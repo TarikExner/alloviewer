@@ -243,7 +243,7 @@ def train(
 
     # DDP bootstrap
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    world_size = int(os.environ.get("WORLD_SIZE", 1))
+    world_size = torch.cuda.device_count()
     distributed = world_size > 1
 
     if distributed and not dist.is_initialized():
