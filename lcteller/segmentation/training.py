@@ -226,7 +226,7 @@ def train(
     # AMP setup
     use_amp = bool(amp and device.type == "cuda")
     use_bf16 = bool(use_amp and torch.cuda.is_bf16_supported())
-    scaler = GradScaler(device_type="cuda", enabled=(use_amp and not use_bf16))
+    scaler = GradScaler(enabled=(use_amp and not use_bf16))
 
     # Data
     train_ds = SimCellsDataset(length=train_len, tile_size=tile_size, rng_seed=seed,   sim_fn=simulate_image)
