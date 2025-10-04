@@ -31,6 +31,17 @@ def _tqdm(iterable, desc, position, total=None, disable=None):
 def ddp_is_active():
     return dist.is_available() and dist.is_initialized()
 
+def _ddp_broadcast_bool(flag: bool, device):
+    """Broadcast a boolean stop flag from rank 0 to all ranks (no-op if not DDP)."""
+    if not ddp_is_active():
+        return flag
+    t = torch.tensor([1 if flag else 0], dtype=torch.int32, device=device)
+    # by convention rank 0 writes its value; others keep whatever, then we broadcast 0->all
+    if ddp_rank() == 0:
+        t[...] = 1 if flag else 0
+    torch.distributed.broadcast(t, src=0)
+    return bool(int(t.item()))
+
 def ddp_world_size():
     return dist.get_world_size() if ddp_is_active() else 1
 
@@ -73,7 +84,22 @@ def bce_dice_loss_weighted_channels(logits, target, w_cell=1.0, w_bound=1.2, w_b
     loss_bound = bce_dice_loss(logits[:,1:2], target[:,1:2], w_bce, w_dice)
     return w_cell * loss_cell + w_bound * loss_bound
 
-def train_epoch(model, loader, opt, scaler, device, use_amp, loss_mode, w_cell, w_bound, w_bce, w_dice, show_bar):
+class EarlyStopper:
+    def __init__(self, patience=2, min_delta=1e-4):
+        self.patience = int(patience)
+        self.min_delta = float(min_delta)
+        self.best = float("inf")
+        self.bad = 0
+
+    def step(self, val_loss: float) -> bool:
+        if val_loss < self.best - self.min_delta:
+            self.best = float(val_loss)
+            self.bad = 0
+            return False  # keep training
+        self.bad += 1
+        return self.bad >= self.patience  # True => stop
+
+def train_epoch(model, loader, opt, scaler, device, use_amp, loss_mode, w_cell, w_bound, w_bce, w_dice, show_bar, max_steps=None):
     model.train()
     running_loss = 0.0
     running_dice_cell = 0.0
@@ -82,7 +108,8 @@ def train_epoch(model, loader, opt, scaler, device, use_amp, loss_mode, w_cell, 
 
     use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
     pbar = _tqdm(loader, desc="train", position=1, disable=not show_bar)
-    for img, tgt, _ in pbar:
+
+    for step_idx, (img, tgt, _) in enumerate(pbar, start=1):
         img = img.to(device, non_blocking=True)
         tgt = tgt.to(device, non_blocking=True)
 
@@ -116,12 +143,16 @@ def train_epoch(model, loader, opt, scaler, device, use_amp, loss_mode, w_cell, 
                 "dice_bound": f"{running_dice_bound/steps:.3f}"
             })
 
+        if (max_steps is not None) and (step_idx >= int(max_steps)):
+            break
+
     out = {
         "loss": running_loss / max(1, steps),
         "dice_cell": running_dice_cell / max(1, steps),
         "dice_bound": running_dice_bound / max(1, steps),
     }
     return out
+
 
 @torch.no_grad()
 def eval_epoch(model, loader, device, use_amp, loss_mode, w_cell, w_bound, w_bce, w_dice, show_bar):
@@ -188,7 +219,7 @@ def collate_no_meta(batch):
 
 def train(
     out_dir="./models/",
-    epochs=30,
+    epochs=50,
     batch_size=16,                 # per-GPU batch
     lr=1e-3,
     weight_decay=1e-4,
@@ -204,6 +235,9 @@ def train(
     w_bound=1.3,
     w_bce=0.3,
     w_dice=0.7,
+    max_steps_per_epoch: int | None = 250,
+    early_stop_patience: int = 2,
+    early_stop_min_delta: float = 1e-4, 
 ):
     os.makedirs(out_dir, exist_ok=True)
 
@@ -229,11 +263,11 @@ def train(
     scaler = GradScaler(enabled=(use_amp and not use_bf16))
 
     # Data
-    train_ds = SimCellsDataset(length=train_len, tile_size=tile_size, rng_seed=seed,   sim_fn=simulate_image)
-    val_ds   = SimCellsDataset(length=val_len,   tile_size=tile_size, rng_seed=seed+1, sim_fn=simulate_image)
+    train_ds = SimCellsDataset(length=train_len, tile_size=tile_size, rng_seed=seed, sim_fn=simulate_image)
+    val_ds = SimCellsDataset(length=val_len, tile_size=tile_size, rng_seed=seed+1, sim_fn=simulate_image)
 
     train_sampler = DistributedSampler(train_ds, num_replicas=world_size, rank=local_rank, shuffle=True,  drop_last=True)  if distributed else None
-    val_sampler   = DistributedSampler(val_ds,   num_replicas=world_size, rank=local_rank, shuffle=False, drop_last=False) if distributed else None
+    val_sampler = DistributedSampler(val_ds, num_replicas=world_size, rank=local_rank, shuffle=False, drop_last=False) if distributed else None
 
     pin_mem = (device.type == "cuda")
     train_dl = DataLoader(train_ds, batch_size=batch_size,
@@ -269,30 +303,41 @@ def train(
 
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
+    stopper = EarlyStopper(patience=early_stop_patience, min_delta=early_stop_min_delta)
 
+    # progress bar
     epoch_bar = _tqdm(range(1, epochs+1), desc="epochs", position=0, disable=not is_rank0)
 
     best_val = float("inf")
     best_path = os.path.join(out_dir, f"best_{unet_mode}.pth")
 
     for ep in epoch_bar:
-        if distributed:
-            train_sampler.set_epoch(ep)
+        # safer sampler epoch set
+        sampler = getattr(train_dl, "sampler", None)
+        if isinstance(sampler, torch.utils.data.distributed.DistributedSampler):
+            sampler.set_epoch(ep)
 
         t0 = time.time()
-        tr_local = train_epoch(model, train_dl, opt, scaler, device, use_amp, loss_mode, w_cell, w_bound, w_bce, w_dice, show_bar=is_rank0)
-        va_local = eval_epoch(model,  val_dl,   device, use_amp, loss_mode, w_cell, w_bound, w_bce, w_dice, show_bar=is_rank0)
 
-        # all-reduce metrics
+        tr_local = train_epoch(
+            model, train_dl, opt, scaler, device, use_amp, loss_mode,
+            w_cell, w_bound, w_bce, w_dice, show_bar=is_rank0,
+            max_steps=max_steps_per_epoch
+        )
+        va_local = eval_epoch(
+            model, val_dl, device, use_amp, loss_mode,
+            w_cell, w_bound, w_bce, w_dice, show_bar=is_rank0
+        )
+
+        # reduce metrics
         tr = reduce_mean_dict(tr_local, device)
         va = reduce_mean_dict(va_local, device)
 
         sched.step()
 
-        # save and log (rank 0)
         if is_rank0:
             state = (model.module.state_dict() if hasattr(model, "module") else model.state_dict())
-            torch.save(state, os.path.join(out_dir, f"last_{unet_mode}.pth"))
+            torch.save(state, os.path.join(out_dir, f"{unet_mode}_epoch_{ep}.pth"))
             if va["loss"] < best_val:
                 best_val = va["loss"]
                 torch.save(state, best_path)
@@ -309,18 +354,25 @@ def train(
                 "bs/gpu": batch_size,
                 "gpus": world_size
             })
-
             with open(os.path.join(out_dir, f"log_{unet_mode}.jsonl"), "a", encoding="utf-8") as f:
                 f.write(json.dumps({
-                    "epoch": ep,
-                    "train": tr,
-                    "val": va,
+                    "epoch": ep, "train": tr, "val": va,
                     "lr": float(opt.param_groups[0]["lr"]),
                     "time_sec": round(time.time()-t0, 2),
                     "best_val": float(best_val),
                     "world_size": world_size,
                     "batch_size_per_gpu": batch_size
                 }) + "\n")
+
+
+        stop_local = stopper.step(va["loss"])
+        stop_all = _ddp_broadcast_bool(stop_local if is_rank0 else False, device)
+        if stop_all:
+            if is_rank0:
+                print(f"Early stopping at epoch {ep} (best val loss: {best_val:.6f})")
+            if ddp_is_active():
+                dist.barrier()
+            break
 
         if ddp_is_active():
             dist.barrier()
