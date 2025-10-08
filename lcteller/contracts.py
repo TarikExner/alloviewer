@@ -1,0 +1,16 @@
+from typing import Protocol, Dict, Any, List
+import numpy as np
+
+class ISegmenter(Protocol):
+    def __call__(self, img: np.ndarray) -> Dict[str, Any]: ...
+
+class IFeatureExtractor(Protocol):
+    def __call__(self, img: np.ndarray, inst: np.ndarray) -> List[Dict[str, Any]]: ...
+
+class ICalibrator(Protocol):
+    def fit(self, pc_wells: List[List[Dict[str, Any]]], nc_wells: List[List[Dict[str, Any]]]) -> Dict[str, Any]: ...
+
+class IClassifier(Protocol):
+    def __init__(self, calib: Dict[str, Any]): ...
+    def __call__(self, rois: List[Dict[str, Any]]) -> List[Dict[str, Any]]: ...
+
