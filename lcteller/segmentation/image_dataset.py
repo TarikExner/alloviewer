@@ -1,9 +1,7 @@
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-
 from scipy import ndimage as ndi
-
 import cv2
 
 from . import simulate_image
@@ -80,6 +78,15 @@ def _transform_centers_for_crop_pad_scale(centers, crop_y0, crop_x0, pad_top, pa
             out.append((yy, xx))
     return out
 
+def _make_center_stem_from_centers(centers, shape):
+    """Binary image with 1.0 at each (y,x) center."""
+    H, W = shape
+    stem = np.zeros((H, W), dtype=np.float32)
+    for (y, x) in centers or []:
+        if 0 <= y < H and 0 <= x < W:
+            stem[y, x] = 1.0
+    return stem
+
 def _camera_rect_transform(
     rng,
     img, cell, bound, inst, centers,
@@ -88,6 +95,7 @@ def _camera_rect_transform(
     aspect_ratio_range=(0.6, 1.6),
     content_scale_range=(0.6, 0.95),
     dark_margin_bias=0.0,
+    center_stem=None,   # NEW: carry center stem along the pipeline
 ):
     """
     1) up/downscale square sim to S_src
@@ -105,10 +113,12 @@ def _camera_rect_transform(
         cell = _resize_map(cell, S_src, mode="binary")
         bound= _resize_map(bound,S_src, mode="binary")
         inst = _resize_map(inst, S_src, mode="label")
+        if center_stem is not None:
+            center_stem = _resize_map(center_stem, S_src, mode="binary")
         scale0 = S_src / float(N)
         centers = [(int(round(y*scale0)), int(round(x*scale0))) for (y, x) in centers]
     else:
-        scale0 = 1.0
+        scale0 = 1.0  # not used further; kept for completeness
 
     # 2) pick rectangle
     H_rect = max(8, int(round(S_src * s)))
@@ -122,27 +132,28 @@ def _camera_rect_transform(
     cell_r  = _crop_rect(cell,  y0, x0, H_rect, W_rect)
     bound_r = _crop_rect(bound, y0, x0, H_rect, W_rect)
     inst_r  = _crop_rect(inst,  y0, x0, H_rect, W_rect)
+    center_r = None if center_stem is None else _crop_rect(center_stem, y0, x0, H_rect, W_rect)
 
     # 3) pad to square
     S_pad = max(H_rect, W_rect)
     img_sq, (pad_top, pad_left) = _pad_to_square(img_r,   S_pad, pad_color=float(dark_margin_bias))
-    cell_sq, _ = _pad_to_square(cell_r,  S_pad, pad_color=0.0)
-    bound_sq, _ = _pad_to_square(bound_r, S_pad, pad_color=0.0)
-    inst_sq, _ = _pad_to_square(inst_r,  S_pad, pad_color=0)
+    cell_sq, _                  = _pad_to_square(cell_r,  S_pad, pad_color=0.0)
+    bound_sq, _                 = _pad_to_square(bound_r, S_pad, pad_color=0.0)
+    inst_sq, _                  = _pad_to_square(inst_r,  S_pad, pad_color=0)
+    center_sq = None if center_r is None else _pad_to_square(center_r, S_pad, pad_color=0.0)[0]
 
     # 4) resize to out_side
-    scale = out_side / float(S_pad)
     img_out   = _resize_map(img_sq,   out_side, mode="image").astype(np.float32)
     cell_out  = _resize_map(cell_sq,  out_side, mode="binary")
     bound_out = _resize_map(bound_sq, out_side, mode="binary")
     inst_out  = _resize_map(inst_sq,  out_side, mode="label")
+    center_out = None if center_sq is None else _resize_map(center_sq, out_side, mode="binary")
 
-    # centers transformed across crop->pad->resize
-    centers_out = _transform_centers_for_crop_pad_scale(
-        centers, y0, x0, pad_top, pad_left, scale, out_side
-    )
+    # centers transformed across crop->pad->resize (kept in meta; not used for heatmap now)
+    scale = out_side / float(S_pad)
+    centers_out = _transform_centers_for_crop_pad_scale(centers, y0, x0, pad_top, pad_left, scale, out_side)
 
-    return img_out, cell_out, bound_out, inst_out, centers_out
+    return img_out, cell_out, bound_out, inst_out, centers_out, center_out  # NOTE extra return
 
 def rand_choice(rng, val_or_range):
     if isinstance(val_or_range, (list, tuple)) and len(val_or_range) == 2:
@@ -153,34 +164,32 @@ def rand_choice(rng, val_or_range):
     return val_or_range
 
 def _warp_centers(centers, H, W, flip_x=False, flip_y=False, rot_k=0):
-    """Apply the same flips/rot90 to (y,x) centers."""
+    # kept for reference; no longer used for the heatmap path
     if not centers:
         return []
-    cy = np.array([c[0] for c in centers], dtype=np.int32)
-    cx = np.array([c[1] for c in centers], dtype=np.int32)
-
-    if flip_x:  # horizontal flip (axis=1)
-        cx = (W - 1) - cx
-    if flip_y:  # vertical flip (axis=0)
-        cy = (H - 1) - cy
-
-    rot_k = int(rot_k) % 4
-    if rot_k == 1:
-        ny = cx
-        nx = (W - 1) - cy
-        cy, cx = ny, nx
-    elif rot_k == 2:
-        cy = (H - 1) - cy
-        cx = (W - 1) - cx
-    elif rot_k == 3:
-        ny = (H - 1) - cx
-        nx = cy
-        cy, cx = ny, nx
-
-    # keep inside image
-    cy = np.clip(cy, 0, H - 1)
-    cx = np.clip(cx, 0, W - 1)
-    return [(int(y), int(x)) for y, x in zip(cy, cx)]
+    pts = np.asarray(centers, dtype=np.int32)
+    if flip_x:
+        pts[:, 1] = (W - 1) - pts[:, 1]
+    if flip_y:
+        pts[:, 0] = (H - 1) - pts[:, 0]
+    k = int(rot_k) % 4
+    if k == 1:
+        y_new = pts[:, 1]
+        x_new = (W - 1) - pts[:, 0]
+        H, W = W, H
+        pts = np.stack([y_new, x_new], axis=1)
+    elif k == 2:
+        y_new = (H - 1) - pts[:, 0]
+        x_new = (W - 1) - pts[:, 1]
+        pts = np.stack([y_new, x_new], axis=1)
+    elif k == 3:
+        y_new = (W - 1) - pts[:, 1]
+        x_new = pts[:, 0]
+        H, W = W, H
+        pts = np.stack([y_new, x_new], axis=1)
+    pts[:, 0] = np.clip(pts[:, 0], 0, H - 1)
+    pts[:, 1] = np.clip(pts[:, 1], 0, W - 1)
+    return [(int(y), int(x)) for y, x in pts]
 
 def _make_center_heatmap_from_centers(centers, shape, sigma=2.0):
     """Set 1.0 at each center, then blur to get smooth peaks."""
@@ -211,7 +220,7 @@ class SimCellsDataset(Dataset):
     """
     Returns:
       img_t:  float32 [3,H,W] in [0,1]
-      tgt_t:  float32 [2,H,W]  (0=cell, 1=boundary)
+      tgt_t:  float32 [C,H,W]  (C=2..4: 0=cell, 1=boundary, 2=center?, 3=energy?)
       extras: dict with:
               - "instance_labels": int32 [H,W]
               - "meta": meta from sim
@@ -261,15 +270,18 @@ class SimCellsDataset(Dataset):
         self.aug_rot90 = aug_rot90
         self.aug_gamma = aug_gamma
         self.rng = np.random.default_rng(rng_seed)
+
         self.add_center = bool(add_center)
         self.add_energy = bool(add_energy)
         self.center_sigma = float(center_sigma)
+
         self.random_camera_rect = bool(random_camera_rect)
         self.cam_src_side_range = cam_src_side_range
         self.cam_aspect_ratio_range = cam_aspect_ratio_range
         self.cam_content_scale_range = cam_content_scale_range
         self.cam_out_side = int(cam_out_side)
         self.cam_dark_margin_bias = float(cam_dark_margin_bias)
+
     def __len__(self):
         return self.length
 
@@ -306,9 +318,46 @@ class SimCellsDataset(Dataset):
             img = np.clip(img, 1e-4, 1.0) ** g
             img = np.clip(img, 0.0, 1.0)
 
-        # return the ops taken so we can warp centers the same way
+        # return the ops taken so we can warp centers the same way (legacy path)
         return img, cell, bound, inst, (flip_x, flip_y, k)
 
+    def _apply_aug_with_center(self, img, cell, bound, inst, center_stem):
+        """Same as _apply_aug but moves the center_stem along; gamma only on image."""
+        flip_x = False
+        flip_y = False
+
+        if self.aug_flip and self.rng.random() < 0.5:
+            img = np.flip(img, axis=1)
+            cell = np.flip(cell, axis=1)
+            bound = np.flip(bound, axis=1)
+            inst = np.flip(inst, axis=1)
+            center_stem = np.flip(center_stem, axis=1)
+            flip_x = True
+
+        if self.aug_flip and self.rng.random() < 0.5:
+            img = np.flip(img, axis=0)
+            cell = np.flip(cell, axis=0)
+            bound = np.flip(bound, axis=0)
+            inst = np.flip(inst, axis=0)
+            center_stem = np.flip(center_stem, axis=0)
+            flip_y = True
+
+        k = 0
+        if self.aug_rot90:
+            k = int(self.rng.integers(0, 4))
+            if k:
+                img = np.rot90(img,   k, axes=(0, 1))
+                cell = np.rot90(cell,  k, axes=(0, 1))
+                bound = np.rot90(bound, k, axes=(0, 1))
+                inst = np.rot90(inst,  k, axes=(0, 1))
+                center_stem = np.rot90(center_stem, k, axes=(0, 1))
+
+        if isinstance(self.aug_gamma, (list, tuple)) and len(self.aug_gamma) == 2:
+            g = float(self.rng.uniform(self.aug_gamma[0], self.aug_gamma[1]))
+            img = np.clip(img, 1e-4, 1.0) ** g
+            img = np.clip(img, 0.0, 1.0)
+
+        return img, cell, bound, inst, center_stem, (flip_x, flip_y, k)
 
     def __getitem__(self, idx):
         N   = self.tile_size
@@ -334,33 +383,40 @@ class SimCellsDataset(Dataset):
         inst  = targets["instance_labels"].astype(np.int32) # H,W
         centers = list(meta.get("centers", []))             # [(y,x), ...]
 
-        # --- camera-rect step (crop -> pad -> resize) ---
+        # --- paint a binary center stem BEFORE any warp ---
+        center_stem = _make_center_stem_from_centers(centers, cell.shape)
+
+        # --- camera-rect step (crop -> pad -> resize), carry the stem too ---
         if self.random_camera_rect:
-            img, cell, bound, inst, centers = _camera_rect_transform(
+            img, cell, bound, inst, centers, center_stem = _camera_rect_transform(
                 self.rng, img, cell, bound, inst, centers,
                 out_side=self.cam_out_side,
                 src_side_range=self.cam_src_side_range,
                 aspect_ratio_range=self.cam_aspect_ratio_range,
                 content_scale_range=self.cam_content_scale_range,
                 dark_margin_bias=self.cam_dark_margin_bias,
+                center_stem=center_stem,
             )
 
-        # now everything is square (cam_out_side x cam_out_side)
+        # --- flips/rot/gamma on ALL maps (center stem included) ---
+        img, cell, bound, inst, center_stem, aug_ops = self._apply_aug_with_center(
+            img, cell, bound, inst, center_stem
+        )
 
-        # --- apply your flips/rot90/gamma (and remember ops for centers) ---
-        img, cell, bound, inst, aug_ops = self._apply_aug(img, cell, bound, inst)
-        flip_x, flip_y, k = aug_ops
-        H, W = cell.shape
-        centers_warped = _warp_centers(centers, H, W, flip_x=flip_x, flip_y=flip_y, rot_k=k)
-
-        # --- aux maps AFTER camera step and AFTER flips ---
+        # --- build final targets ---
         tgt_maps = [cell, bound]
         if self.add_center:
-            center_map = _make_center_heatmap_from_centers(centers_warped, (H, W), sigma=self.center_sigma)
-            tgt_maps.append(center_map)
+            center_map = center_stem
+            if self.center_sigma and self.center_sigma > 0:
+                center_map = ndi.gaussian_filter(center_map.astype(np.float32), float(self.center_sigma))
+                m = float(center_map.max())
+                if m > 0:
+                    center_map = center_map / m
+            tgt_maps.append(center_map.astype(np.float32))
+
         if self.add_energy:
-            energy_map = _make_energy_from_instances(inst)   # EDT after all warps -> stays aligned
-            tgt_maps.append(energy_map)
+            energy_map = _make_energy_from_instances(inst)   # EDT after all warps -> aligned
+            tgt_maps.append(energy_map.astype(np.float32))
 
         tgt = np.stack(tgt_maps, axis=0).astype(np.float32)  # [C,H,W]
 
