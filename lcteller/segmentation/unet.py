@@ -1,4 +1,3 @@
-# unet_optimized.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -76,7 +75,7 @@ class UNetOptimized(nn.Module):
     def __init__(
         self,
         in_channels=3,
-        out_channels=2,
+        out_channels=4,
         base_ch=16,       # 16 is fast on CPU; 32 if you want more capacity
         norm="group",     # "group", "batch", or None
         groups=8,
@@ -88,17 +87,17 @@ class UNetOptimized(nn.Module):
 
         # encoder
         self.inc   = DWConvBlock(in_channels, c, **kw)
-        self.down1 = Down(c,     c*2, **kw)
-        self.down2 = Down(c*2,   c*4, **kw)
-        self.down3 = Down(c*4,   c*8, **kw)   # depth 4 (stop at /16)
+        self.down1 = Down(c, c*2, **kw)
+        self.down2 = Down(c*2, c*4, **kw)
+        self.down3 = Down(c*4, c*8, **kw)   # depth 4 (stop at /16)
         # bottleneck kept narrow for speed
-        self.bott  = Down(c*8,   c*8, **kw)
+        self.bott  = Down(c*8, c*8, **kw)
 
         # decoder
         self.up1 = Up(c*16, c*4, **kw)
-        self.up2 = Up(c*8,  c*2, **kw)
-        self.up3 = Up(c*4,  c,   **kw)
-        self.up4 = Up(c*2,  c,   **kw)
+        self.up2 = Up(c*8, c*2, **kw)
+        self.up3 = Up(c*4, c, **kw)
+        self.up4 = Up(c*2, c, **kw)
 
         self.outc = nn.Conv2d(c, out_channels, kernel_size=1)
 
@@ -128,17 +127,17 @@ class UNetOptimized(nn.Module):
         return self.outc(x)
 
 
-def build_unet_cpu_small(in_channels=3, out_channels=2) -> UNetOptimized:
+def build_unet_cpu_small(in_channels=3, out_channels=4) -> UNetOptimized:
     """Good default for CPU inference."""
     return UNetOptimized(in_channels=in_channels, out_channels=out_channels,
                          base_ch=16, norm="group", groups=8, p_drop=0.0)
 
-def build_unet_cpu_medium(in_channels=3, out_channels=2) -> UNetOptimized:
+def build_unet_cpu_medium(in_channels=3, out_channels=4) -> UNetOptimized:
     """A bit more capacity, still CPU-friendly."""
     return UNetOptimized(in_channels=in_channels, out_channels=out_channels,
                          base_ch=32, norm="group", groups=8, p_drop=0.0)
 
-def build_unet_cpu_large(in_channels=3, out_channels=2) -> UNetOptimized:
+def build_unet_cpu_large(in_channels=3, out_channels=4) -> UNetOptimized:
     """A bit more capacity, still CPU-friendly."""
     return UNetOptimized(in_channels=in_channels, out_channels=out_channels,
                          base_ch=64, norm="group", groups=8, p_drop=0.0)

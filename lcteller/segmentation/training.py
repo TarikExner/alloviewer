@@ -7,36 +7,31 @@ import torch.nn.functional as F
 import torch.distributed as dist
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from torch.utils.data import DataLoader
 from torch.amp import autocast, GradScaler
 from tqdm.auto import tqdm
+from typing import Literal, List
 
-from typing import Literal
+from . import (
+    SimCellsDataset, simulate_image,
+    build_unet_cpu_small, build_unet_cpu_medium, build_unet_cpu_large
+)
 
-from . import (SimCellsDataset, build_unet_cpu_small, simulate_image,
-               build_unet_cpu_medium, build_unet_cpu_large)
+# --------------------- utils ---------------------
 
 def _tqdm(iterable, desc, position, total=None, disable=None):
     return tqdm(
-        iterable,
-        desc=desc,
-        total=total,
-        leave=False,
-        dynamic_ncols=True,
-        mininterval=0.2,
-        smoothing=0.1,
-        position=position,
-        disable=disable
+        iterable, desc=desc, total=total, leave=False,
+        dynamic_ncols=True, mininterval=0.2, smoothing=0.1,
+        position=position, disable=disable
     )
+
 def ddp_is_active():
     return dist.is_available() and dist.is_initialized()
 
 def _ddp_broadcast_bool(flag: bool, device):
-    """Broadcast a boolean stop flag from rank 0 to all ranks (no-op if not DDP)."""
     if not ddp_is_active():
         return flag
     t = torch.tensor([1 if flag else 0], dtype=torch.int32, device=device)
-    # by convention rank 0 writes its value; others keep whatever, then we broadcast 0->all
     if ddp_rank() == 0:
         t[...] = 1 if flag else 0
     torch.distributed.broadcast(t, src=0)
@@ -49,7 +44,6 @@ def ddp_rank():
     return dist.get_rank() if ddp_is_active() else 0
 
 def reduce_mean_scalar(val: float, device):
-    """All-reduce mean for a single float."""
     if not ddp_is_active():
         return float(val)
     t = torch.tensor([val], dtype=torch.float32, device=device)
@@ -61,28 +55,57 @@ def reduce_mean_dict(d: dict, device):
         return d
     return {k: reduce_mean_scalar(float(v), device) for k, v in d.items()}
 
+# --------------------- losses ---------------------
+
 def dice_loss_from_probs(probs, target, eps=1e-6):
-    # probs/target: [N,C,H,W]
+    # probs/target: [N,1,H,W]
     num = 2 * (probs * target).sum(dim=(0,2,3)) + eps
     den = (probs + target).sum(dim=(0,2,3)) + eps
     return (1 - num / den).mean()
 
 def dice_from_probs(probs, target, eps=1e-6):
-    # per-batch mean dice (for logging), probs/target: [N,1,H,W]
+    # probs/target: [N,1,H,W]
     num = 2 * (probs * target).sum(dim=(0,2,3))
     den = (probs + target).sum(dim=(0,2,3)) + eps
     return (num / den).mean().item()
 
-def bce_dice_loss(logits, target, w_bce=0.3, w_dice=0.7):
-    bce = F.binary_cross_entropy_with_logits(logits, target)
+def bce_dice_multi(
+    logits: torch.Tensor,   # [B,C,H,W]
+    target: torch.Tensor,   # [B,C,H,W]
+    weights: List[float],
+    w_bce: float = 0.3,
+    w_dice: float = 0.7,
+) -> torch.Tensor:
+    """Sum over channels: w_c * (0.3 * BCE + 0.7 * Dice)."""
+    assert logits.shape[:2] == target.shape[:2], "logits/target shape mismatch"
+    C = logits.shape[1]
+    assert len(weights) == C, f"weights length {len(weights)} != channels {C}"
     probs = torch.sigmoid(logits)
-    d    = dice_loss_from_probs(probs, target)
-    return w_bce * bce + w_dice * d
+    total = 0.0
+    for c in range(C):
+        bce = F.binary_cross_entropy_with_logits(logits[:, c:c+1], target[:, c:c+1])
+        d   = dice_loss_from_probs(probs[:, c:c+1], target[:, c:c+1])
+        total = total + weights[c] * (w_bce * bce + w_dice * d)
+    return total
 
-def bce_dice_loss_weighted_channels(logits, target, w_cell=1.0, w_bound=1.2, w_bce=0.3, w_dice=0.7):
-    loss_cell  = bce_dice_loss(logits[:,0:1], target[:,0:1], w_bce, w_dice)
-    loss_bound = bce_dice_loss(logits[:,1:2], target[:,1:2], w_bce, w_dice)
-    return w_cell * loss_cell + w_bound * loss_bound
+# --------------------- schedulers ---------------------
+
+def make_weight_schedule(C: int, epoch: int, warmup_epochs: int = 5) -> List[float]:
+    """
+    Returns per-channel weights for the current epoch.
+
+    Channel order convention:
+      0: cell, 1: boundary, 2: center (optional), 3: energy (optional)
+    """
+    if epoch <= warmup_epochs:
+        return [1.0] * C
+
+    # base after warmup for up to 4 channels
+    post = [1.0, 1.3, 0.5, 0.5]
+    # truncate to C channels
+    return post[:C]
+
+# --------------------- training loops ---------------------
 
 class EarlyStopper:
     def __init__(self, patience=2, min_delta=1e-4):
@@ -95,15 +118,17 @@ class EarlyStopper:
         if val_loss < self.best - self.min_delta:
             self.best = float(val_loss)
             self.bad = 0
-            return False  # keep training
+            return False
         self.bad += 1
-        return self.bad >= self.patience  # True => stop
+        return self.bad >= self.patience
 
-def train_epoch(model, loader, opt, scaler, device, use_amp, loss_mode, w_cell, w_bound, w_bce, w_dice, show_bar, max_steps=None):
+def train_epoch(model, loader, opt, scaler, device, use_amp, weights, w_bce, w_dice, show_bar, max_steps=None):
     model.train()
     running_loss = 0.0
-    running_dice_cell = 0.0
+    running_dice_cell  = 0.0
     running_dice_bound = 0.0
+    running_dice_center = 0.0
+    running_dice_energy = 0.0
     steps = 0
 
     use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
@@ -115,107 +140,126 @@ def train_epoch(model, loader, opt, scaler, device, use_amp, loss_mode, w_cell, 
 
         opt.zero_grad(set_to_none=True)
         with autocast(device_type="cuda", enabled=use_amp, dtype=(torch.bfloat16 if use_bf16 else torch.float16)):
-            logits = model(img)
-            if loss_mode == "joint":
-                loss = bce_dice_loss(logits, tgt, w_bce=w_bce, w_dice=w_dice)
-            else:
-                loss = bce_dice_loss_weighted_channels(
-                    logits, tgt, w_cell=w_cell, w_bound=w_bound, w_bce=w_bce, w_dice=w_dice
-                )
+            logits = model(img)  # [B,C,H,W]
+            loss = bce_dice_multi(logits, tgt, weights, w_bce=w_bce, w_dice=w_dice)
+
         scaler.scale(loss).backward()
         scaler.step(opt)
         scaler.update()
 
         with torch.no_grad():
             probs = torch.sigmoid(logits)
-            dc = dice_from_probs(probs[:,0:1], tgt[:,0:1])
-            db = dice_from_probs(probs[:,1:2], tgt[:,1:2])
+            if tgt.shape[1] >= 1:
+                running_dice_cell  += dice_from_probs(probs[:,0:1], tgt[:,0:1])
+            if tgt.shape[1] >= 2:
+                running_dice_bound += dice_from_probs(probs[:,1:2], tgt[:,1:2])
+            if tgt.shape[1] >= 3:
+                running_dice_center += dice_from_probs(probs[:,2:3], tgt[:,2:3])
+            if tgt.shape[1] >= 4:
+                running_dice_energy += dice_from_probs(probs[:,3:4], tgt[:,3:4])
 
         running_loss += float(loss.item())
-        running_dice_cell  += dc
-        running_dice_bound += db
         steps += 1
 
         if show_bar:
-            pbar.set_postfix({
-                "loss": f"{running_loss/steps:.4f}",
-                "dice_cell": f"{running_dice_cell/steps:.3f}",
-                "dice_bound": f"{running_dice_bound/steps:.3f}"
-            })
+            post = {"loss": f"{running_loss/steps:.4f}"}
+            if tgt.shape[1] >= 1:
+                post["dice_cell"] = f"{running_dice_cell/steps:.3f}"
+            if tgt.shape[1] >= 2:
+                post["dice_bound"] = f"{running_dice_bound/steps:.3f}"
+            if tgt.shape[1] >= 3:
+                post["dice_center"] = f"{running_dice_center/steps:.3f}"
+            if tgt.shape[1] >= 4:
+                post["dice_energy"] = f"{running_dice_energy/steps:.3f}"
+            pbar.set_postfix(post)
 
         if (max_steps is not None) and (step_idx >= int(max_steps)):
             break
 
-    out = {
-        "loss": running_loss / max(1, steps),
-        "dice_cell": running_dice_cell / max(1, steps),
-        "dice_bound": running_dice_bound / max(1, steps),
-    }
+    out = {"loss": running_loss / max(1, steps)}
+    if steps and tgt.shape[1] >= 1:
+        out["dice_cell"]   = running_dice_cell / steps
+    if steps and tgt.shape[1] >= 2:
+        out["dice_bound"]  = running_dice_bound / steps
+    if steps and tgt.shape[1] >= 3:
+        out["dice_center"] = running_dice_center / steps
+    if steps and tgt.shape[1] >= 4:
+        out["dice_energy"] = running_dice_energy / steps
     return out
 
-
 @torch.no_grad()
-def eval_epoch(model, loader, device, use_amp, loss_mode, w_cell, w_bound, w_bce, w_dice, show_bar):
+def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar):
     model.eval()
     loss_sum = 0.0
-    dice_cell_sum = 0.0
-    dice_bound_sum = 0.0
+    dice_cell_sum   = 0.0
+    dice_bound_sum  = 0.0
+    dice_center_sum = 0.0
+    dice_energy_sum = 0.0
     n = 0
 
     use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
     pbar = _tqdm(loader, desc="evaluation", position=2, disable=not show_bar)
+
     for img, tgt, _ in pbar:
         img = img.to(device, non_blocking=True)
         tgt = tgt.to(device, non_blocking=True)
 
         with autocast(device_type="cuda", enabled=use_amp, dtype=(torch.bfloat16 if use_bf16 else torch.float16)):
             logits = model(img)
-            if loss_mode == "joint":
-                loss = bce_dice_loss(logits, tgt, w_bce=w_bce, w_dice=w_dice)
-            else:
-                loss = bce_dice_loss_weighted_channels(
-                    logits, tgt, w_cell=w_cell, w_bound=w_bound, w_bce=w_bce, w_dice=w_dice
-                )
+            loss = bce_dice_multi(logits, tgt, weights, w_bce=w_bce, w_dice=w_dice)
             probs = torch.sigmoid(logits)
 
-        dc = dice_from_probs(probs[:,0:1], tgt[:,0:1])
-        db = dice_from_probs(probs[:,1:2], tgt[:,1:2])
-
         loss_sum += float(loss.item())
-        dice_cell_sum  += dc
-        dice_bound_sum += db
+        if tgt.shape[1] >= 1:
+            dice_cell_sum  += dice_from_probs(probs[:,0:1], tgt[:,0:1])
+        if tgt.shape[1] >= 2:
+            dice_bound_sum += dice_from_probs(probs[:,1:2], tgt[:,1:2])
+        if tgt.shape[1] >= 3:
+            dice_center_sum += dice_from_probs(probs[:,2:3], tgt[:,2:3])
+        if tgt.shape[1] >= 4:
+            dice_energy_sum += dice_from_probs(probs[:,3:4], tgt[:,3:4])
         n += 1
 
         if show_bar:
-            pbar.set_postfix({
-                "loss": f"{loss_sum/n:.4f}",
-                "dice_cell": f"{dice_cell_sum/n:.3f}",
-                "dice_bound": f"{dice_bound_sum/n:.3f}"
-            })
+            post = {"loss": f"{loss_sum/n:.4f}"}
+            if tgt.shape[1] >= 1:
+                post["dice_cell"]   = f"{dice_cell_sum/n:.3f}"
+            if tgt.shape[1] >= 2:
+                post["dice_bound"]  = f"{dice_bound_sum/n:.3f}"
+            if tgt.shape[1] >= 3:
+                post["dice_center"] = f"{dice_center_sum/n:.3f}"
+            if tgt.shape[1] >= 4:
+                post["dice_energy"] = f"{dice_energy_sum/n:.3f}"
+            pbar.set_postfix(post)
 
-    out = {
-        "loss": loss_sum / max(1, n),
-        "dice_cell": dice_cell_sum / max(1, n),
-        "dice_bound": dice_bound_sum / max(1, n),
-    }
+    out = {"loss": loss_sum / max(1, n)}
+    if n and tgt.shape[1] >= 1:
+        out["dice_cell"]   = dice_cell_sum / n
+    if n and tgt.shape[1] >= 2:
+        out["dice_bound"]  = dice_bound_sum / n
+    if n and tgt.shape[1] >= 3:
+        out["dice_center"] = dice_center_sum / n
+    if n and tgt.shape[1] >= 4:
+        out["dice_energy"] = dice_energy_sum / n
     return out
+
+# --------------------- collate ---------------------
 
 def collate_no_meta(batch):
     """
     batch: list of (img_t, tgt_t, extras)
     Stacks img and target; stacks extras['instance_labels']; keeps meta as a list.
+    Works for any number of target channels.
     """
     imgs, tgts, exs = zip(*batch)
-    imgs = torch.stack(imgs, dim=0)          # [B,3,H,W]
-    tgts = torch.stack(tgts, dim=0)          # [B,2,H,W]
-
-    # instance labels are tensors of HxW; safe to stack
+    imgs = torch.stack(imgs, dim=0)                # [B,3,H,W]
+    tgts = torch.stack(tgts, dim=0)                # [B,C,H,W]
     inst = torch.stack([e["instance_labels"] for e in exs], dim=0)  # [B,H,W]
-
-    metas = [e["meta"] for e in exs]         # keep as list (no stacking)
-
+    metas = [e["meta"] for e in exs]
     extras_out = {"instance_labels": inst, "meta": metas}
     return imgs, tgts, extras_out
+
+# --------------------- main train() ---------------------
 
 def train(
     out_dir="./models/",
@@ -229,15 +273,13 @@ def train(
     val_len=2000,
     seed=187,
     amp=True,
-    loss_mode="weighted",
     unet_mode: Literal["small", "medium", "large"] = "small",
-    w_cell=1.0,
-    w_bound=1.3,
     w_bce=0.3,
     w_dice=0.7,
     max_steps_per_epoch: int | None = 250,
-    early_stop_patience: int = 2,
-    early_stop_min_delta: float = 1e-4, 
+    early_stop_patience: int = 5,
+    early_stop_min_delta: float = 1e-5,
+    warmup_epochs: int = 5
 ):
     os.makedirs(out_dir, exist_ok=True)
 
@@ -263,36 +305,35 @@ def train(
     scaler = GradScaler(enabled=(use_amp and not use_bf16))
 
     # Data
-    train_ds = SimCellsDataset(length=train_len, tile_size=tile_size, rng_seed=seed, sim_fn=simulate_image)
-    val_ds = SimCellsDataset(length=val_len, tile_size=tile_size, rng_seed=seed+1, sim_fn=simulate_image)
+    train_ds = SimCellsDataset(length=train_len, tile_size=tile_size, rng_seed=seed,
+                               sim_fn=simulate_image, add_center=True, add_energy=True)
+    val_ds   = SimCellsDataset(length=val_len, tile_size=tile_size, rng_seed=seed+1,
+                               sim_fn=simulate_image, add_center=True, add_energy=True)
 
     train_sampler = DistributedSampler(train_ds, num_replicas=world_size, rank=local_rank, shuffle=True,  drop_last=True)  if distributed else None
-    val_sampler = DistributedSampler(val_ds, num_replicas=world_size, rank=local_rank, shuffle=False, drop_last=False) if distributed else None
+    val_sampler   = DistributedSampler(val_ds,   num_replicas=world_size, rank=local_rank, shuffle=False, drop_last=False) if distributed else None
 
     pin_mem = (device.type == "cuda")
     train_dl = DataLoader(train_ds, batch_size=batch_size,
                           shuffle=(train_sampler is None),
                           sampler=train_sampler,
-                          num_workers=workers,
-                          pin_memory=pin_mem,
+                          num_workers=workers, pin_memory=pin_mem,
                           persistent_workers=(workers > 0),
-                          drop_last=True,
-                          collate_fn=collate_no_meta)
+                          drop_last=True, collate_fn=collate_no_meta)
     val_dl   = DataLoader(val_ds, batch_size=batch_size,
-                          shuffle=False,
-                          sampler=val_sampler,
-                          num_workers=workers,
-                          pin_memory=pin_mem,
+                          shuffle=False, sampler=val_sampler,
+                          num_workers=workers, pin_memory=pin_mem,
                           persistent_workers=(workers > 0),
-                          drop_last=False,
-                          collate_fn=collate_no_meta)
+                          drop_last=False, collate_fn=collate_no_meta)
 
+    # Model: out_channels matches dataset targets
+    n_out = 4
     if unet_mode == "small":
-        model = build_unet_cpu_small(in_channels=3, out_channels=2).to(device)
+        model = build_unet_cpu_small(in_channels=3, out_channels=n_out).to(device)
     elif unet_mode == "medium":
-        model = build_unet_cpu_medium(in_channels=3, out_channels=2).to(device)
+        model = build_unet_cpu_medium(in_channels=3, out_channels=n_out).to(device)
     elif unet_mode == "large":
-        model = build_unet_cpu_large(in_channels=3, out_channels=2).to(device)
+        model = build_unet_cpu_large(in_channels=3, out_channels=n_out).to(device)
     else:
         raise ValueError(f"Unknown unet mode '{unet_mode}'")
 
@@ -312,21 +353,25 @@ def train(
     best_path = os.path.join(out_dir, f"best_{unet_mode}.pth")
 
     for ep in epoch_bar:
-        # safer sampler epoch set
+        # set epoch on sampler
         sampler = getattr(train_dl, "sampler", None)
         if isinstance(sampler, torch.utils.data.distributed.DistributedSampler):
             sampler.set_epoch(ep)
 
         t0 = time.time()
 
+        # weight schedule for this epoch
+        weights = make_weight_schedule(C=n_out, epoch=ep, warmup_epochs=warmup_epochs)
+
         tr_local = train_epoch(
-            model, train_dl, opt, scaler, device, use_amp, loss_mode,
-            w_cell, w_bound, w_bce, w_dice, show_bar=is_rank0,
-            max_steps=max_steps_per_epoch
+            model, train_dl, opt, scaler, device, use_amp,
+            weights=weights, w_bce=w_bce, w_dice=w_dice,
+            show_bar=is_rank0, max_steps=max_steps_per_epoch
         )
         va_local = eval_epoch(
-            model, val_dl, device, use_amp, loss_mode,
-            w_cell, w_bound, w_bce, w_dice, show_bar=is_rank0
+            model, val_dl, device, use_amp,
+            weights=weights, w_bce=w_bce, w_dice=w_dice,
+            show_bar=is_rank0
         )
 
         # reduce metrics
@@ -342,28 +387,37 @@ def train(
                 best_val = va["loss"]
                 torch.save(state, best_path)
 
-            epoch_bar.set_postfix({
+            post = {
                 "tr_loss": f"{tr['loss']:.4f}",
-                "tr_d_cell": f"{tr['dice_cell']:.3f}",
-                "tr_d_bound": f"{tr['dice_bound']:.3f}",
                 "va_loss": f"{va['loss']:.4f}",
-                "va_d_cell": f"{va['dice_cell']:.3f}",
-                "va_d_bound": f"{va['dice_bound']:.3f}",
                 "best": f"{best_val:.4f}",
                 "sec": f"{time.time()-t0:.1f}",
                 "bs/gpu": batch_size,
-                "gpus": world_size
-            })
+                "gpus": ddp_world_size(),
+                "w": str([round(w,3) for w in weights]),
+            }
+            if "dice_cell" in tr:
+                post["tr_d_cell"] = f"{tr['dice_cell']:.3f}"
+            if "dice_bound" in tr:
+                post["tr_d_bound"] = f"{tr['dice_bound']:.3f}"
+            if "dice_cell" in va:
+                post["va_d_cell"] = f"{va['dice_cell']:.3f}"
+            if "dice_bound" in va:
+                post["va_d_bound"] = f"{va['dice_bound']:.3f}"
+
+            epoch_bar.set_postfix(post)
+
             with open(os.path.join(out_dir, f"log_{unet_mode}.jsonl"), "a", encoding="utf-8") as f:
-                f.write(json.dumps({
+                rec = {
                     "epoch": ep, "train": tr, "val": va,
                     "lr": float(opt.param_groups[0]["lr"]),
                     "time_sec": round(time.time()-t0, 2),
                     "best_val": float(best_val),
-                    "world_size": world_size,
-                    "batch_size_per_gpu": batch_size
-                }) + "\n")
-
+                    "world_size": ddp_world_size(),
+                    "batch_size_per_gpu": batch_size,
+                    "weights": weights,
+                }
+                f.write(json.dumps(rec) + "\n")
 
         stop_local = stopper.step(va["loss"])
         stop_all = _ddp_broadcast_bool(stop_local if is_rank0 else False, device)
@@ -385,3 +439,4 @@ def train(
         dist.destroy_process_group()
 
     return best_path if is_rank0 else None
+
