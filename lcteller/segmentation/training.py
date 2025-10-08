@@ -98,7 +98,8 @@ def make_weight_schedule(C: int, epoch: int, warmup_epochs: int = 5) -> List[flo
       0: cell, 1: boundary, 2: center (optional), 3: energy (optional)
     """
     if epoch <= warmup_epochs:
-        return [1.0] * C
+        post = [1.0, 1.5, 1.5, 1.5]
+        return  post[:C]
 
     # base after warmup for up to 4 channels
     post = [1.0, 1.3, 0.5, 0.5]
