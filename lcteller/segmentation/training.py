@@ -137,7 +137,12 @@ def train_epoch(model,
     steps = 0
 
     use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-    pbar = _tqdm(loader, desc="train", position=1, disable=not show_bar)
+    total = (min(max_steps, len(loader)) if (max_steps is not None) else len(loader))
+    pbar = _tqdm(loader,
+                 desc="train",
+                 position=1,
+                 disable=not show_bar,
+                 total = total)
 
     for step_idx, (img, tgt, _) in enumerate(pbar, start=1):
         img = img.to(device, non_blocking=True)
