@@ -277,7 +277,7 @@ def collate_no_meta(batch):
 def train(
     out_dir="./models/",
     epochs=100,
-    batch_size=16,                 # per-GPU batch
+    batch_size=64,                 # per-GPU batch
     lr=1e-3,
     weight_decay=1e-4,
     workers=8,
@@ -290,12 +290,12 @@ def train(
     w_bce=0.3,
     w_dice=0.7,
     max_steps_per_epoch: int | None = 250,
-    early_stop_patience: int = 5,
+    early_stop_patience: int = 10,
     early_stop_min_delta: float = 1e-5,
     warmup_epochs: int = 10,
     lr_warmup_epochs: int = 3,
-    lr_warmup_start_factor: float = 1e-2,  # NEW: LR starts at (start_factor * base_lr) and ramps to base_lr
-    grad_clip_norm: float | None = 1.0, # NEW: None to disable, or e.g. 1.0
+    lr_warmup_start_factor: float = 1e-2,
+    grad_clip_norm: float | None = 1.0,
 ):
     os.makedirs(out_dir, exist_ok=True)
 
