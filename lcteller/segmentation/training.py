@@ -287,7 +287,7 @@ def train(
     max_steps_per_epoch: int | None = 250,
     early_stop_patience: int = 5,
     early_stop_min_delta: float = 1e-5,
-    warmup_epochs: int = 5,
+    warmup_epochs: int = 10,
     lr_warmup_epochs: int = 3,
     lr_warmup_start_factor: float = 1e-2,  # NEW: LR starts at (start_factor * base_lr) and ramps to base_lr
     grad_clip_norm: float | None = 1.0, # NEW: None to disable, or e.g. 1.0
