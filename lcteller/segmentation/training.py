@@ -368,6 +368,10 @@ def train(
     best_path = os.path.join(out_dir, f"best_{unet_mode}.pth")
 
     for ep in epoch_bar:
+
+        cur_lr = opt.param_groups[0]["lr"]
+        print(f"epoch {ep} | lr={cur_lr:.6g}")
+
         # set epoch on sampler
         sampler = getattr(train_dl, "sampler", None)
         if isinstance(sampler, torch.utils.data.distributed.DistributedSampler):
