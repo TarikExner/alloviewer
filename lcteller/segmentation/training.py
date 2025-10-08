@@ -9,7 +9,8 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch.amp import autocast, GradScaler
 from tqdm.auto import tqdm
-from typing import Literal, List
+from typing import Literal, List, Optional
+from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 
 from . import (
     SimCellsDataset, simulate_image,
@@ -123,7 +124,10 @@ class EarlyStopper:
         self.bad += 1
         return self.bad >= self.patience
 
-def train_epoch(model, loader, opt, scaler, device, use_amp, weights, w_bce, w_dice, show_bar, max_steps=None):
+def train_epoch(model,
+                loader,
+                opt, scaler, device, use_amp, weights, w_bce, w_dice, show_bar, max_steps=None,
+                grad_clip_norm: Optional[float] = None):
     model.train()
     running_loss = 0.0
     running_dice_cell  = 0.0
@@ -145,6 +149,9 @@ def train_epoch(model, loader, opt, scaler, device, use_amp, weights, w_bce, w_d
             loss = bce_dice_multi(logits, tgt, weights, w_bce=w_bce, w_dice=w_dice)
 
         scaler.scale(loss).backward()
+        if grad_clip_norm is not None and grad_clip_norm > 0:
+            scaler.unscale_(opt)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float(grad_clip_norm))
         scaler.step(opt)
         scaler.update()
 
@@ -264,11 +271,11 @@ def collate_no_meta(batch):
 
 def train(
     out_dir="./models/",
-    epochs=50,
+    epochs=100,
     batch_size=16,                 # per-GPU batch
     lr=1e-3,
     weight_decay=1e-4,
-    workers=4,
+    workers=8,
     tile_size=512,
     train_len=100_000,
     val_len=2000,
@@ -280,7 +287,10 @@ def train(
     max_steps_per_epoch: int | None = 250,
     early_stop_patience: int = 5,
     early_stop_min_delta: float = 1e-5,
-    warmup_epochs: int = 2
+    warmup_epochs: int = 5,
+    lr_warmup_epochs: int = 3,
+    lr_warmup_start_factor: float = 1e-2,  # NEW: LR starts at (start_factor * base_lr) and ramps to base_lr
+    grad_clip_norm: float | None = 1.0, # NEW: None to disable, or e.g. 1.0
 ):
     os.makedirs(out_dir, exist_ok=True)
 
@@ -344,7 +354,11 @@ def train(
         )
 
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
+    warm = LinearLR(opt, start_factor=lr_warmup_start_factor, total_iters=max(1, warmup_epochs))
+
+    cos  = CosineAnnealingLR(opt, T_max=max(1, epochs - warmup_epochs))
+    sched = SequentialLR(opt, schedulers=[warm, cos], milestones=[warmup_epochs])
+
     stopper = EarlyStopper(patience=early_stop_patience, min_delta=early_stop_min_delta)
 
     # progress bar
@@ -367,7 +381,8 @@ def train(
         tr_local = train_epoch(
             model, train_dl, opt, scaler, device, use_amp,
             weights=weights, w_bce=w_bce, w_dice=w_dice,
-            show_bar=is_rank0, max_steps=max_steps_per_epoch
+            show_bar=is_rank0, max_steps=max_steps_per_epoch,
+            grad_clip_norm=grad_clip_norm
         )
         va_local = eval_epoch(
             model, val_dl, device, use_amp,
