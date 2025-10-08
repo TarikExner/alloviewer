@@ -354,10 +354,10 @@ def train(
         )
 
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-    warm = LinearLR(opt, start_factor=lr_warmup_start_factor, total_iters=max(1, warmup_epochs))
+    warm = LinearLR(opt, start_factor=lr_warmup_start_factor, total_iters=max(1, lr_warmup_epochs))
 
-    cos  = CosineAnnealingLR(opt, T_max=max(1, epochs - warmup_epochs))
-    sched = SequentialLR(opt, schedulers=[warm, cos], milestones=[warmup_epochs])
+    cos  = CosineAnnealingLR(opt, T_max=max(1, epochs - lr_warmup_epochs))
+    sched = SequentialLR(opt, schedulers=[warm, cos], milestones=[lr_warmup_epochs])
 
     stopper = EarlyStopper(patience=early_stop_patience, min_delta=early_stop_min_delta)
 
