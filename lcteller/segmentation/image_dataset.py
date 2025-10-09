@@ -45,11 +45,10 @@ def _pad_to_square(arr, target_side, pad_color=0.0):
     right = dx - left
 
     if arr.ndim == 3:
-        # Need a pair per axis for constant_values
         const = (
-            (float(pad_color), float(pad_color)),  # along H (top, bottom)
-            (float(pad_color), float(pad_color)),  # along W (left, right)
-            (0, 0),                                # channels: no pad
+            (float(pad_color), float(pad_color)),  # H: (top, bottom)
+            (float(pad_color), float(pad_color)),  # W: (left, right)
+            (0, 0),                                # C
         )
         out = np.pad(
             arr,
@@ -87,109 +86,46 @@ def _make_center_stem_from_centers(centers, shape):
             stem[y, x] = 1.0
     return stem
 
-def _camera_rect_transform(
-    rng,
-    img, cell, bound, inst, centers,
-    out_side=512,
-    src_side_range=(640, 1024),
-    aspect_ratio_range=(0.6, 1.6),
-    content_scale_range=(0.6, 0.95),
-    dark_margin_bias=0.0,
-    center_stem=None,   # NEW: carry center stem along the pipeline
-):
-    """
-    1) up/downscale square sim to S_src
-    2) crop random rectangle (H_rect x W_rect)
-    3) pad to square with black margin (+bias)
-    4) resize to out_side x out_side
-    """
-    # current sim is square N x N
-    N = img.shape[0]
-    S_src, ar, s = _sample_camera_params(rng, src_side_range, aspect_ratio_range, content_scale_range)
+def _compute_inner_boundary(inst_np: np.ndarray) -> np.ndarray:
+    """1-px inner boundary from integer labels (H,W)."""
+    a = inst_np
+    H, W = a.shape
+    up    = (a != np.roll(a, -1, axis=0))
+    down  = (a != np.roll(a,  1, axis=0))
+    left  = (a != np.roll(a, -1, axis=1))
+    right = (a != np.roll(a,  1, axis=1))
+    b = (up | down | left | right)
+    b &= (a > 0)
+    # clear wrap edges
+    b[H-1,:] &= (a[H-1,:] != 0)
+    b[0,:]   &= (a[0,:]   != 0)
+    b[:,W-1] &= (a[:,W-1] != 0)
+    b[:,0]   &= (a[:,0]   != 0)
+    return b.astype(np.uint8)
 
-    # 1) resize everything to S_src (square)
-    if S_src != N:
-        img  = _resize_map(img,  S_src, mode="image")
-        cell = _resize_map(cell, S_src, mode="binary")
-        bound= _resize_map(bound,S_src, mode="binary")
-        inst = _resize_map(inst, S_src, mode="label")
-        if center_stem is not None:
-            center_stem = _resize_map(center_stem, S_src, mode="binary")
-        scale0 = S_src / float(N)
-        centers = [(int(round(y*scale0)), int(round(x*scale0))) for (y, x) in centers]
+def _make_soft_boundary_from_instances(inst: np.ndarray,
+                                       ring_width: int = 1,
+                                       soft_band: int = 2,
+                                       sigma: float = 1.0) -> np.ndarray:
+    """Soft thin boundary target from instances. Returns float32 [H,W] in [0,1]."""
+    ring = _compute_inner_boundary(inst).astype(bool)
+    if ring_width > 1:
+        rad = max(1, int(ring_width // 2))
+        ring = ndi.binary_dilation(ring, structure=ndi.generate_binary_structure(2,1), iterations=rad)
+    cell = (inst > 0)
+    if soft_band > 0:
+        not_ring = ~ring
+        dist = ndi.distance_transform_edt(not_ring)
+        dist[~cell] = np.inf
+        soft = np.exp(-(dist**2) / (2.0 * (sigma**2)))
+        soft[dist > float(soft_band)] = 0.0
+        soft[~np.isfinite(soft)] = 0.0
+        m = soft.max()
+        if m > 0:
+            soft = soft / m
+        return soft.astype(np.float32)
     else:
-        scale0 = 1.0  # not used further; kept for completeness
-
-    # 2) pick rectangle
-    H_rect = max(8, int(round(S_src * s)))
-    W_rect = max(8, int(round(H_rect * ar)))
-    W_rect = min(W_rect, S_src)
-    H_rect = min(H_rect, S_src)
-    y0 = int(rng.integers(0, S_src - H_rect + 1))
-    x0 = int(rng.integers(0, S_src - W_rect + 1))
-
-    img_r   = _crop_rect(img,   y0, x0, H_rect, W_rect)
-    cell_r  = _crop_rect(cell,  y0, x0, H_rect, W_rect)
-    bound_r = _crop_rect(bound, y0, x0, H_rect, W_rect)
-    inst_r  = _crop_rect(inst,  y0, x0, H_rect, W_rect)
-    center_r = None if center_stem is None else _crop_rect(center_stem, y0, x0, H_rect, W_rect)
-
-    # 3) pad to square
-    S_pad = max(H_rect, W_rect)
-    img_sq, (pad_top, pad_left) = _pad_to_square(img_r,   S_pad, pad_color=float(dark_margin_bias))
-    cell_sq, _                  = _pad_to_square(cell_r,  S_pad, pad_color=0.0)
-    bound_sq, _                 = _pad_to_square(bound_r, S_pad, pad_color=0.0)
-    inst_sq, _                  = _pad_to_square(inst_r,  S_pad, pad_color=0)
-    center_sq = None if center_r is None else _pad_to_square(center_r, S_pad, pad_color=0.0)[0]
-
-    # 4) resize to out_side
-    img_out   = _resize_map(img_sq,   out_side, mode="image").astype(np.float32)
-    cell_out  = _resize_map(cell_sq,  out_side, mode="binary")
-    bound_out = _resize_map(bound_sq, out_side, mode="binary")
-    inst_out  = _resize_map(inst_sq,  out_side, mode="label")
-    center_out = None if center_sq is None else _resize_map(center_sq, out_side, mode="binary")
-
-    # centers transformed across crop->pad->resize (kept in meta; not used for heatmap now)
-    scale = out_side / float(S_pad)
-    centers_out = _transform_centers_for_crop_pad_scale(centers, y0, x0, pad_top, pad_left, scale, out_side)
-
-    return img_out, cell_out, bound_out, inst_out, centers_out, center_out  # NOTE extra return
-
-def rand_choice(rng, val_or_range):
-    if isinstance(val_or_range, (list, tuple)) and len(val_or_range) == 2:
-        lo, hi = val_or_range
-        if isinstance(lo, int) and isinstance(hi, int):
-            return int(rng.integers(lo, hi + 1))
-        return float(rng.uniform(float(lo), float(hi)))
-    return val_or_range
-
-def _warp_centers(centers, H, W, flip_x=False, flip_y=False, rot_k=0):
-    # kept for reference; no longer used for the heatmap path
-    if not centers:
-        return []
-    pts = np.asarray(centers, dtype=np.int32)
-    if flip_x:
-        pts[:, 1] = (W - 1) - pts[:, 1]
-    if flip_y:
-        pts[:, 0] = (H - 1) - pts[:, 0]
-    k = int(rot_k) % 4
-    if k == 1:
-        y_new = pts[:, 1]
-        x_new = (W - 1) - pts[:, 0]
-        H, W = W, H
-        pts = np.stack([y_new, x_new], axis=1)
-    elif k == 2:
-        y_new = (H - 1) - pts[:, 0]
-        x_new = (W - 1) - pts[:, 1]
-        pts = np.stack([y_new, x_new], axis=1)
-    elif k == 3:
-        y_new = (W - 1) - pts[:, 1]
-        x_new = pts[:, 0]
-        H, W = W, H
-        pts = np.stack([y_new, x_new], axis=1)
-    pts[:, 0] = np.clip(pts[:, 0], 0, H - 1)
-    pts[:, 1] = np.clip(pts[:, 1], 0, W - 1)
-    return [(int(y), int(x)) for y, x in pts]
+        return ring.astype(np.float32)
 
 def _make_center_heatmap_from_centers(centers, shape, sigma=2.0):
     """Set 1.0 at each center, then blur to get smooth peaks."""
@@ -216,14 +152,98 @@ def _make_energy_from_instances(instances):
     dist[~cell] = 0.0
     return dist.astype(np.float32)
 
+def _camera_rect_transform(
+    rng,
+    img, cell, bound, inst, centers,
+    out_side=512,
+    src_side_range=(640, 1024),
+    aspect_ratio_range=(0.6, 1.6),
+    content_scale_range=(0.6, 0.95),
+    dark_margin_bias=0.0,
+    center_stem=None,   # carry center stem along the pipeline
+):
+    """
+    1) up/downscale square sim to S_src
+    2) crop random rectangle (H_rect x W_rect)
+    3) pad to square with black margin (+bias)
+    4) resize to out_side x out_side
+    """
+    N = img.shape[0]
+    S_src, ar, s = _sample_camera_params(rng, src_side_range, aspect_ratio_range, content_scale_range)
+
+    # 1) resize everything to S_src (square)
+    if S_src != N:
+        img  = _resize_map(img,  S_src, mode="image")
+        cell = _resize_map(cell, S_src, mode="binary")
+        bound= _resize_map(bound,S_src, mode="binary")
+        inst = _resize_map(inst, S_src, mode="label")
+        if center_stem is not None:
+            center_stem = _resize_map(center_stem, S_src, mode="binary")
+        scale0 = S_src / float(N)
+        centers = [(int(round(y*scale0)), int(round(x*scale0))) for (y, x) in centers]
+    # else: scale0 not used
+
+    # 2) pick rectangle
+    H_rect = max(8, int(round(S_src * s)))
+    W_rect = max(8, int(round(H_rect * ar)))
+    W_rect = min(W_rect, S_src)
+    H_rect = min(H_rect, S_src)
+    y0 = int(rng.integers(0, S_src - H_rect + 1))
+    x0 = int(rng.integers(0, S_src - W_rect + 1))
+
+    img_r    = _crop_rect(img,   y0, x0, H_rect, W_rect)
+    cell_r   = _crop_rect(cell,  y0, x0, H_rect, W_rect)
+    bound_r  = _crop_rect(bound, y0, x0, H_rect, W_rect)
+    inst_r   = _crop_rect(inst,  y0, x0, H_rect, W_rect)
+    center_r = None if center_stem is None else _crop_rect(center_stem, y0, x0, H_rect, W_rect)
+
+    # 3) pad to square
+    S_pad = max(H_rect, W_rect)
+    img_sq, (pad_top, pad_left) = _pad_to_square(img_r,   S_pad, pad_color=float(dark_margin_bias))
+    cell_sq, _                  = _pad_to_square(cell_r,  S_pad, pad_color=0.0)
+    bound_sq, _                 = _pad_to_square(bound_r, S_pad, pad_color=0.0)
+    inst_sq, _                  = _pad_to_square(inst_r,  S_pad, pad_color=0)
+    center_sq = None if center_r is None else _pad_to_square(center_r, S_pad, pad_color=0.0)[0]
+
+    # 4) resize to out_side
+    img_out    = _resize_map(img_sq,    out_side, mode="image").astype(np.float32)
+    cell_out   = _resize_map(cell_sq,   out_side, mode="binary")
+    bound_out  = _resize_map(bound_sq,  out_side, mode="binary")
+    inst_out   = _resize_map(inst_sq,   out_side, mode="label")
+    center_out = None if center_sq is None else _resize_map(center_sq, out_side, mode="binary")
+
+    # centers transformed across crop->pad->resize (kept in meta)
+    scale = out_side / float(S_pad)
+    centers_out = _transform_centers_for_crop_pad_scale(centers, y0, x0, pad_top, pad_left, scale, out_side)
+
+    return img_out, cell_out, bound_out, inst_out, centers_out, center_out
+
+def rand_choice(rng, val_or_range):
+    if isinstance(val_or_range, (list, tuple)) and len(val_or_range) == 2:
+        lo, hi = val_or_range
+        if isinstance(lo, int) and isinstance(hi, int):
+            return int(rng.integers(lo, hi + 1))
+        return float(rng.uniform(float(lo), float(hi)))
+    return val_or_range
+
+def _make_center_heatmap_from_stem(center_stem: np.ndarray, sigma=2.0):
+    """Blur the binary stem and renormalize."""
+    heat = center_stem.astype(np.float32)
+    if sigma and sigma > 0:
+        heat = ndi.gaussian_filter(heat, float(sigma))
+        m = float(heat.max())
+        if m > 0:
+            heat /= m
+    return heat.astype(np.float32)
+
 class SimCellsDataset(Dataset):
     """
     Returns:
       img_t:  float32 [3,H,W] in [0,1]
-      tgt_t:  float32 [C,H,W]  (C=2..4: 0=cell, 1=boundary, 2=center?, 3=energy?)
+      tgt_t:  float32 [C,H,W]  (C=2..4: 0=cell, 1=boundary-soft, 2=center?, 3=energy?)
       extras: dict with:
               - "instance_labels": int32 [H,W]
-              - "meta": meta from sim
+              - "meta": meta from sim (centers are warped by camera rect)
     """
     def __init__(
         self,
@@ -231,12 +251,12 @@ class SimCellsDataset(Dataset):
         tile_size=512,
         n_cells=(10, 400),
         cell_diameter=(4, 28),
-        frac_positive=(0, 1),
+        frac_positive=(0.0, 1.0),
         blur_sigma=(0, 2.0),
         background_level=(0.0, 0.04),
         color_jitter=(0.0, 0.2),
         photon_level=(1500, 4000),
-        boundary_width=2,
+        boundary_width=2,   # simulator’s boundary; we’ll rebuild a thin/soft one anyway
         aug_flip=True,
         aug_rot90=True,
         aug_gamma=(0.90, 1.12),
@@ -251,6 +271,10 @@ class SimCellsDataset(Dataset):
         cam_content_scale_range=(0.6, 0.95),
         cam_out_side=512,
         cam_dark_margin_bias=0.0,
+        # NEW: boundary target shape params
+        bound_ring_width=1,
+        bound_soft_band=2,
+        bound_sigma=1.0,
     ):
         if sim_fn is None:
             self.sim_fn = simulate_image
@@ -282,11 +306,14 @@ class SimCellsDataset(Dataset):
         self.cam_out_side = int(cam_out_side)
         self.cam_dark_margin_bias = float(cam_dark_margin_bias)
 
+        self.bound_ring_width = int(bound_ring_width)
+        self.bound_soft_band = int(bound_soft_band)
+        self.bound_sigma = float(bound_sigma)
+
     def __len__(self):
         return self.length
 
     def _apply_aug(self, img, cell, bound, inst):
-        H, W = img.shape[0], img.shape[1]
         flip_x = False
         flip_y = False
 
@@ -318,11 +345,10 @@ class SimCellsDataset(Dataset):
             img = np.clip(img, 1e-4, 1.0) ** g
             img = np.clip(img, 0.0, 1.0)
 
-        # return the ops taken so we can warp centers the same way (legacy path)
         return img, cell, bound, inst, (flip_x, flip_y, k)
 
     def _apply_aug_with_center(self, img, cell, bound, inst, center_stem):
-        """Same as _apply_aug but moves the center_stem along; gamma only on image."""
+        """Same as _apply_aug but moves center_stem too; gamma only on image."""
         flip_x = False
         flip_y = False
 
@@ -379,14 +405,14 @@ class SimCellsDataset(Dataset):
             boundary_width=self.boundary_width,
         )
         cell  = targets["cell_mask"].astype(np.float32)     # H,W
-        bound = targets["boundary"].astype(np.float32)      # H,W
+        bound = targets["boundary"].astype(np.float32)      # (ignored later; kept for completeness)
         inst  = targets["instance_labels"].astype(np.int32) # H,W
         centers = list(meta.get("centers", []))             # [(y,x), ...]
 
-        # --- paint a binary center stem BEFORE any warp ---
+        # paint a binary center stem BEFORE any warp
         center_stem = _make_center_stem_from_centers(centers, cell.shape)
 
-        # --- camera-rect step (crop -> pad -> resize), carry the stem too ---
+        # camera-rect step (crop -> pad -> resize), carry the stem too
         if self.random_camera_rect:
             img, cell, bound, inst, centers, center_stem = _camera_rect_transform(
                 self.rng, img, cell, bound, inst, centers,
@@ -397,26 +423,35 @@ class SimCellsDataset(Dataset):
                 dark_margin_bias=self.cam_dark_margin_bias,
                 center_stem=center_stem,
             )
+            # update meta centers to warped coords
+            meta["centers"] = centers
 
-        # --- flips/rot/gamma on ALL maps (center stem included) ---
+        # flips/rot/gamma on ALL maps (center stem included)
         img, cell, bound, inst, center_stem, aug_ops = self._apply_aug_with_center(
             img, cell, bound, inst, center_stem
         )
 
-        # --- build final targets ---
-        tgt_maps = [cell, bound]
+        # build final targets (on warped inst)
+        # 0) cell stays as-is
+        cell_t = cell.astype(np.float32)
+
+        # 1) soft thin boundary from instances (ignore simulator's 'bound')
+        bound_soft = _make_soft_boundary_from_instances(
+            inst, ring_width=self.bound_ring_width,
+            soft_band=self.bound_soft_band, sigma=self.bound_sigma
+        ).astype(np.float32)
+
+        tgt_maps = [cell_t, bound_soft]
+
+        # 2) center heatmap from blurred stem
         if self.add_center:
-            center_map = center_stem
-            if self.center_sigma and self.center_sigma > 0:
-                center_map = ndi.gaussian_filter(center_map.astype(np.float32), float(self.center_sigma))
-                m = float(center_map.max())
-                if m > 0:
-                    center_map = center_map / m
+            center_map = _make_center_heatmap_from_stem(center_stem, sigma=self.center_sigma)
             tgt_maps.append(center_map.astype(np.float32))
 
+        # 3) energy (EDT) from warped instances
         if self.add_energy:
-            energy_map = _make_energy_from_instances(inst)   # EDT after all warps -> aligned
-            tgt_maps.append(energy_map.astype(np.float32))
+            energy_map = _make_energy_from_instances(inst).astype(np.float32)
+            tgt_maps.append(energy_map)
 
         tgt = np.stack(tgt_maps, axis=0).astype(np.float32)  # [C,H,W]
 
