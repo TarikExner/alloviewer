@@ -453,8 +453,10 @@ def train_epoch(model,
             post = {"loss": f"{running_loss/steps:.4f}"}
             post["dice_cell"] = f"{running_dice_cell/steps:.3f}"
             post["dice_bound"] = f"{running_dice_bound/steps:.3f}"
-            if C >= 3: post["dice_center"] = f"{running_dice_center/steps:.3f}"
-            if C >= 4: post["dice_energy"] = f"{running_dice_energy/steps:.3f}"
+            if C >= 3:
+                post["dice_center"] = f"{running_dice_center/steps:.3f}"
+            if C >= 4:
+                post["dice_energy"] = f"{running_dice_energy/steps:.3f}"
             pbar.set_postfix(post)
 
         if (max_steps is not None) and (step_idx >= int(max_steps)):
@@ -464,8 +466,10 @@ def train_epoch(model,
     if steps:
         out["dice_cell"]   = running_dice_cell / steps
         out["dice_bound"]  = running_dice_bound / steps
-        if C >= 3: out["dice_center"] = running_dice_center / steps
-        if C >= 4: out["dice_energy"] = running_dice_energy / steps
+        if C >= 3:
+            out["dice_center"] = running_dice_center / steps
+        if C >= 4:
+            out["dice_energy"] = running_dice_energy / steps
     return out
 
 @torch.no_grad()
@@ -580,16 +584,20 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
                 "dice_cell": f"{dice_cell_sum/n:.3f}",
                 "dice_bound": f"{dice_bound_sum/n:.3f}",
             }
-            if C >= 3: post["dice_center"] = f"{dice_center_sum/n:.3f}"
-            if C >= 4: post["dice_energy"] = f"{dice_energy_sum/n:.3f}"
+            if C >= 3:
+                post["dice_center"] = f"{dice_center_sum/n:.3f}"
+            if C >= 4:
+                post["dice_energy"] = f"{dice_energy_sum/n:.3f}"
             pbar.set_postfix(post)
 
     out = {"loss": loss_sum / max(1, n)}
     if n:
         out["dice_cell"]   = dice_cell_sum / n
         out["dice_bound"]  = dice_bound_sum / n
-        if C >= 3: out["dice_center"] = dice_center_sum / n
-        if C >= 4: out["dice_energy"] = dice_energy_sum / n
+        if C >= 3:
+            out["dice_center"] = dice_center_sum / n
+        if C >= 4:
+            out["dice_energy"] = dice_energy_sum / n
         out["bound_f1_tol2"]  = boundF_sum / n if n else 0.0
         out["center_f1_r5"]   = centerF_sum / n if n else 0.0
         out["energy_rmse"]    = energy_rmse_sum / n if n else 0.0
