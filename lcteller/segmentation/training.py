@@ -161,6 +161,32 @@ def make_outside_mask_centers_batch(meta_list: List[dict],
 
 # --------------------- specialized losses ---------------------
 
+def make_ring_and_far_bg_masks(cell_mask: torch.Tensor,
+                               ring_px: int = 3,
+                               far_px: int = 12) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    cell_mask: [B,1,H,W] in {0,1} (or [0..1])
+    Returns:
+      ring_mask: [B,1,H,W] ~1 on a thin outer ring around cell borders
+      far_bg_mask: [B,1,H,W] ~1 on background pixels at least `far_px` away from cells
+    """
+    m = (cell_mask > 0.5).float()
+    # outer ring via dilation - mask
+    if ring_px > 0:
+        ring_dil = F.max_pool2d(m, kernel_size=2*ring_px+1, stride=1, padding=ring_px)
+        ring_mask = (ring_dil - m).clamp_(0, 1)
+    else:
+        ring_mask = torch.zeros_like(m)
+
+    # far background: invert a *larger* dilation
+    if far_px > 0:
+        far_dil = F.max_pool2d(m, kernel_size=2*far_px+1, stride=1, padding=far_px)
+        far_bg_mask = (1.0 - far_dil).clamp_(0, 1)
+    else:
+        far_bg_mask = (1.0 - m).clamp_(0, 1)
+
+    return ring_mask, far_bg_mask
+
 def bce_dice_loss(logits, target, w_bce=0.3, w_dice=0.7):
     bce = F.binary_cross_entropy_with_logits(logits, target)
     probs = torch.sigmoid(logits)
@@ -433,7 +459,13 @@ def train_epoch(model,
                 center_sparsity_weight: float = 0.0,
                 energy_w_l1: float = 0.5,
                 energy_w_mse: float = 0.5,
-                excl_weight: float = 0.2):
+                excl_weight: float = 0.2,
+                halo_ring_px: int = 3,
+                halo_far_px: int = 12,
+                halo_w_cell: float = 0.05,
+                halo_w_energy_ring: float = 0.05,
+                halo_w_energy_far: float = 0.10,
+                ):
     model.train()
     running_loss = 0.0
     running_dice_cell  = 0.0
@@ -462,8 +494,8 @@ def train_epoch(model,
             logits = model(img)  # [B,C,H,W]
             probs  = torch.sigmoid(logits)
 
+            # --- base losses ---
             loss_cell = bce_dice_loss(logits[:,0:1], tgt[:,0:1], w_bce=w_bce, w_dice=w_dice)
-
             loss_bound = bce_dice_loss(logits[:,1:2], bound_soft, w_bce=w_bce, w_dice=w_dice)
             loss_excl  = boundary_exclusion_loss(probs[:,0:1], bound_soft, weight=excl_weight)
 
@@ -485,12 +517,38 @@ def train_epoch(model,
             else:
                 loss_energy = torch.tensor(0.0, device=device)
 
+            # --- anti-halo penalties (NEW) ---
+            # thin ring just outside cells & far background mask (GPU-friendly via max_pool2d)
+            m = (cell_mask > 0.5).float()
+            if halo_ring_px > 0:
+                ring_dil = F.max_pool2d(m, kernel_size=2*halo_ring_px+1, stride=1, padding=halo_ring_px)
+                ring_mask = (ring_dil - m).clamp_(0, 1)
+            else:
+                ring_mask = torch.zeros_like(m)
+            if halo_far_px > 0:
+                far_dil = F.max_pool2d(m, kernel_size=2*halo_far_px+1, stride=1, padding=halo_far_px)
+                far_bg_mask = (1.0 - far_dil).clamp_(0, 1)
+            else:
+                far_bg_mask = (1.0 - m).clamp_(0, 1)
+
+            cell_prob = probs[:, 0:1]
+            loss_cell_halo = halo_w_cell * (ring_mask * cell_prob).mean()
+
+            loss_energy_halo = torch.tensor(0.0, device=device)
+            if C >= 4:
+                energy_prob = probs[:, 3:4]
+                ring_leak  = (ring_mask   * energy_prob).mean()
+                far_leak   = (far_bg_mask * energy_prob).mean()
+                loss_energy_halo = halo_w_energy_ring * ring_leak + halo_w_energy_far * far_leak
+
             total_loss = (
                 weights[0] * loss_cell +
                 (weights[1] if len(weights) > 1 else 0.0) * loss_bound +
                 (weights[2] if len(weights) > 2 else 0.0) * loss_center +
                 (weights[3] if len(weights) > 3 else 0.0) * loss_energy +
-                loss_excl
+                loss_excl +
+                loss_cell_halo +         # NEW
+                loss_energy_halo         # NEW
             )
 
         scaler.scale(total_loss).backward()
@@ -534,10 +592,12 @@ def train_epoch(model,
             out["dice_energy"] = running_dice_energy / steps
     return out
 
+
 @torch.no_grad()
 def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
                center_match_radius_px: int = 5, center_thr: float = 0.2, center_nms: int = 3,
-               bound_tol_px: int = 2, bound_thr: float = 0.2, bound_sweep: bool = False):
+               bound_tol_px: int = 2, bound_thr: float = 0.2, bound_sweep: bool = False,
+               halo_ring_px: int = 3, halo_far_px: int = 12):
     model.eval()
     loss_sum = 0.0
     dice_cell_sum   = 0.0
@@ -552,6 +612,11 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
     energy_rmse_n = 0
     energy_r_sum = 0.0
     energy_r_n = 0
+    # anti-halo diagnostics
+    ring_leak_cell_sum = 0.0
+    far_leak_cell_sum  = 0.0
+    ring_leak_energy_sum = 0.0
+    far_leak_energy_sum  = 0.0
     n = 0
 
     use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
@@ -608,31 +673,50 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
         if C >= 4:
             dice_energy_sum += dice_from_probs(probs[:,3:4], tgt[:,3:4])
 
+        # --- anti-halo diagnostics (do NOT affect eval loss) ---
+        m = (cell_mask > 0.5).float()
+        if halo_ring_px > 0:
+            ring_dil = F.max_pool2d(m, kernel_size=2*halo_ring_px+1, stride=1, padding=halo_ring_px)
+            ring_mask = (ring_dil - m).clamp_(0, 1)
+        else:
+            ring_mask = torch.zeros_like(m)
+        if halo_far_px > 0:
+            far_dil = F.max_pool2d(m, kernel_size=2*halo_far_px+1, stride=1, padding=halo_far_px)
+            far_bg_mask = (1.0 - far_dil).clamp_(0, 1)
+        else:
+            far_bg_mask = (1.0 - m).clamp_(0, 1)
+
+        cell_prob = probs[:, 0:1]
+        ring_leak_cell_sum += float((ring_mask * cell_prob).mean().item())
+        far_leak_cell_sum  += float((far_bg_mask * cell_prob).mean().item())
+
+        if C >= 4:
+            energy_prob = probs[:, 3:4]
+            ring_leak_energy_sum += float((ring_mask   * energy_prob).mean().item())
+            far_leak_energy_sum  += float((far_bg_mask * energy_prob).mean().item())
+
+        # --- classic + new metrics (per-sample numpy) ---
         probs_np = probs.detach().float().cpu().numpy()  # [B,C,H,W]
         tgt_np   = tgt.detach().float().cpu().numpy()
         metas = extras.get("meta", [])
         insts = extras["instance_labels"].detach().cpu().numpy()
 
-        # instance labels (GT) for boundary target used above
         for i in range(B):
             cell_gt   = tgt_np[i, 0]
-            bound_gt  = tgt_np[i, 1]  # whatever dataset provided; fine as reference
             center_pr = probs_np[i, 2] if C >= 3 else None
             energy_pr = probs_np[i, 3] if C >= 4 else None
 
-            # boundary F-score (tol px) against GT boundary map
             bf_f1 = boundary_f1_skeletonized(
                 pred_prob=probs_np[i, 1],
                 inst_gt=insts[i],
-                tol=bound_tol_px,     # e.g., 2–3 px
-                thr=bound_thr,              # or sweep=True to report best-F1
+                tol=bound_tol_px,
+                thr=bound_thr,
                 sweep=bound_sweep
             )
             if not np.isnan(bf_f1):
                 boundF_sum += bf_f1
                 n_bound_valid += 1
 
-            # center keypoint F1
             if center_pr is not None and i < len(metas):
                 gt_centers = metas[i].get("centers", []) or []
                 cm = center_metrics_np(center_pr, gt_centers,
@@ -642,19 +726,13 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
                     centerF_sum += cm["f1"]
                     n_center_valid += 1
 
-            # energy errors
             if energy_pr is not None:
-                # use the GT energy channel already in targets
                 energy_gt = tgt_np[i, 3] if C >= 4 else np.zeros_like(cell_gt)
                 ee = energy_errors_np(energy_pr, energy_gt, cell_gt)
-
                 if ee.get("valid_rmse", False) and np.isfinite(ee["rmse"]):
-                    energy_rmse_sum += ee["rmse"]
-                    energy_rmse_n += 1
-
+                    energy_rmse_sum += ee["rmse"]; energy_rmse_n += 1
                 if ee.get("valid_r", False) and np.isfinite(ee["pearson"]):
-                    energy_r_sum += ee["pearson"]
-                    energy_r_n += 1
+                    energy_r_sum += ee["pearson"]; energy_r_n += 1
 
         loss_sum += float(total_loss.item())
         n += 1
@@ -679,10 +757,15 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
             out["dice_center"] = dice_center_sum / n
         if C >= 4:
             out["dice_energy"] = dice_energy_sum / n
-        out["bound_f1_tol2"] = boundF_sum / n_bound_valid if n else 0.0
-        out["center_f1_r5"] = centerF_sum / n_center_valid if n else 0.0
-        out["energy_rmse"] = (energy_rmse_sum / energy_rmse_n) if energy_rmse_n > 0 else np.nan
-        out["energy_pearson"] = (energy_r_sum / energy_r_n) if energy_r_n > 0 else np.nan
+        out["bound_f1_tol2"]   = boundF_sum / n_bound_valid if n_bound_valid > 0 else np.nan
+        out["center_f1_r5"]    = centerF_sum / n_center_valid if n_center_valid > 0 else np.nan
+        out["energy_rmse"]     = (energy_rmse_sum / energy_rmse_n) if energy_rmse_n > 0 else np.nan
+        out["energy_pearson"]  = (energy_r_sum / energy_r_n) if energy_r_n > 0 else np.nan
+        # anti-halo diagnostics
+        out["ring_leak_cell"]   = ring_leak_cell_sum / n
+        out["far_leak_cell"]    = far_leak_cell_sum / n
+        out["ring_leak_energy"] = ring_leak_energy_sum / n if C >= 4 else np.nan
+        out["far_leak_energy"]  = far_leak_energy_sum  / n if C >= 4 else np.nan
 
     return out
 
@@ -706,7 +789,7 @@ def collate_no_meta(batch):
 
 def train(
     out_dir="./models/",
-    epochs=100,
+    epochs=500,
     batch_size=64,                 # per-GPU batch
     lr=1e-3,
     weight_decay=1e-4,
@@ -878,7 +961,7 @@ def train(
             with open(os.path.join(out_dir, f"log_{unet_mode}.jsonl"), "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec) + "\n")
 
-        stop_local = stopper.step(va["loss"])
+        stop_local = stopper.step(tr["loss"])
         stop_all = _ddp_broadcast_bool(stop_local if is_rank0 else False, device)
         if stop_all:
             if is_rank0:
