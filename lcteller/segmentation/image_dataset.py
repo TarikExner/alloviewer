@@ -431,6 +431,13 @@ class SimCellsDataset(Dataset):
             img, cell, bound, inst, center_stem
         )
 
+        # recover new centers
+        ys, xs = np.nonzero(center_stem > 0.5)   # stem is 1 at centers before the blur step
+        centers_after_aug = [(int(y), int(x)) for y, x in zip(ys, xs)]
+
+        meta = dict(meta)
+        meta["centers"] = centers_after_aug
+
         # build final targets (on warped inst)
         # 0) cell stays as-is
         cell_t = cell.astype(np.float32)

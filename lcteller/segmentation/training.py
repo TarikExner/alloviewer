@@ -12,7 +12,8 @@ from tqdm.auto import tqdm
 from typing import Literal, List, Optional, Tuple
 from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 
-import math
+from skimage.morphology import skeletonize
+
 from scipy import ndimage as ndi
 import cv2
 from scipy.optimize import linear_sum_assignment
@@ -244,6 +245,45 @@ def boundary_fscore_np(pred_bound: np.ndarray, gt_bound: np.ndarray, tol: int = 
     f1   = 2 * prec * rec / (prec + rec + 1e-8) if (prec + rec) > 0 else 0.0
     return {"precision": float(prec), "recall": float(rec), "f1": float(f1)}
 
+def compute_thin_gt_boundary_from_instances(inst_np: np.ndarray) -> np.ndarray:
+    # 1-px inner boundary from integer instances
+    a = inst_np
+    H, W = a.shape
+    up    = (a != np.roll(a, -1, axis=0))
+    down  = (a != np.roll(a,  1, axis=0))
+    left  = (a != np.roll(a, -1, axis=1))
+    right = (a != np.roll(a,  1, axis=1))
+    b = (up | down | left | right)
+    b &= (a > 0)
+    b[H-1,:] = b[H-1,:] & (a[H-1,:] != 0)
+    b[0,:]   = b[0,:]   & (a[0,:]   != 0)
+    b[:,W-1] = b[:,W-1] & (a[:,W-1] != 0)
+    b[:,0]   = b[:,0]   & (a[:,0]   != 0)
+    return b.astype(np.uint8)
+
+def boundary_f1_skeletonized(pred_prob: np.ndarray,
+                             inst_gt: np.ndarray,
+                             tol: int = 2,
+                             thr: float = 0.2,
+                             sweep: bool = False) -> float:
+    """
+    F1 between predicted boundary map and a thin GT boundary extracted from instances.
+    Optionally sweep thresholds and return best F1.
+    """
+    gt_thin = compute_thin_gt_boundary_from_instances(inst_gt)
+
+    def f1_at(t):
+        pred_bin = (pred_prob >= t).astype(np.uint8)
+        pred_skel = skeletonize(pred_bin > 0).astype(np.uint8)
+        stats = boundary_fscore_np(pred_skel, gt_thin, tol=tol)
+        return float(stats["f1"])
+
+    if sweep:
+        ts = np.linspace(0.05, 0.7, 14)  # coarse sweep; cheap
+        return max(f1_at(t) for t in ts)
+    else:
+        return f1_at(thr)
+
 def _nms_peaks_np(heat: np.ndarray, thr: float = 0.2, min_dist: int = 3) -> List[Tuple[int,int,float]]:
     h = (heat >= thr).astype(np.uint8)
     if min_dist > 1:
@@ -291,17 +331,39 @@ def center_metrics_np(center_pred: np.ndarray, gt_centers: List[Tuple[int,int]],
     return {"precision":float(prec), "recall":float(rec), "f1":float(f1), "median_err_px":med_err,
             "n_pred":len(pred_xy), "n_gt":len(gt_centers), "n_tp":TP}
 
-def energy_errors_np(energy_pred: np.ndarray, energy_gt: np.ndarray, cell_mask_gt: np.ndarray) -> dict:
+def energy_errors_np(energy_pred: np.ndarray,
+                     energy_gt: np.ndarray,
+                     cell_mask_gt: np.ndarray) -> dict:
+    """
+    Returns RMSE and Pearson r inside cells.
+    If variance is ~0, marks Pearson invalid and returns NaN.
+    """
     m = (cell_mask_gt > 0.5)
     if not np.any(m):
-        return {"rmse": np.nan, "pearson": np.nan}
+        return {"rmse": np.nan, "pearson": np.nan, "valid_rmse": False, "valid_r": False}
+
     p = energy_pred[m].astype(np.float32)
     g = energy_gt[m].astype(np.float32)
-    rmse = float(np.sqrt(np.mean((p - g) ** 2)))
-    p0 = (p - p.mean()); g0 = (g - g.mean())
-    den = np.sqrt((p0**2).sum() * (g0**2).sum()) + 1e-8
-    r = float((p0 * g0).sum() / den)
-    return {"rmse": rmse, "pearson": r}
+
+    # RMSE is always well-defined as long as we have pixels
+    rmse = float(np.sqrt(np.mean((p - g) ** 2))) if p.size else np.nan
+    valid_rmse = bool(np.isfinite(rmse))
+
+    # Pearson: guard zero-variance and clamp to [-1, 1]
+    p0 = p - p.mean()
+    g0 = g - g.mean()
+    denom = np.sqrt((p0**2).sum() * (g0**2).sum())
+    if denom <= 1e-8:
+        r = np.nan
+        valid_r = False
+    else:
+        r = float((p0 * g0).sum() / denom)
+        # numerical safety
+        r = float(np.clip(r, -1.0, 1.0))
+        valid_r = True
+
+    return {"rmse": rmse, "pearson": r, "valid_rmse": valid_rmse, "valid_r": valid_r}
+
 
 # --------------------- per-epoch weight schedule ---------------------
 
@@ -475,7 +537,7 @@ def train_epoch(model,
 @torch.no_grad()
 def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
                center_match_radius_px: int = 5, center_thr: float = 0.2, center_nms: int = 3,
-               bound_tol_px: int = 2):
+               bound_tol_px: int = 2, bound_thr: float = 0.2, bound_sweep: bool = False):
     model.eval()
     loss_sum = 0.0
     dice_cell_sum   = 0.0
@@ -483,9 +545,13 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
     dice_center_sum = 0.0
     dice_energy_sum = 0.0
     boundF_sum = 0.0
+    n_bound_valid = 0
     centerF_sum = 0.0
+    n_center_valid = 0
     energy_rmse_sum = 0.0
+    energy_rmse_n = 0
     energy_r_sum = 0.0
+    energy_r_n = 0
     n = 0
 
     use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
@@ -545,6 +611,8 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
         probs_np = probs.detach().float().cpu().numpy()  # [B,C,H,W]
         tgt_np   = tgt.detach().float().cpu().numpy()
         metas = extras.get("meta", [])
+        insts = extras["instance_labels"].detach().cpu().numpy()
+
         # instance labels (GT) for boundary target used above
         for i in range(B):
             cell_gt   = tgt_np[i, 0]
@@ -553,9 +621,16 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
             energy_pr = probs_np[i, 3] if C >= 4 else None
 
             # boundary F-score (tol px) against GT boundary map
-            bf = boundary_fscore_np(probs_np[i,1], bound_gt, tol=bound_tol_px)
-            if not np.isnan(bf["f1"]):
-                boundF_sum += bf["f1"]
+            bf_f1 = boundary_f1_skeletonized(
+                pred_prob=probs_np[i, 1],
+                inst_gt=insts[i],
+                tol=bound_tol_px,     # e.g., 2–3 px
+                thr=bound_thr,              # or sweep=True to report best-F1
+                sweep=bound_sweep
+            )
+            if not np.isnan(bf_f1):
+                boundF_sum += bf_f1
+                n_bound_valid += 1
 
             # center keypoint F1
             if center_pr is not None and i < len(metas):
@@ -565,15 +640,21 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
                                        match_radius=center_match_radius_px)
                 if not np.isnan(cm["f1"]):
                     centerF_sum += cm["f1"]
+                    n_center_valid += 1
 
             # energy errors
-            if energy_pr is not None and C >= 4:
-                energy_gt = tgt_np[i, 3]
+            if energy_pr is not None:
+                # use the GT energy channel already in targets
+                energy_gt = tgt_np[i, 3] if C >= 4 else np.zeros_like(cell_gt)
                 ee = energy_errors_np(energy_pr, energy_gt, cell_gt)
-                if not np.isnan(ee["rmse"]):
+
+                if ee.get("valid_rmse", False) and np.isfinite(ee["rmse"]):
                     energy_rmse_sum += ee["rmse"]
-                if not np.isnan(ee["pearson"]):
+                    energy_rmse_n += 1
+
+                if ee.get("valid_r", False) and np.isfinite(ee["pearson"]):
                     energy_r_sum += ee["pearson"]
+                    energy_r_n += 1
 
         loss_sum += float(total_loss.item())
         n += 1
@@ -598,10 +679,11 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
             out["dice_center"] = dice_center_sum / n
         if C >= 4:
             out["dice_energy"] = dice_energy_sum / n
-        out["bound_f1_tol2"]  = boundF_sum / n if n else 0.0
-        out["center_f1_r5"]   = centerF_sum / n if n else 0.0
-        out["energy_rmse"]    = energy_rmse_sum / n if n else 0.0
-        out["energy_pearson"] = energy_r_sum / n if n else 0.0
+        out["bound_f1_tol2"] = boundF_sum / n_bound_valid if n else 0.0
+        out["center_f1_r5"] = centerF_sum / n_center_valid if n else 0.0
+        out["energy_rmse"] = (energy_rmse_sum / energy_rmse_n) if energy_rmse_n > 0 else np.nan
+        out["energy_pearson"] = (energy_r_sum / energy_r_n) if energy_r_n > 0 else np.nan
+
     return out
 
 # --------------------- collate ---------------------
@@ -771,10 +853,12 @@ def train(
             # classic dice logs
             for k_alias, k in [("tr_d_cell","dice_cell"), ("tr_d_bound","dice_bound"),
                                ("tr_d_center","dice_center"), ("tr_d_energy","dice_energy")]:
-                if k in tr: post[k_alias] = f"{tr[k]:.3f}"
+                if k in tr:
+                    post[k_alias] = f"{tr[k]:.3f}"
             for k_alias, k in [("va_d_cell","dice_cell"), ("va_d_bound","dice_bound"),
                                ("va_d_center","dice_center"), ("va_d_energy","dice_energy")]:
-                if k in va: post[k_alias] = f"{va[k]:.3f}"
+                if k in va:
+                    post[k_alias] = f"{va[k]:.3f}"
             # new metrics (val)
             for k in ["bound_f1_tol2","center_f1_r5","energy_rmse","energy_pearson"]:
                 if k in va:
