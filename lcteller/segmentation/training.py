@@ -803,7 +803,7 @@ def train(
     w_bce=0.3,
     w_dice=0.7,
     max_steps_per_epoch: int | None = 250,
-    early_stop_patience: int = 10,
+    early_stop_patience: int = 20,
     early_stop_min_delta: float = 1e-5,
     warmup_epochs: int = 10,            # channel-weight warmup epochs
     lr_warmup_epochs: int = 3,          # LR warmup
@@ -961,7 +961,7 @@ def train(
             with open(os.path.join(out_dir, f"log_{unet_mode}.jsonl"), "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec) + "\n")
 
-        stop_local = stopper.step(tr["loss"])
+        stop_local = stopper.step(va["loss"])
         stop_all = _ddp_broadcast_bool(stop_local if is_rank0 else False, device)
         if stop_all:
             if is_rank0:
