@@ -460,11 +460,14 @@ def train_epoch(model,
                 energy_w_l1: float = 0.5,
                 energy_w_mse: float = 0.5,
                 excl_weight: float = 0.2,
+                # --- anti-halo knobs ---
                 halo_ring_px: int = 3,
                 halo_far_px: int = 12,
                 halo_w_cell: float = 0.05,
                 halo_w_energy_ring: float = 0.05,
                 halo_w_energy_far: float = 0.10,
+                halo_w_center_ring: float = 0.05,     # NEW: center halo weight (ring)
+                halo_w_center_far: float = 0.10,      # NEW: center halo weight (far background)
                 ):
     model.train()
     running_loss = 0.0
@@ -517,29 +520,40 @@ def train_epoch(model,
             else:
                 loss_energy = torch.tensor(0.0, device=device)
 
-            # --- anti-halo penalties (NEW) ---
-            # thin ring just outside cells & far background mask (GPU-friendly via max_pool2d)
+            # --- anti-halo penalties (GPU-friendly via max_pool2d) ---
+            # masks: ring (just outside cells) and far background
             m = (cell_mask > 0.5).float()
             if halo_ring_px > 0:
                 ring_dil = F.max_pool2d(m, kernel_size=2*halo_ring_px+1, stride=1, padding=halo_ring_px)
                 ring_mask = (ring_dil - m).clamp_(0, 1)
             else:
                 ring_mask = torch.zeros_like(m)
+
             if halo_far_px > 0:
                 far_dil = F.max_pool2d(m, kernel_size=2*halo_far_px+1, stride=1, padding=halo_far_px)
                 far_bg_mask = (1.0 - far_dil).clamp_(0, 1)
             else:
                 far_bg_mask = (1.0 - m).clamp_(0, 1)
 
+            # cell halo (discourage bleed just outside cells)
             cell_prob = probs[:, 0:1]
             loss_cell_halo = halo_w_cell * (ring_mask * cell_prob).mean()
 
+            # energy halo (discourage energy in ring & far background)
             loss_energy_halo = torch.tensor(0.0, device=device)
             if C >= 4:
                 energy_prob = probs[:, 3:4]
-                ring_leak  = (ring_mask   * energy_prob).mean()
-                far_leak   = (far_bg_mask * energy_prob).mean()
-                loss_energy_halo = halo_w_energy_ring * ring_leak + halo_w_energy_far * far_leak
+                ring_leak_e  = (ring_mask   * energy_prob).mean()
+                far_leak_e   = (far_bg_mask * energy_prob).mean()
+                loss_energy_halo = halo_w_energy_ring * ring_leak_e + halo_w_energy_far * far_leak_e
+
+            # --- NEW: center halo (discourage center activations outside cells)
+            loss_center_halo = torch.tensor(0.0, device=device)
+            if C >= 3:
+                center_prob = probs[:, 2:3]
+                ring_leak_c = (ring_mask   * center_prob).mean()
+                far_leak_c  = (far_bg_mask * center_prob).mean()
+                loss_center_halo = halo_w_center_ring * ring_leak_c + halo_w_center_far * far_leak_c
 
             total_loss = (
                 weights[0] * loss_cell +
@@ -547,8 +561,9 @@ def train_epoch(model,
                 (weights[2] if len(weights) > 2 else 0.0) * loss_center +
                 (weights[3] if len(weights) > 3 else 0.0) * loss_energy +
                 loss_excl +
-                loss_cell_halo +         # NEW
-                loss_energy_halo         # NEW
+                loss_cell_halo +
+                loss_energy_halo +
+                loss_center_halo
             )
 
         scaler.scale(total_loss).backward()
