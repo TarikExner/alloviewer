@@ -25,12 +25,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 import torch
+from torch.utils.data import DataLoader
 
 from tqdm import tqdm
 
 from ..segmenter import SegmenterUNet, InstanceSegmenter
 from ..config import UNET_CONFIG, INSTANCE_CONFIG
 from ..segmentation import SimCellsDataset
+
+# -------------------- defaults --------------------
 
 DEFAULT_DATASET_CFG = dict(
     length=100000,          # will be capped by unet_validation(num_images=...)
@@ -73,18 +76,6 @@ def _to_np_int32(x):
 def _append_run_index(base_dir: str, run_dir: str, meta: dict, df_head: pd.DataFrame) -> None:
     """
     Append a row per (unet_mode, random_camera_rect) to a global runs_index.csv.
-
-    Parameters
-    ----------
-    base_dir : str
-        Root folder that contains run_* subfolders (e.g., "./validation_runs").
-    run_dir : str
-        Full path to the current run folder (e.g., "./validation_runs/run_121025").
-    meta : dict
-        Parsed JSON from run_meta.json. Must include "run_id" and "created_at".
-    df_head : pd.DataFrame
-        A small slice of the run's results (we usually load selected columns only)
-        used to compute quick summaries, not the full dataset.
     """
     idx_path = os.path.join(base_dir, "runs_index.csv")
 
@@ -117,7 +108,6 @@ def _append_run_index(base_dir: str, run_dir: str, meta: dict, df_head: pd.DataF
                 rec[col] = bool(val) if col == "random_camera_rect" else val
             rows.append(rec)
     else:
-        # No grouping columns found; write a single summary row
         rows.append({
             "run_id": meta.get("run_id"),
             "created_at": meta.get("created_at"),
@@ -150,7 +140,7 @@ def _next_run_id(base_dir: str) -> str:
     base = _date_id_ddmmyy()
     run_id = base
     k = 1
-    while os.path.exists(os.path.join(base_dir, f"run_{run_id}")):
+    while os.path.exists(os.path.join(base_dir, f"unet_validation_{run_id}")):
         run_id = f"{base}-{k:03d}"
         k += 1
     return run_id
@@ -181,7 +171,6 @@ def _compact_labels(lab: np.ndarray) -> np.ndarray:
 
 def _regionprops_fast(lab: np.ndarray) -> Dict[str, np.ndarray]:
     if lab.max() == 0:
-        # Return empty arrays to avoid downstream errors
         return {
             "label": np.array([], dtype=int),
             "area": np.array([], dtype=float),
@@ -268,13 +257,11 @@ def _sanitize_for_json(o):
             return str(o)
     return o
 
-
 # -------------------- sim → "probabilities" (from tgt_t) --------------------
 def _probs_from_targets(tgt_t: torch.Tensor) -> Dict[str, np.ndarray]:
     """
     Map SimCellsDataset target tensor [C,H,W] → dict of per-map arrays in [0,1] (best-effort).
     Channel order per dataset: 0=cell(0/1), 1=bound_soft, 2=center?, 3=energy?
-    Energy is EDT-like; we normalize to [0,1] per image for compatibility.
     """
     t = tgt_t.detach().cpu().numpy().astype(np.float32)
     C, H, W = t.shape
@@ -320,8 +307,51 @@ def _run_instance_segmenter_from_probs(inst_seg: InstanceSegmenter, probs: Dict[
     seg_out = inst_seg(seg_out, update_cell_mask=True)
     return seg_out
 
+# -------------------- batched UNet forward --------------------
+
+def _batched_unet_forward(
+    unet: SegmenterUNet,
+    imgs_bchw: torch.Tensor,  # [B,3,H,W] float32 in [0,1]
+) -> Dict[str, np.ndarray]:
+    """
+    Run the wrapped UNet in a single forward pass for a batch.
+    Returns dict of numpy arrays (float32) with keys: cell, bound, center, energy; each [B,H,W].
+    """
+    device = unet.device if hasattr(unet, "device") else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    use_amp = bool(getattr(unet, "use_amp", False))
+    use_bf16 = bool(use_amp and torch.cuda.is_bf16_supported())
+
+    x = imgs_bchw.to(device, non_blocking=True)
+    # optional channels_last for speed
+    try:
+        x = x.to(memory_format=torch.channels_last)
+        unet.model = unet.model.to(memory_format=torch.channels_last)
+    except Exception:
+        pass
+
+    with torch.no_grad():
+        with torch.amp.autocast(
+            device_type=("cuda" if device.type == "cuda" else "cpu"),
+            dtype=(torch.bfloat16 if use_bf16 else torch.float16),
+            enabled=use_amp,
+        ):
+            logits = unet.model(x)          # [B,4,H,W]
+            probs  = torch.sigmoid(logits)  # [B,4,H,W]
+
+    probs = probs.detach().to(torch.float32).cpu().numpy()  # [B,4,H,W]
+    cell   = probs[:, 0, ...]
+    bound  = probs[:, 1, ...]
+    center = probs[:, 2, ...]
+    energy = probs[:, 3, ...]
+    return {
+        "cell": cell,
+        "bound": bound,
+        "center": center,
+        "energy": energy,
+    }
 
 # -------------------- per-image evaluation --------------------
+
 def _shape_distributions(lab_a: np.ndarray, lab_b: np.ndarray) -> Dict[str, float]:
     """KS and Wasserstein between instance shape summaries."""
     props_a = _regionprops_fast(lab_a)
@@ -335,7 +365,6 @@ def _shape_distributions(lab_a: np.ndarray, lab_b: np.ndarray) -> Dict[str, floa
             out[f"wd_{name}"] = 0.0
             return
         if x.size == 0 or y.size == 0:
-            # maximal difference if one side empty
             out[f"ks_{name}"] = 1.0
             out[f"ks_p_{name}"] = 0.0
             out[f"wd_{name}"] = float(np.inf)
@@ -353,12 +382,10 @@ def _shape_distributions(lab_a: np.ndarray, lab_b: np.ndarray) -> Dict[str, floa
 
     return out
 
-def evaluate_one_image(
-    img_rgb: np.ndarray,
-    tgt_t: torch.Tensor,
+def evaluate_one_image_from_probs(
+    probs: Dict[str, np.ndarray],
     meta: Dict[str, Any],
-    instances: torch.Tensor,
-    unet: SegmenterUNet,
+    instances: np.ndarray,
     shared_inst_seg: InstanceSegmenter,
     *,
     iou_thresholds: Tuple[float, ...] = (0.3, 0.5, 0.7),
@@ -368,22 +395,14 @@ def evaluate_one_image(
     derived_params: Optional[Dict[str, Any]] = None,
     mode_name: str = "",
 ) -> Dict[str, Any]:
-    # --- 0) build SIM "probs" and instances (GT via same InstanceSegmenter) ---
-
-    inst_sim = _to_np_int32(instances)
-
-    # --- 1) UNET forward ---
+    # --- 1) SAME instance segmenter on UNET probs ---
     t0 = time.time()
-    seg_out = unet(img_rgb)
-    t1 = time.time()
-
-    # --- 2) SAME instance segmenter on UNET probs ---
-    unet_probs = seg_out["probs"]
-    pr_inst_out = _run_instance_segmenter_from_probs(shared_inst_seg, unet_probs)
+    pr_inst_out = _run_instance_segmenter_from_probs(shared_inst_seg, probs)
     t2 = time.time()
     inst_pred = pr_inst_out["instance_labels"].astype(np.int32)
 
-    # --- 3) base metrics ---
+    # --- 2) base metrics ---
+    inst_sim = instances
     N_gt = _count_instances(inst_sim)
     N_pr = _count_instances(inst_pred)
     res: Dict[str, Any] = {
@@ -392,9 +411,9 @@ def evaluate_one_image(
         "N_gt": N_gt,
         "N_pred": N_pr,
         "count_error_frac": (abs(N_pr - N_gt) / max(1, N_gt)),
-        "unet_ms": (t1 - t0) * 1000.0,
-        "instance_ms": (t2 - t1) * 1000.0,
-        "total_ms": (t2 - t0) * 1000.0,
+        "unet_ms": 0.0,  # reserved; batch inference has separate timing
+        "instance_ms": (t2 - t0) * 1000.0,
+        "total_ms": (t2 - t0) * 1000.0,  # here this is post-proc time only
     }
 
     # area coverage
@@ -404,7 +423,7 @@ def evaluate_one_image(
     res["pr_area_frac"] = pr_bin_frac
     res["coverage_error_frac"] = abs(pr_bin_frac - gt_bin_frac) / max(gt_bin_frac, 1e-8)
 
-    # --- 4) IoU/matching across thresholds ---
+    # --- 3) IoU/matching across thresholds ---
     gt_c = _compact_labels(inst_sim)
     pr_c = _compact_labels(inst_pred)
     IoU, gt_ids, pr_ids, _, _ = _contingency_iou(gt_c, pr_c)
@@ -428,11 +447,10 @@ def evaluate_one_image(
         res[f"f1_{tag}"] = f1
         res[f"mean_iou_{tag}"] = (float(np.mean(ious)) if ious else 0.0)
 
-    # --- 5) center vs instance sanity checks (camera-rect loss / collisions) ---
+    # --- 4) center vs instance sanity checks (camera-rect loss / collisions) ---
     centers = list((meta or {}).get("centers", [])) or []
     res["meta_centers_count"] = int(len(centers))
 
-    # unique centers (guard collisions after resize/round)
     uniq = sorted(set((int(y), int(x)) for (y, x) in centers))
     res["centers_unique"] = int(len(uniq))
     res["centers_dupe"] = int(max(0, len(centers) - len(uniq)))
@@ -440,7 +458,6 @@ def evaluate_one_image(
     H, W = inst_sim.shape
     on_cell = 0
     on_bg = 0
-    # map instance id at each center
     inst_ids_at_centers = []
     for (y, x) in uniq:
         if 0 <= y < H and 0 <= x < W:
@@ -451,13 +468,12 @@ def evaluate_one_image(
             else:
                 on_bg += 1
         else:
-            on_bg += 1  # center out of bounds counts as miss
+            on_bg += 1
 
     res["centers_on_cell"] = int(on_cell)
     res["centers_on_bg"] = int(on_bg)
     res["camera_rect_center_miss_flag"] = int(on_bg > 0)
 
-    # fraction of GT instances that have at least one center inside
     if N_gt > 0:
         has_center = 0
         seen = set()
@@ -469,24 +485,18 @@ def evaluate_one_image(
     else:
         res["inst_with_center_frac"] = np.nan
 
-    # simple deltas for quick filtering
     res["center_vs_inst_diff"] = float(len(uniq) - N_gt)
     res["center_vs_inst_absdiff"] = float(abs(len(uniq) - N_gt))
 
-    # --- 6) shape distribution checks (same as before)
+    # --- 5) shape distribution checks
     res.update(_shape_distributions(inst_sim, inst_pred))
 
-    # --- 7) artifacts
+    # --- 6) artifacts
     if save_artifacts and artifacts_dir:
-        # save GT/Pred labels
         np.savez_compressed(os.path.join(artifacts_dir, f"{image_id}.gt.npz"), lab=inst_sim)
         np.savez_compressed(os.path.join(artifacts_dir, f"{image_id}.pred.npz"), lab=inst_pred)
 
-        # save raw RGB image as float32 in [0,1]
-        img_npz_path = os.path.join(artifacts_dir, f"{image_id}.img.npz")
-        np.savez_compressed(img_npz_path, img=img_rgb.astype(np.float32))
-        res["image_npz_path"] = img_npz_path
-
+    # --- 7) meta passthroughs (unchanged keys)
     meta = dict(meta or {})
     params = dict(meta.get("params", {}))
     res["meta_radius"] = int(meta.get("radius", -1))
@@ -500,6 +510,20 @@ def evaluate_one_image(
 
     return res
 
+# -------------------- collate --------------------
+
+def _collate_simcells(batch):
+    """
+    batch: list of (img_t [C,H,W], tgt_t [C,H,W], extras dict)
+    returns:
+      imgs [B,3,H,W] float32 in [0,1],
+      tgts [B,C,H,W],
+      extras list of dicts
+    """
+    imgs = torch.stack([b[0] for b in batch], dim=0).contiguous()
+    tgts = torch.stack([b[1] for b in batch], dim=0).contiguous()
+    extras = [b[2] for b in batch]
+    return imgs, tgts, extras
 
 # -------------------- main runner --------------------
 
@@ -521,7 +545,7 @@ def unet_validation(
     Evaluate UNet modes against GT built by running the SAME InstanceSegmenter on simulated targets.
     Runs each experiment twice: random_camera_rect=False and True.
     """
-    # Prepare run folder
+    # Prepare run folder (same naming semantics, but ensure clash-free)
     run_id = _next_run_id(output_dir)   # e.g. "121025" or "121025-001"
     run_dir = os.path.join(output_dir, f"unet_validation_{run_id}")
     art_dir = os.path.join(run_dir, "artifacts")
@@ -545,7 +569,7 @@ def unet_validation(
         "tags": list(tags or []),
         "unet_base_config": unet_base_cfg,
         "instance_config": inst_cfg,
-        "dataset_config": dict(base_ds_cfg),   # what we started from
+        "dataset_config": dict(base_ds_cfg),
         "device": device,
         "iou_thresholds": list(iou_thresholds),
         "modes": list(modes),
@@ -557,7 +581,7 @@ def unet_validation(
     with open(os.path.join(run_dir, "run_meta.json"), "w", encoding="utf-8") as f:
         json.dump(_sanitize_for_json(run_snap), f, indent=2)
 
-    # Write a human summary
+    # Human summary
     summary = []
     summary.append(f"Run ID: {run_id}")
     summary.append(f"Created: {run_snap['created_at']}")
@@ -567,16 +591,18 @@ def unet_validation(
     summary.append(f"Device: {device}")
     summary.append(f"Camera sweep: random_camera_rect in [False, True]")
     summary.append(f"Dataset cfg keys: {', '.join(sorted(base_ds_cfg.keys()))}")
-
     with open(os.path.join(run_dir, "summary.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(summary) + "\n")
 
     # Shared InstanceSegmenter (same for GT and prediction)
     shared_inst = InstanceSegmenter.from_config(inst_cfg)
 
-    # Parquet writer
+    # Parquet writer and buffering
     pq_path = os.path.join(run_dir, "results.parquet")
     pq_writer = None
+    results_buffer: List[Dict[str, Any]] = []
+    ROW_GROUP_SIZE = 16384
+    FLUSH_EVERY = 10_000  # rows
 
     # Derived scale-aware params
     def _derived_from_diameter(ds: SimCellsDataset, dia: float) -> Dict[str, Any]:
@@ -615,40 +641,74 @@ def unet_validation(
                 ds_cfg["random_camera_rect"] = bool(cam_flag)
                 ds = SimCellsDataset(**ds_cfg)
 
-                idx = 0
+                # DataLoader for batched inference
+                num_workers = max(4, os.cpu_count() // 2 if os.cpu_count() else 4)
+                pin_memory = ("cuda" in device)
+                dl = DataLoader(
+                    ds,
+                    batch_size=min(batch_size, 16),   # external cap still honored by caller
+                    shuffle=False,
+                    num_workers=num_workers,
+                    pin_memory=pin_memory,
+                    persistent_workers=(num_workers > 0),
+                    prefetch_factor=4 if num_workers > 0 else None,
+                    drop_last=False,
+                    collate_fn=_collate_simcells,
+                )
+
                 processed = 0
                 mode_bar = tqdm(total=per_cam_total, unit="img",
                                 desc=f"Mode={mode} Cam={'ON' if cam_flag else 'OFF'}", leave=False)
 
-                while idx < per_cam_total:
-                    current_bs = min(batch_size, per_cam_total - idx)
-                    batch_items: List[Tuple[str, np.ndarray, torch.Tensor, Dict[str, Any]]] = []
+                # Iterate until per_cam_total (respect num_images cap)
+                for b_idx, (imgs, tgts, extras_list) in enumerate(dl):
+                    if processed >= per_cam_total:
+                        break
+                    # trim last batch if it exceeds the cap
+                    B = imgs.shape[0]
+                    remaining = per_cam_total - processed
+                    if B > remaining:
+                        imgs = imgs[:remaining]
+                        tgts = tgts[:remaining]
+                        extras_list = extras_list[:remaining]
+                        B = remaining
 
-                    t_load0 = time.time()
-                    for _ in range(current_bs):
-                        img_t, tgt_t, extras = ds[idx]
-                        img = img_t.numpy().transpose(1, 2, 0).astype(np.float32)
-                        img = np.clip(img, 0.0, 1.0)
-                        instances = extras["instance_labels"]
+                    # --- GPU forward (batched) ---
+                    t_gpu0 = time.time()
+                    probs_batch = _batched_unet_forward(unet, imgs)  # dict of [B,H,W]
+                    t_gpu1 = time.time()
+
+                    # --- Pack jobs for threaded post-proc ---
+                    # Pre-extract per-item arrays to avoid indexing inside threads
+                    cellB   = probs_batch["cell"]
+                    boundB  = probs_batch["bound"]
+                    centerB = probs_batch["center"]
+                    energyB = probs_batch["energy"]
+
+                    # derive params once per item
+                    jobs = []
+                    for i in range(B):
+                        extras = extras_list[i] or {}
+                        inst_sim = _to_np_int32(extras.get("instance_labels"))
                         meta = dict(extras.get("meta", {}))
                         dia = float(meta.get("cell_diameter", ds.cell_diameter if isinstance(ds.cell_diameter, (int, float)) else -1))
                         derived = _derived_from_diameter(ds, dia)
-                        image_id = f"im_{idx:07d}"
-                        batch_items.append((image_id, img, tgt_t, meta | {"random_camera_rect": cam_flag}, derived))
-                        idx += 1
-                    t_load1 = time.time()
+                        image_id = f"im_{(processed + i):07d}"
 
-                    t_gpu0 = time.time()
-                    def _job(item):
-                        image_id, img, tgt_t, meta, derived = item
-                        # carry camera flag into results
-                        row = evaluate_one_image(
-                            img_rgb=img,
-                            tgt_t=tgt_t,
-                            meta=meta,
-                            instances=instances,
-                            unet=unet,
-                            shared_inst_seg=shared_inst,
+                        probs_i = {
+                            "cell":   cellB[i],
+                            "bound":  boundB[i],
+                            "center": centerB[i] if centerB is not None else None,
+                            "energy": energyB[i] if energyB is not None else None,
+                        }
+                        meta["random_camera_rect"] = cam_flag
+
+                        jobs.append((probs_i, meta, inst_sim, derived, image_id))
+
+                    # --- Threaded post-proc & metrics (no pickling) ---
+                    batch_results = Parallel(n_jobs=n_jobs, prefer="threads")(
+                        delayed(evaluate_one_image_from_probs)(
+                            probs_i, meta, inst_sim, shared_inst,
                             iou_thresholds=iou_thresholds,
                             save_artifacts=save_artifacts,
                             artifacts_dir=art_dir if save_artifacts else None,
@@ -656,43 +716,66 @@ def unet_validation(
                             derived_params=derived,
                             mode_name=mode,
                         )
-                        # add camera flag column
-                        row["random_camera_rect"] = bool(meta.get("random_camera_rect", False))
-                        return row
-
-                    results_list = Parallel(n_jobs=n_jobs, prefer="processes", verbose=0)(
-                        delayed(_job)(itm) for itm in batch_items
+                        for (probs_i, meta, inst_sim, derived, image_id) in jobs
                     )
-                    t_gpu1 = time.time()
 
-                    df = pd.DataFrame(results_list)
-                    table = pa.Table.from_pandas(df, preserve_index=False)
-                    if pq_writer is None:
-                        pq_writer = pq.ParquetWriter(pq_path, table.schema, compression="zstd")
-                    pq_writer.write_table(table)
+                    # Fill "unet_ms" and "total_ms" to keep readouts consistent
+                    # Share the per-batch time equally across items (keeps magnitude comparable)
+                    unet_ms_each = ((t_gpu1 - t_gpu0) * 1000.0) / max(1, B)
+                    for r in batch_results:
+                        r["random_camera_rect"] = bool(cam_flag)
+                        r["unet_ms"] = float(unet_ms_each)
+                        r["total_ms"] = float(r.get("instance_ms", 0.0) + unet_ms_each)
 
-                    processed += current_bs
-                    mode_bar.update(current_bs)
-                    cam_bar.update(current_bs)
-                    overall_bar.update(current_bs)
+                    results_buffer.extend(batch_results)
 
-                    batch_time = (t_gpu1 - t_gpu0)
-                    imgs_per_sec = current_bs / max(1e-6, (t_load1 - t_load0) + batch_time)
+                    processed += B
+                    mode_bar.update(B)
+                    cam_bar.update(B)
+                    overall_bar.update(B)
+
+                    imgs_per_sec = B / max(1e-6, (t_gpu1 - t_gpu0))
                     mode_bar.set_postfix({
-                        "batch_gpu_ms": f"{batch_time*1000.0:.0f}",
+                        "batch_gpu_ms": f"{(t_gpu1 - t_gpu0)*1000.0:.0f}",
                         "img/s": f"{imgs_per_sec:.1f}",
                         "done": processed
                     })
+
+                    # Flush in chunks
+                    if len(results_buffer) >= FLUSH_EVERY:
+                        df = pd.DataFrame(results_buffer)
+                        table = pa.Table.from_pandas(df, preserve_index=False)
+                        if pq_writer is None:
+                            pq_writer = pq.ParquetWriter(
+                                pq_path, table.schema, compression="zstd"
+                            )
+                        pq_writer.write_table(table, row_group_size=ROW_GROUP_SIZE)
+                        results_buffer.clear()
+
+                    if processed >= per_cam_total:
+                        break
 
                 mode_bar.close()
             cam_bar.close()
 
     finally:
         overall_bar.close()
+        if pq_writer is None and len(results_buffer) > 0:
+            # init writer on final flush if not created yet
+            df = pd.DataFrame(results_buffer)
+            table = pa.Table.from_pandas(df, preserve_index=False)
+            pq_writer = pq.ParquetWriter(pq_path, table.schema, compression="zstd")
+            pq_writer.write_table(table, row_group_size=ROW_GROUP_SIZE)
+            results_buffer.clear()
+        elif pq_writer is not None and len(results_buffer) > 0:
+            df = pd.DataFrame(results_buffer)
+            table = pa.Table.from_pandas(df, preserve_index=False)
+            pq_writer.write_table(table, row_group_size=ROW_GROUP_SIZE)
+            results_buffer.clear()
         if pq_writer is not None:
             pq_writer.close()
 
-    # Update global runs index with quick stats
+    # Update global runs index with quick stats (unchanged)
     with open(os.path.join(run_dir, "run_meta.json"), "r", encoding="utf-8") as f:
         meta_saved = json.load(f)
     head_cols = [c for c in ("unet_mode","random_camera_rect","f1_0_5","f1@0.5","count_error_frac","count_error_pct") if c]

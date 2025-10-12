@@ -32,17 +32,32 @@ def _sample_camera_params(rng, src_side_range=(640, 1024), aspect_ratio_range=(0
     return S_src, ar, s
 
 def _resize_map(x, size, mode="image"):
-    """Resize to (size,size). mode: image|binary|label"""
+    """Resize to (size, size). mode: image|binary|label
+
+    - image  : continuous maps (RGB, probs). AREA for downscale, CUBIC for upscale.
+    - binary : nearest (keeps 0/1).
+    - label  : nearest on float32 buffer, then back to int32 (keeps IDs).
+    """
+    H, W = x.shape[:2]
+    # decide if overall downscale (either dim shrinks) vs upscale
+    downscale = (size < H) or (size < W)
+
     if mode == "image":
-        return cv2.resize(np.ascontiguousarray(x), (size, size), interpolation=cv2.INTER_AREA)
+        interp = cv2.INTER_AREA if downscale else cv2.INTER_CUBIC
+        y = cv2.resize(np.ascontiguousarray(x.astype(np.float32, copy=False)),
+                       (size, size), interpolation=interp)
+        return y.astype(np.float32, copy=False)
+
     elif mode == "binary":
-        y = cv2.resize(np.ascontiguousarray(x.astype(np.uint8)), (size, size), interpolation=cv2.INTER_NEAREST)
-        return y.astype(np.float32)
+        y = cv2.resize(np.ascontiguousarray(x.astype(np.uint8, copy=False)),
+                       (size, size), interpolation=cv2.INTER_NEAREST)
+        return y.astype(np.float32, copy=False)
+
     elif mode == "label":
-        # Go through float32 with nearest to avoid OpenCV issues with int32
-        xin = np.ascontiguousarray(x.astype(np.float32))
+        xin = np.ascontiguousarray(x.astype(np.float32, copy=False))
         y = cv2.resize(xin, (size, size), interpolation=cv2.INTER_NEAREST)
-        return y.astype(np.int32)
+        return y.astype(np.int32, copy=False)
+
     else:
         raise ValueError(mode)
 
@@ -210,9 +225,9 @@ def _camera_rect_transform(
 
     # 1) resize everything to S_src (square)
     if S_src != N:
-        img  = _resize_map(img,  S_src, mode="image")
+        img  = _resize_map(img, S_src, mode="image")
         cell = _resize_map(cell, S_src, mode="binary")
-        bound= _resize_map(bound,S_src, mode="binary")
+        bound= _resize_map(bound, S_src, mode="binary")
         inst = _resize_map(inst, S_src, mode="label")
         if center_stem is not None:
             center_stem = _resize_map(center_stem, S_src, mode="binary")
@@ -227,18 +242,18 @@ def _camera_rect_transform(
     y0 = int(rng.integers(0, S_src - H_rect + 1))
     x0 = int(rng.integers(0, S_src - W_rect + 1))
 
-    img_r    = _crop_rect(img,   y0, x0, H_rect, W_rect)
-    cell_r   = _crop_rect(cell,  y0, x0, H_rect, W_rect)
+    img_r    = _crop_rect(img, y0, x0, H_rect, W_rect)
+    cell_r   = _crop_rect(cell, y0, x0, H_rect, W_rect)
     bound_r  = _crop_rect(bound, y0, x0, H_rect, W_rect)
-    inst_r   = _crop_rect(inst,  y0, x0, H_rect, W_rect)
+    inst_r   = _crop_rect(inst, y0, x0, H_rect, W_rect)
     center_r = None if center_stem is None else _crop_rect(center_stem, y0, x0, H_rect, W_rect)
 
     # 3) pad to square
     S_pad = max(H_rect, W_rect)
-    img_sq, (pad_top, pad_left) = _pad_to_square(img_r,   S_pad, pad_color=float(dark_margin_bias))
-    cell_sq, _                  = _pad_to_square(cell_r,  S_pad, pad_color=0.0)
-    bound_sq, _                 = _pad_to_square(bound_r, S_pad, pad_color=0.0)
-    inst_sq, _                  = _pad_to_square(inst_r,  S_pad, pad_color=0)
+    img_sq, (pad_top, pad_left) = _pad_to_square(img_r, S_pad, pad_color=float(dark_margin_bias))
+    cell_sq, _ = _pad_to_square(cell_r, S_pad, pad_color=0.0)
+    bound_sq, _ = _pad_to_square(bound_r, S_pad, pad_color=0.0)
+    inst_sq, _ = _pad_to_square(inst_r, S_pad, pad_color=0)
     center_sq = None if center_r is None else _pad_to_square(center_r, S_pad, pad_color=0.0)[0]
 
     # 4) resize to out_side

@@ -84,7 +84,7 @@ class InstanceSegmenterConfig:
     min_object_area: int = 0            # remove small objects (px^2)
 
     # -------- Distance transform --------
-    distance_smooth_sigma: float = 0.0  # smooth EDT (px)
+    distance_smooth_sigma: float = 1.0  # smooth EDT (px)
     distance_weight: float = 1.0        # how much -EDT contributes to lowering elevation
 
     # -------- Boundary term (adds to elevation) --------
@@ -113,7 +113,7 @@ class InstanceSegmenterConfig:
     watershed_line: bool = False        # draw seams as 0-valued pixels in labels
 
     # -------- Post-processing --------
-    min_instance_area: int = 0          # remove tiny instances (px^2)
+    min_instance_area: int = 3          # remove tiny instances (px^2)
 
     # -------- Helpers --------
     def to_dict(self):
