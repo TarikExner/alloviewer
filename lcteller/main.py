@@ -29,7 +29,9 @@ from .extractor import RGBExtractor
 from .calibrators import PCNCMedianCalibrator
 from .classifiers import ROIClassifier
 
-from .config import UNET_CONFIG, INSTANCE_CONFIG
+from .qc import QCMonitor
+
+from .config import UNET_CONFIG, INSTANCE_CONFIG, WELL_QC_CONFIG
 
 
 def load_images(filenames: List[str],
@@ -60,10 +62,11 @@ def run_job(layout: PlateLayout,
 
     plate = create_plate(layout, images)
     segmenter = SegmenterUNet.from_config(UNET_CONFIG)
-    instance_segmenter = InstanceSegmenter.from_config(INSTANCE_CONFIG)
+    instance_segmenter= InstanceSegmenter.from_config(INSTANCE_CONFIG)
     extractor = RGBExtractor()
     calibrator = PCNCMedianCalibrator()
     classifier_ctor = ROIClassifier
+    qc_monitor = QCMonitor()
 
     per_well: dict[str, WellResult] = {}
 
@@ -76,8 +79,22 @@ def run_job(layout: PlateLayout,
 
         segmentation_results = segmenter(image)
         segmentation_results = instance_segmenter(segmentation_results)
+        qc_out = qc_monitor(
+            instance_labels=segmentation_results["instance_labels"],
+            probs=segmentation_results.get("probs"),
+            image=image,
+            markers=segmentation_results.get("markers"),
+        )
 
-        rois_dict = extractor(image, segmentation_results["instance_labels"])
+        segmentation_results["qc"] = {
+            "well": qc_out["well"],
+            "roi_table": qc_out["roi_table"],
+        }
+        
+        segmentation_results["instance_labels_qc"] = qc_out["instances_filtered"]
+
+        rois_dict = extractor(image, segmentation_results["instance_labels_qc"])
+        # rois_dict = extractor(image, segmentation_results["instance_labels"])
         rois = [ROIResult(**d) for d in rois_dict]
 
         probs = segmentation_results.get("probs", None)

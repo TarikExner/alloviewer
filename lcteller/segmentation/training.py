@@ -25,6 +25,15 @@ from . import (
 
 # --------------------- utils ---------------------
 
+def worker_init_fn(worker_id):
+    base_seed = torch.initial_seed() % 2**32
+    np.random.seed(base_seed + worker_id)
+    random.seed(base_seed + worker_id)
+    # If your Dataset keeps an RNG, re-seed it:
+    worker_info = torch.utils.data.get_worker_info()
+    if worker_info is not None and hasattr(worker_info.dataset, "rng"):
+        worker_info.dataset.rng = np.random.default_rng(base_seed + worker_id)
+
 def _tqdm(iterable, desc, position, total=None, disable=None):
     return tqdm(
         iterable, desc=desc, total=total, leave=False,
@@ -322,7 +331,7 @@ def _nms_peaks_np(heat: np.ndarray, thr: float = 0.2, min_dist: int = 3) -> List
     return [(int(ys[i]), int(xs[i]), float(scores[i])) for i in idx]
 
 def center_metrics_np(center_pred: np.ndarray, gt_centers: List[Tuple[int,int]],
-                      peak_thr: float = 0.2, nms_dist: int = 3, match_radius: int = 5) -> dict:
+                      peak_thr: float = 0.2, nms_dist: int = 3, match_radius: int = 10) -> dict:
     preds = _nms_peaks_np(center_pred, thr=peak_thr, min_dist=nms_dist)
     pred_xy = [(y, x) for (y, x, _) in preds]
     if len(pred_xy) == 0 or len(gt_centers) == 0:
@@ -610,7 +619,7 @@ def train_epoch(model,
 
 @torch.no_grad()
 def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
-               center_match_radius_px: int = 5, center_thr: float = 0.2, center_nms: int = 3,
+               center_match_radius_px: int = 10, center_thr: float = 0.2, center_nms: int = 3,
                bound_tol_px: int = 2, bound_thr: float = 0.2, bound_sweep: bool = False,
                halo_ring_px: int = 3, halo_far_px: int = 12):
     model.eval()
@@ -773,7 +782,7 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
         if C >= 4:
             out["dice_energy"] = dice_energy_sum / n
         out["bound_f1_tol2"]   = boundF_sum / n_bound_valid if n_bound_valid > 0 else np.nan
-        out["center_f1_r5"]    = centerF_sum / n_center_valid if n_center_valid > 0 else np.nan
+        out["center_f1_r10"]    = centerF_sum / n_center_valid if n_center_valid > 0 else np.nan
         out["energy_rmse"]     = (energy_rmse_sum / energy_rmse_n) if energy_rmse_n > 0 else np.nan
         out["energy_pearson"]  = (energy_r_sum / energy_r_n) if energy_r_n > 0 else np.nan
         # anti-halo diagnostics
@@ -863,6 +872,7 @@ def train(
                           sampler=train_sampler,
                           num_workers=workers, pin_memory=pin_mem,
                           persistent_workers=(workers > 0),
+                          worker_init_fn=worker_init_fn,
                           drop_last=True, collate_fn=collate_no_meta)
     val_dl   = DataLoader(val_ds, batch_size=batch_size,
                           shuffle=False, sampler=val_sampler,

@@ -3,9 +3,14 @@ import torch
 from torch.utils.data import Dataset
 from scipy import ndimage as ndi
 import cv2
+from skimage.segmentation import relabel_sequential
 
 from . import simulate_image
 
+
+# -----------------------------
+# helpers
+# -----------------------------
 
 def _sample_camera_params(rng, src_side_range=(640, 1024), aspect_ratio_range=(0.6, 1.6), content_scale_range=(0.6, 0.95)):
     S_src = int(rng.integers(int(src_side_range[0]), int(src_side_range[1]) + 1))
@@ -16,12 +21,14 @@ def _sample_camera_params(rng, src_side_range=(640, 1024), aspect_ratio_range=(0
 def _resize_map(x, size, mode="image"):
     """Resize to (size,size). mode: image|binary|label"""
     if mode == "image":
-        return cv2.resize(x, (size, size), interpolation=cv2.INTER_AREA)
+        return cv2.resize(np.ascontiguousarray(x), (size, size), interpolation=cv2.INTER_AREA)
     elif mode == "binary":
-        y = cv2.resize(x.astype(np.uint8), (size, size), interpolation=cv2.INTER_NEAREST)
+        y = cv2.resize(np.ascontiguousarray(x.astype(np.uint8)), (size, size), interpolation=cv2.INTER_NEAREST)
         return y.astype(np.float32)
     elif mode == "label":
-        y = cv2.resize(x.astype(np.int32), (size, size), interpolation=cv2.INTER_NEAREST)
+        # Go through float32 with nearest to avoid OpenCV issues with int32
+        xin = np.ascontiguousarray(x.astype(np.float32))
+        y = cv2.resize(xin, (size, size), interpolation=cv2.INTER_NEAREST)
         return y.astype(np.int32)
     else:
         raise ValueError(mode)
@@ -45,16 +52,14 @@ def _pad_to_square(arr, target_side, pad_color=0.0):
     right = dx - left
 
     if arr.ndim == 3:
-        const = (
-            (float(pad_color), float(pad_color)),  # H: (top, bottom)
-            (float(pad_color), float(pad_color)),  # W: (left, right)
-            (0, 0),                                # C
-        )
+        # pad only H and W, not channels
         out = np.pad(
             arr,
             ((top, bottom), (left, right), (0, 0)),
             mode="constant",
-            constant_values=const,
+            constant_values=((float(pad_color), float(pad_color)),
+                             (float(pad_color), float(pad_color)),
+                             (0.0, 0.0)),
         )
     else:
         out = np.pad(
@@ -141,6 +146,16 @@ def _make_center_heatmap_from_centers(centers, shape, sigma=2.0):
             heat /= m
     return heat.astype(np.float32)
 
+def _make_center_heatmap_from_stem(center_stem: np.ndarray, sigma=2.0):
+    """Blur the binary stem and renormalize."""
+    heat = center_stem.astype(np.float32)
+    if sigma and sigma > 0:
+        heat = ndi.gaussian_filter(heat, float(sigma))
+        m = float(heat.max())
+        if m > 0:
+            heat /= m
+    return heat.astype(np.float32)
+
 def _make_energy_from_instances(instances):
     """Energy = normalized distance inside cells, 0 outside."""
     cell = (instances > 0)
@@ -151,6 +166,15 @@ def _make_energy_from_instances(instances):
             dist /= dmax
     dist[~cell] = 0.0
     return dist.astype(np.float32)
+
+def rand_choice(rng, val_or_range):
+    if isinstance(val_or_range, (list, tuple)) and len(val_or_range) == 2:
+        lo, hi = val_or_range
+        if isinstance(lo, int) and isinstance(hi, int):
+            return int(rng.integers(lo, hi + 1))
+        return float(rng.uniform(float(lo), float(hi)))
+    return val_or_range
+
 
 def _camera_rect_transform(
     rng,
@@ -181,7 +205,6 @@ def _camera_rect_transform(
             center_stem = _resize_map(center_stem, S_src, mode="binary")
         scale0 = S_src / float(N)
         centers = [(int(round(y*scale0)), int(round(x*scale0))) for (y, x) in centers]
-    # else: scale0 not used
 
     # 2) pick rectangle
     H_rect = max(8, int(round(S_src * s)))
@@ -218,23 +241,10 @@ def _camera_rect_transform(
 
     return img_out, cell_out, bound_out, inst_out, centers_out, center_out
 
-def rand_choice(rng, val_or_range):
-    if isinstance(val_or_range, (list, tuple)) and len(val_or_range) == 2:
-        lo, hi = val_or_range
-        if isinstance(lo, int) and isinstance(hi, int):
-            return int(rng.integers(lo, hi + 1))
-        return float(rng.uniform(float(lo), float(hi)))
-    return val_or_range
 
-def _make_center_heatmap_from_stem(center_stem: np.ndarray, sigma=2.0):
-    """Blur the binary stem and renormalize."""
-    heat = center_stem.astype(np.float32)
-    if sigma and sigma > 0:
-        heat = ndi.gaussian_filter(heat, float(sigma))
-        m = float(heat.max())
-        if m > 0:
-            heat /= m
-    return heat.astype(np.float32)
+# -----------------------------
+# dataset
+# -----------------------------
 
 class SimCellsDataset(Dataset):
     """
@@ -256,7 +266,7 @@ class SimCellsDataset(Dataset):
         background_level=(0.0, 0.04),
         color_jitter=(0.0, 0.2),
         photon_level=(1500, 4000),
-        boundary_width=2,   # simulator’s boundary; we’ll rebuild a thin/soft one anyway
+        boundary_width=2,   # simulator boundary; we rebuild a thin/soft one anyway
         aug_flip=True,
         aug_rot90=True,
         aug_gamma=(0.90, 1.12),
@@ -271,15 +281,31 @@ class SimCellsDataset(Dataset):
         cam_content_scale_range=(0.6, 0.95),
         cam_out_side=512,
         cam_dark_margin_bias=0.0,
-        # NEW: boundary target shape params
+        # boundary target shape params (global caps)
         bound_ring_width=1,
         bound_soft_band=2,
         bound_sigma=1.0,
+        # ---------- NEW knobs (defaults keep old behavior) ----------
+        # Mixture sampling to increase chance of tiny cells
+        small_diam_range=(3, 8),
+        small_diam_weight=0.35,      # prob to sample from small_diam_range
+        # Threshold for considering a cell "tiny"
+        small_diam_thresh=8,
+        # Camera scale range to use when tiny cells are present (less shrink)
+        cam_content_scale_range_small=(0.85, 0.98),
+        # Scale-aware targets
+        center_sigma_min=1.0,
+        bound_ring_width_min=1,
+        bound_soft_band_min=1,
+        bound_ring_width_max=4,
+        bound_soft_band_max=6,
+        # Optional: narrower gamma for tiny cells (set to None to disable)
+        tiny_gamma_range=(0.95, 1.05),       # e.g. (0.95, 1.05)
     ):
-        if sim_fn is None:
-            self.sim_fn = simulate_image
-        else:
-            self.sim_fn = sim_fn
+        # sim fn
+        self.sim_fn = simulate_image if sim_fn is None else sim_fn
+
+        # original args
         self.length = int(length)
         self.tile_size = int(tile_size)
         self.n_cells = n_cells
@@ -310,8 +336,58 @@ class SimCellsDataset(Dataset):
         self.bound_soft_band = int(bound_soft_band)
         self.bound_sigma = float(bound_sigma)
 
+        # new knobs
+        self.small_diam_range = small_diam_range
+        self.small_diam_weight = float(small_diam_weight)
+        self.small_diam_thresh = float(small_diam_thresh)
+        self.cam_content_scale_range_small = cam_content_scale_range_small
+
+        self.center_sigma_min = float(center_sigma_min)
+        self.bound_ring_width_min = int(bound_ring_width_min)
+        self.bound_soft_band_min = int(bound_soft_band_min)
+        self.bound_ring_width_max = int(bound_ring_width_max)
+        self.bound_soft_band_max = int(bound_soft_band_max)
+
+        self.tiny_gamma_range = tiny_gamma_range
+
     def __len__(self):
         return self.length
+
+    # ---------- tiny-cell aware sampling and scaling ----------
+
+    def _sample_diameter(self):
+        """Two-component mix: tiny range with prob small_diam_weight, else original range."""
+        if isinstance(self.cell_diameter, (list, tuple)) and len(self.cell_diameter) == 2:
+            if self.rng.random() < self.small_diam_weight:
+                return rand_choice(self.rng, self.small_diam_range)
+            else:
+                return rand_choice(self.rng, self.cell_diameter)
+        # if user passed a scalar
+        return float(self.cell_diameter)
+
+    def _pick_cam_content_scale_range(self, dia):
+        if float(dia) < self.small_diam_thresh:
+            return self.cam_content_scale_range_small
+        return self.cam_content_scale_range
+
+    def _scale_center_sigma(self, dia):
+        return float(max(self.center_sigma_min, 0.25 * float(dia)))
+
+    def _scale_boundary_params(self, dia):
+        d = float(dia)
+        ring = int(np.clip(round(0.15 * d), self.bound_ring_width_min, self.bound_ring_width_max))
+        band = int(np.clip(round(0.40 * d), self.bound_soft_band_min, self.bound_soft_band_max))
+        # cap by global user-provided maxima (keeps backward compat if desired)
+        ring = min(ring, max(1, self.bound_ring_width))
+        band = min(band, max(1, self.bound_soft_band))
+        return ring, band
+
+    def _gamma_range_for_diameter(self, dia):
+        if (self.tiny_gamma_range is not None) and (float(dia) < self.small_diam_thresh):
+            return self.tiny_gamma_range
+        return self.aug_gamma
+
+    # ---------- augs ----------
 
     def _apply_aug(self, img, cell, bound, inst):
         flip_x = False
@@ -335,11 +411,12 @@ class SimCellsDataset(Dataset):
         if self.aug_rot90:
             k = int(self.rng.integers(0, 4))
             if k:
-                img = np.rot90(img,   k, axes=(0, 1))
-                cell = np.rot90(cell,  k, axes=(0, 1))
+                img = np.rot90(img, k, axes=(0, 1))
+                cell = np.rot90(cell, k, axes=(0, 1))
                 bound = np.rot90(bound, k, axes=(0, 1))
-                inst = np.rot90(inst,  k, axes=(0, 1))
+                inst = np.rot90(inst, k, axes=(0, 1))
 
+        # gamma on image only
         if isinstance(self.aug_gamma, (list, tuple)) and len(self.aug_gamma) == 2:
             g = float(self.rng.uniform(self.aug_gamma[0], self.aug_gamma[1]))
             img = np.clip(img, 1e-4, 1.0) ** g
@@ -347,7 +424,7 @@ class SimCellsDataset(Dataset):
 
         return img, cell, bound, inst, (flip_x, flip_y, k)
 
-    def _apply_aug_with_center(self, img, cell, bound, inst, center_stem):
+    def _apply_aug_with_center(self, img, cell, bound, inst, center_stem, gamma_range=None):
         """Same as _apply_aug but moves center_stem too; gamma only on image."""
         flip_x = False
         flip_y = False
@@ -372,23 +449,27 @@ class SimCellsDataset(Dataset):
         if self.aug_rot90:
             k = int(self.rng.integers(0, 4))
             if k:
-                img = np.rot90(img,   k, axes=(0, 1))
-                cell = np.rot90(cell,  k, axes=(0, 1))
+                img = np.rot90(img, k, axes=(0, 1))
+                cell = np.rot90(cell, k, axes=(0, 1))
                 bound = np.rot90(bound, k, axes=(0, 1))
-                inst = np.rot90(inst,  k, axes=(0, 1))
+                inst = np.rot90(inst, k, axes=(0, 1))
                 center_stem = np.rot90(center_stem, k, axes=(0, 1))
 
-        if isinstance(self.aug_gamma, (list, tuple)) and len(self.aug_gamma) == 2:
-            g = float(self.rng.uniform(self.aug_gamma[0], self.aug_gamma[1]))
+        # gamma on image only (allow override range)
+        g_range = gamma_range if (isinstance(gamma_range, (list, tuple)) and len(gamma_range) == 2) else self.aug_gamma
+        if isinstance(g_range, (list, tuple)) and len(g_range) == 2:
+            g = float(self.rng.uniform(g_range[0], g_range[1]))
             img = np.clip(img, 1e-4, 1.0) ** g
             img = np.clip(img, 0.0, 1.0)
 
         return img, cell, bound, inst, center_stem, (flip_x, flip_y, k)
 
+    # ---------- main ----------
+
     def __getitem__(self, idx):
         N   = self.tile_size
         nC  = rand_choice(self.rng, self.n_cells)
-        dia = rand_choice(self.rng, self.cell_diameter)
+        dia = self._sample_diameter()
         fp  = rand_choice(self.rng, self.frac_positive)
         blr = rand_choice(self.rng, self.blur_sigma)
         bg  = rand_choice(self.rng, self.background_level)
@@ -405,57 +486,60 @@ class SimCellsDataset(Dataset):
             boundary_width=self.boundary_width,
         )
         cell  = targets["cell_mask"].astype(np.float32)     # H,W
-        bound = targets["boundary"].astype(np.float32)      # (ignored later; kept for completeness)
+        bound = targets["boundary"].astype(np.float32)      # kept for completeness
         inst  = targets["instance_labels"].astype(np.int32) # H,W
         centers = list(meta.get("centers", []))             # [(y,x), ...]
 
-        # paint a binary center stem BEFORE any warp
+        # binary center stem BEFORE any warp
         center_stem = _make_center_stem_from_centers(centers, cell.shape)
 
-        # camera-rect step (crop -> pad -> resize), carry the stem too
+        # camera-rect step (crop -> pad -> resize), use safer scale range for tiny cells
         if self.random_camera_rect:
+            local_content_scale_range = self._pick_cam_content_scale_range(dia)
             img, cell, bound, inst, centers, center_stem = _camera_rect_transform(
                 self.rng, img, cell, bound, inst, centers,
                 out_side=self.cam_out_side,
                 src_side_range=self.cam_src_side_range,
                 aspect_ratio_range=self.cam_aspect_ratio_range,
-                content_scale_range=self.cam_content_scale_range,
+                content_scale_range=local_content_scale_range,
                 dark_margin_bias=self.cam_dark_margin_bias,
                 center_stem=center_stem,
             )
-            # update meta centers to warped coords
             meta["centers"] = centers
 
         # flips/rot/gamma on ALL maps (center stem included)
+        gamma_range = self._gamma_range_for_diameter(dia)
         img, cell, bound, inst, center_stem, aug_ops = self._apply_aug_with_center(
-            img, cell, bound, inst, center_stem
+            img, cell, bound, inst, center_stem, gamma_range=gamma_range
         )
 
-        # recover new centers
+        # recover new centers from stem
         ys, xs = np.nonzero(center_stem > 0.5)   # stem is 1 at centers before the blur step
         centers_after_aug = [(int(y), int(x)) for y, x in zip(ys, xs)]
 
         meta = dict(meta)
         meta["centers"] = centers_after_aug
+        meta["is_tiny"] = bool(float(dia) < self.small_diam_thresh)
+        meta["cell_diameter"] = float(dia)
 
         # build final targets (on warped inst)
-        # 0) cell stays as-is
         cell_t = cell.astype(np.float32)
 
-        # 1) soft thin boundary from instances (ignore simulator's 'bound')
+        # scale-aware boundary
+        ring_w, soft_band = self._scale_boundary_params(dia)
         bound_soft = _make_soft_boundary_from_instances(
-            inst, ring_width=self.bound_ring_width,
-            soft_band=self.bound_soft_band, sigma=self.bound_sigma
+            inst, ring_width=ring_w, soft_band=soft_band, sigma=self.bound_sigma
         ).astype(np.float32)
 
         tgt_maps = [cell_t, bound_soft]
 
-        # 2) center heatmap from blurred stem
+        # center heatmap with diameter-aware sigma
         if self.add_center:
-            center_map = _make_center_heatmap_from_stem(center_stem, sigma=self.center_sigma)
+            c_sigma = self._scale_center_sigma(dia)
+            center_map = _make_center_heatmap_from_stem(center_stem, sigma=c_sigma)
             tgt_maps.append(center_map.astype(np.float32))
 
-        # 3) energy (EDT) from warped instances
+        # energy (EDT)
         if self.add_energy:
             energy_map = _make_energy_from_instances(inst).astype(np.float32)
             tgt_maps.append(energy_map)
@@ -465,6 +549,8 @@ class SimCellsDataset(Dataset):
         # pack tensors
         img_c = np.ascontiguousarray(np.transpose(img, (2, 0, 1)), dtype=np.float32)
         tgt_c = np.ascontiguousarray(tgt, dtype=np.float32)
+
+        inst, _, _ = relabel_sequential(inst.astype(np.int32))
         inst_c = np.ascontiguousarray(inst, dtype=np.int32)
 
         img_t = torch.from_numpy(img_c)

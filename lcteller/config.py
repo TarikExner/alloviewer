@@ -1,10 +1,13 @@
 import torch
 from pathlib import Path
 
+from .segmenter import SegmenterConfig, InstanceSegmenterConfig
+from .qc import QCMonitorConfig
+
 HERE = Path(__file__).resolve()
 PKG_DIR= HERE.parent
 MODELS_DIR = PKG_DIR / "models"
-DEVICE = "cpu"# "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 DEFAULT_CALIB_RG_GAUSS = {
     "method": "pc_nc_gaussian_rg_default",
@@ -14,37 +17,14 @@ DEFAULT_CALIB_RG_GAUSS = {
     "sd_nc": 0.02,   # small spread
 }
 
-INSTANCE_CONFIG = {
-    "min_object_area": 80,
-    "min_hole_area": 20,
-    "min_instance_area": 100,
+WELL_QC_CONFIG = QCMonitorConfig()
 
-    "distance_smooth_sigma": 0.0,
-    "use_boundary": True,
-    "gamma": 3.0,
-    "smooth_boundary_sigma": 0.0,
+INSTANCE_CONFIG = InstanceSegmenterConfig().to_dict()
 
-    "use_edge_term": True,
-    "edge_sigma": 1.0,
-    "edge_weight": 1.5,
-
-    "seed_method": "hmax",          # or "spacing"
-    "h_maxima": 0.6,                # lower -> more seeds
-    "min_peak_distance": 8,         # used if seed_method="spacing"
-    "marker_erosion_radius": 1,
-
-    "compactness": 0.0,
-    "watershed_line": True,
-}
-
-UNET_CONFIG = {
-    "unet_mode": "small",
+UNET_CONFIG = SegmenterConfig.from_dict({
+    "device": DEVICE,
+    "use_amp": DEVICE == "cuda",
     "model_dir": MODELS_DIR,
     "model_file": None,
-    "device": DEVICE,
-    "thr_cell": 0.5,
-    "thr_bound": 0.5,
-    "use_amp": True if DEVICE == "cuda" else False,
-    "return_logits": False,
-    "compute_instances": True,
-}
+}).to_dict()
+    

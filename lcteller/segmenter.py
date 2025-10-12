@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field, asdict
 import numpy as np
 from typing import Dict, Any, Optional, Tuple, Callable, List, Literal
 from scipy import ndimage as ndi
@@ -10,7 +10,6 @@ from skimage import morphology, segmentation, measure, feature
 from skimage.measure import label as cc_label
 
 from .contracts import ISegmenter
-from .config import DEVICE
 from .segmentation import (
     build_unet_cpu_small,
     build_unet_cpu_medium,
@@ -21,87 +20,132 @@ MaskProvider = Callable[[np.ndarray], Tuple[np.ndarray, np.ndarray]]
 
 @dataclass
 class SegmenterConfig:
-    """
-    Minimal config for the segmenter.
-
-    Attributes
-    ----------
-    unet_mode: which backbone to build ("small" | "medium" | "large")
-    model_dir: folder that holds the checkpoint files
-    model_file: filename of the checkpoint; if None -> f"best_{unet_mode}.pth"
-    device: e.g. "cuda:0" or "cpu"
-    thr_cell: threshold for cell probability to make a binary mask
-    thr_bound: threshold for boundary probability to make a binary mask
-    use_amp: enable autocast on CUDA
-    return_logits: include raw logits in the output dict (False by default)
-    compute_instances: run connected components on the final cell mask (if skimage is installed)
-    """
-    unet_mode: Literal["small", "medium", "large"] = "small"
+    # model
+    unet_mode: str = "small"
     model_dir: str = "./models"
     model_file: Optional[str] = None
-    device: str = DEVICE
-    thr_cell: float = 0.5
-    thr_bound: float = 0.5
+    device: str = "cuda"
     use_amp: bool = True
     return_logits: bool = False
+
+    # post
     compute_instances: bool = True
+
+    # convenience thresholds (not used for watershed internals)
+    thr_cell: float = 0.5
+    thr_bound: float = 0.5
+
+    # nested instance config (dict or InstanceSegmenterConfig)
+    instance_cfg: Dict[str, Any] = field(default_factory=dict)
+
+    # ---- helpers ----
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize config; nests instance_cfg as a dict."""
+        d = asdict(self)
+        # ensure instance_cfg is a dict if user put an InstanceSegmenterConfig in here
+        icfg = d.get("instance_cfg", {})
+        if isinstance(icfg, InstanceSegmenterConfig):
+            d["instance_cfg"] = icfg.to_dict()
+        return d
+
+    @classmethod
+    def from_dict(cls, d: Optional[Dict[str, Any]] = None) -> "SegmenterConfig":
+        """Construct from dict; accepts nested instance_cfg as dict or InstanceSegmenterConfig."""
+        d = dict(d or {})
+        # peel out instance_cfg before filtering top-level keys
+        raw_icfg = d.pop("instance_cfg", None)
+
+        allowed = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
+        filtered = {k: v for k, v in d.items() if k in allowed}
+
+        # normalize nested instance_cfg
+        if isinstance(raw_icfg, InstanceSegmenterConfig):
+            filtered["instance_cfg"] = raw_icfg.to_dict()
+        elif isinstance(raw_icfg, dict):
+            filtered["instance_cfg"] = InstanceSegmenterConfig.from_dict(raw_icfg).to_dict()
+        elif raw_icfg is None:
+            filtered["instance_cfg"] = {}
+        else:
+            # unknown type -> ignore, keep defaults
+            filtered["instance_cfg"] = {}
+
+        return cls(**filtered)
+
 
 @dataclass
 class InstanceSegmenterConfig:
-    # cleanup
-    min_object_area: int = 100
-    min_hole_area:   int = 20
-    min_instance_area: int = 120
+    # -------- Probability → binary mask (hysteresis) --------
+    cell_mask_low_thr: float = 0.30     # low threshold for hysteresis
+    cell_mask_high_thr: float = 0.60    # high threshold for hysteresis
+    mask_close_radius: int = 0          # morphological closing radius (px)
 
-    # elevation terms
-    distance_smooth_sigma: float = 0.0   # ↓ from 1.0 (keep peaks!)
+    # Cleanup after hysteresis
+    min_hole_area: int = 0              # remove small holes (px^2)
+    min_object_area: int = 0            # remove small objects (px^2)
+
+    # -------- Distance transform --------
+    distance_smooth_sigma: float = 0.0  # smooth EDT (px)
+    distance_weight: float = 1.0        # how much -EDT contributes to lowering elevation
+
+    # -------- Boundary term (adds to elevation) --------
     use_boundary: bool = True
-    gamma: float = 3.0                   # stronger boundary push
-    smooth_boundary_sigma: float = 0.0
+    smooth_boundary_sigma: float = 1.0  # blur P(bound) before using
+    gamma_boundary: float = 1.0         # weight for boundary cost
 
-    # extra edge term from cell prob gradient (helps at the neck)
+    # -------- Edge (grad of P(cell)) term (adds to elevation) --------
     use_edge_term: bool = True
-    edge_sigma: float = 1.0
-    edge_weight: float = 1.5            # adds to elevation
+    edge_sigma: float = 1.0             # gradient smoothing
+    edge_weight: float = 1.0            # weight for edge cost
 
-    # markers
-    seed_method: Literal["hmax","spacing"] = "hmax"
-    h_maxima: float = 0.6               # lower -> more seeds
-    min_peak_distance: int = 6
-    marker_erosion_radius: int = 1      # erode ONLY for seed finding
+    # -------- Energy term (subtracts from elevation) --------
+    use_energy: bool = True
+    energy_weight: float = 0.5          # attraction inside cells
+    energy_smooth_sigma: float = 0.0    # optional smoothing of P(energy)
 
-    # watershed options
+    # center-driven seeds
+    use_centers: bool = True
+    center_seed_method: str = "nms"     # {"nms","thr"}
+    center_min_distance: int = 1        # NMS min distance (px)
+    center_thr: float = 0.2             # threshold for centers (abs prob)
+
+    # -------- Watershed --------
     compactness: float = 0.0
-    watershed_line: bool = False
+    watershed_line: bool = False        # draw seams as 0-valued pixels in labels
+
+    # -------- Post-processing --------
+    min_instance_area: int = 0          # remove tiny instances (px^2)
+
+    # -------- Helpers --------
+    def to_dict(self):
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Optional[Dict[str, Any]] = None) -> "InstanceSegmenterConfig":
+        """Construct from dict, ignoring unknown keys."""
+        d = dict(d or {})
+        allowed = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
+        filtered = {k: v for k, v in d.items() if k in allowed}
+        return cls(**filtered)
 
 
-class SegmenterUNet(ISegmenter):
+class SegmenterUNet:
     """
-
-    Input
-    -----
-    img: np.ndarray with shape (H, W, 3) or (H, W).
-         Values can be in [0, 1] or [0, 255]. dtype will be cast to float32.
-
-    Output dict
-    -----------
+    Wraps the UNet (4 heads) and returns probabilities plus (optional) instances.
+    Output dict:
     {
-        "cell_mask": np.uint8 [H, W]               # 1 = cell, 0 = background
-        "boundary":  np.uint8 [H, W]               # 1 = boundary, 0 = non-boundary
+        "cell_mask": np.uint8 [H, W]             # derived from hysteresis inside InstanceSegmenter if compute_instances
+        "boundary":  np.uint8 [H, W]             # binarized for convenience (thr_bound)
         "probs": {
-            "cell":  np.float32 [H, W],            # sigmoid probs
-            "bound": np.float32 [H, W]
+            "cell":   float32 [H, W],
+            "bound":  float32 [H, W],
+            "center": float32 [H, W],
+            "energy": float32 [H, W],
         }
-        "instance_labels": np.int32 [H, W] | None  # optional, if skimage present
-        "meta": {
-            "unet_mode": str,
-            "device": str,
-            "checkpoint": str
-        }
-        # (optionally) "logits": np.float32 [2, H, W]
+        "instance_labels": np.int32 [H, W] | None
+        "meta": {...}
+        ("logits": float32 [4, H, W]) if return_logits
     }
     """
-
     def __init__(self, cfg: SegmenterConfig):
         self.cfg = cfg
 
@@ -115,44 +159,52 @@ class SegmenterUNet(ISegmenter):
         else:
             raise ValueError(f"Unknown unet_mode: {cfg.unet_mode}")
 
-        self.device = torch.device(cfg.device if torch.cuda.is_available() or "cpu" in cfg.device else "cpu")
-        self.model = builder(in_channels=3, out_channels=2).to(self.device)
+        # device
+        if torch.cuda.is_available() and "cuda" in cfg.device:
+            self.device = torch.device(cfg.device)
+        else:
+            self.device = torch.device("cpu")
+
+        # 4 output channels: cell, boundary, center, energy
+        self.model = builder(in_channels=3, out_channels=4).to(self.device)
         self.model.eval()
 
-        # resolve checkpoint path
-        model_file = cfg.model_file or f"unet_{cfg.unet_mode}.pth"
+        # resolve checkpoint
+        model_file = cfg.model_file or f"best_{cfg.unet_mode}.pth"
         self.ckpt_path = os.path.join(cfg.model_dir, model_file)
         if not os.path.isfile(self.ckpt_path):
             raise FileNotFoundError(f"Checkpoint not found: {self.ckpt_path}")
 
-        # load weights (state_dict only)
+        # load weights (handle plain state_dict or ddp-wrapped dict)
         state = torch.load(self.ckpt_path, map_location="cpu")
-        # some users save with DDP wrapper; handle both
         if isinstance(state, dict) and "state_dict" in state:
             state = state["state_dict"]
         try:
             self.model.load_state_dict(state, strict=True)
         except RuntimeError:
-            # try to strip a possible "module." prefix from DDP
             fixed = {k.replace("module.", "", 1): v for k, v in state.items()}
             self.model.load_state_dict(fixed, strict=True)
 
         # AMP policy
-        self.use_amp = bool(cfg.use_amp and (self.device.type == DEVICE))
+        self.use_amp = bool(cfg.use_amp and (self.device.type == "cuda") )
+
+        # optional instance segmenter
+        self.inst_seg = InstanceSegmenter(
+            InstanceSegmenterConfig(**(cfg.instance_cfg or {}))
+        ) if cfg.compute_instances else None
 
     def _to_tensor(self, img: np.ndarray) -> torch.Tensor:
         """
-        img: (H,W,3) or (H,W). Returns float tensor [1,3,H,W] on self.device.
-        Normalizes to [0,1].
+        img: (H,W,3) or (H,W). Returns float tensor [1,3,H,W] on self.device, normalized to [0,1].
         """
         if img.ndim == 2:
-            img = np.stack([img, img, img], axis=-1)  # gray -> RGB
+            img = np.stack([img, img, img], axis=-1)
         if img.shape[-1] != 3:
             raise ValueError(f"Expected image with 3 channels, got shape {img.shape}")
 
         x = img.astype(np.float32, copy=False)
         if x.max() > 1.0:
-            x = x / 255.0
+            x /= 255.0
         x = np.transpose(x, (2, 0, 1))  # CHW
         x = np.ascontiguousarray(x, dtype=np.float32)
         t = torch.from_numpy(x).unsqueeze(0).to(self.device, non_blocking=True)  # [1,3,H,W]
@@ -164,152 +216,211 @@ class SegmenterUNet(ISegmenter):
         use_bf16 = (self.use_amp and torch.cuda.is_bf16_supported())
 
         with torch.amp.autocast(
-            device_type=DEVICE,
+            device_type=self.cfg.device,
             dtype=(torch.bfloat16 if use_bf16 else torch.float16),
             enabled=self.use_amp
         ):
-            logits = self.model(x)           # [1,2,H,W]
-            probs = torch.sigmoid(logits)    # [1,2,H,W]
+            logits = self.model(x)           # [1,4,H,W]
+            probs  = torch.sigmoid(logits)   # [1,4,H,W]
 
-        # to numpy
-        probs_np = probs.squeeze(0).detach().to(torch.float32).cpu().numpy()  # [2,H,W]
-        cell_p = probs_np[0]
-        bound_p = probs_np[1]
+        # numpy (float32)
+        probs_np = probs.squeeze(0).detach().to(torch.float32).cpu().numpy()  # [4,H,W]
+        cell_p, bound_p, center_p, energy_p = probs_np
 
-        cell_bin = (cell_p >= self.cfg.thr_cell).astype(np.uint8)
-        bound_bin = (bound_p >= self.cfg.thr_bound).astype(np.uint8)
-
-
-        # Optional instance labeling
-        instances = None
-        if self.cfg.compute_instances:
-            if cc_label is not None:
-                # avoid marking boundaries as part of cells
-                instances = cc_label(cell_bin, connectivity=2).astype(np.int32)
-            else:
-                # skimage not installed
-                instances = None
-
+        # Optional instance segmentation (probability-first)
         out: Dict[str, Any] = {
-            "cell_mask": cell_bin,
-            "boundary": bound_bin,
-            "probs": {"cell": cell_p.astype(np.float32), "bound": bound_p.astype(np.float32)},
-            "instance_labels": instances,
+            "probs": {
+                "cell":   cell_p.astype(np.float32),
+                "bound":  bound_p.astype(np.float32),
+                "center": center_p.astype(np.float32),
+                "energy": energy_p.astype(np.float32),
+            },
+            "instance_labels": None,
             "meta": {
                 "unet_mode": self.cfg.unet_mode,
                 "device": str(self.device),
                 "checkpoint": os.path.abspath(self.ckpt_path),
             },
         }
+
+        # Convenience binary maps (NOT used internally for watershed)
+        out["cell_mask"] = (cell_p >= self.cfg.thr_cell).astype(np.uint8)
+        out["boundary"]  = (bound_p >= self.cfg.thr_bound).astype(np.uint8)
+
         if self.cfg.return_logits:
             out["logits"] = logits.squeeze(0).detach().cpu().float().numpy()
+
+        if self.inst_seg is not None:
+            out = self.inst_seg(out, update_cell_mask=True)
+
         return out
 
     @classmethod
     def from_config(cls, cfg_dict: Dict[str, Any]) -> "SegmenterUNet":
-        """
-        Helper to build from a plain dict (e.g., loaded from your YAML/JSON config).
-        Unknown keys are ignored.
-        """
         known = {f.name for f in SegmenterConfig.__dataclass_fields__.values()}
-        filtered = {k: v for k, v in dict(cfg_dict).items() if k in known}
+        filtered = {k: v for k, v in dict(cfg_dict or {}).items() if k in known}
         cfg = SegmenterConfig(**filtered)
         return cls(cfg)
-
 
 
 class InstanceSegmenter:
     def __init__(self, cfg: InstanceSegmenterConfig):
         self.cfg = cfg
 
-    def __call__(self, seg_out: dict, update_cell_mask: bool = True) -> dict:
-        cell = (seg_out["cell_mask"] > 0)
+    def _hysteresis_mask(self, pc: np.ndarray) -> np.ndarray:
+        """Two-threshold hysteresis on cell prob to get a robust watershed mask."""
+        low = float(self.cfg.cell_mask_low_thr)
+        high = float(self.cfg.cell_mask_high_thr)
+        strong = (pc >= high)
+        weak   = (pc >= low)
 
-        # remove tiny bits first
-        if self.cfg.min_object_area > 0:
-            cell = morphology.remove_small_objects(cell, min_size=int(self.cfg.min_object_area))
+        # label weak components and keep those connected to any strong pixel
+        lab = measure.label(weak, connectivity=1)
+        keep = np.zeros_like(weak, dtype=bool)
+        if strong.any():
+            strong_ids = np.unique(lab[strong])
+            strong_ids = strong_ids[strong_ids != 0]
+            for sid in strong_ids:
+                keep |= (lab == sid)
+        mask = keep
 
-        # fill holes
-        cell = ndi.binary_fill_holes(cell)
+        # small closing & hole handling
+        if self.cfg.mask_close_radius > 0:
+            mask = morphology.binary_closing(mask, morphology.disk(int(self.cfg.mask_close_radius)))
+        mask = ndi.binary_fill_holes(mask)
         if self.cfg.min_hole_area > 0:
-            cell = morphology.remove_small_holes(cell, area_threshold=int(self.cfg.min_hole_area))
+            mask = morphology.remove_small_holes(mask, area_threshold=int(self.cfg.min_hole_area))
+        if self.cfg.min_object_area > 0:
+            mask = morphology.remove_small_objects(mask, min_size=int(self.cfg.min_object_area))
+        return mask.astype(bool)
 
-        # distance (keep sharp)
-        dist = ndi.distance_transform_edt(cell).astype(np.float32)
-        if self.cfg.distance_smooth_sigma > 0:
-            dist_s = ndi.gaussian_filter(dist, float(self.cfg.distance_smooth_sigma))
-        else:
-            dist_s = dist
+    def _smooth01(self, x: np.ndarray, sigma: float) -> np.ndarray:
+        if sigma and sigma > 0:
+            y = ndi.gaussian_filter(x.astype(np.float32), float(sigma))
+            # keep as probability-like
+            y = np.clip(y, 0.0, 1.0)
+            return y
+        return x.astype(np.float32)
 
-        # base elevation: LOW is labeled first
-        elevation = -dist_s
+    def _make_markers(self, mask: np.ndarray, p_center: np.ndarray | None, dist_s: np.ndarray) -> np.ndarray:
+        """
+        Build boolean seed map from center heat/prob and distance peaks/h-maxima, then label.
+        Returns int32 markers with 0 as background.
+        """
+        # ensure boolean working mask
+        work_mask = (mask.astype(bool) if mask.dtype != bool else mask)
 
-        # add boundary prob (higher cost at boundary)
-        if self.cfg.use_boundary and "probs" in seg_out and "bound" in seg_out["probs"]:
-            b = seg_out["probs"]["bound"].astype(np.float32)
-            if self.cfg.smooth_boundary_sigma > 0:
-                b = ndi.gaussian_filter(b, float(self.cfg.smooth_boundary_sigma))
-            if b.max() > b.min():
-                b = (b - b.min()) / (b.max() - b.min())
-                elevation = elevation + self.cfg.gamma * b
+        seeds_bool = np.zeros_like(work_mask, dtype=bool)
 
-        # add edge term from cell prob gradient (push cut through necks)
-        if self.cfg.use_edge_term and "probs" in seg_out and "cell" in seg_out["probs"]:
-            p = seg_out["probs"]["cell"].astype(np.float32)
-            g = ndi.gaussian_gradient_magnitude(p, sigma=float(self.cfg.edge_sigma))
-            if g.max() > 0:
-                g = g / g.max()
-                elevation = elevation + self.cfg.edge_weight * g
+        # ---- center-driven seeds ----
+        if self.cfg.use_centers and (p_center is not None):
+            if getattr(self.cfg, "center_seed_method", "nms") == "nms":
+                coords = feature.peak_local_max(
+                    p_center.astype(np.float32),
+                    min_distance=int(self.cfg.center_min_distance),
+                    threshold_abs=float(self.cfg.center_thr),
+                    labels=work_mask,
+                    exclude_border=False,
+                )
+                seeds_center = np.zeros_like(work_mask, dtype=bool)
+                if coords.size:
+                    seeds_center[tuple(coords.T)] = True
+            else:
+                # simple threshold
+                seeds_center = (p_center >= float(self.cfg.center_thr)) & work_mask
 
-        # --- robust markers: erode ONLY for seeds to split dumbbells ---
-        seed_mask = cell
-        if self.cfg.marker_erosion_radius > 0:
-            seed_mask = morphology.binary_erosion(
-                seed_mask, morphology.disk(int(self.cfg.marker_erosion_radius))
-            )
+            seeds_bool |= seeds_center  # both bool
 
-        if self.cfg.seed_method == "hmax" and self.cfg.h_maxima > 0:
-            seeds_bool = morphology.h_maxima(dist_s, h=float(self.cfg.h_maxima))
-            seeds_bool &= seed_mask
-        else:
-            coords = feature.peak_local_max(
-                dist_s, min_distance=int(self.cfg.min_peak_distance),
-                labels=seed_mask, exclude_border=False
-            )
-            seeds_bool = np.zeros_like(cell, dtype=bool)
-            if coords.size:
-                seeds_bool[tuple(coords.T)] = True
-
+        # Label seeds; fallback to CCs of mask if empty
         markers = measure.label(seeds_bool, connectivity=1).astype(np.int32)
         if markers.max() == 0:
-            # fallback: CC of eroded mask
-            markers = measure.label(seed_mask, connectivity=1).astype(np.int32)
+            markers = measure.label(work_mask, connectivity=1).astype(np.int32)
 
-        # watershed inside cell mask
+        return markers
+
+    def __call__(self, seg_out: Dict[str, Any], update_cell_mask: bool = True) -> Dict[str, Any]:
+        probs = seg_out.get("probs", {})
+        p_cell   = probs.get("cell",   None)
+        p_bound  = probs.get("bound",  None)
+        p_center = probs.get("center", None)
+        p_energy = probs.get("energy", None)
+
+        if p_cell is None:
+            raise ValueError("seg_out['probs']['cell'] required")
+
+        H, W = p_cell.shape
+
+        # --- 1) watershed mask from cell probability (hysteresis) ---
+        mask = self._hysteresis_mask(p_cell)
+
+        # --- 2) base distance inside the (binary) mask (still keeps prob influence) ---
+        dist = ndi.distance_transform_edt(mask).astype(np.float32)
+        dist_s = dist
+        if self.cfg.distance_smooth_sigma > 0:
+            dist_s = ndi.gaussian_filter(dist, float(self.cfg.distance_smooth_sigma))
+
+        # --- 3) elevation (minimize) built from PROBABILITIES ---
+        # start with zero elevation, then add/subtract weighted terms
+        elevation = np.zeros((H, W), dtype=np.float32)
+        # subtract distance (attract to centers => lower elevation)
+        if self.cfg.distance_weight != 0:
+            # normalize to [0,1] for stability
+            dmax = dist_s.max()
+            if dmax > 1e-6:
+                elevation -= self.cfg.distance_weight * (dist_s / dmax)
+
+        # add boundary (higher elevation where boundary prob is high)
+        if self.cfg.use_boundary and (p_bound is not None):
+            b = self._smooth01(p_bound, self.cfg.smooth_boundary_sigma)
+            elevation += self.cfg.gamma_boundary * b
+
+        # add edge term from cell prob gradient magnitude
+        if self.cfg.use_edge_term and (self.cfg.edge_weight != 0):
+            g = ndi.gaussian_gradient_magnitude(p_cell.astype(np.float32), sigma=float(self.cfg.edge_sigma))
+            gmax = g.max()
+            if gmax > 1e-6:
+                elevation += self.cfg.edge_weight * (g / gmax)
+
+        # subtract energy (attract to high energy inside cells)
+        if self.cfg.use_energy and (p_energy is not None) and (self.cfg.energy_weight != 0):
+            e = self._smooth01(p_energy, self.cfg.energy_smooth_sigma)
+            elevation -= self.cfg.energy_weight * e
+
+        # --- 4) seeds from centers and/or distance peaks (probability-driven) ---
+        # (For centers we use center prob directly; for distance we use dist_s)
+        markers = self._make_markers(mask, p_center, dist_s)
+
+        # --- 5) watershed inside mask ---
         instances = segmentation.watershed(
             image=elevation,
             markers=markers,
-            mask=cell,
+            mask=mask,
             compactness=float(self.cfg.compactness),
             watershed_line=bool(self.cfg.watershed_line),
         ).astype(np.int32)
 
-        # drop tiny shards and relabel compactly
+        # --- 6) post-process: drop tiny shards and relabel compactly ---
         if self.cfg.min_instance_area > 0:
             instances = morphology.remove_small_objects(instances, min_size=int(self.cfg.min_instance_area)).astype(np.int32)
             instances = measure.label(instances > 0, connectivity=1).astype(np.int32)
 
+        # push updated fields back
         if update_cell_mask:
-            seg_out["cell_mask"] = cell.astype(np.uint8)
+            seg_out["cell_mask"] = mask.astype(np.uint8)
         seg_out["instance_labels"] = instances
+        seg_out["elevation"] = elevation
+        seg_out["markers"] = markers
         return seg_out
 
     @classmethod
     def from_config(cls, cfg_dict: Dict[str, Any]) -> "InstanceSegmenter":
-        known = {f.name for f in InstanceSegmenterConfig.__dataclass_fields__.values()}
-        filtered = {k: v for k, v in dict(cfg_dict or {}).items() if k in known}
+        # Accept a plain dict (ignore unknown keys)
+        cfg_dict = dict(cfg_dict or {})
+        known = set(InstanceSegmenterConfig.__dataclass_fields__.keys())
+        filtered = {k: v for k, v in cfg_dict.items() if k in known}
         cfg = InstanceSegmenterConfig(**filtered)
         return cls(cfg)
+
 
 class DummyByOrderSegmenter(ISegmenter):
     """
