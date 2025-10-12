@@ -25,6 +25,26 @@ from . import (
 
 # --------------------- utils ---------------------
 
+def gaussian_kernel1d(sigma: float, radius: int | None = None, device=None, dtype=None):
+    if radius is None:
+        radius = int(max(1, round(3*sigma)))
+    x = torch.arange(-radius, radius+1, device=device, dtype=dtype)
+    k = torch.exp(-(x**2)/(2*sigma*sigma))
+    k = k / k.sum()
+    return k
+
+def gaussian_blur_2d(x: torch.Tensor, sigma: float) -> torch.Tensor:
+    # x: [B,1,H,W]
+    if sigma <= 0:
+        return x
+    b, c, h, w = x.shape
+    k1d = gaussian_kernel1d(sigma, device=x.device, dtype=x.dtype)
+    kx = k1d.view(1, 1, 1, -1)
+    ky = k1d.view(1, 1, -1, 1)
+    x = F.conv2d(x, kx, padding=(0, kx.shape[-1]//2), groups=1)
+    x = F.conv2d(x, ky, padding=(ky.shape[-2]//2, 0), groups=1)
+    return x
+
 def worker_init_fn(worker_id):
     base_seed = torch.initial_seed() % 2**32
     np.random.seed(base_seed + worker_id)
@@ -449,8 +469,9 @@ def _build_aux_targets(extras: dict,
     if inst_b.dtype != torch.int32 and inst_b.dtype != torch.int64:
         inst_b = inst_b.to(torch.int32)
     B, H, W = inst_b.shape
-    bound_soft = make_soft_boundary_batch(inst_b, ring_width=bound_ring_width,
-                                          soft_band=bound_soft_band, sigma=bound_sigma, device=device)  # [B,1,H,W]
+
+    bound_soft = tgt[:, 1:2]
+    bound_soft = gaussian_blur_2d(bound_soft, sigma=1.0)
     cell_mask = tgt[:, 0:1]  # [B,1,H,W] float
     metas = extras.get("meta", None)
     center_allow = None
