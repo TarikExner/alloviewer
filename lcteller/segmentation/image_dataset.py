@@ -12,6 +12,19 @@ from . import simulate_image
 # helpers
 # -----------------------------
 
+def _transform_centers_aug(centers, H, W, flip_x: bool, flip_y: bool, k: int):
+    pts = list(centers)
+    if flip_x:
+        pts = [(y, W - 1 - x) for (y, x) in pts]
+    if flip_y:
+        pts = [(H - 1 - y, x) for (y, x) in pts]
+    if k:
+        for _ in range(k % 4):
+            pts = [(x, H - 1 - y) for (y, x) in pts]
+            H, W = W, H
+    pts = [(int(y), int(x)) for (y, x) in pts if 0 <= y < H and 0 <= x < W]
+    return pts
+
 def _sample_camera_params(rng, src_side_range=(640, 1024), aspect_ratio_range=(0.6, 1.6), content_scale_range=(0.6, 0.95)):
     S_src = int(rng.integers(int(src_side_range[0]), int(src_side_range[1]) + 1))
     ar = float(rng.uniform(aspect_ratio_range[0], aspect_ratio_range[1]))
@@ -512,10 +525,10 @@ class SimCellsDataset(Dataset):
         img, cell, bound, inst, center_stem, aug_ops = self._apply_aug_with_center(
             img, cell, bound, inst, center_stem, gamma_range=gamma_range
         )
+        flip_x, flip_y, k = aug_ops
 
-        # recover new centers from stem
-        ys, xs = np.nonzero(center_stem > 0.5)   # stem is 1 at centers before the blur step
-        centers_after_aug = [(int(y), int(x)) for y, x in zip(ys, xs)]
+        H, W = cell.shape
+        centers_after_aug = _transform_centers_aug(centers, H, W, flip_x, flip_y, k)
 
         meta = dict(meta)
         meta["centers"] = centers_after_aug

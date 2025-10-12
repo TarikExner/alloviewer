@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import json
+import cv2
 import time
 import hashlib
 import uuid
@@ -61,9 +62,13 @@ DEFAULT_DATASET_CFG = dict(
 )
 
 # -------------------- small utils --------------------
-import pandas as pd
-import numpy as np
-import os
+
+def _to_np_int32(x):
+    """Return x as a NumPy int32 array (no copy if already right type)."""
+    if isinstance(x, torch.Tensor):
+        return x.detach().cpu().to(torch.int32).numpy()
+    x = np.asarray(x)
+    return x.astype(np.int32, copy=False)
 
 def _append_run_index(base_dir: str, run_dir: str, meta: dict, df_head: pd.DataFrame) -> None:
     """
@@ -299,7 +304,6 @@ def _probs_from_targets(tgt_t: torch.Tensor) -> Dict[str, np.ndarray]:
 
     return out
 
-
 def _run_instance_segmenter_from_probs(inst_seg: InstanceSegmenter, probs: Dict[str, np.ndarray]) -> Dict[str, Any]:
     """Build a seg_out-like dict and run InstanceSegmenter on it."""
     seg_out = {
@@ -349,11 +353,11 @@ def _shape_distributions(lab_a: np.ndarray, lab_b: np.ndarray) -> Dict[str, floa
 
     return out
 
-
 def evaluate_one_image(
     img_rgb: np.ndarray,
     tgt_t: torch.Tensor,
     meta: Dict[str, Any],
+    instances: torch.Tensor,
     unet: SegmenterUNet,
     shared_inst_seg: InstanceSegmenter,
     *,
@@ -364,27 +368,22 @@ def evaluate_one_image(
     derived_params: Optional[Dict[str, Any]] = None,
     mode_name: str = "",
 ) -> Dict[str, Any]:
-    """
-    GT instances are produced by running the SAME InstanceSegmenter on simulated targets (tgt_t).
-    Pred instances are produced by UNet->probs and the SAME InstanceSegmenter.
-    """
-    # --- 0) build SIM "probs" and instances ---
-    sim_probs = _probs_from_targets(tgt_t)
-    sim_inst_out = _run_instance_segmenter_from_probs(shared_inst_seg, sim_probs)
-    inst_sim = sim_inst_out["instance_labels"].astype(np.int32)
+    # --- 0) build SIM "probs" and instances (GT via same InstanceSegmenter) ---
+
+    inst_sim = _to_np_int32(instances)
 
     # --- 1) UNET forward ---
     t0 = time.time()
-    seg_out = unet(img_rgb)  # compute_instances must be False in cfg
+    seg_out = unet(img_rgb)
     t1 = time.time()
 
-    # --- 2) Run SAME instance segmenter on UNET probs ---
+    # --- 2) SAME instance segmenter on UNET probs ---
     unet_probs = seg_out["probs"]
     pr_inst_out = _run_instance_segmenter_from_probs(shared_inst_seg, unet_probs)
     t2 = time.time()
     inst_pred = pr_inst_out["instance_labels"].astype(np.int32)
 
-    # --- 3) metrics ---
+    # --- 3) base metrics ---
     N_gt = _count_instances(inst_sim)
     N_pr = _count_instances(inst_pred)
     res: Dict[str, Any] = {
@@ -398,13 +397,14 @@ def evaluate_one_image(
         "total_ms": (t2 - t0) * 1000.0,
     }
 
+    # area coverage
     gt_bin_frac = float((inst_sim > 0).mean())
     pr_bin_frac = float((inst_pred > 0).mean())
     res["gt_area_frac"] = gt_bin_frac
     res["pr_area_frac"] = pr_bin_frac
     res["coverage_error_frac"] = abs(pr_bin_frac - gt_bin_frac) / max(gt_bin_frac, 1e-8)
 
-    # IoU/matching across thresholds
+    # --- 4) IoU/matching across thresholds ---
     gt_c = _compact_labels(inst_sim)
     pr_c = _compact_labels(inst_pred)
     IoU, gt_ids, pr_ids, _, _ = _contingency_iou(gt_c, pr_c)
@@ -416,39 +416,85 @@ def evaluate_one_image(
         FP = len(pr_ids) - len(matched_cols)
         FN = len(gt_ids) - len(matched_rows)
         prec = TP / (TP + FP) if (TP + FP) > 0 else 0.0
-        rec = TP / (TP + FN) if (TP + FN) > 0 else 0.0
-        f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+        rec  = TP / (TP + FN) if (TP + FN) > 0 else 0.0
+        f1   = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
         ious = [p[2] for p in pairs]
-        thr_tag = str(thr).replace(".", "_")
-        res[f"TP_{thr_tag}"] = TP
-        res[f"FP_{thr_tag}"] = FP
-        res[f"FN_{thr_tag}"] = FN
-        res[f"precision_{thr_tag}"] = prec
-        res[f"recall_{thr_tag}"] = rec
-        res[f"f1_{thr_tag}"] = f1
-        res[f"mean_iou_{thr_tag}"] = (float(np.mean(ious)) if ious else 0.0)
+        tag = str(thr).replace(".", "_")
+        res[f"TP_{tag}"] = TP
+        res[f"FP_{tag}"] = FP
+        res[f"FN_{tag}"] = FN
+        res[f"precision_{tag}"] = prec
+        res[f"recall_{tag}"] = rec
+        res[f"f1_{tag}"] = f1
+        res[f"mean_iou_{tag}"] = (float(np.mean(ious)) if ious else 0.0)
 
-    # shape distribution checks
+    # --- 5) center vs instance sanity checks (camera-rect loss / collisions) ---
+    centers = list((meta or {}).get("centers", [])) or []
+    res["meta_centers_count"] = int(len(centers))
+
+    # unique centers (guard collisions after resize/round)
+    uniq = sorted(set((int(y), int(x)) for (y, x) in centers))
+    res["centers_unique"] = int(len(uniq))
+    res["centers_dupe"] = int(max(0, len(centers) - len(uniq)))
+
+    H, W = inst_sim.shape
+    on_cell = 0
+    on_bg = 0
+    # map instance id at each center
+    inst_ids_at_centers = []
+    for (y, x) in uniq:
+        if 0 <= y < H and 0 <= x < W:
+            lab = int(inst_sim[y, x])
+            inst_ids_at_centers.append(lab)
+            if lab > 0:
+                on_cell += 1
+            else:
+                on_bg += 1
+        else:
+            on_bg += 1  # center out of bounds counts as miss
+
+    res["centers_on_cell"] = int(on_cell)
+    res["centers_on_bg"] = int(on_bg)
+    res["camera_rect_center_miss_flag"] = int(on_bg > 0)
+
+    # fraction of GT instances that have at least one center inside
+    if N_gt > 0:
+        has_center = 0
+        seen = set()
+        for lab in inst_ids_at_centers:
+            if lab > 0 and lab not in seen:
+                seen.add(lab)
+                has_center += 1
+        res["inst_with_center_frac"] = float(has_center / N_gt)
+    else:
+        res["inst_with_center_frac"] = np.nan
+
+    # simple deltas for quick filtering
+    res["center_vs_inst_diff"] = float(len(uniq) - N_gt)
+    res["center_vs_inst_absdiff"] = float(abs(len(uniq) - N_gt))
+
+    # --- 6) shape distribution checks (same as before)
     res.update(_shape_distributions(inst_sim, inst_pred))
 
-    # artifacts
+    # --- 7) artifacts
     if save_artifacts and artifacts_dir:
+        # save GT/Pred labels
         np.savez_compressed(os.path.join(artifacts_dir, f"{image_id}.gt.npz"), lab=inst_sim)
         np.savez_compressed(os.path.join(artifacts_dir, f"{image_id}.pred.npz"), lab=inst_pred)
 
-    # flatten meta (from simulate_image) + derived params
-    # meta has: centers, labels, radius, params{N, n_cells, cell_diameter, frac_positive, seed, ... maybe more}
+        # save raw RGB image as float32 in [0,1]
+        img_npz_path = os.path.join(artifacts_dir, f"{image_id}.img.npz")
+        np.savez_compressed(img_npz_path, img=img_rgb.astype(np.float32))
+        res["image_npz_path"] = img_npz_path
+
     meta = dict(meta or {})
     params = dict(meta.get("params", {}))
     res["meta_radius"] = int(meta.get("radius", -1))
-    res["meta_centers_count"] = int(len(meta.get("centers", [])))
-    res["meta_labels_pos_frac"] = float(np.mean(meta.get("labels", []))) if len(meta.get("labels", [])) else np.nan
-
-    # store params.* individually
+    res["meta_labels_pos_frac"] = (
+        float(np.mean(meta.get("labels", []))) if len(meta.get("labels", [])) else np.nan
+    )
     for k, v in params.items():
         res[f"meta_param_{k}"] = v
-
-    # add derived (scale-aware) params if given
     for k, v in (derived_params or {}).items():
         res[f"meta_derived_{k}"] = v
 
@@ -583,6 +629,7 @@ def unet_validation(
                         img_t, tgt_t, extras = ds[idx]
                         img = img_t.numpy().transpose(1, 2, 0).astype(np.float32)
                         img = np.clip(img, 0.0, 1.0)
+                        instances = extras["instance_labels"]
                         meta = dict(extras.get("meta", {}))
                         dia = float(meta.get("cell_diameter", ds.cell_diameter if isinstance(ds.cell_diameter, (int, float)) else -1))
                         derived = _derived_from_diameter(ds, dia)
@@ -599,6 +646,7 @@ def unet_validation(
                             img_rgb=img,
                             tgt_t=tgt_t,
                             meta=meta,
+                            instances=instances,
                             unet=unet,
                             shared_inst_seg=shared_inst,
                             iou_thresholds=iou_thresholds,
