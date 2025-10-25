@@ -178,6 +178,22 @@ def create_dataset_h5(
                 pass
 
         # --- helper: write a slice; update 'written' AFTER successful write ---
+
+        def _jsonify(obj):
+            # numpy scalars
+            if isinstance(obj, (np.generic,)):
+                return obj.item()
+            # numpy arrays
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            # containers
+            if isinstance(obj, dict):
+                return {str(k): _jsonify(v) for k, v in obj.items()}
+            if isinstance(obj, (list, tuple)):
+                return [_jsonify(v) for v in obj]
+            # everything else (str, int, float, bool, None)
+            return obj
+
         def _write_slice(imgs, tgts, inst, metas):
             nonlocal written, last_flush
             n = imgs.shape[0]
@@ -192,9 +208,10 @@ def create_dataset_h5(
             d_imgs[written:end] = imgs[:take].detach().cpu().numpy().astype(np.float32)
             d_tgts[written:end] = tgts[:take].detach().cpu().numpy().astype(np.float32)
             d_inst[written:end] = inst[:take].detach().cpu().numpy().astype(np.int32)
-            d_meta[written:end] = [json.dumps(m, separators=(",", ":")) for m in metas[:take]]
-
-            # publish progress
+            d_meta[written:end] = [
+                json.dumps(_jsonify(m), separators=(",", ":"))
+                for m in metas[:take]
+            ]            # publish progress
             written = end
             f.attrs.modify("written", int(written))
             last_flush += 1
