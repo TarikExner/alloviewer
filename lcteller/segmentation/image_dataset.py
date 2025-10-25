@@ -303,7 +303,6 @@ class SimCellsDataset(Dataset):
         meta = dict(mode="tiles", tile_xy=(int(y0), int(x0)), tile_hw=(th, th))
         return img_t.astype(np.float32), cell_t.astype(np.float32), bound_t.astype(np.float32), inst_t.astype(np.int32), meta
 
-    # ---- main ----
     def __getitem__(self, idx):
         rng = np.random.default_rng(int(self.base_rng.integers(0, 2**31-1)) ^ int(idx))
 
