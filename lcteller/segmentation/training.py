@@ -1,5 +1,6 @@
 import os
 import time
+import glob
 import json
 import numpy as np
 import torch
@@ -20,7 +21,6 @@ from scipy import ndimage as ndi
 import cv2
 
 from . import (
-    SimCellsDataset,
     DiskSimCellsDataset,
     build_unet_cpu_small, build_unet_cpu_medium, build_unet_cpu_large
 )
