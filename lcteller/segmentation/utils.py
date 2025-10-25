@@ -6,11 +6,28 @@ import numpy as np
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from typing import Optional
+import torch
 
 from .config import default_camera, default_scene
 
 # --- config fallbacks ---
 from . import SimCellsDataset
+
+# --------------------- collate ---------------------
+
+def collate_no_meta(batch):
+    """
+    batch: list of (img_t, tgt_t, extras)
+    Stacks img and target; stacks extras['instance_labels']; keeps meta as a list.
+    Works for any number of target channels.
+    """
+    imgs, tgts, exs = zip(*batch)
+    imgs = torch.stack(imgs, dim=0)                # [B,3,H,W]
+    tgts = torch.stack(tgts, dim=0)                # [B,C,H,W]
+    inst = torch.stack([e["instance_labels"] for e in exs], dim=0)  # [B,H,W]
+    metas = [e["meta"] for e in exs]
+    extras_out = {"instance_labels": inst, "meta": metas}
+    return imgs, tgts, extras_out
 
 def create_dataset_h5(
     out_path: str,
@@ -67,6 +84,7 @@ def create_dataset_h5(
         persistent_workers=(num_workers_gen > 0),
         prefetch_factor=4,
         drop_last=False,
+        collate_fn=collate_no_meta
     )
 
     # --- peek first batch via iterator (so we can keep it) ---

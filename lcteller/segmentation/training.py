@@ -25,6 +25,7 @@ from . import (
     build_unet_cpu_small, build_unet_cpu_medium, build_unet_cpu_large
 )
 from .config import default_camera, default_scene
+from .utils import collate_no_meta
 
 # --------------------- utils ---------------------
 
@@ -816,21 +817,6 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
 
     return out
 
-# --------------------- collate ---------------------
-
-def collate_no_meta(batch):
-    """
-    batch: list of (img_t, tgt_t, extras)
-    Stacks img and target; stacks extras['instance_labels']; keeps meta as a list.
-    Works for any number of target channels.
-    """
-    imgs, tgts, exs = zip(*batch)
-    imgs = torch.stack(imgs, dim=0)                # [B,3,H,W]
-    tgts = torch.stack(tgts, dim=0)                # [B,C,H,W]
-    inst = torch.stack([e["instance_labels"] for e in exs], dim=0)  # [B,H,W]
-    metas = [e["meta"] for e in exs]
-    extras_out = {"instance_labels": inst, "meta": metas}
-    return imgs, tgts, extras_out
 
 # --------------------- main train() ---------------------
 
