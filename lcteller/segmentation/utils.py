@@ -100,7 +100,7 @@ def create_dataset_h5(
     # --- open/create HDF5 with context manager (always closes) ---
     vlen_str = h5py.special_dtype(vlen=str)
     new_file = (not os.path.exists(out_path))
-    with h5py.File(out_path, "a", libver="latest", track_times=False) as f:
+    with h5py.File(out_path, "a", libver="latest") as f:
         if new_file:
             # create fixed-size datasets
             f.attrs.update({
