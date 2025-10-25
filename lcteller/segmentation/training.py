@@ -5,6 +5,7 @@ import json
 import numpy as np
 import torch
 import torch.nn.functional as F
+import h5py
 import torch.distributed as dist
 from torch.utils.data import DataLoader, ConcatDataset, Subset
 from torch.utils.data.distributed import DistributedSampler
@@ -817,17 +818,6 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
 
     return out
 
-
-def _discover_h5_paths(h5_path: str) -> list[str]:
-    if os.path.isdir(h5_path):
-        files = sorted(glob.glob(os.path.join(h5_path, "*.h5")))
-        if not files:
-            raise FileNotFoundError(f"No .h5 files found in directory: {h5_path}")
-        return files
-    if os.path.isfile(h5_path):
-        return [h5_path]
-    raise FileNotFoundError(f"h5_path not found: {h5_path}")
-
 def _probe_total_len(h5_paths: list[str]) -> int:
     tot = 0
     for p in h5_paths:
@@ -842,14 +832,13 @@ def build_h5_loaders(
     batch_size: int,
     workers: int,
     seed: int,
-    train_len: int,
-    val_len: int,
+    train_pct: float,
+    val_pct: Optional[float],
     distributed: bool,
     device: torch.device,
 ):
     # discover files and build a concatenated base dataset
-    h5_paths = _discover_h5_paths(h5_path)
-    base_ds = ConcatDataset([DiskSimCellsDataset(p) for p in h5_paths])
+    base_ds = DiskSimCellsDataset(h5_path)
     N = len(base_ds)
     if N == 0:
         raise RuntimeError("Empty HDF5 dataset (no samples).")
@@ -857,6 +846,11 @@ def build_h5_loaders(
     # split by shuffled indices (deterministic per seed)
     rng = np.random.RandomState(seed)
     perm = rng.permutation(N)
+
+    train_len = train_pct*N
+    if val_pct is None:
+        val_pct = 1-train_pct
+    val_len=val_pct*N
 
     v_n = min(int(val_len), N)
     t_n = min(int(train_len), max(0, N - v_n))
@@ -909,8 +903,8 @@ def train(
     mode: Literal["pad_resize", "crop_well_resize", "tiles"] = "crop_well_resize",
     camera_cfg=None,
     scene_cfg=None,
-    train_len=100_000,
-    val_len=2000,
+    train_pct=0.9,
+    val_pct=None,
     seed=187,
     amp=True,
     unet_mode: Literal["small", "medium", "large"] = "small",
@@ -960,8 +954,8 @@ def train(
         batch_size=batch_size,
         workers=workers,
         seed=seed,
-        train_len=train_len,
-        val_len=val_len,
+        train_pct=train_pct,
+        val_pct=val_pct,
         distributed=distributed,
         device=device,
     )
