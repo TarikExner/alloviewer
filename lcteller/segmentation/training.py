@@ -11,6 +11,8 @@ from torch.amp import autocast, GradScaler
 from tqdm.auto import tqdm
 from typing import Literal, List, Optional, Tuple
 from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
+import random
+from scipy.spatial import cKDTree
 
 from skimage.morphology import skeletonize
 
@@ -22,15 +24,24 @@ from . import (
     SimCellsDataset, simulate_image,
     build_unet_cpu_small, build_unet_cpu_medium, build_unet_cpu_large
 )
+from .config import default_camera, default_scene
 
 # --------------------- utils ---------------------
 
+_GK_CACHE = {}
 def gaussian_kernel1d(sigma: float, radius: int | None = None, device=None, dtype=None):
+    if sigma <= 0:
+        # trivial kernel
+        return torch.tensor([1.0], device=device, dtype=dtype)
     if radius is None:
         radius = int(max(1, round(3*sigma)))
-    x = torch.arange(-radius, radius+1, device=device, dtype=dtype)
-    k = torch.exp(-(x**2)/(2*sigma*sigma))
-    k = k / k.sum()
+    key = (float(sigma), int(radius), device, dtype)
+    k = _GK_CACHE.get(key)
+    if k is None:
+        x = torch.arange(-radius, radius+1, device=device, dtype=dtype)
+        k = torch.exp(-(x**2)/(2*sigma*sigma))
+        k = k / k.sum()
+        _GK_CACHE[key] = k
     return k
 
 def gaussian_blur_2d(x: torch.Tensor, sigma: float) -> torch.Tensor:
@@ -350,41 +361,30 @@ def _nms_peaks_np(heat: np.ndarray, thr: float = 0.2, min_dist: int = 3) -> List
     idx = np.argsort(-scores)
     return [(int(ys[i]), int(xs[i]), float(scores[i])) for i in idx]
 
-def center_metrics_np(center_pred: np.ndarray, gt_centers: List[Tuple[int,int]],
-                      peak_thr: float = 0.2, nms_dist: int = 3, match_radius: int = 10) -> dict:
+
+def center_metrics_np(center_pred, gt_centers, peak_thr=0.2, nms_dist=3, match_radius=10):
     preds = _nms_peaks_np(center_pred, thr=peak_thr, min_dist=nms_dist)
-    pred_xy = [(y, x) for (y, x, _) in preds]
-    if len(pred_xy) == 0 or len(gt_centers) == 0:
-        TP = 0
-        FP = len(pred_xy)
-        FN = len(gt_centers)
-        prec = TP / (TP + FP + 1e-8)
-        rec  = TP / (TP + FN + 1e-8)
-        f1   = 2 * prec * rec / (prec + rec + 1e-8)
-        return {"precision":prec, "recall":rec, "f1":f1, "median_err_px":np.nan,
-                "n_pred":len(pred_xy), "n_gt":len(gt_centers), "n_tp":0}
-    P = np.array(pred_xy, dtype=float)
+    P = np.array([(y,x) for y,x,_ in preds], dtype=float)
     G = np.array(gt_centers, dtype=float)
-    d2 = ((P[:, None, :] - G[None, :, :]) ** 2).sum(axis=2)
-    D = np.sqrt(d2)
-    row_ind, col_ind = linear_sum_assignment(D)
-    matches = []
-    unmatched_p = set(range(len(pred_xy)))
-    unmatched_g = set(range(len(gt_centers)))
-    for r, c in zip(row_ind, col_ind):
-        if D[r, c] <= match_radius:
-            matches.append((r, c, float(D[r, c])))
-            unmatched_p.discard(r)
-            unmatched_g.discard(c)
-    TP = len(matches)
-    FP = len(unmatched_p)
-    FN = len(unmatched_g)
+    if len(P)==0 or len(G)==0:
+        TP, FP, FN = 0, len(P), len(G)
+    else:
+        tree = cKDTree(G)
+        taken = np.zeros(len(G), dtype=bool)
+        TP = 0
+        for i, p in enumerate(P):
+            d, j = tree.query(p, distance_upper_bound=match_radius)
+            if np.isfinite(d) and j < len(G) and not taken[j]:
+                taken[j] = True
+                TP += 1
+        FP = len(P) - TP
+        FN = len(G) - TP
     prec = TP / (TP + FP + 1e-8)
-    rec  = TP / (TP + FN + 1e-8)
-    f1   = 2 * prec * rec / (prec + rec + 1e-8)
-    med_err = float(np.median([m[2] for m in matches])) if matches else np.nan
-    return {"precision":float(prec), "recall":float(rec), "f1":float(f1), "median_err_px":med_err,
-            "n_pred":len(pred_xy), "n_gt":len(gt_centers), "n_tp":TP}
+    rec = TP / (TP + FN + 1e-8)
+    f1 = 2*prec*rec/(prec+rec+1e-8)
+    return {"precision":float(prec), "recall":float(rec), "f1":float(f1),
+            "n_pred":len(P), "n_gt":len(G), "n_tp":TP}
+
 
 def energy_errors_np(energy_pred: np.ndarray,
                      energy_gt: np.ndarray,
@@ -802,10 +802,12 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
             out["dice_center"] = dice_center_sum / n
         if C >= 4:
             out["dice_energy"] = dice_energy_sum / n
+
         out["bound_f1_tol2"]   = boundF_sum / n_bound_valid if n_bound_valid > 0 else np.nan
         out["center_f1_r10"]    = centerF_sum / n_center_valid if n_center_valid > 0 else np.nan
         out["energy_rmse"]     = (energy_rmse_sum / energy_rmse_n) if energy_rmse_n > 0 else np.nan
         out["energy_pearson"]  = (energy_r_sum / energy_r_n) if energy_r_n > 0 else np.nan
+
         # anti-halo diagnostics
         out["ring_leak_cell"]   = ring_leak_cell_sum / n
         out["far_leak_cell"]    = far_leak_cell_sum / n
@@ -839,7 +841,10 @@ def train(
     lr=1e-3,
     weight_decay=1e-4,
     workers=8,
-    tile_size=512,
+    target: int = 512,
+    mode: Literal["pad_resize", "crop_well_resize", "tiles"] = "crop_well_resize",
+    camera_cfg=None,
+    scene_cfg=None,
     train_len=100_000,
     val_len=2000,
     seed=187,
@@ -867,6 +872,8 @@ def train(
         torch.cuda.set_device(local_rank)
 
     device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True
     is_rank0 = (ddp_rank() == 0)
 
     # seeds per-rank
@@ -879,13 +886,30 @@ def train(
     scaler = GradScaler(enabled=(use_amp and not use_bf16))
 
     # Data (keep Dataset simple; no special soft-boundary logic inside it)
-    train_ds = SimCellsDataset(length=train_len, tile_size=tile_size, rng_seed=seed,
-                               sim_fn=simulate_image, add_center=True, add_energy=True)
-    val_ds   = SimCellsDataset(length=val_len,  tile_size=tile_size, rng_seed=seed+1,
-                               sim_fn=simulate_image, add_center=True, add_energy=True)
+    if camera_cfg is None:
+        camera_cfg = default_camera()
+    if scene_cfg is None:
+        scene_cfg = default_scene()
+
+    train_ds = SimCellsDataset(
+        length=train_len,
+        mode=mode,
+        target=target,
+        rng_seed=seed,
+        camera_cfg=camera_cfg,
+        scene_cfg=scene_cfg,
+    )
+    val_ds = SimCellsDataset(
+        length=val_len,
+        mode=mode,
+        target=target,
+        rng_seed=seed + 1,
+        camera_cfg=camera_cfg,
+        scene_cfg=scene_cfg,
+    )
 
     train_sampler = DistributedSampler(train_ds, num_replicas=world_size, rank=local_rank, shuffle=True,  drop_last=True)  if distributed else None
-    val_sampler   = DistributedSampler(val_ds,   num_replicas=world_size, rank=local_rank, shuffle=False, drop_last=False) if distributed else None
+    val_sampler = DistributedSampler(val_ds, num_replicas=world_size, rank=local_rank, shuffle=False, drop_last=False) if distributed else None
 
     pin_mem = (device.type == "cuda")
     train_dl = DataLoader(train_ds, batch_size=batch_size,
@@ -894,11 +918,13 @@ def train(
                           num_workers=workers, pin_memory=pin_mem,
                           persistent_workers=(workers > 0),
                           worker_init_fn=worker_init_fn,
+                          prefetch_factor=4,
                           drop_last=True, collate_fn=collate_no_meta)
     val_dl   = DataLoader(val_ds, batch_size=batch_size,
                           shuffle=False, sampler=val_sampler,
                           num_workers=workers, pin_memory=pin_mem,
                           persistent_workers=(workers > 0),
+                          prefetch_factor=4,
                           drop_last=False, collate_fn=collate_no_meta)
 
     # Model: out_channels matches dataset targets (cell, boundary, center, energy)
@@ -928,7 +954,33 @@ def train(
     epoch_bar = _tqdm(range(1, epochs+1), desc="epochs", position=0, disable=not is_rank0)
 
     best_val = float("inf")
-    best_path = os.path.join(out_dir, f"best_{unet_mode}.pth")
+    
+    tag = f"{mode}_S{int(target)}_seed{int(seed)}"
+    best_path = os.path.join(out_dir, f"best_{unet_mode}_{tag}.pth")
+    log_path   = os.path.join(out_dir, f"log_{unet_mode}_{tag}.jsonl")
+
+    if is_rank0:
+        run_meta = {
+            "unet_mode": unet_mode,
+            "mode": mode,
+            "target": int(target),
+            "seed": int(seed),
+            "world_size": ddp_world_size(),
+            "epochs": int(epochs),
+            "batch_size_per_gpu": int(batch_size),
+            "lr": float(lr),
+            "weight_decay": float(weight_decay),
+            "amp": bool(amp),
+            "out_dir": out_dir,
+            "best_path": best_path,
+            "log_path": log_path,
+            "camera_cfg_name": getattr(camera_cfg, "name", None),
+            "scene_cfg": getattr(scene_cfg, "name", None),
+        }
+        if device.type == "cuda":
+            run_meta["gpu_name"] = torch.cuda.get_device_name(device)
+        with open(os.path.join(out_dir, f"run_meta_{unet_mode}_{tag}.json"), "w", encoding="utf-8") as f:
+            json.dump(run_meta, f, indent=2)
 
     for ep in epoch_bar:
 
@@ -965,7 +1017,8 @@ def train(
 
         if is_rank0:
             state = (model.module.state_dict() if hasattr(model, "module") else model.state_dict())
-            torch.save(state, os.path.join(out_dir, f"{unet_mode}_epoch_{ep}.pth"))
+            epoch_path = os.path.join(out_dir, f"{unet_mode}_{tag}_epoch_{ep}.pth")
+            torch.save(state, epoch_path)
             if va["loss"] < best_val:
                 best_val = va["loss"]
                 torch.save(state, best_path)
@@ -978,6 +1031,8 @@ def train(
                 "bs/gpu": batch_size,
                 "gpus": ddp_world_size(),
                 "w": str([round(w,3) for w in weights]),
+                "mode": mode,
+                "target": int(target),
             }
             # classic dice logs
             for k_alias, k in [("tr_d_cell","dice_cell"), ("tr_d_bound","dice_bound"),
@@ -989,7 +1044,7 @@ def train(
                 if k in va:
                     post[k_alias] = f"{va[k]:.3f}"
             # new metrics (val)
-            for k in ["bound_f1_tol2","center_f1_r5","energy_rmse","energy_pearson"]:
+            for k in ["bound_f1_tol2","center_f1_r10","energy_rmse","energy_pearson"]:
                 if k in va:
                     post[k] = f"{va[k]:.3f}"
 
@@ -1003,8 +1058,12 @@ def train(
                 "world_size": ddp_world_size(),
                 "batch_size_per_gpu": batch_size,
                 "weights": weights,
+                "mode": mode,
+                "target": int(target),
+                "unet_mode": unet_mode,
+                "checkpoint": epoch_path,
             }
-            with open(os.path.join(out_dir, f"log_{unet_mode}.jsonl"), "a", encoding="utf-8") as f:
+            with open(log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec) + "\n")
 
         stop_local = stopper.step(va["loss"])

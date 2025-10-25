@@ -24,7 +24,7 @@ from .segmenter import (
 
 from .segmentation import simulate_image
 
-from .models import Plate, WellImage
+from .structs import Plate, WellImage
 
 
 __all__ = [

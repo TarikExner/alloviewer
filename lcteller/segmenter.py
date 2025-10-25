@@ -401,8 +401,8 @@ class InstanceSegmenter:
 
         # --- 6) post-process: drop tiny shards and relabel compactly ---
         if self.cfg.min_instance_area > 0:
+            # this removes small pixel objects. This is mainly to keep the count consistent
             instances = morphology.remove_small_objects(instances, min_size=int(self.cfg.min_instance_area)).astype(np.int32)
-            instances = measure.label(instances > 0, connectivity=1).astype(np.int32)
 
         # push updated fields back
         if update_cell_mask:

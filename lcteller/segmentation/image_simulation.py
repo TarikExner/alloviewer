@@ -1,164 +1,528 @@
 import numpy as np
 from skimage import segmentation, morphology
+from scipy import ndimage as ndi
+
 
 def simulate_image(
-    N=512,
+    # --- size / geometry ---
+    H=512, W=512,
+    well_radius_frac=0.42,
+    well_center_jitter=0.02,
+
+    # --- radial look of the well ---
+    background_level=0.08,
+    edge_boost=0.25,
+    radial_gamma=1.2,
+    vignette_strength=0.20,
+
+    # --- color mix ---
+    bg_hue=0.25,             # 0=orange, 1=green
+
+    # --- cells (sharp ones inside the well) ---
     n_cells=150,
     cell_diameter=20,
     frac_positive=0.5,
-    background_level=0.02,
     color_jitter=0.07,
-    blur_sigma=1.2,
+    sigma_in=(0.5, 1.0),
+    sigma_out=(1.6, 3.2),    # used if focus_frac_in<1
+    focus_frac_in=1.0,       # default: draw sharp; ghosts carry the blur
+    in_focus_sigma_thresh=None,
+    boundary_width=1,
+
+    # crowd cells near the *outer* wall, but keep a filled center
+    rim_bias=0.85,
+    rim_band=0.12,
+    edge_clamp=0.65,
+
+    # --- collision / packing control ---
+    min_cell_sep_px=None,   # if None -> 0.9 * cell_diameter
+    rim_min_sep_px=4,
+    pack_iters=20,          # fewer iters thanks to vectorized packing
+    pack_strength=0.45,     # 0..1, how far to push per step
+    wall_margin_px=2.0,     # keep centers this far from the wall
+
+    # --- sidedness (pile-up on one side near the rim) ---
+    side_bias_enable=False,     # set True to activate
+    side_bias_theta=0.0,        # radians; 0=right, +pi/2=up, pi=left, -pi/2=down
+    side_bias_strength=0.75,    # 0..1 mixture with uniform (higher = stronger bias)
+    side_bias_kappa=5.0,        # von Mises concentration at the rim (higher = tighter)
+    side_bias_inner_frac=0.55,  # start fading bias below this fraction of R (center stays even)
+
+    # --- visual wall (soft rim) ---
+    wall_blur_sigma=12.0,
+    ring_artifacts=0,
+    ring_sigma_range=(6.0, 18.0),
+    ring_alpha_range=(0.03, 0.12),
+
+    # --- “ghost cells” OUTSIDE the well (big, elongated, not in masks) ---
+    ghost_enable=True,
+    ghost_density=0.50,      # fraction relative to number of rim cells
+    ghost_offset_px=10.0,
+    ghost_offset_jitter=6.0,
+    ghost_sigma=(2.5, 6.0),  # base sigma (minor axis)
+    ghost_dilate=1.0,
+    ghost_intensity=(0.8, 1.4),
+
+    # NEW: outward elongation and short trail
+    ghost_stretch=3.0,       # major/minor axis ratio (>1 stretches outward)
+    ghost_trail=3,           # number of faded lobes outward
+    ghost_trail_decay=0.6,   # amplitude decay per lobe (0..1)
+
+    # --- debris INSIDE the well (small + dim) ---
+    dirt_density=0.0007,
+    dirt_size=(2, 4),
+    dirt_sigma=(1.2, 2.0),
+    dirt_alpha=(0.01, 0.04),
+
+    # --- noise / camera ---
+    blur_sigma_global=0.0,
     photon_level=2500,
+    read_noise=0.003,
+
+    # --- radial reflections on the wall (outside the well) ---
+    reflect_enable=True,
+    reflect_n=6,                 # number of streak groups
+    reflect_theta_sigma=0.10,    # angular width of a streak (radians)
+    reflect_radial_sigma=8.0,    # radial softness (pixels)
+    reflect_offset_range=(6.0, 24.0),   # how far outside R the streak sits
+    reflect_alpha_range=(0.05, 0.20),   # strength
+    reflect_wobble=0.35,         # small angular wiggle per streak (radians)
+    reflect_harmonics=2,         # add faint copies to get a comb feel
+    reflect_harmonic_decay=0.55, # falloff for those copies
+
     seed=None,
     return_targets=True,
-    boundary_width=2,
 ):
     """
     Returns:
-      image: (N, N, 3) float32 in [0,1]
-      meta: dict with centers, labels(1=orange,0=green), radius, params
+      image: (H, W, 3) float32 in [0,1]
+      meta: dict (centers, labels, well_center, radius_px, final_sigmas)
       targets (if return_targets):
-        {
-          "instance_labels": int32 (N,N) 0=bg, 1..K cells
-          "cell_mask": float32 (N,N) in {0,1}
-          "boundary": float32 (N,N) in {0,1}  (inside cell union)
-        }
+        instance_labels: int32 (H,W) 0=bg, 1..K for *all inside-well cells*
+        cell_mask: float32 (H,W) 1 for in-focus cells only
+        boundary: float32 (H,W)
     """
     rng = np.random.default_rng(seed)
-    H = W = int(N)
-    rad = max(2, int(round(cell_diameter / 2)))
+    H = int(H)
+    W = int(W)
 
-    base_orange = np.array([1.00, 0.62, 0.08], dtype=np.float32)
-    base_green  = np.array([0.05, 0.95, 0.35], dtype=np.float32)
+    # ---------- fast blur helper (SciPy) ----------
+    def blur(a, sigma):
+        if sigma is None or sigma <= 0:
+            return a
+        if a.ndim == 2:
+            return ndi.gaussian_filter(a, sigma=float(sigma), mode='reflect')
+        elif a.ndim == 3:
+            return ndi.gaussian_filter(a, sigma=(float(sigma), float(sigma), 0.0), mode='reflect')
+        else:
+            return a
 
-    img = np.full((H, W, 3), background_level, dtype=np.float32)
-
-    # Pure disk kernel
-    yx = np.mgrid[-rad:rad+1, -rad:rad+1]
-    rr = np.sqrt(yx[0]**2 + yx[1]**2)
-    disk = (rr <= rad).astype(np.float32)
-
-    # Labels (phenotype)
-    n_pos = int(round(frac_positive * n_cells))
-    labels = np.array([1]*n_pos + [0]*(n_cells - n_pos))
-    rng.shuffle(labels)
-
-    # Place centers (light overlap avoidance)
-    centers = []
-    max_tries = 50 * n_cells
-    tries = 0
-    while len(centers) < n_cells and tries < max_tries:
-        tries += 1
-        cy = rng.integers(rad+1, H - rad - 1)
-        cx = rng.integers(rad+1, W - rad - 1)
-        ok = True
-        for (py, px) in centers[-30:]:
-            if (py - cy)**2 + (px - cx)**2 < (1.2*rad)**2:
-                ok = False
-                break
-        if ok:
-            centers.append((int(cy), int(cx)))
-    while len(centers) < n_cells:
-        cy = rng.integers(rad+1, H - rad - 1)
-        cx = rng.integers(rad+1, W - rad - 1)
-        centers.append((int(cy), int(cx)))
-
-    # jitter color
+    # ---------- helpers ----------
     def jitter_color(base_rgb):
-        jitter = rng.normal(1.0, color_jitter, size=3).astype(np.float32)
-        c = (base_rgb * jitter).clip(0, 1)
+        j = rng.normal(1.0, color_jitter, size=3).astype(np.float32)
+        c = (base_rgb * j).clip(0, 1)
         scale = np.linalg.norm(base_rgb) / max(1e-6, np.linalg.norm(c))
         return (c * scale).clip(0, 1)
 
-    # --- Ground-truth instance labels (nearest-center within disks) ---
-    inst = np.zeros((H, W), dtype=np.int32)
-    bestd = np.full((H, W), np.inf, dtype=np.float32)
-    r = int(rad)
-    yy, xx = np.mgrid[-r:r+1, -r:r+1]
-    rr_patch = np.sqrt(yy**2 + xx**2)
-    inside = rr_patch <= r + 1e-6
+    base_orange = np.array([1.00, 0.62, 0.08], dtype=np.float32)
+    base_green  = np.array([0.05, 0.95, 0.35], dtype=np.float32)
+    bg_color = ((1.0 - bg_hue) * base_orange + bg_hue * base_green).astype(np.float32)
 
-    for k, (cy, cx) in enumerate(centers, start=1):
-        y0, y1 = cy - r, cy + r + 1
-        x0, x1 = cx - r, cx + r + 1
+    # ---------- grids / well ----------
+    yy, xx = np.mgrid[0:H, 0:W]
+    cy = H/2 + rng.normal(0, well_center_jitter * min(H, W))
+    cx = W/2 + rng.normal(0, well_center_jitter * min(H, W))
+    rr = np.sqrt((yy - cy)**2 + (xx - cx)**2)
+    R = well_radius_frac * min(H, W)
+    inside = rr <= R
+    r_norm = np.clip(rr / R, 0, 1)
+
+    illum = r_norm**radial_gamma
+    bg_inside = (background_level + edge_boost * illum).astype(np.float32)
+    img = (bg_inside[..., None] * bg_color[None, None, :]).astype(np.float32)
+
+    # vignette
+    ry = (yy - H/2) / (0.5 * H)
+    rx = (xx - W/2) / (0.5 * W)
+    v = np.sqrt(rx**2 + ry**2)
+    img *= (1.0 - vignette_strength * (v**2))[..., None].clip(0.65, 1.0).astype(np.float32)
+
+    # soft wall glow (background only)
+    rim = np.exp(-((rr - R)**2) / (2 * (0.8)**2)).astype(np.float32)
+    rim = blur(rim, wall_blur_sigma)
+    rim = (rim / (rim.max() + 1e-8))
+    img += (0.06 * rim)[..., None] * bg_color[None, None, :]
+
+    if ring_artifacts > 0:
+        rings = np.zeros((H, W), dtype=np.float32)
+        for _ in range(int(ring_artifacts)):
+            r_shift = rng.uniform(-0.04, 0.06) * R
+            sig = rng.uniform(*ring_sigma_range)
+            a = rng.uniform(*ring_alpha_range)
+            ring = np.exp(-((rr - (R + r_shift))**2) / (2 * 1.0**2))
+            ring = blur(ring, sig)
+            ring /= ring.max() + 1e-8
+            rings += a * ring
+        img += rings[..., None] * bg_color[None, None, :]
+
+    # small background texture inside the well
+    tex = rng.normal(0, 1.0, size=(H, W)).astype(np.float32)
+    tex = blur(tex, 6.0)
+    tex = (tex - tex.min()) / (tex.ptp() + 1e-8)
+    tex = 0.92 + 0.16 * tex
+    img[inside] *= tex[inside, None].astype(np.float32)
+
+    # ---------- place sharp cells inside the well ----------
+    rad = max(2, int(round(cell_diameter / 2)))
+    n_pos = int(round(frac_positive * n_cells))
+    labels = np.array([1]*n_pos + [0]*(n_cells - n_pos), dtype=np.int32)
+    rng.shuffle(labels)
+
+    # area-uniform radius sampling with optional rim pull
+    def sample_radius():
+        a = (1.0 - rim_band) * R
+        if rng.random() < rim_bias:
+            # [a, R] uniform by area
+            r = np.sqrt(a*a + rng.random() * (R*R - a*a))
+            if edge_clamp > 0:
+                r = (1.0 - edge_clamp) * r + edge_clamp * R
+                r -= rng.uniform(0.0, 0.02 * rim_band * R)  # jitter
+        else:
+            r = a * np.sqrt(rng.random())
+        return float(np.clip(r, 0.05*R, 0.985*R))
+
+    def sample_theta(r):
+        """Angle with sidedness near rim; fades to uniform toward center."""
+        if not side_bias_enable:
+            return rng.uniform(-np.pi, np.pi)
+        f0 = float(np.clip(side_bias_inner_frac, 0.0, 0.99))
+        w_rad = np.clip((r / R - f0) / (1.0 - f0 + 1e-6), 0.0, 1.0)
+        if w_rad <= 0:
+            return rng.uniform(-np.pi, np.pi)
+        kappa = max(1e-3, side_bias_kappa * w_rad)
+        mix_p = np.clip(side_bias_strength * w_rad, 0.0, 1.0)
+        if rng.random() < mix_p:
+            return rng.vonmises(side_bias_theta, kappa)
+        else:
+            return rng.uniform(-np.pi, np.pi)
+
+    centers = []
+    is_rim = []
+    tries, max_tries = 0, 400 * n_cells
+    while len(centers) < n_cells and tries < max_tries:
+        tries += 1
+        r_s = sample_radius()
+        th = sample_theta(r_s)
+        y = int(round(cy + r_s * np.sin(th)))
+        x = int(round(cx + r_s * np.cos(th)))
+        if not (rad < y < H - rad - 1 and rad < x < W - rad - 1):
+            continue
+
+        # enforce spacing only for rim-band points (sampling-time hint)
+        rim_inner = (1.0 - rim_band) * R
+        is_this_rim = (r_s >= rim_inner)
+        ok = True
+        if is_this_rim and rim_min_sep_px > 0:
+            for (py, px), rim_flag in zip(centers[-200:], is_rim[-200:]):
+                if rim_flag:
+                    if (py - y)**2 + (px - x)**2 < rim_min_sep_px**2:
+                        ok = False
+                        break
+        if ok:
+            centers.append((y, x))
+            is_rim.append(is_this_rim)
+
+    while len(centers) < n_cells:
+        y = rng.integers(rad+1, H-rad-1)
+        x = rng.integers(rad+1, W-rad-1)
+        centers.append((int(y), int(x)))
+        is_rim.append(False)
+
+    # ---------- resolve overlaps: push-apart circle packing (vectorized) ----------
+    min_sep = float(min_cell_sep_px if min_cell_sep_px is not None else 0.9 * cell_diameter)
+    min_sep = max(2.0, min_sep)
+    max_r_center = max(0.0, R - wall_margin_px - rad)
+
+    cf = np.array(centers, dtype=np.float32)  # (N, 2): (y, x)
+    eps = 1e-6
+    N = cf.shape[0]
+
+    for _ in range(int(pack_iters)):
+        # pairwise vectors v_ij = c_i - c_j
+        v = cf[:, None, :] - cf[None, :, :]            # (N, N, 2)
+        d = np.sqrt((v**2).sum(axis=2)) + eps          # (N, N)
+        M = (d < min_sep) & (d > 0)
+
+        if not M.any():
+            break
+
+        u = v / d[..., None]                            # unit dir (N, N, 2)
+        overlap = (min_sep - d) * M                     # (N, N)
+        disp = (u * overlap[..., None]).sum(axis=1)     # (N, 2)
+
+        cf += (pack_strength * 0.5) * disp
+
+        # keep inside bounds
+        cf[:, 0] = np.clip(cf[:, 0], rad+1, H - rad - 2)
+        cf[:, 1] = np.clip(cf[:, 1], rad+1, W - rad - 2)
+
+        # keep inside well margin
+        vy = cf[:, 0] - cy
+        vx = cf[:, 1] - cx
+        rr_c = np.sqrt(vy*vy + vx*vx) + eps
+        too_far = rr_c > max_r_center
+        if max_r_center > 0 and np.any(too_far):
+            s = (max_r_center / rr_c[too_far]).astype(np.float32)
+            cf[too_far, 0] = cy + vy[too_far] * s
+            cf[too_far, 1] = cx + vx[too_far] * s
+
+    centers = [(int(round(y)), int(round(x))) for (y, x) in cf]
+
+    # ---------- instance map (fast paint) ----------
+    inst = np.zeros((H, W), dtype=np.int32)
+    r = int(rad)
+    yy_p, xx_p = np.mgrid[-r:r+1, -r:r+1]
+    disk_mask = (yy_p**2 + xx_p**2) <= r*r
+
+    for k_id, (y, x) in enumerate(centers, start=1):
+        y0, y1 = y - r, y + r + 1
+        x0, x1 = x - r, x + r + 1
+        if y1 <= 0 or x1 <= 0 or y0 >= H or x0 >= W:
+            continue
         y0c, y1c = max(0, y0), min(H, y1)
         x0c, x1c = max(0, x0), min(W, x1)
         sy0, sy1 = y0c - y0, y1c - y0
         sx0, sx1 = x0c - x0, x1c - x0
 
-        rr_sub = rr_patch[sy0:sy1, sx0:sx1]
-        inside_sub = inside[sy0:sy1, sx0:sx1]
-        pd = bestd[y0c:y1c, x0c:x1c]
-        better = np.logical_and(inside_sub, rr_sub < pd)
-        pd[better] = rr_sub[better]
-        inst[y0c:y1c, x0c:x1c][better] = k
+        m = disk_mask[sy0:sy1, sx0:sx1]
+        sl = (slice(y0c, y1c), slice(x0c, x1c))
+        write_mask = m & (rr[y0c:y1c, x0c:x1c] <= R)
+        # last-writer-wins is fine because we enforced min_sep
+        inst[sl] = np.where(write_mask, k_id, inst[sl])
 
-    cell_mask = (inst > 0)
+    # ---------- render sharp cells ----------
+    final_sigmas = np.zeros(n_cells, dtype=np.float32)
 
-    # Boundary from instances
-    boundary = segmentation.find_boundaries(inst, mode="thick")
+    for k_id, (y, x) in enumerate(centers):
+        base_col = base_orange if labels[k_id] == 1 else base_green
+        col = jitter_color(base_col)
+        sig = rng.uniform(*sigma_in) if rng.random() < focus_frac_in else rng.uniform(*sigma_out)
+        final_sigmas[k_id] = sig
+
+        radius = int(np.ceil(max(2, 0.5 * cell_diameter + 3 * sig)))
+        yx = np.mgrid[-radius:radius+1, -radius:radius+1]
+        g = np.exp(-(yx[0]**2 + yx[1]**2) / (2 * (cell_diameter/6 + sig)**2)).astype(np.float32)
+        g /= g.max() + 1e-8
+        amp = float(rng.uniform(0.9, 1.1))
+
+        y0, y1 = y - radius, y + radius + 1
+        x0, x1 = x - radius, x + radius + 1
+        y0c, y1c = max(0, y0), min(H, y1)
+        x0c, x1c = max(0, x0), min(W, x1)
+        sy0, sy1 = y0c - y0, y1c - y0
+        sx0, sx1 = x0c - x0, x1c - x0
+        img[y0c:y1c, x0c:x1c, :] += amp * g[sy0:sy1, sx0:sx1][..., None] * col[None, None, :]
+
+    # ---------- elongated ghosts OUTSIDE the wall (not in masks) ----------
+    def draw_elliptical_gaussian(dst, gy, gx, sig_minor, stretch, angle_rad, amp, col):
+        sig_x = sig_minor * stretch
+        sig_y = sig_minor
+        radius = int(np.ceil(ghost_dilate * (0.5 * cell_diameter + 3 * max(sig_x, sig_y))))
+        yy_l, xx_l = np.mgrid[-radius:radius+1, -radius:radius+1].astype(np.float32)
+        ca, sa = np.cos(angle_rad), np.sin(angle_rad)
+        xr =  ca*xx_l + sa*yy_l
+        yr = -sa*xx_l + ca*yy_l
+        g = np.exp(-0.5 * ((xr/sig_x)**2 + (yr/sig_y)**2)).astype(np.float32)
+        g /= g.max() + 1e-8
+        y0, y1 = gy - radius, gy + radius + 1
+        x0, x1 = gx - radius, gx + radius + 1
+        if y1 <= 0 or x1 <= 0 or y0 >= H or x0 >= W: return
+        y0c, y1c = max(0, y0), min(H, y1)
+        x0c, x1c = max(0, x0), min(W, x1)
+        sy0, sy1 = y0c - y0, y1c - y0
+        sx0, sx1 = x0c - x0, x1c - x0
+        dst[y0c:y1c, x0c:x1c, :] += amp * g[sy0:sy1, sx0:sx1][..., None] * col[None, None, :]
+
+    if ghost_enable and ghost_density > 0:
+        rim_idx = [i for i, flag in enumerate(is_rim) if flag]
+        if rim_idx:
+            n_ghost = max(1, int(len(rim_idx) * ghost_density))
+            pick = rng.choice(rim_idx, size=n_ghost, replace=True)
+            for i in pick:
+                ang = np.arctan2(centers[i][0] - cy, centers[i][1] - cx)
+                roff = max(1.0, rng.normal(ghost_offset_px, ghost_offset_jitter))
+                base_y = int(round(cy + (R + roff) * np.sin(ang)))
+                base_x = int(round(cx + (R + roff) * np.cos(ang)))
+                base_col = base_green if labels[i] == 0 else base_orange
+                col = jitter_color(base_col)
+
+                sig0 = rng.uniform(*ghost_sigma)
+
+                amp0 = float(rng.uniform(*ghost_intensity))
+                draw_elliptical_gaussian(img, base_y, base_x, sig0, ghost_stretch, ang, amp0, col)
+
+                step = max(2.0, 0.6 * cell_diameter)  # outward spacing per lobe
+                amp = amp0 * ghost_trail_decay
+                for t in range(1, int(ghost_trail)):
+                    gy = int(round(base_y + t * step * np.sin(ang)))
+                    gx = int(round(base_x + t * step * np.cos(ang)))
+                    sig_t = sig0 * (1.0 + 0.4*t)  # grow a bit along the trail
+                    draw_elliptical_gaussian(img, gy, gx, sig_t, ghost_stretch, ang, amp, col)
+                    amp *= ghost_trail_decay
+
+    # --- RADIAL REFLECTIONS (outside the well) ---
+    if reflect_enable and reflect_n > 0:
+        ang = np.arctan2(yy - cy, xx - cx)  # [-pi, pi]
+
+        def angle_wrap(a):
+            return (a + np.pi) % (2*np.pi) - np.pi
+
+        refl = np.zeros((H, W), dtype=np.float32)
+
+        for _ in range(int(reflect_n)):
+            theta0 = rng.uniform(-np.pi, np.pi)
+            theta0 += rng.normal(0, reflect_wobble)
+            r_off  = rng.uniform(*reflect_offset_range)
+            alpha  = rng.uniform(*reflect_alpha_range)
+            radial_term = np.exp(-((rr - (R + r_off))**2) / (2 * reflect_radial_sigma**2))
+            angular_term = np.exp(-(angle_wrap(ang - theta0)**2) / (2 * reflect_theta_sigma**2))
+            base = radial_term * angular_term
+
+            comb = base.copy()
+            th_sig = reflect_theta_sigma
+            for h in range(1, int(reflect_harmonics) + 1):
+                decay = reflect_harmonic_decay**h
+                comb += decay * np.exp(-(angle_wrap(ang - (theta0 + h*th_sig*2.0))**2) / (2 * th_sig**2)) * radial_term
+                comb += decay * np.exp(-(angle_wrap(ang - (theta0 - h*th_sig*2.0))**2) / (2 * th_sig**2)) * radial_term
+
+            refl += alpha * comb
+
+        outside = rr > R
+        refl = np.clip(refl / (refl.max() + 1e-8), 0, 1)
+        img[outside, 0] += (refl[outside] * bg_color[0] * 0.9).astype(np.float32)
+        img[outside, 1] += (refl[outside] * bg_color[1] * 0.9).astype(np.float32)
+        img[outside, 2] += (refl[outside] * bg_color[2] * 0.9).astype(np.float32)
+
+    # ---------- debris (small, dim) — irregular blobs, INSIDE the well only ----------
+    inside_idx = np.flatnonzero(inside.ravel())
+    if inside_idx.size > 0:
+        n_dirt = int(inside.sum() * float(dirt_density))
+        for _ in range(n_dirt):
+            idx = int(rng.choice(inside_idx))
+            ry, rx = divmod(idx, W)
+
+            rad_d = int(rng.integers(dirt_size[0], dirt_size[1] + 1))
+            patch_r = max(3, int(rad_d * rng.uniform(1.0, 1.6)))
+            y0, y1 = ry - patch_r, ry + patch_r + 1
+            x0, x1 = rx - patch_r, rx + patch_r + 1
+            if y1 <= 0 or x1 <= 0 or y0 >= H or x0 >= W:
+                continue
+
+            y0c, y1c = max(0, y0), min(H, y1)
+            x0c, x1c = max(0, x0), min(W, x1)
+            sy0, sy1 = y0c - y0, y1c - y0
+            sx0, sx1 = x0c - x0, x1c - x0
+
+            mask_in = inside[y0c:y1c, x0c:x1c]
+            if mask_in.sum() == 0:
+                continue
+            if mask_in.mean() < 0.25 and rng.random() < 0.7:
+                continue
+
+            ps_h = (y1 - y0); ps_w = (x1 - x0)
+            noise = rng.normal(0.0, 1.0, size=(ps_h, ps_w)).astype(np.float32)
+            base_sig = rng.uniform(0.8, 1.6)
+            field = blur(noise, base_sig)
+
+            thr = np.percentile(field, rng.uniform(72.0, 90.0))
+            blob = (field > thr)
+
+            yy_l, xx_l = np.mgrid[y0:y1, x0:x1]
+            dy = yy_l - ry; dx = xx_l - rx
+            r2 = (dy*dy + dx*dx).astype(np.float32)
+            mask_center = r2 <= (rad_d * rad_d * rng.uniform(0.9, 1.4))
+            blob = np.logical_and(blob, mask_center)
+
+            r1 = int(rng.integers(0, 2))   # 0 or 1
+            r2c = int(rng.integers(0, 2))  # 0 or 1
+            if r1 > 0:
+                blob = morphology.binary_opening(blob, footprint=morphology.disk(r1))
+            if r2c > 0:
+                blob = morphology.binary_closing(blob, footprint=morphology.disk(r2c))
+
+            if not blob.any():
+                continue
+
+            sig_edge = rng.uniform(*dirt_sigma)
+            alpha_soft = blur(blob.astype(np.float32), sig_edge)
+            alpha_soft = alpha_soft / (alpha_soft.max() + 1e-8)
+
+            a = rng.uniform(*dirt_alpha)
+            alpha_map = (a * alpha_soft).astype(np.float32)
+
+            h = float(rng.uniform(0.0, 1.0))  # 0=orange, 1=green
+            base_mix = ((1.0 - h) * base_orange + h * base_green).astype(np.float32)
+            bright = float(0.85 + 0.3 * rng.random())
+            col = (bright * base_mix).clip(0.0, 1.0).astype(np.float32)
+
+            alpha_local = alpha_map[sy0:sy1, sx0:sx1] * mask_in.astype(np.float32)
+            if alpha_local.max() <= 0:
+                continue
+
+            sl = (slice(y0c, y1c), slice(x0c, x1c))
+            img[sl + (slice(None),)] += alpha_local[..., None] * col[None, None, :]
+
+    # optional global blur
+    if blur_sigma_global and blur_sigma_global > 0:
+        img = blur(img, float(blur_sigma_global))
+
+    img = np.clip(img, 0, 1).astype(np.float32)
+
+    # ---------- camera noise ----------
+    counts = (img * photon_level).astype(np.float32)
+    noised = rng.poisson(counts).astype(np.float32) / max(1.0, photon_level)
+    noised += rng.normal(0.0, read_noise, size=noised.shape).astype(np.float32)
+    noised = np.clip(noised, 0, 1).astype(np.float32)
+
+    # ---------- targets ----------
+    if in_focus_sigma_thresh is None:
+        in_focus_sigma_thresh = 1.15 * max(sigma_in)
+
+    inst_all = inst.astype(np.int32)
+    final_sigmas = np.array([max(sigma_in) for _ in range(n_cells)], dtype=np.float32)
+    keep_ids = set(range(1, n_cells+1))
+    inst_in = np.where(np.vectorize(lambda v: v in keep_ids)(inst_all), inst_all, 0).astype(np.int32)
+    cell_mask = (inst_in > 0)
+
+    boundary = segmentation.find_boundaries(inst_in, mode="thick")
     if boundary_width and boundary_width > 1:
         boundary = morphology.binary_dilation(boundary, morphology.disk(int(boundary_width)))
     boundary = np.logical_and(boundary, cell_mask)
 
-    # --- Render image (flat disks), then blur+noise ---
-    for k, (cy, cx) in enumerate(centers):
-        col = jitter_color(base_orange if labels[k] == 1 else base_green)
-        amp = float(rng.uniform(0.95, 1.05))
-        y0, y1 = cy - r, cy + r + 1
-        x0, x1 = cx - r, cx + r + 1
-        patch = amp * disk[..., None] * col[None, None, :]
-        y0c, y1c = max(0, y0), min(H, y1)
-        x0c, x1c = max(0, x0), min(W, x1)
-        sy0, sy1 = y0c - y0, y1c - y0
-        sx0, sx1 = x0c - x0, x1c - x0
-        img[y0c:y1c, x0c:x1c, :] += patch[sy0:sy1, sx0:sx1, :]
-
-    if blur_sigma and blur_sigma > 0:
-        def gaussian_kernel1d(sigma, radius=None):
-            if radius is None:
-                radius = int(np.ceil(3*sigma))
-            x = np.arange(-radius, radius+1, dtype=np.float32)
-            k = np.exp(-(x**2)/(2*sigma**2))
-            k /= k.sum()
-            return k
-        def sep_conv(a, sigma):
-            k = gaussian_kernel1d(sigma)
-            pad = len(k)//2
-            tmp = np.pad(a, ((0,0),(pad,pad),(0,0)), mode='reflect')
-            out = np.empty_like(a)
-            for i in range(a.shape[1]):
-                out[:, i, :] = np.tensordot(tmp[:, i:i+len(k), :], k, axes=([1],[0]))
-            tmp2 = np.pad(out, ((pad,pad),(0,0),(0,0)), mode='reflect')
-            out2 = np.empty_like(a)
-            for j in range(a.shape[0]):
-                out2[j, :, :] = np.tensordot(tmp2[j:j+len(k), :, :], k, axes=([0],[0]))
-            return out2
-        img = sep_conv(img, float(blur_sigma))
-
-    counts = (img.clip(0, 1) * photon_level).astype(np.float32)
-    noised = rng.poisson(counts).astype(np.float32) / max(1.0, photon_level)
-    noised += rng.normal(0.0, 0.003, size=noised.shape).astype(np.float32)
-    noised = np.clip(noised, 0, 1).astype(np.float32)
+    targets = {
+        "instance_labels": inst_all,
+        "cell_mask": cell_mask.astype(np.float32),
+        "boundary": boundary.astype(np.float32),
+    } if return_targets else {}
 
     meta = {
         "centers": centers,
-        "labels": labels,  # 1=orange, 0=green
-        "radius": rad,
+        "labels": labels,
+        "final_sigmas": final_sigmas,
+        "well_center": (float(cy), float(cx)),
+        "radius_px": float(R),
         "params": dict(
-            N=N, n_cells=n_cells, cell_diameter=cell_diameter,
-            frac_positive=frac_positive, seed=seed
+            H=H, W=W, bg_hue=bg_hue, seed=seed,
+            ghost_stretch=ghost_stretch,
+            rim_min_sep_px=rim_min_sep_px,
+            min_cell_sep_px=min_cell_sep_px,
+            side_bias_enable=side_bias_enable,
+            side_bias_theta=float(side_bias_theta),
+            side_bias_strength=float(side_bias_strength),
+            side_bias_kappa=float(side_bias_kappa),
+            side_bias_inner_frac=float(side_bias_inner_frac),
         ),
     }
 
-    if return_targets:
-        targets = {
-            "instance_labels": inst.astype(np.int32),
-            "cell_mask": cell_mask.astype(np.float32),
-            "boundary": boundary.astype(np.float32),
-        }
-    else:
-        targets = {}
-
     return noised, meta, targets
+
