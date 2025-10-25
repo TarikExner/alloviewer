@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.distributed as dist
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset, Subset
 from torch.utils.data.distributed import DistributedSampler
 from torch.amp import autocast, GradScaler
 from tqdm.auto import tqdm
@@ -18,10 +18,10 @@ from skimage.morphology import skeletonize
 
 from scipy import ndimage as ndi
 import cv2
-from scipy.optimize import linear_sum_assignment
 
 from . import (
-    SimCellsDataset, simulate_image,
+    SimCellsDataset,
+    DiskSimCellsDataset,
     build_unet_cpu_small, build_unet_cpu_medium, build_unet_cpu_large
 )
 from .config import default_camera, default_scene
@@ -818,10 +818,88 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
     return out
 
 
+def _discover_h5_paths(h5_path: str) -> list[str]:
+    if os.path.isdir(h5_path):
+        files = sorted(glob.glob(os.path.join(h5_path, "*.h5")))
+        if not files:
+            raise FileNotFoundError(f"No .h5 files found in directory: {h5_path}")
+        return files
+    if os.path.isfile(h5_path):
+        return [h5_path]
+    raise FileNotFoundError(f"h5_path not found: {h5_path}")
+
+def _probe_total_len(h5_paths: list[str]) -> int:
+    tot = 0
+    for p in h5_paths:
+        with h5py.File(p, "r", libver="latest", swmr=True) as f:
+            if "imgs" not in f:
+                raise KeyError(f"'imgs' dataset missing in {p}")
+            tot += int(f["imgs"].shape[0])
+    return tot
+
+def build_h5_loaders(
+    h5_path: str,
+    batch_size: int,
+    workers: int,
+    seed: int,
+    train_len: int,
+    val_len: int,
+    distributed: bool,
+    device: torch.device,
+):
+    # discover files and build a concatenated base dataset
+    h5_paths = _discover_h5_paths(h5_path)
+    base_ds = ConcatDataset([DiskSimCellsDataset(p) for p in h5_paths])
+    N = len(base_ds)
+    if N == 0:
+        raise RuntimeError("Empty HDF5 dataset (no samples).")
+
+    # split by shuffled indices (deterministic per seed)
+    rng = np.random.RandomState(seed)
+    perm = rng.permutation(N)
+
+    v_n = min(int(val_len), N)
+    t_n = min(int(train_len), max(0, N - v_n))
+    if t_n + v_n > N:
+        v_n = min(v_n, N - t_n)
+
+    train_idx = perm[:t_n]
+    val_idx   = perm[t_n:t_n + v_n]
+
+    train_ds = Subset(base_ds, train_idx)
+    val_ds = Subset(base_ds, val_idx)
+
+    # samplers for DDP
+    train_sampler = DistributedSampler(train_ds, shuffle=True,  drop_last=True)  if distributed else None
+    val_sampler   = DistributedSampler(val_ds,   shuffle=False, drop_last=False) if distributed else None
+
+    pin_mem = (device.type == "cuda")
+    train_dl = DataLoader(
+        train_ds, batch_size=batch_size,
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
+        num_workers=workers, pin_memory=pin_mem,
+        persistent_workers=(workers > 0),
+        prefetch_factor=2,
+        drop_last=True,
+        collate_fn=collate_no_meta,
+    )
+    val_dl = DataLoader(
+        val_ds, batch_size=batch_size,
+        shuffle=False, sampler=val_sampler,
+        num_workers=workers, pin_memory=pin_mem,
+        persistent_workers=(workers > 0),
+        prefetch_factor=2,
+        drop_last=False,
+        collate_fn=collate_no_meta,
+    )
+    return train_ds, val_ds, train_dl, val_dl
+
 # --------------------- main train() ---------------------
 
 def train(
     out_dir="./models/",
+    h5_path="./image_datasets/",
     epochs=500,
     batch_size=64,                 # per-GPU batch
     lr=1e-3,
@@ -877,41 +955,18 @@ def train(
     if scene_cfg is None:
         scene_cfg = default_scene()
 
-    train_ds = SimCellsDataset(
-        length=train_len,
-        mode=mode,
-        target=target,
-        rng_seed=seed,
-        camera_cfg=camera_cfg,
-        scene_cfg=scene_cfg,
+    train_ds, val_ds, train_dl, val_dl = build_h5_loaders(
+        h5_path=h5_path,
+        batch_size=batch_size,
+        workers=workers,
+        seed=seed,
+        train_len=train_len,
+        val_len=val_len,
+        distributed=distributed,
+        device=device,
     )
-    val_ds = SimCellsDataset(
-        length=val_len,
-        mode=mode,
-        target=target,
-        rng_seed=seed + 1,
-        camera_cfg=camera_cfg,
-        scene_cfg=scene_cfg,
-    )
-
     train_sampler = DistributedSampler(train_ds, num_replicas=world_size, rank=local_rank, shuffle=True,  drop_last=True)  if distributed else None
     val_sampler = DistributedSampler(val_ds, num_replicas=world_size, rank=local_rank, shuffle=False, drop_last=False) if distributed else None
-
-    pin_mem = (device.type == "cuda")
-    train_dl = DataLoader(train_ds, batch_size=batch_size,
-                          shuffle=(train_sampler is None),
-                          sampler=train_sampler,
-                          num_workers=workers, pin_memory=pin_mem,
-                          persistent_workers=(workers > 0),
-                          worker_init_fn=worker_init_fn,
-                          prefetch_factor=4,
-                          drop_last=True, collate_fn=collate_no_meta)
-    val_dl   = DataLoader(val_ds, batch_size=batch_size,
-                          shuffle=False, sampler=val_sampler,
-                          num_workers=workers, pin_memory=pin_mem,
-                          persistent_workers=(workers > 0),
-                          prefetch_factor=4,
-                          drop_last=False, collate_fn=collate_no_meta)
 
     # Model: out_channels matches dataset targets (cell, boundary, center, energy)
     n_out = 4

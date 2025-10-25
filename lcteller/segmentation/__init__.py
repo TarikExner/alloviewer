@@ -4,7 +4,7 @@ from .unet import (UNetOptimized,
                   build_unet_cpu_large)
 
 from .image_simulation import simulate_image
-from .image_dataset import SimCellsDataset
+from .image_dataset import SimCellsDataset, DiskSimCellsDataset
 
 __all__ = [
     "UNetOptimized",
@@ -12,5 +12,6 @@ __all__ = [
     "build_unet_cpu_medium",
     "build_unet_cpu_large",
     "simulate_image",
-    "SimCellsDataset"
+    "SimCellsDataset",
+    "DiskSimCellsDataset"
 ]

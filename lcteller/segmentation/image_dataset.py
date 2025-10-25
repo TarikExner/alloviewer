@@ -3,12 +3,16 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 import cv2
+import json
+import h5py
 from scipy import ndimage as ndi
 from skimage import filters, measure, morphology, exposure
 from skimage.segmentation import relabel_sequential
 
 from . import simulate_image
 from .config import INT_KEYS, PASS_THROUGH_RANGES
+
+from typing import Optional, Sequence
 
 
 def _resize_map(x, side, mode="image"):
@@ -194,7 +198,7 @@ class SimCellsDataset(Dataset):
         mode="pad_resize",            # "pad_resize" | "crop_well_resize" | "tiles"
         target=512,
         tiles_per_image=4,            # used if mode="tiles"
-        tile_overlap=128,             # (kept for future eval tiler)
+        tile_overlap=64,              # (kept for future eval tiler)
         boundary_ring_width=1,
         boundary_soft_band=2,
         boundary_sigma=1.0,
@@ -403,4 +407,95 @@ class SimCellsDataset(Dataset):
         }
 
         return torch.from_numpy(img_c.copy()), torch.from_numpy(tgt.copy()), extras
+
+class DiskSimCellsDataset(Dataset):
+    """
+    Read-only dataset for HDF5 files produced by create_dataset_h5/export_to_prealloc_h5_safe.
+
+    Expects datasets:
+      /imgs: float32 [N, 3, S, S]
+      /tgts: float32 [N, C, S, S]
+      /inst: int32   [N, S, S]
+      /meta: vlen JSON strings (one per sample)
+
+    Returns (per __getitem__):
+      img_t:  torch.float32 [3, S, S]
+      tgt_t:  torch.float32 [C, S, S]
+      extras: {
+        "instance_labels": torch.int32 [S, S],
+        "meta": dict
+      }
+    """
+    def __init__(self, h5_path: str, indices: Optional[Sequence[int]] = None):
+        super().__init__()
+        self.h5_path = str(h5_path)
+        self._h5: Optional[h5py.File] = None
+        self._imgs = self._tgts = self._inst = self._meta = None
+
+        # lightweight probe (no persistent handle) to get shapes, attrs
+        with h5py.File(self.h5_path, "r", libver="latest", swmr=True) as f:
+            n = int(f["imgs"].shape[0])
+            self._N = n
+            self._C_img = int(f["imgs"].shape[1])
+            self._S = int(f["imgs"].shape[2])
+            self._C_tgt = int(f["tgts"].shape[1])
+            # optional sanity
+            assert "inst" in f and "meta" in f, "Missing datasets 'inst' or 'meta' in HDF5."
+
+        if indices is None:
+            self._idx = np.arange(self._N, dtype=np.int64)
+        else:
+            idx = np.asarray(indices, dtype=np.int64)
+            if idx.ndim != 1:
+                raise ValueError("indices must be 1D")
+            if (idx < 0).any() or (idx >= self._N).any():
+                raise ValueError("indices out of range")
+            self._idx = idx
+
+    def __len__(self) -> int:
+        return int(self._idx.shape[0])
+
+    def _ensure_open(self):
+        # open per worker/process lazily
+        if self._h5 is None:
+            self._h5 = h5py.File(self.h5_path, "r", libver="latest", swmr=True)
+            self._imgs = self._h5["imgs"]
+            self._tgts = self._h5["tgts"]
+            self._inst = self._h5["inst"]
+            self._meta = self._h5["meta"]
+
+    def __getitem__(self, i: int):
+        self._ensure_open()
+        k = int(self._idx[i])
+
+        # read numpy views; h5py returns arrays on slicing
+        img = self._imgs[k]   # float32 [3,S,S]
+        tgt = self._tgts[k]   # float32 [C,S,S]
+        inst = self._inst[k]  # int32   [S,S]
+        meta_json = self._meta[k]
+        # h5py vlen str returns bytes or str depending on build
+        if isinstance(meta_json, bytes):
+            meta = json.loads(meta_json.decode("utf-8"))
+        else:
+            meta = json.loads(meta_json)
+
+        # convert to torch with exact dtypes
+        img_t = torch.from_numpy(np.asarray(img, dtype=np.float32))      # [3,S,S]
+        tgt_t = torch.from_numpy(np.asarray(tgt, dtype=np.float32))      # [C,S,S]
+        inst_t = torch.from_numpy(np.asarray(inst, dtype=np.int32))      # [S,S]
+
+        extras = {"instance_labels": inst_t, "meta": meta}
+        return img_t, tgt_t, extras
+
+    def close(self):
+        if self._h5 is not None:
+            try:
+                self._h5.close()
+            except Exception:
+                pass
+            self._h5 = None
+            self._imgs = self._tgts = self._inst = self._meta = None
+
+    def __del__(self):
+        self.close()
 
