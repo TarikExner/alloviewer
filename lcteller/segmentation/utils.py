@@ -12,7 +12,7 @@ from .config import default_camera, default_scene
 # --- config fallbacks ---
 from . import SimCellsDataset
 
-def export_to_prealloc_h5_safe(
+def create_dataset_h5(
     out_path: str,
     length: int,
     mode: str = "crop_well_resize",
