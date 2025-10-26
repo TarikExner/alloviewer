@@ -852,6 +852,10 @@ def build_h5_loaders(
         val_pct = 1-train_pct
     val_len=val_pct*N
 
+    if val_len > 700:
+        val_len = 700
+        train_len = N - 700
+
     v_n = min(int(val_len), N)
     t_n = min(int(train_len), max(0, N - v_n))
     if t_n + v_n > N:
