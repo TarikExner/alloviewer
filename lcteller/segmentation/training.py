@@ -874,7 +874,7 @@ def build_h5_loaders(
     pin_mem = (device.type == "cuda")
     train_dl = DataLoader(
         train_ds, batch_size=batch_size,
-        shuffle=(train_sampler is None),
+        shuffle=True,
         sampler=train_sampler,
         num_workers=workers, pin_memory=pin_mem,
         persistent_workers=(workers > 0),
