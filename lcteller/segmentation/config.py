@@ -330,3 +330,60 @@ def default_camera() -> CameraSetup:
 def default_scene() -> SimulatorConfig:
     return SimulatorConfig()
 
+def test_camera() -> CameraSetup:
+    return CameraSetup(
+        name = "test_cam",
+        W = 2048,
+        aspect_ratios = ((4,3), (4,3)),
+        portrait_prob = 0,
+        blur_sigma_global = 0,
+        photon_level = 2500,
+        read_noise = 0.01
+    )
+
+def train_camera() -> CameraSetup:
+    return default_camera()
+
+def train_scene() -> SimulatorConfig:
+    return default_scene()
+
+def test_scene() -> SimulatorConfig:
+    return SimulatorConfig(
+        well_radius_frac = (0.3, 0.5),
+        well_center_jitter = (0.0, 0.04),
+
+        # --- radial look of the well ---
+        background_level = (0, 0.3),
+        edge_boost = (0, 0.5),
+        radial_gamma = 1.2,
+        vignette_strength= (0, 0.20),
+
+        # --- cells ---
+        n_cells = (10, 500),
+        cell_diameter = (6.0, 10.0),
+        frac_positive = (0.0, 1.0),
+        color_jitter = (0.0, 0.2),
+        sigma_in = (0.9, 1.2),   # pass-through
+        sigma_out = (0.9, 1.2), # pass-through
+        focus_frac_in = (0.0, 1.0),
+        in_focus_sigma_thresh = None,
+
+        boundary_width = 1,
+
+        # crowd near outer wall
+        rim_bias = (0.5, 0.95),
+        rim_band = (0.1, 0.5),
+        edge_clamp = (0.1, 0.3),
+
+        # --- collision / packing ---
+        min_cell_sep_px = None,
+        rim_min_sep_px = (4, 20),
+        pack_iters = (10, 20),
+        pack_strength = (0.0, 1.0),
+        wall_margin_px = (2.0, 20.0),
+
+        # --- ghosts (outside) ---
+        ghost_enable = True,
+        ghost_intensity = (0.02, 0.1),
+    )
+

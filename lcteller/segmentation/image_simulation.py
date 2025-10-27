@@ -336,7 +336,8 @@ def simulate_image(
         g /= g.max() + 1e-8
         y0, y1 = gy - radius, gy + radius + 1
         x0, x1 = gx - radius, gx + radius + 1
-        if y1 <= 0 or x1 <= 0 or y0 >= H or x0 >= W: return
+        if y1 <= 0 or x1 <= 0 or y0 >= H or x0 >= W:
+            return
         y0c, y1c = max(0, y0), min(H, y1)
         x0c, x1c = max(0, x0), min(W, x1)
         sy0, sy1 = y0c - y0, y1c - y0
@@ -429,7 +430,8 @@ def simulate_image(
             if mask_in.mean() < 0.25 and rng.random() < 0.7:
                 continue
 
-            ps_h = (y1 - y0); ps_w = (x1 - x0)
+            ps_h = (y1 - y0)
+            ps_w = (x1 - x0)
             noise = rng.normal(0.0, 1.0, size=(ps_h, ps_w)).astype(np.float32)
             base_sig = rng.uniform(0.8, 1.6)
             field = blur(noise, base_sig)
@@ -438,7 +440,8 @@ def simulate_image(
             blob = (field > thr)
 
             yy_l, xx_l = np.mgrid[y0:y1, x0:x1]
-            dy = yy_l - ry; dx = xx_l - rx
+            dy = yy_l - ry
+            dx = xx_l - rx
             r2 = (dy*dy + dx*dx).astype(np.float32)
             mask_center = r2 <= (rad_d * rad_d * rng.uniform(0.9, 1.4))
             blob = np.logical_and(blob, mask_center)
@@ -525,4 +528,3 @@ def simulate_image(
     }
 
     return noised, meta, targets
-
