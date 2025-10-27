@@ -515,6 +515,8 @@ def simulate_image(
         "well_center": (float(cy), float(cx)),
         "radius_px": float(R),
         "params": dict(
+            frac_positive=frac_positive,
+            n_cells=n_cells,
             H=H, W=W, bg_hue=bg_hue, seed=seed,
             ghost_stretch=ghost_stretch,
             rim_min_sep_px=rim_min_sep_px,
