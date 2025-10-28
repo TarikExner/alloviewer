@@ -1,6 +1,51 @@
 import numpy as np
 from skimage import segmentation, morphology
 from scipy import ndimage as ndi
+import inspect
+from collections.abc import Mapping, Sequence
+
+def _to_jsonable(x):
+    """Convert common numeric / numpy types to plain Python so JSON dump works."""
+    # simple numbers
+    if isinstance(x, (int, float, bool, str)) or x is None:
+        return x
+
+    # numpy scalars
+    if isinstance(x, (np.integer,)):
+        return int(x)
+    if isinstance(x, (np.floating,)):
+        return float(x)
+
+    # sequences (tuples/lists) of jsonable items
+    if isinstance(x, Sequence) and not isinstance(x, (str, bytes)):
+        return type(x)(_to_jsonable(v) for v in x)
+
+    # small numpy arrays (avoid dumping huge arrays by mistake)
+    if isinstance(x, np.ndarray):
+        # keep tiny shapes, otherwise store shape + dtype
+        if x.size <= 64:
+            return x.tolist()
+        return {"__ndarray__": True, "shape": tuple(x.shape), "dtype": str(x.dtype)}
+
+    # mappings
+    if isinstance(x, Mapping):
+        return {k: _to_jsonable(v) for k, v in x.items()}
+
+    # fallback to string
+    return str(x)
+
+
+def capture_params(func, locals_dict):
+    """
+    Return a dict of just the function's declared parameters
+    with their current values, made JSON-safe.
+    """
+    sig = inspect.signature(func)
+    out = {}
+    for name in sig.parameters:
+        if name in locals_dict:
+            out[name] = _to_jsonable(locals_dict[name])
+    return out
 
 
 def simulate_image(
@@ -507,26 +552,20 @@ def simulate_image(
         "cell_mask": cell_mask.astype(np.float32),
         "boundary": boundary.astype(np.float32),
     } if return_targets else {}
+    if min_cell_sep_px is None:
+        min_cell_sep_px = 0.9 * cell_diameter
+
+    all_params = capture_params(simulate_image, locals())
 
     meta = {
         "centers": centers,
         "labels": labels,
+        "frac_positive": frac_positive,
+        "n_cells": n_cells,
         "final_sigmas": final_sigmas,
         "well_center": (float(cy), float(cx)),
         "radius_px": float(R),
-        "params": dict(
-            frac_positive=frac_positive,
-            n_cells=n_cells,
-            H=H, W=W, bg_hue=bg_hue, seed=seed,
-            ghost_stretch=ghost_stretch,
-            rim_min_sep_px=rim_min_sep_px,
-            min_cell_sep_px=min_cell_sep_px,
-            side_bias_enable=side_bias_enable,
-            side_bias_theta=float(side_bias_theta),
-            side_bias_strength=float(side_bias_strength),
-            side_bias_kappa=float(side_bias_kappa),
-            side_bias_inner_frac=float(side_bias_inner_frac),
-        ),
+        "params": all_params
     }
 
     return noised, meta, targets
