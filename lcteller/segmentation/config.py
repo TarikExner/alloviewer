@@ -359,7 +359,7 @@ def test_scene() -> SimulatorConfig:
         vignette_strength= (0, 0.20),
 
         # --- cells ---
-        n_cells = (10, 500),
+        n_cells = (10, 2000),
         cell_diameter = (6.0, 10.0),
         frac_positive = (0.0, 1.0),
         color_jitter = (0.0, 0.2),
