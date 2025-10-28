@@ -183,22 +183,77 @@ def make_outside_mask_centers_batch(meta_list: List[dict],
     """
     Build 1 where peaks are allowed (small disks around GT centers), else 0.
     Returns [B,1,H,W] float32 in {0,1}
+
+    Notes:
+      - Maps centers from original sim coords -> current [H,W] coords using meta['mode_meta'].
+      - Supports modes: pad_resize, crop_well_resize, tiles.
+      - If 'mode_meta' is missing, uses centers as-is.
     """
     yy, xx = np.ogrid[:H, :W]
     B = len(meta_list)
     mask = np.zeros((B, H, W), dtype=np.float32)
-    r2 = radius * radius
+    r2 = int(radius) * int(radius)
+
+    def _map_centers(m: dict) -> List[tuple]:
+        # original centers from the simulator
+        ctrs = m.get("centers", []) or []
+        mm = m.get("mode_meta", None)
+        if not ctrs:
+            return []
+        if mm is None or "mode" not in mm:
+            # assume already in [H,W]
+            return [(int(round(y)), int(round(x))) for (y, x) in ctrs]
+
+        mode = mm["mode"]
+        mapped = []
+        if mode == "pad_resize":
+            # We padded to a square (S_in) with top/left, then scaled by 'scale' to target=[H,W]
+            pt = int(mm.get("pad_top", 0))
+            pl = int(mm.get("pad_left", 0))
+            scale = float(mm.get("scale", 1.0))
+            for (y, x) in ctrs:
+                yy_m = int(round((float(y) + pt) * scale))
+                xx_m = int(round((float(x) + pl) * scale))
+                mapped.append((yy_m, xx_m))
+
+        elif mode == "crop_well_resize":
+            # We cropped [y0:y1, x0:x1] then scaled by 'scale' to target=[H,W]
+            y0, y1, x0, x1 = mm.get("crop", (0, 0, 0, 0))
+            scale = float(mm.get("scale", 1.0))
+            for (y, x) in ctrs:
+                yy_m = int(round((float(y) - float(y0)) * scale))
+                xx_m = int(round((float(x) - float(x0)) * scale))
+                mapped.append((yy_m, xx_m))
+
+        elif mode == "tiles":
+            # We cut a tile with top-left (y0,x0); no scaling
+            y0, x0 = mm.get("tile_xy", (0, 0))
+            for (y, x) in ctrs:
+                yy_m = int(round(float(y) - float(y0)))
+                xx_m = int(round(float(x) - float(x0)))
+                mapped.append((yy_m, xx_m))
+        else:
+            # unknown mode -> best effort: assume already in [H,W]
+            mapped = [(int(round(y)), int(round(x))) for (y, x) in ctrs]
+
+        return mapped
+
     for i, m in enumerate(meta_list):
-        centers = m.get("centers", []) or []
+        ctrs_mapped = _map_centers(m)
+        if not ctrs_mapped:
+            continue
+
         acc = np.zeros((H, W), dtype=np.uint8)
-        for (y, x) in centers:
+        for (y, x) in ctrs_mapped:
             if 0 <= y < H and 0 <= x < W:
                 rr = (yy - y) * (yy - y) + (xx - x) * (xx - x)
                 acc[rr <= r2] = 1
         mask[i] = acc
+
     mask_t = torch.from_numpy(mask).unsqueeze(1)  # [B,1,H,W]
     if device is not None:
         mask_t = mask_t.to(device, non_blocking=True)
+
     return mask_t
 
 # --------------------- specialized losses ---------------------
@@ -332,7 +387,7 @@ def compute_thin_gt_boundary_from_instances(inst_np: np.ndarray) -> np.ndarray:
 def boundary_f1_skeletonized(pred_prob: np.ndarray,
                              inst_gt: np.ndarray,
                              tol: int = 2,
-                             thr: float = 0.2,
+                             thr: float = 0.9,
                              sweep: bool = False) -> float:
     """
     F1 between predicted boundary map and a thin GT boundary extracted from instances.
@@ -424,18 +479,32 @@ def energy_errors_np(energy_pred: np.ndarray,
 
 # --------------------- per-epoch weight schedule ---------------------
 
-def make_weight_schedule(C: int, epoch: int, warmup_epochs: int = 10) -> List[float]:
+def make_weight_schedule(
+    C: int,
+    epoch: int,
+    warmup_epochs: int = 10,
+    decay_epochs: int = 50,
+) -> list[float]:
     """
     Channel order:
       0: cell, 1: boundary, 2: center, 3: energy
-    Warmup -> [1.0, 1.8, 2.0, 2.0]
-    After  -> [1.0, 1.3, 0.5, 0.5]
+    hi until warmup is reached, then linearly decay to lo over decay_epochs.
     """
+    hi = [1.0, 1.8, 3.0, 3.0]
+    lo = [1.0, 1.3, 0.5, 0.5]
+
+    # still in warmup -> use hi exactly
     if epoch <= warmup_epochs:
-        post = [1.0, 1.8, 2.0, 2.0]
-        return post[:C]
-    post = [1.0, 1.3, 0.5, 0.5]
-    return post[:C]
+        return hi[:C]
+
+    # warmup passed
+    if decay_epochs <= 0:
+        return lo[:C]  # immediate switch if no decay window
+
+    # blend factor from 0..1 across the decay window
+    t = min(1.0, max(0.0, (epoch - warmup_epochs) / float(decay_epochs)))
+    w = [hi[i] + t * (lo[i] - hi[i]) for i in range(C)]
+    return w[:C]
 
 # --------------------- training loops ---------------------
 
@@ -458,8 +527,6 @@ def _build_aux_targets(extras: dict,
                        tgt: torch.Tensor,
                        device: torch.device,
                        center_outside_radius: int = 6,
-                       bound_ring_width: int = 1,
-                       bound_soft_band: int = 2,
                        bound_sigma: float = 1.0):
     """
     Build:
@@ -473,7 +540,7 @@ def _build_aux_targets(extras: dict,
     B, H, W = inst_b.shape
 
     bound_soft = tgt[:, 1:2]
-    bound_soft = gaussian_blur_2d(bound_soft, sigma=1.0)
+    bound_soft = gaussian_blur_2d(bound_soft, sigma=bound_sigma)
     cell_mask = tgt[:, 0:1]  # [B,1,H,W] float
     metas = extras.get("meta", None)
     center_allow = None
@@ -498,16 +565,27 @@ def train_epoch(model,
                 halo_w_cell: float = 0.05,
                 halo_w_energy_ring: float = 0.05,
                 halo_w_energy_far: float = 0.10,
-                halo_w_center_ring: float = 0.05,     # NEW: center halo weight (ring)
-                halo_w_center_far: float = 0.10,      # NEW: center halo weight (far background)
+                halo_w_center_ring: float = 0.05,
+                halo_w_center_far: float = 0.10,
                 ):
     model.train()
-    running_loss = 0.0
+    # running sums
+    steps = 0
+    running_loss_weighted = 0.0
+    running_loss_unweighted = 0.0
+    running_loss_cell = 0.0
+    running_loss_bound = 0.0
+    running_loss_center = 0.0
+    running_loss_energy = 0.0
+    running_loss_excl = 0.0
+    running_loss_cell_halo = 0.0
+    running_loss_energy_halo = 0.0
+    running_loss_center_halo = 0.0
+
     running_dice_cell  = 0.0
     running_dice_bound = 0.0
     running_dice_center = 0.0
     running_dice_energy = 0.0
-    steps = 0
 
     use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
     total = (min(max_steps, len(loader)) if (max_steps is not None) else len(loader))
@@ -520,8 +598,8 @@ def train_epoch(model,
 
         bound_soft, cell_mask, center_allow = _build_aux_targets(
             extras, tgt, device,
-            center_outside_radius=6,
-            bound_ring_width=1, bound_soft_band=2, bound_sigma=1.0
+            center_outside_radius=3,
+            bound_sigma=1.0
         )
 
         opt.zero_grad(set_to_none=True)
@@ -529,11 +607,10 @@ def train_epoch(model,
             logits = model(img)  # [B,C,H,W]
             probs  = torch.sigmoid(logits)
 
-            # --- base losses ---
-            loss_cell = bce_dice_loss(logits[:,0:1], tgt[:,0:1], w_bce=w_bce, w_dice=w_dice)
-            loss_bound = bce_dice_loss(logits[:,1:2], bound_soft, w_bce=w_bce, w_dice=w_dice)
-            loss_excl  = boundary_exclusion_loss(probs[:,0:1], bound_soft, weight=excl_weight)
-
+            # --- per-head losses ---
+            loss_cell  = bce_dice_loss(logits[:,0:1], tgt[:,0:1], w_bce=w_bce, w_dice=w_dice)
+            loss_bound = bce_dice_loss(logits[:,1:2], bound_soft,  w_bce=w_bce, w_dice=w_dice)
+            loss_center = torch.tensor(0.0, device=device)
             if C >= 3:
                 loss_center = center_head_loss(
                     logits[:,2:3], tgt[:,2:3], cell_mask=cell_mask,
@@ -541,37 +618,32 @@ def train_epoch(model,
                     sparsity_weight=center_sparsity_weight, outside_mask=center_allow,
                     count_weight=0.0
                 )
-            else:
-                loss_center = torch.tensor(0.0, device=device)
-
+            loss_energy = torch.tensor(0.0, device=device)
             if C >= 4:
                 loss_energy = energy_head_loss_masked(
                     logits[:,3:4], tgt[:,3:4], cell_mask=cell_mask,
                     w_l1=energy_w_l1, w_mse=energy_w_mse
                 )
-            else:
-                loss_energy = torch.tensor(0.0, device=device)
 
-            # --- anti-halo penalties (GPU-friendly via max_pool2d) ---
-            # masks: ring (just outside cells) and far background
+            # exclusion (regularizer)
+            loss_excl = boundary_exclusion_loss(probs[:,0:1], bound_soft, weight=excl_weight)
+
+            # --- anti-halo (regularizers) ---
             m = (cell_mask > 0.5).float()
             if halo_ring_px > 0:
                 ring_dil = F.max_pool2d(m, kernel_size=2*halo_ring_px+1, stride=1, padding=halo_ring_px)
                 ring_mask = (ring_dil - m).clamp_(0, 1)
             else:
                 ring_mask = torch.zeros_like(m)
-
             if halo_far_px > 0:
                 far_dil = F.max_pool2d(m, kernel_size=2*halo_far_px+1, stride=1, padding=halo_far_px)
                 far_bg_mask = (1.0 - far_dil).clamp_(0, 1)
             else:
                 far_bg_mask = (1.0 - m).clamp_(0, 1)
 
-            # cell halo (discourage bleed just outside cells)
             cell_prob = probs[:, 0:1]
             loss_cell_halo = halo_w_cell * (ring_mask * cell_prob).mean()
 
-            # energy halo (discourage energy in ring & far background)
             loss_energy_halo = torch.tensor(0.0, device=device)
             if C >= 4:
                 energy_prob = probs[:, 3:4]
@@ -579,7 +651,6 @@ def train_epoch(model,
                 far_leak_e   = (far_bg_mask * energy_prob).mean()
                 loss_energy_halo = halo_w_energy_ring * ring_leak_e + halo_w_energy_far * far_leak_e
 
-            # --- NEW: center halo (discourage center activations outside cells)
             loss_center_halo = torch.tensor(0.0, device=device)
             if C >= 3:
                 center_prob = probs[:, 2:3]
@@ -587,24 +658,31 @@ def train_epoch(model,
                 far_leak_c  = (far_bg_mask * center_prob).mean()
                 loss_center_halo = halo_w_center_ring * ring_leak_c + halo_w_center_far * far_leak_c
 
-            total_loss = (
+            # totals
+            heads = [loss_cell, loss_bound]
+            if C >= 3:
+                heads.append(loss_center)
+            if C >= 4:
+                heads.append(loss_energy)
+            loss_unweighted = torch.stack(heads).mean()
+
+            loss_weighted = (
                 weights[0] * loss_cell +
                 (weights[1] if len(weights) > 1 else 0.0) * loss_bound +
                 (weights[2] if len(weights) > 2 else 0.0) * loss_center +
                 (weights[3] if len(weights) > 3 else 0.0) * loss_energy +
-                loss_excl +
-                loss_cell_halo +
-                loss_energy_halo +
-                loss_center_halo
+                loss_excl + loss_cell_halo + loss_energy_halo + loss_center_halo
             )
 
-        scaler.scale(total_loss).backward()
+        # backprop on weighted loss (as before)
+        scaler.scale(loss_weighted).backward()
         if grad_clip_norm is not None and grad_clip_norm > 0:
             scaler.unscale_(opt)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float(grad_clip_norm))
         scaler.step(opt)
         scaler.update()
 
+        # metrics
         with torch.no_grad():
             running_dice_cell  += dice_from_probs(probs[:,0:1], tgt[:,0:1])
             running_dice_bound += dice_from_probs(probs[:,1:2], bound_soft)
@@ -613,23 +691,49 @@ def train_epoch(model,
             if C >= 4:
                 running_dice_energy += dice_from_probs(probs[:,3:4], tgt[:,3:4])
 
-        running_loss += float(total_loss.item())
+        # accumulate losses
+        running_loss_cell         += float(loss_cell.item())
+        running_loss_bound        += float(loss_bound.item())
+        running_loss_center       += float(loss_center.item())
+        running_loss_energy       += float(loss_energy.item())
+        running_loss_excl         += float(loss_excl.item())
+        running_loss_cell_halo    += float(loss_cell_halo.item())
+        running_loss_energy_halo  += float(loss_energy_halo.item()) if C >= 4 else 0.0
+        running_loss_center_halo  += float(loss_center_halo.item()) if C >= 3 else 0.0
+        running_loss_unweighted   += float(loss_unweighted.item())
+        running_loss_weighted     += float(loss_weighted.item())
+
         steps += 1
 
         if show_bar:
-            post = {"loss": f"{running_loss/steps:.4f}"}
-            post["dice_cell"] = f"{running_dice_cell/steps:.3f}"
-            post["dice_bound"] = f"{running_dice_bound/steps:.3f}"
+            post = {
+                "loss_w": f"{running_loss_weighted/steps:.4f}",
+                "loss_u": f"{running_loss_unweighted/steps:.4f}",
+                "d_cell": f"{running_dice_cell/steps:.3f}",
+                "d_bound": f"{running_dice_bound/steps:.3f}",
+            }
             if C >= 3:
-                post["dice_center"] = f"{running_dice_center/steps:.3f}"
+                post["d_center"] = f"{running_dice_center/steps:.3f}"
             if C >= 4:
-                post["dice_energy"] = f"{running_dice_energy/steps:.3f}"
+                post["d_energy"] = f"{running_dice_energy/steps:.3f}"
             pbar.set_postfix(post)
 
         if (max_steps is not None) and (step_idx >= int(max_steps)):
             break
 
-    out = {"loss": running_loss / max(1, steps)}
+    out = {
+        "loss_weighted": running_loss_weighted / max(1, steps),
+        "loss_unweighted": running_loss_unweighted / max(1, steps),
+        "loss_cell":   running_loss_cell   / max(1, steps),
+        "loss_bound":  running_loss_bound  / max(1, steps),
+        "loss_center": running_loss_center / max(1, steps) if steps else float("nan"),
+        "loss_energy": running_loss_energy / max(1, steps) if steps else float("nan"),
+        "loss_excl":   running_loss_excl   / max(1, steps),
+        "loss_cell_halo":   running_loss_cell_halo   / max(1, steps),
+        "loss_energy_halo": running_loss_energy_halo / max(1, steps),
+        "loss_center_halo": running_loss_center_halo / max(1, steps),
+    }
+    # classic dice
     if steps:
         out["dice_cell"]   = running_dice_cell / steps
         out["dice_bound"]  = running_dice_bound / steps
@@ -643,10 +747,20 @@ def train_epoch(model,
 @torch.no_grad()
 def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
                center_match_radius_px: int = 10, center_thr: float = 0.2, center_nms: int = 3,
-               bound_tol_px: int = 2, bound_thr: float = 0.2, bound_sweep: bool = False,
+               bound_tol_px: int = 2, bound_thr: float = 0.7, bound_sweep: bool = False,
                halo_ring_px: int = 3, halo_far_px: int = 12):
     model.eval()
-    loss_sum = 0.0
+    # loss accumulators
+    n = 0
+    loss_w_sum = 0.0
+    loss_u_sum = 0.0
+    loss_cell_sum = 0.0
+    loss_bound_sum = 0.0
+    loss_center_sum = 0.0
+    loss_energy_sum = 0.0
+    loss_excl_sum = 0.0
+
+    # dice/metrics accumulators (as before)
     dice_cell_sum   = 0.0
     dice_bound_sum  = 0.0
     dice_center_sum = 0.0
@@ -664,7 +778,6 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
     far_leak_cell_sum  = 0.0
     ring_leak_energy_sum = 0.0
     far_leak_energy_sum  = 0.0
-    n = 0
 
     use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
     pbar = _tqdm(loader, desc="evaluation", position=2, disable=not show_bar)
@@ -676,36 +789,41 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
 
         bound_soft, cell_mask, center_allow = _build_aux_targets(
             extras, tgt, device,
-            center_outside_radius=6,
-            bound_ring_width=1, bound_soft_band=2, bound_sigma=1.0
+            center_outside_radius=3,
+            bound_sigma=1.0
         )
 
         with autocast(device_type="cuda", enabled=use_amp, dtype=(torch.bfloat16 if use_bf16 else torch.float16)):
             logits = model(img)
             probs  = torch.sigmoid(logits)
 
+            # per-head
             loss_cell  = bce_dice_loss(logits[:,0:1], tgt[:,0:1], w_bce=w_bce, w_dice=w_dice)
-            loss_bound = bce_dice_loss(logits[:,1:2], bound_soft, w_bce=w_bce, w_dice=w_dice)
-            loss_excl  = boundary_exclusion_loss(probs[:,0:1], bound_soft, weight=0.2)
-
+            loss_bound = bce_dice_loss(logits[:,1:2], bound_soft,  w_bce=w_bce, w_dice=w_dice)
+            loss_center = torch.tensor(0.0, device=device)
             if C >= 3:
                 loss_center = center_head_loss(
                     logits[:,2:3], tgt[:,2:3], cell_mask=cell_mask,
                     pos_weight=10.0, w_bce=0.6, w_mse=0.4,
                     sparsity_weight=0.0, outside_mask=center_allow, count_weight=0.0
                 )
-            else:
-                loss_center = torch.tensor(0.0, device=device)
-
+            loss_energy = torch.tensor(0.0, device=device)
             if C >= 4:
                 loss_energy = energy_head_loss_masked(
                     logits[:,3:4], tgt[:,3:4], cell_mask=cell_mask,
                     w_l1=0.5, w_mse=0.5
                 )
-            else:
-                loss_energy = torch.tensor(0.0, device=device)
+            loss_excl  = boundary_exclusion_loss(probs[:,0:1], bound_soft, weight=0.2)
 
-            total_loss = (
+            # totals
+            heads = [loss_cell, loss_bound]
+            if C >= 3:
+                heads.append(loss_center)
+            if C >= 4:
+                heads.append(loss_energy)
+            loss_unweighted = torch.stack(heads).mean()
+
+            loss_weighted = (
                 weights[0] * loss_cell +
                 (weights[1] if len(weights) > 1 else 0.0) * loss_bound +
                 (weights[2] if len(weights) > 2 else 0.0) * loss_center +
@@ -713,6 +831,7 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
                 loss_excl
             )
 
+        # dice summaries
         dice_cell_sum  += dice_from_probs(probs[:,0:1], tgt[:,0:1])
         dice_bound_sum += dice_from_probs(probs[:,1:2], bound_soft)
         if C >= 3:
@@ -720,7 +839,7 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
         if C >= 4:
             dice_energy_sum += dice_from_probs(probs[:,3:4], tgt[:,3:4])
 
-        # --- anti-halo diagnostics (do NOT affect eval loss) ---
+        # anti-halo diagnostics (unchanged)
         m = (cell_mask > 0.5).float()
         if halo_ring_px > 0:
             ring_dil = F.max_pool2d(m, kernel_size=2*halo_ring_px+1, stride=1, padding=halo_ring_px)
@@ -742,8 +861,8 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
             ring_leak_energy_sum += float((ring_mask   * energy_prob).mean().item())
             far_leak_energy_sum  += float((far_bg_mask * energy_prob).mean().item())
 
-        # --- classic + new metrics (per-sample numpy) ---
-        probs_np = probs.detach().float().cpu().numpy()  # [B,C,H,W]
+        # numpy metrics (unchanged)
+        probs_np = probs.detach().float().cpu().numpy()
         tgt_np   = tgt.detach().float().cpu().numpy()
         metas = extras.get("meta", [])
         insts = extras["instance_labels"].detach().cpu().numpy()
@@ -777,26 +896,47 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
                 energy_gt = tgt_np[i, 3] if C >= 4 else np.zeros_like(cell_gt)
                 ee = energy_errors_np(energy_pr, energy_gt, cell_gt)
                 if ee.get("valid_rmse", False) and np.isfinite(ee["rmse"]):
-                    energy_rmse_sum += ee["rmse"]; energy_rmse_n += 1
+                    energy_rmse_sum += ee["rmse"]
+                    energy_rmse_n += 1
                 if ee.get("valid_r", False) and np.isfinite(ee["pearson"]):
-                    energy_r_sum += ee["pearson"]; energy_r_n += 1
+                    energy_r_sum += ee["pearson"]
+                    energy_r_n += 1
 
-        loss_sum += float(total_loss.item())
+        # accumulate losses
+        loss_w_sum     += float(loss_weighted.item())
+        loss_u_sum     += float(loss_unweighted.item())
+        loss_cell_sum  += float(loss_cell.item())
+        loss_bound_sum += float(loss_bound.item())
+        loss_center_sum+= float(loss_center.item())
+        loss_energy_sum+= float(loss_energy.item())
+        loss_excl_sum  += float(loss_excl.item())
         n += 1
 
         if show_bar:
             post = {
-                "loss": f"{loss_sum/n:.4f}",
-                "dice_cell": f"{dice_cell_sum/n:.3f}",
-                "dice_bound": f"{dice_bound_sum/n:.3f}",
+                "loss_w": f"{loss_w_sum/n:.4f}",
+                "loss_u": f"{loss_u_sum/n:.4f}",
+                "d_cell": f"{dice_cell_sum/n:.3f}",
+                "d_bound": f"{dice_bound_sum/n:.3f}",
             }
             if C >= 3:
-                post["dice_center"] = f"{dice_center_sum/n:.3f}"
+                post["d_center"] = f"{dice_center_sum/n:.3f}"
             if C >= 4:
-                post["dice_energy"] = f"{dice_energy_sum/n:.3f}"
+                post["d_energy"] = f"{dice_energy_sum/n:.3f}"
             pbar.set_postfix(post)
 
-    out = {"loss": loss_sum / max(1, n)}
+    out = {
+        # selection loss (unweighted)
+        "loss_unweighted": loss_u_sum / max(1, n),
+        # also keep weighted and per-head for logging
+        "loss_weighted":   loss_w_sum / max(1, n),
+        "loss_cell":       loss_cell_sum  / max(1, n),
+        "loss_bound":      loss_bound_sum / max(1, n),
+        "loss_center":     loss_center_sum/ max(1, n) if n else float("nan"),
+        "loss_energy":     loss_energy_sum/ max(1, n) if n else float("nan"),
+        "loss_excl":       loss_excl_sum  / max(1, n),
+    }
+
     if n:
         out["dice_cell"]   = dice_cell_sum / n
         out["dice_bound"]  = dice_bound_sum / n
@@ -805,12 +945,11 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
         if C >= 4:
             out["dice_energy"] = dice_energy_sum / n
 
-        out["bound_f1_tol2"]   = boundF_sum / n_bound_valid if n_bound_valid > 0 else np.nan
-        out["center_f1_r10"]    = centerF_sum / n_center_valid if n_center_valid > 0 else np.nan
-        out["energy_rmse"]     = (energy_rmse_sum / energy_rmse_n) if energy_rmse_n > 0 else np.nan
-        out["energy_pearson"]  = (energy_r_sum / energy_r_n) if energy_r_n > 0 else np.nan
+        out["bound_f1_tol2"]  = boundF_sum / n_bound_valid if n_bound_valid > 0 else np.nan
+        out["center_f1_r10"]  = centerF_sum / n_center_valid if n_center_valid > 0 else np.nan
+        out["energy_rmse"]    = (energy_rmse_sum / energy_rmse_n) if energy_rmse_n > 0 else np.nan
+        out["energy_pearson"] = (energy_r_sum   / energy_r_n)    if energy_r_n   > 0 else np.nan
 
-        # anti-halo diagnostics
         out["ring_leak_cell"]   = ring_leak_cell_sum / n
         out["far_leak_cell"]    = far_leak_cell_sum / n
         out["ring_leak_energy"] = ring_leak_energy_sum / n if C >= 4 else np.nan
@@ -1058,14 +1197,25 @@ def train(
             state = (model.module.state_dict() if hasattr(model, "module") else model.state_dict())
             epoch_path = os.path.join(out_dir, f"{unet_mode}_{tag}_epoch_{ep}.pth")
             torch.save(state, epoch_path)
-            if va["loss"] < best_val:
-                best_val = va["loss"]
+
+            # use UNWEIGHTED val loss for model selection
+            sel = va["loss_unweighted"]
+            if sel < best_val:
+                best_val = sel
                 torch.save(state, best_path)
 
             post = {
-                "tr_loss": f"{tr['loss']:.4f}",
-                "va_loss": f"{va['loss']:.4f}",
-                "best": f"{best_val:.4f}",
+                # train
+                "tr_loss_w": f"{tr['loss_weighted']:.4f}",
+                "tr_loss_u": f"{tr['loss_unweighted']:.4f}",
+                "tr_l_cell": f"{tr['loss_cell']:.4f}",
+                "tr_l_bound": f"{tr['loss_bound']:.4f}",
+                "tr_l_center": f"{tr.get('loss_center', float('nan')):.4f}",
+                "tr_l_energy": f"{tr.get('loss_energy', float('nan')):.4f}",
+                # val
+                "va_loss_w": f"{va['loss_weighted']:.4f}",
+                "va_loss_u": f"{va['loss_unweighted']:.4f}",
+                "best_u": f"{best_val:.4f}",
                 "sec": f"{time.time()-t0:.1f}",
                 "bs/gpu": batch_size,
                 "gpus": ddp_world_size(),
@@ -1090,10 +1240,12 @@ def train(
             epoch_bar.set_postfix(post)
 
             rec = {
-                "epoch": ep, "train": tr, "val": va,
+                "epoch": ep,
+                "train": tr,          # contains per-head + weighted/unweighted
+                "val": va,            # contains per-head + weighted/unweighted
                 "lr": float(opt.param_groups[0]["lr"]),
                 "time_sec": round(time.time()-t0, 2),
-                "best_val": float(best_val),
+                "best_val_unweighted": float(best_val),
                 "world_size": ddp_world_size(),
                 "batch_size_per_gpu": batch_size,
                 "weights": weights,
@@ -1105,11 +1257,12 @@ def train(
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec) + "\n")
 
-        stop_local = stopper.step(va["loss"])
+        # early stop on UNWEIGHTED val loss
+        stop_local = stopper.step(va["loss_unweighted"])
         stop_all = _ddp_broadcast_bool(stop_local if is_rank0 else False, device)
         if stop_all:
             if is_rank0:
-                print(f"Early stopping at epoch {ep} (best val loss: {best_val:.6f})")
+                print(f"Early stopping at epoch {ep} (best unweighted val loss: {best_val:.6f})")
             if ddp_is_active():
                 dist.barrier()
             break

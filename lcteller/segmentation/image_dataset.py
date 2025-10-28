@@ -10,9 +10,8 @@ from skimage import filters, measure, morphology, exposure
 from skimage.segmentation import relabel_sequential
 
 from . import simulate_image
-from .config import INT_KEYS, PASS_THROUGH_RANGES
 
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Union
 
 
 def _resize_map(x, side, mode="image"):
@@ -150,7 +149,7 @@ def _make_center_stem_from_centers(centers, shape):
             stem[int(y), int(x)] = 1.0
     return stem
 
-def _make_center_heatmap(stem, sigma=2.0):
+def _make_center_heatmap(stem, sigma: Union[int, float] = 1.0):
     heat = stem.astype(np.float32)
     if sigma and sigma > 0:
         heat = ndi.gaussian_filter(heat, float(sigma))
@@ -202,7 +201,7 @@ class SimCellsDataset(Dataset):
         boundary_ring_width=1,
         boundary_soft_band=2,
         boundary_sigma=1.0,
-        center_sigma=2.0,
+        center_sigma=1.0,
         rng_seed=123,
         well_is_brighter="auto",
         transforms=None,              # optional Albumentations-style joint transforms
