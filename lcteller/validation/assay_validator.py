@@ -15,6 +15,8 @@ from skimage.measure import label as sklabel
 from ..segmentation.image_dataset import DiskSimCellsDataset
 from ..segmentation.utils import collate_no_meta
 
+from tqdm import tqdm
+
 from .utils import (
     iou_dice_overlap,
     boundary_f1_skeletonized,
@@ -60,7 +62,6 @@ def _flatten_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
             out[f"meta__{k}"] = v
     return out
 
-
 def validate_unet_segmentation(
     segmenter,
     cfg: ValidationConfig,
@@ -83,99 +84,104 @@ def validate_unet_segmentation(
 
     per_rows: List[Dict[str, Any]] = []
 
-    for batch in dl:
-        imgs_t, tgts_t, extras = batch  # imgs: [B,3,S,S], tgts: [B,4,S,S]
-        B = int(imgs_t.shape[0])
+    # progress bar over images
+    with tqdm(total=len(ds), desc="Validating UNet (images)", unit="img") as pbar:
+        for batch in dl:
+            imgs_t, tgts_t, extras = batch  # imgs: [B,3,S,S], tgts: [B,4,S,S]
+            B = int(imgs_t.shape[0])
 
-        for b in range(B):
-            # ---- inputs (numpy) ----
-            img_chw = imgs_t[b].numpy().astype(np.float32)        # [3,S,S] in [0,1]
-            img_hwc = np.transpose(img_chw, (1, 2, 0))            # [H,W,3]
+            for b in range(B):
+                # ---- inputs (numpy) ----
+                img_chw = imgs_t[b].numpy().astype(np.float32)        # [3,S,S] in [0,1]
+                img_hwc = np.transpose(img_chw, (1, 2, 0))            # [H,W,3]
 
-            tgt = tgts_t[b].numpy().astype(np.float32)            # [4,S,S]
-            cell_gt = (tgt[0] > 0.5).astype(np.uint8)
-            # bound_prob_gt = tgt[1].astype(np.float32)           # not used directly
-            # center_gt_heat = tgt[2].astype(np.float32)          # GT centers heat (not used)
-            energy_gt = tgt[3].astype(np.float32)
+                tgt = tgts_t[b].numpy().astype(np.float32)            # [4,S,S]
+                cell_gt = (tgt[0] > 0.5).astype(np.uint8)
+                # bound_prob_gt = tgt[1].astype(np.float32)           # not used directly
+                # center_gt_heat = tgt[2].astype(np.float32)          # GT centers heat (not used)
+                energy_gt = tgt[3].astype(np.float32)
 
-            inst_gt = extras["instance_labels"][b].numpy().astype(np.int32)
-            meta = extras["meta"][b]
+                inst_gt = extras["instance_labels"][b].numpy().astype(np.int32)
+                meta = extras["meta"][b]
 
-            # ---- model forward ----
-            out = segmenter(img_hwc)
-            cell_prob = out["probs"]["cell"].astype(np.float32)
-            bound_prob = out["probs"]["bound"].astype(np.float32)
-            center_pred = out["probs"]["center"].astype(np.float32)
-            energy_pred = out["probs"]["energy"].astype(np.float32)
+                # ---- model forward ----
+                out = segmenter(img_hwc)
+                cell_prob = out["probs"]["cell"].astype(np.float32)
+                bound_prob = out["probs"]["bound"].astype(np.float32)
+                center_pred = out["probs"]["center"].astype(np.float32)
+                energy_pred = out["probs"]["energy"].astype(np.float32)
 
-            # ---- binarize for components ----
-            cell_pred_bin = (cell_prob >= cfg.cell_thr).astype(np.uint8)
-            n_cc = int(sklabel(cell_pred_bin, connectivity=1).max())
-            n_gt = int(inst_gt.max())
+                # ---- binarize for components ----
+                cell_pred_bin = (cell_prob >= cfg.cell_thr).astype(np.uint8)
+                n_cc = int(sklabel(cell_pred_bin, connectivity=1).max())
+                n_gt = int(inst_gt.max())
 
-            # ---- centers (pred count via peaks) ----
-            peaks = nms_peaks_np(center_pred, thr=cfg.center_peak_thr, min_dist=cfg.center_nms_dist)
-            n_centers_pred = int(len(peaks))
+                # ---- centers (pred count via peaks) ----
+                peaks = nms_peaks_np(center_pred, thr=cfg.center_peak_thr, min_dist=cfg.center_nms_dist)
+                n_centers_pred = int(len(peaks))
 
-            # ---- metrics ----
-            # masks
-            mask_stats = iou_dice_overlap(cell_pred_bin, cell_gt)
+                # ---- metrics ----
+                # masks
+                mask_stats = iou_dice_overlap(cell_pred_bin, cell_gt)
 
-            # boundary F1 vs thin GT boundary
-            boundary_f1 = boundary_f1_skeletonized(
-                bound_prob,
-                inst_gt,
-                tol=cfg.boundary_tol,
-                thr=cfg.boundary_thr,
-                sweep=cfg.boundary_sweep,
-            )
+                # boundary F1 vs thin GT boundary
+                boundary_f1 = boundary_f1_skeletonized(
+                    bound_prob,
+                    inst_gt,
+                    tol=cfg.boundary_tol,
+                    thr=cfg.boundary_thr,
+                    sweep=cfg.boundary_sweep,
+                )
 
-            # centers (Hungarian + AP + OKS)
-            center_stats = center_metrics_hungarian(
-                center_pred,
-                inst_gt,
-                peak_thr=cfg.center_peak_thr,
-                nms_dist=cfg.center_nms_dist,
-                match_radius=cfg.center_match_radius,
-                ap_thr_list=cfg.ap_thr_list,
-                oks_thresholds=cfg.oks_thresholds,
-            )
+                # centers (Hungarian + AP + OKS)
+                center_stats = center_metrics_hungarian(
+                    center_pred,
+                    inst_gt,
+                    peak_thr=cfg.center_peak_thr,
+                    nms_dist=cfg.center_nms_dist,
+                    match_radius=cfg.center_match_radius,
+                    ap_thr_list=cfg.ap_thr_list,
+                    oks_thresholds=cfg.oks_thresholds,
+                )
 
-            # energy (inside cells) — full set (includes SSIM & grad corr)
-            energy_stats = energy_metrics_extended_full(
-                energy_pred,
-                energy_gt,
-                cell_gt,
-                frac_delta=cfg.energy_frac_delta,
-            )
+                # energy (inside cells) — full set (includes SSIM & grad corr)
+                energy_stats = energy_metrics_extended_full(
+                    energy_pred,
+                    energy_gt,
+                    cell_gt,
+                    frac_delta=cfg.energy_frac_delta,
+                )
 
-            # ---- counts & meta ----
-            n_sim = int(meta.get("n_cells", n_gt))  # fallback to GT instances if n_cells missing
+                # ---- counts & meta ----
+                n_sim = int(meta.get("n_cells", n_gt))  # fallback to GT instances if n_cells missing
 
-            row: Dict[str, Any] = {
-                "idx": int(len(per_rows)),
-                # counts
-                "n_cells_simulated": n_sim,
-                "n_cells_gt_instances": n_gt,
-                "n_cells_pred_components_thr0p5": n_cc,
-                "n_cells_pred_centers": n_centers_pred,
-                "count_error_components": int(n_cc - n_gt),
-                "count_error_centers": int(n_centers_pred - n_gt),
-                # mask metrics
-                **{f"mask_{k}": v for k, v in mask_stats.items()},
-                # boundary
-                "boundary_f1": float(boundary_f1),
-                # center metrics
-                **{f"center_{k}": v for k, v in center_stats.items()},
-                # energy metrics
-                **{f"energy_{k}": v for k, v in energy_stats.items()},
-            }
+                row: Dict[str, Any] = {
+                    "idx": int(len(per_rows)),
+                    # counts
+                    "n_cells_simulated": n_sim,
+                    "n_cells_gt_instances": n_gt,
+                    "n_cells_pred_components_thr0p5": n_cc,
+                    "n_cells_pred_centers": n_centers_pred,
+                    "count_error_components": int(n_cc - n_gt),
+                    "count_error_centers": int(n_centers_pred - n_gt),
+                    # mask metrics
+                    **{f"mask_{k}": v for k, v in mask_stats.items()},
+                    # boundary
+                    "boundary_f1": float(boundary_f1),
+                    # center metrics
+                    **{f"center_{k}": v for k, v in center_stats.items()},
+                    # energy metrics
+                    **{f"energy_{k}": v for k, v in energy_stats.items()},
+                }
 
-            # flatten meta/params to columns
-            meta_cols = _flatten_meta(meta)
-            row.update(meta_cols)
+                # flatten meta/params to columns
+                meta_cols = _flatten_meta(meta)
+                row.update(meta_cols)
 
-            per_rows.append(row)
+                per_rows.append(row)
+
+                # update progress bar per image
+                pbar.update(1)
 
     df = pd.DataFrame(per_rows)
 
@@ -201,4 +207,5 @@ def validate_unet_segmentation(
             json.dump(summary, f, indent=2)
 
     return df, summary
+
 
