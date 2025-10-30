@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader
 from skimage.measure import label as sklabel
 
 from ..segmentation.image_dataset import DiskSimCellsDataset
+from ..segmentation.utils import collate_no_meta
 
 from .utils import (
     iou_dice_overlap,
@@ -77,6 +78,7 @@ def validate_unet_segmentation(
         num_workers=cfg.workers,
         pin_memory=True,
         drop_last=False,
+        collate_fn=collate_no_meta
     )
 
     per_rows: List[Dict[str, Any]] = []
