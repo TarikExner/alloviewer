@@ -26,10 +26,12 @@ def collate_no_meta(batch):
 def create_dataset_h5(
     out_path: str,
     length: int,
-    mode: str = "crop_well_resize",
+    mode: str = "crop_well_resize",            # "pad_resize" | "crop_well_resize" | "tiles"
+    n_tiles: Optional[int] = 1,
+    tile_overlap: int = 64,
     target: int = 512,
     rng_seed: int = 187,
-    gen_batch_size: int = 128,
+    gen_batch_size: int = 16,
     num_workers_gen: int = 16,
     compression: Optional[str] = "lzf",
     flush_every: int = 8,
@@ -61,8 +63,11 @@ def create_dataset_h5(
     signal.signal(signal.SIGTERM, _handle_signal)
 
     # --- dataset & dataloader (generation on CPU) ---
+    if not n_tiles:
+        n_tiles = 1
     ds = SimCellsDataset(
         length=length, mode=mode, target=target,
+        n_tiles=n_tiles, tile_overlap=tile_overlap,
         rng_seed=rng_seed, camera_cfg=camera_cfg, scene_cfg=scene_cfg,
     )
     dl = DataLoader(
