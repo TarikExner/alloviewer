@@ -35,6 +35,10 @@ class SegmenterConfig:
     thr_cell: float = 0.5
     thr_bound: float = 0.5
 
+    # tell the segmenter that the input to __call__ will be a batch of tiles
+    # instead of a single image
+    input_is_tiles: bool = False
+
     # nested instance config (dict or InstanceSegmenterConfig)
     instance_cfg: Dict[str, Any] = field(default_factory=dict)
 
@@ -42,7 +46,6 @@ class SegmenterConfig:
     def to_dict(self) -> Dict[str, Any]:
         """Serialize config; nests instance_cfg as a dict."""
         d = asdict(self)
-        # ensure instance_cfg is a dict if user put an InstanceSegmenterConfig in here
         icfg = d.get("instance_cfg", {})
         if isinstance(icfg, InstanceSegmenterConfig):
             d["instance_cfg"] = icfg.to_dict()
@@ -52,13 +55,11 @@ class SegmenterConfig:
     def from_dict(cls, d: Optional[Dict[str, Any]] = None) -> "SegmenterConfig":
         """Construct from dict; accepts nested instance_cfg as dict or InstanceSegmenterConfig."""
         d = dict(d or {})
-        # peel out instance_cfg before filtering top-level keys
         raw_icfg = d.pop("instance_cfg", None)
 
         allowed = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
         filtered = {k: v for k, v in d.items() if k in allowed}
 
-        # normalize nested instance_cfg
         if isinstance(raw_icfg, InstanceSegmenterConfig):
             filtered["instance_cfg"] = raw_icfg.to_dict()
         elif isinstance(raw_icfg, dict):
@@ -66,7 +67,6 @@ class SegmenterConfig:
         elif raw_icfg is None:
             filtered["instance_cfg"] = {}
         else:
-            # unknown type -> ignore, keep defaults
             filtered["instance_cfg"] = {}
 
         return cls(**filtered)
@@ -131,10 +131,17 @@ class InstanceSegmenterConfig:
 class SegmenterUNet:
     """
     Wraps the UNet (4 heads) and returns probabilities plus (optional) instances.
-    Output dict:
+
+    If cfg.input_is_tiles == False (default):
+        __call__(img: np.ndarray (H,W,3)) -> dict for ONE image
+
+    If cfg.input_is_tiles == True OR you pass a 4D array:
+        __call__(tiles: np.ndarray (T,3,H,W) or (T,H,W,3)) -> dict of BATched probs/masks
+
+    Output dict for single image:
     {
-        "cell_mask": np.uint8 [H, W]             # derived from hysteresis inside InstanceSegmenter if compute_instances
-        "boundary":  np.uint8 [H, W]             # binarized for convenience (thr_bound)
+        "cell_mask": np.uint8 [H, W]
+        "boundary":  np.uint8 [H, W]
         "probs": {
             "cell":   float32 [H, W],
             "bound":  float32 [H, W],
@@ -144,6 +151,21 @@ class SegmenterUNet:
         "instance_labels": np.int32 [H, W] | None
         "meta": {...}
         ("logits": float32 [4, H, W]) if return_logits
+    }
+
+    Output dict for tiles (T tiles):
+    {
+        "cell_mask": np.uint8 [T, H, W]
+        "boundary":  np.uint8 [T, H, W]
+        "probs": {
+            "cell":   float32 [T, H, W],
+            "bound":  float32 [T, H, W],
+            "center": float32 [T, H, W],
+            "energy": float32 [T, H, W],
+        }
+        "instance_labels": List[np.ndarray] | None   # only if compute_instances=True
+        "meta": {..., "batched": True, "n_tiles": T}
+        ("logits": float32 [T, 4, H, W]) if return_logits
     }
     """
     def __init__(self, cfg: SegmenterConfig):
@@ -186,12 +208,14 @@ class SegmenterUNet:
             self.model.load_state_dict(fixed, strict=True)
 
         # AMP policy
-        self.use_amp = bool(cfg.use_amp and (self.device.type == "cuda") )
+        self.use_amp = bool(cfg.use_amp and (self.device.type == "cuda"))
 
         # optional instance segmenter
         self.inst_seg = InstanceSegmenter(
             InstanceSegmenterConfig(**(cfg.instance_cfg or {}))
         ) if cfg.compute_instances else None
+
+    # ---------- utils ----------
 
     def _to_tensor(self, img: np.ndarray) -> torch.Tensor:
         """
@@ -210,8 +234,121 @@ class SegmenterUNet:
         t = torch.from_numpy(x).unsqueeze(0).to(self.device, non_blocking=True)  # [1,3,H,W]
         return t
 
+    def _to_tensor_tiles(self, tiles: np.ndarray) -> torch.Tensor:
+        """
+        tiles: (T,3,H,W) or (T,H,W,3) -> torch [T,3,H,W] on device
+        """
+        if tiles.ndim != 4:
+            raise ValueError(f"Expected 4D tiles array, got shape {tiles.shape}")
+
+        if tiles.shape[1] == 3:  # (T,3,H,W)
+            x = tiles.astype(np.float32, copy=False)
+        elif tiles.shape[-1] == 3:  # (T,H,W,3)
+            x = np.transpose(tiles, (0, 3, 1, 2)).astype(np.float32, copy=False)
+        else:
+            raise ValueError(f"Expected tiles with 3 channels, got shape {tiles.shape}")
+
+        if x.max() > 1.0:
+            x = x / 255.0
+
+        x = np.ascontiguousarray(x, dtype=np.float32)
+        t = torch.from_numpy(x).to(self.device, non_blocking=True)  # [T,3,H,W]
+        return t
+
+    @torch.no_grad()
+    def predict_tiles(self, tiles: torch.Tensor) -> torch.Tensor:
+        """
+        tiles: [B, 3, H, W] on any device
+        returns: probs [B, 4, H, W] on CPU (float32)
+        """
+        tiles = tiles.to(self.device, non_blocking=True)
+        use_bf16 = (self.use_amp and torch.cuda.is_bf16_supported())
+
+        with torch.amp.autocast(
+            device_type=self.device.type,
+            dtype=(torch.bfloat16 if use_bf16 else torch.float16),
+            enabled=self.use_amp
+        ):
+            logits = self.model(tiles)          # [B, 4, H, W]
+            probs = torch.sigmoid(logits)
+
+        return probs.detach().to(torch.float32).cpu()  # [B,4,H,W]
+
+    # ---------- main call ----------
+
     @torch.no_grad()
     def __call__(self, img: np.ndarray) -> Dict[str, Any]:
+        """
+        If cfg.input_is_tiles == False (default):
+            behave like before → single image
+        If cfg.input_is_tiles == True OR img.ndim == 4:
+            treat input as batch of tiles
+        """
+        # --- case 1: tiles ---
+        if self.cfg.input_is_tiles or img.ndim == 4:
+            tiles_t = self._to_tensor_tiles(img)           # [T,3,H,W] on device
+            use_bf16 = (self.use_amp and torch.cuda.is_bf16_supported())
+            with torch.amp.autocast(
+                device_type=self.device.type,
+                dtype=(torch.bfloat16 if use_bf16 else torch.float16),
+                enabled=self.use_amp
+            ):
+                logits = self.model(tiles_t)               # [T,4,H,W]
+                probs = torch.sigmoid(logits)              # [T,4,H,W]
+
+            probs_np = probs.detach().to(torch.float32).cpu().numpy()  # [T,4,H,W]
+            T, C, H, W = probs_np.shape
+            cell_p  = probs_np[:, 0, ...]
+            bound_p = probs_np[:, 1, ...]
+            center_p= probs_np[:, 2, ...]
+            energy_p= probs_np[:, 3, ...]
+
+            out: Dict[str, Any] = {
+                "probs": {
+                    "cell":   cell_p.astype(np.float32),
+                    "bound":  bound_p.astype(np.float32),
+                    "center": center_p.astype(np.float32),
+                    "energy": energy_p.astype(np.float32),
+                },
+                "cell_mask": (cell_p >= self.cfg.thr_cell).astype(np.uint8),
+                "boundary":  (bound_p >= self.cfg.thr_bound).astype(np.uint8),
+                "instance_labels": None,
+                "meta": {
+                    "unet_mode": self.cfg.unet_mode,
+                    "device": str(self.device),
+                    "checkpoint": os.path.abspath(self.ckpt_path),
+                    "batched": True,
+                    "n_tiles": int(T),
+                },
+            }
+
+            if self.cfg.return_logits:
+                out["logits"] = logits.detach().cpu().float().numpy()  # [T,4,H,W]
+
+            # optional per-tile instance segmentation
+            if self.inst_seg is not None:
+                inst_list = []
+                # apply instance segmenter tile-by-tile to keep old interface
+                for i in range(T):
+                    single_out = {
+                        "probs": {
+                            "cell":   cell_p[i],
+                            "bound":  bound_p[i],
+                            "center": center_p[i],
+                            "energy": energy_p[i],
+                        },
+                        "cell_mask": (cell_p[i] >= self.cfg.thr_cell).astype(np.uint8),
+                        "boundary":  (bound_p[i] >= self.cfg.thr_bound).astype(np.uint8),
+                        "instance_labels": None,
+                        "meta": {},
+                    }
+                    single_out = self.inst_seg(single_out, update_cell_mask=True)
+                    inst_list.append(single_out["instance_labels"])
+                out["instance_labels"] = inst_list
+
+            return out
+
+        # --- case 2: single image (old behavior) ---
         x = self._to_tensor(img)
         use_bf16 = (self.use_amp and torch.cuda.is_bf16_supported())
 
@@ -223,11 +360,9 @@ class SegmenterUNet:
             logits = self.model(x)           # [1,4,H,W]
             probs  = torch.sigmoid(logits)   # [1,4,H,W]
 
-        # numpy (float32)
         probs_np = probs.squeeze(0).detach().to(torch.float32).cpu().numpy()  # [4,H,W]
         cell_p, bound_p, center_p, energy_p = probs_np
 
-        # Optional instance segmentation (probability-first)
         out: Dict[str, Any] = {
             "probs": {
                 "cell":   cell_p.astype(np.float32),
@@ -243,7 +378,6 @@ class SegmenterUNet:
             },
         }
 
-        # Convenience binary maps (NOT used internally for watershed)
         out["cell_mask"] = (cell_p >= self.cfg.thr_cell).astype(np.uint8)
         out["boundary"]  = (bound_p >= self.cfg.thr_bound).astype(np.uint8)
 

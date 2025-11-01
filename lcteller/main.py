@@ -18,7 +18,7 @@ image_filenames=[
 """
 import numpy as np
 from typing import List
-from .utils import (load_image)
+from .image_utils import load_image
 from .structs import (
     PlateLayout, Plate, WellImage,
     ROIResult, SegmentationResults,

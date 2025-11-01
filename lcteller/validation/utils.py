@@ -1,7 +1,6 @@
-# utils.py
-
 from __future__ import annotations
 import math
+import json
 from typing import Any, Dict, List, Sequence, Tuple, Optional
 
 import numpy as np
@@ -10,9 +9,9 @@ from scipy.spatial import cKDTree
 from scipy.optimize import linear_sum_assignment
 from scipy.stats import spearmanr, wasserstein_distance
 from skimage.metrics import structural_similarity as ssim
-from skimage.measure import label as sklabel
 from skimage.morphology import skeletonize
-from skimage.transform import resize as skresize
+from scipy import ndimage as ndi
+from skimage import exposure, filters, morphology, measure
 
 
 # ----------------------------
@@ -21,8 +20,6 @@ from skimage.transform import resize as skresize
 def crop_rect(arr: np.ndarray, y0: int, x0: int, h: int, w: int) -> np.ndarray:
     return arr[y0:y0+h, x0:x0+w, ...] if arr.ndim == 3 else arr[y0:y0+h, x0:x0+w]
 
-from scipy import ndimage as ndi
-from skimage import exposure, filters, morphology, measure
 
 def estimate_well_mask(img: np.ndarray, blur_sigma: float = 3.0, well_is_brighter: str | bool = "auto"):
     g = img if img.ndim == 2 else (0.2989*img[...,0] + 0.5870*img[...,1] + 0.1140*img[...,2])
@@ -60,12 +57,16 @@ def square_crop_from_center_radius(mask_shape: Tuple[int,int], center: Tuple[flo
     w = x1 - x0
     if h > w:
         d = h - w
-        x0 -= d//2; x1 += d - d//2
+        x0 -= d//2
+        x1 += d - d//2
     elif w > h:
         d = w - h
-        y0 -= d//2; y1 += d - d//2
-    y0 = max(0, y0); x0 = max(0, x0)
-    y1 = min(H, y1); x1 = min(W, x1)
+        y0 -= d//2
+        y1 += d - d//2
+    y0 = max(0, y0)
+    x0 = max(0, x0)
+    y1 = min(H, y1)
+    x1 = min(W, x1)
     return y0, y1, x0, x1
 
 
@@ -385,8 +386,10 @@ def center_metrics_np(center_pred: np.ndarray,
 # ----------------------------
 
 def concordance_ccc(x: np.ndarray, y: np.ndarray) -> float:
-    xm = x.mean(); ym = y.mean()
-    vx = x.var(); vy = y.var()
+    xm = x.mean()
+    ym = y.mean()
+    vx = x.var()
+    vy = y.var()
     cov = ((x - xm) * (y - ym)).mean()
     denom = vx + vy + (xm - ym) ** 2
     if denom <= 1e-12:
@@ -471,9 +474,11 @@ def energy_metrics_extended_full(
     g_patch = energy_gt[y0:y1, x0:x1].astype(np.float32)
     m_patch = m[y0:y1, x0:x1]
 
-    p_in = p_patch[m_patch]; g_in = g_patch[m_patch]
+    p_in = p_patch[m_patch]
+    g_in = g_patch[m_patch]
     if p_in.size > 0 and g_in.size > 0:
-        p_f = p_patch.copy(); g_f = g_patch.copy()
+        p_f = p_patch.copy()
+        g_f = g_patch.copy()
         p_f[~m_patch] = p_in.mean()
         g_f[~m_patch] = g_in.mean()
 
@@ -481,7 +486,8 @@ def energy_metrics_extended_full(
             amin, amax = float(a.min()), float(a.max())
             return (a - amin) / (amax - amin + 1e-8)
 
-        p_n = _mm(p_f); g_n = _mm(g_f)
+        p_n = _mm(p_f)
+        g_n = _mm(g_f)
         try:
             ssim_val = float(ssim(p_n, g_n, data_range=1.0))
         except Exception:
@@ -517,4 +523,28 @@ def energy_metrics_extended_full(
         "bias": bias, "slope": float(a), "intercept": float(b),
         "frac_within_delta": frac_ok, "valid_pixels": n_pix
     }
+
+def jsonify(x: Any):
+    if isinstance(x, (np.generic,)):
+        return x.item()
+    if isinstance(x, np.ndarray):
+        return x.tolist()
+    if isinstance(x, dict):
+        return {str(k): jsonify(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [jsonify(v) for v in x]
+    return x
+
+def flatten_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for k, v in meta.items():
+        if k == "params" and isinstance(v, dict):
+            for pk, pv in v.items():
+                out[f"param__{pk}"] = pv
+        elif isinstance(v, (dict, list, tuple)):
+            out[f"meta__{k}"] = json.dumps(v)
+        else:
+            out[f"meta__{k}"] = v
+    return out
+
 
