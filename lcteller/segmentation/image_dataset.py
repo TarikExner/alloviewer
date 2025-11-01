@@ -362,7 +362,11 @@ class SimCellsDataset(Dataset):
         th = self.target
         if H <= th or W <= th:
             # fallback
-            return self._mode_pad_resize(img, cell, bound, inst)
+            img_o, cell_o, bound_o, inst_o, meta = self._mode_pad_resize(img, cell, bound, inst)
+            meta["tile_xy"] = (0,0)
+            meta["tile_hw"] = (th, th)
+            meta["mode"] = "tiles"
+            return img_o, cell_o, bound_o, inst_o, meta
 
         y0 = int(rng.integers(0, H - th + 1))
         x0 = int(rng.integers(0, W - th + 1))
