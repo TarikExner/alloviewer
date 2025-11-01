@@ -920,6 +920,7 @@ def create_validation_h5_tiles(
 
             # batch is: (imgs_tiles, tgts_tiles, extras) but batched with batch_size=1
             imgs_tiles, tgts_tiles, extras = batch
+            print(type(extras))
             # remove batch dim
             imgs_tiles = imgs_tiles[0]     # [T, 3, tile, tile]
             tgts_tiles = tgts_tiles[0]     # [T, 4, tile, tile]
@@ -1015,6 +1016,7 @@ def create_external_images_h5_tiles(
         shuffle=False,
         num_workers=int(num_workers),
         persistent_workers=(num_workers > 0),
+        collate_fn=collate_smart
     )
 
     vlen_str = h5py.special_dtype(vlen=str)
