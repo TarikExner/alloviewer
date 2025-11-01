@@ -38,7 +38,7 @@ def create_dataset_h5(
     gen_batch_size: int = 128,          # generation batch + HDF5 chunk
     num_workers_gen: int = 16,          # DataLoader workers for generation
     compression: Optional[str] = "lzf", # "lzf" (fast lossless) or None
-    flush_every: int = 8,               # flush every N writes
+    flush_every: int = 8,
     resume: bool = True,
     camera_cfg=None,
     scene_cfg=None,

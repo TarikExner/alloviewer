@@ -168,6 +168,82 @@ def _make_energy_from_instances(instances):
     dist[~cell] = 0.0
     return dist.astype(np.float32)
 
+def _crop_sim_meta_to_tile(meta, y0, x0, h, w):
+    """
+    Take simulator meta (full image) and make it consistent with a tile
+    that starts at (y0, x0) and has size (h, w).
+    """
+    # shallow copy so we don't mutate caller's dict
+    new_meta = dict(meta)
+
+    centers = meta.get("centers", [])
+    labels  = meta.get("labels", [])
+    sigmas  = meta.get("final_sigmas", None)
+
+    kept_centers = []
+    kept_labels  = []
+    kept_sigmas  = []
+
+    for i, c in enumerate(centers):
+        cy, cx = c
+        ny = cy - y0
+        nx = cx - x0
+        if 0 <= ny < h and 0 <= nx < w:
+            kept_centers.append((int(ny), int(nx)))
+            if isinstance(labels, (list, tuple, np.ndarray)) and i < len(labels):
+                kept_labels.append(int(labels[i]))
+            # sigmas can be np.ndarray
+            if sigmas is not None and i < len(sigmas):
+                kept_sigmas.append(float(sigmas[i]))
+
+    # update centers
+    new_meta["centers"] = kept_centers
+
+    # update labels (keep type: list of int)
+    if isinstance(labels, np.ndarray):
+        new_meta["labels"] = np.array(kept_labels, dtype=labels.dtype)
+    else:
+        new_meta["labels"] = kept_labels
+
+    # update final_sigmas
+    if sigmas is not None:
+        new_meta["final_sigmas"] = np.array(kept_sigmas, dtype=np.float32)
+
+    # counts
+    n_cells_tile = len(kept_centers)
+    new_meta["n_cells"] = int(n_cells_tile)
+
+    # frac_positive
+    if n_cells_tile > 0 and len(kept_labels) == n_cells_tile:
+        new_meta["frac_positive"] = float(np.mean(kept_labels))
+    else:
+        new_meta["frac_positive"] = 0.0
+
+    # well center shift (can be outside tile, that's fine)
+    if "well_center" in meta and meta["well_center"] is not None:
+        wy, wx = meta["well_center"]
+        new_meta["well_center"] = (float(wy - y0), float(wx - x0))
+
+    # radius stays as is
+
+    # fix params (the captured simulator args)
+    params = meta.get("params", None)
+    if isinstance(params, dict):
+        new_params = dict(params)
+        # sizes
+        new_params["H"] = int(h)
+        new_params["W"] = int(w)
+        # counts
+        if "n_cells" in new_params:
+            new_params["n_cells"] = int(n_cells_tile)
+        if "frac_positive" in new_params:
+            new_params["frac_positive"] = float(new_meta["frac_positive"])
+        if "well_center" in new_params and "well_center" in new_meta:
+            new_params["well_center"] = new_meta["well_center"]
+        # radius_px stays
+        new_meta["params"] = new_params
+
+    return new_meta
 
 # -----------------------------
 # main dataset
@@ -326,6 +402,17 @@ class SimCellsDataset(Dataset):
             img_o, cell_o, bound_o, inst_o, mode_meta = self._mode_crop_well_resize(img, cell, bound, inst, meta)
         else:  # "tiles"
             img_o, cell_o, bound_o, inst_o, mode_meta = self._mode_tiles(img, cell, bound, inst, rng)
+            # we know _mode_tiles gave us: tile_xy=(y0, x0), tile_hw=(th, tw)
+            y0, x0 = mode_meta["tile_xy"]
+            th, tw = mode_meta["tile_hw"]
+
+            # 1) crop simulator meta to tile
+            meta = _crop_sim_meta_to_tile(meta, y0, x0, th, tw)
+
+            # 2) also fix sim_kwargs sizes so the saved record matches the tile
+            sim_kwargs = dict(sim_kwargs)  # copy so we don't affect future iters
+            sim_kwargs["H"] = th
+            sim_kwargs["W"] = tw
 
         # targets (4 heads)
         bound_soft = _make_soft_boundary_from_instances(

@@ -13,6 +13,8 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from skimage.measure import label as sklabel
 
+from ..segmentation.utils import collate_no_meta
+
 # pull helpers from utils.py (see adjustments below)
 from .utils import (
     resize_map,                     # cv2-based (image/binary/label)
@@ -356,7 +358,8 @@ def validate_unet_on_external_h5(
 
     ds = ExternalMasksH5(h5_path)
     dl = DataLoader(ds, batch_size=batch_size, shuffle=False,
-                    num_workers=workers, pin_memory=True, drop_last=False)
+                    num_workers=workers, pin_memory=True, drop_last=False,
+                    collate_fn=collate_no_meta)
 
     rows: List[Dict[str, Any]] = []
 
