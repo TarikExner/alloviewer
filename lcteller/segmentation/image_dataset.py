@@ -255,25 +255,25 @@ class SimCellsDataset(Dataset):
       - pad_resize: pad to square, then resize to target
       - crop_well_resize: square-crop around well, then resize
       - tiles: return a random target×target tile
-
-    This version only uses configs:
-      - scene_cfg: SimulatorConfig (ranges for scene/well)
-      - camera_cfg: CameraSetup (ranges for H, W, noise, hue)
+               (or many tiles if n_tiles>0, or all tiles if n_tiles==-1)
 
     Returns:
-      img_t   : float32 [3, S, S] in [0,1]
-      tgt_t   : float32 [4, S, S]  (0=cell, 1=boundary_soft, 2=center_heat, 3=energy)
+      img_t   : float32 [T, 3, S, S] in [0,1]
+      tgt_t   : float32 [T, 4, S, S]
       extras  : dict with:
-                  - instance_labels: int32 [S, S]
-                  - meta: sim meta + mode info
+                  - instance_labels: int32 [T, S, S]
+                  - meta: {
+                        "full": original_sim_meta (possibly cropped if tiles),
+                        "tiles": [tile_meta_0, ..., tile_meta_{T-1}]
+                    }
     """
     def __init__(
         self,
         length=1000,
         mode="pad_resize",            # "pad_resize" | "crop_well_resize" | "tiles"
         target=512,
-        tiles_per_image=4,            # used if mode="tiles"
-        tile_overlap=64,              # (kept for future eval tiler)
+        n_tiles: int = 1,             # >0: pick that many random tiles; -1: cover full image; only for mode="tiles"
+        tile_overlap=64,              # used when n_tiles == -1
         boundary_ring_width=1,
         boundary_soft_band=2,
         boundary_sigma=1.0,
@@ -282,7 +282,7 @@ class SimCellsDataset(Dataset):
         well_is_brighter="auto",
         transforms=None,              # optional Albumentations-style joint transforms
 
-        # configs (REQUIRED in this version)
+        # required
         scene_cfg=None,               # SimulatorConfig
         camera_cfg=None,              # CameraSetup
     ):
@@ -294,7 +294,7 @@ class SimCellsDataset(Dataset):
         assert self.mode in ("pad_resize", "crop_well_resize", "tiles")
 
         self.target = int(target)
-        self.tiles_per_image = int(tiles_per_image)
+        self.n_tiles = int(n_tiles)
         self.tile_overlap = int(tile_overlap)
 
         self.boundary_ring_width = int(boundary_ring_width)
@@ -304,18 +304,16 @@ class SimCellsDataset(Dataset):
 
         self.well_is_brighter = well_is_brighter
         self.transforms = transforms
-
         self.base_rng = np.random.default_rng(rng_seed)
 
         self.scene_cfg = scene_cfg
         self.camera_cfg = camera_cfg
 
     def __len__(self):
-        if self.mode == "tiles":
-            return self.length * self.tiles_per_image
+        # length = number of simulated scenes, NOT number of tiles
         return self.length
 
-    # ---- mode mappers ----
+    # ---- mode mappers (single-tile helpers) ----
     def _mode_pad_resize(self, img, cell, bound, inst):
         sq, (pad_top, pad_left), S = _pad_to_square(img, pad_val=0.0)
         cell_sq, _, _ = _pad_to_square(cell, pad_val=0.0)
@@ -331,17 +329,13 @@ class SimCellsDataset(Dataset):
         return img_o, cell_o, bound_o, inst_o, meta
 
     def _mode_crop_well_resize(self, img, cell, bound, inst, sim_meta):
-        # use simulator meta if it has well info; else estimate
         cycx = sim_meta.get("well_center", None)
         R = sim_meta.get("radius_px", None)
         if (cycx is None) or (R is None):
-            mask, center, radius = _estimate_well_mask(img, blur_sigma=3.0, well_is_brighter=self.well_is_brighter)
+            _, center, radius = _estimate_well_mask(img, blur_sigma=3.0, well_is_brighter=self.well_is_brighter)
         else:
-            H, W = cell.shape
-            center = (float(cycx[0]), float(cycx[1])); radius = float(R)
-            mask = np.zeros((H, W), dtype=bool)
-            yy, xx = np.mgrid[0:H, 0:W]
-            mask = ((yy - center[0])**2 + (xx - center[1])**2) <= radius*radius
+            center = (float(cycx[0]), float(cycx[1]))
+            radius = float(R)
 
         y0, y1, x0, x1 = _square_crop_from_center_radius(cell.shape, center, radius, pad=8)
         img_c   = _crop_rect(img,  y0, x0, y1-y0, x1-x0)
@@ -362,15 +356,14 @@ class SimCellsDataset(Dataset):
                     well_radius=float(radius))
         return img_o, cell_o, bound_o, inst_o, meta
 
-    def _mode_tiles(self, img, cell, bound, inst, rng):
-        # random tile of size target within the image (clip to edges)
+    def _mode_tiles_single(self, img, cell, bound, inst, rng):
+        """old behavior: pick ONE random tile"""
         H, W = cell.shape
         th = self.target
         if H <= th or W <= th:
-            # fallback: pad+resize path
+            # fallback
             return self._mode_pad_resize(img, cell, bound, inst)
 
-        # prefer placing tile center inside the well if sim meta exists; otherwise uniform
         y0 = int(rng.integers(0, H - th + 1))
         x0 = int(rng.integers(0, W - th + 1))
 
@@ -382,133 +375,197 @@ class SimCellsDataset(Dataset):
         meta = dict(mode="tiles", tile_xy=(int(y0), int(x0)), tile_hw=(th, th))
         return img_t.astype(np.float32), cell_t.astype(np.float32), bound_t.astype(np.float32), inst_t.astype(np.int32), meta
 
+    # ---- new: full sliding tiler for mode="tiles", n_tiles == -1 ----
+    def _enumerate_full_tiles(self, img, cell, bound, inst):
+        """
+        Return list of (img_t, cell_t, bound_t, inst_t, tile_meta)
+        covering the whole image with stride = target - tile_overlap.
+        """
+        H, W = cell.shape
+        th = self.target
+        if H <= th or W <= th:
+            # same fallback as above
+            img_o, cell_o, bound_o, inst_o, meta = self._mode_pad_resize(img, cell, bound, inst)
+            return [(img_o, cell_o, bound_o, inst_o, meta)]
+
+        stride = max(1, th - self.tile_overlap)
+        tiles = []
+        for y0 in range(0, H - th + 1, stride):
+            for x0 in range(0, W - th + 1, stride):
+                img_t   = _crop_rect(img,  y0, x0, th, th)
+                cell_t  = _crop_rect(cell, y0, x0, th, th)
+                bound_t = _crop_rect(bound,y0, x0, th, th)
+                inst_t  = _crop_rect(inst, y0, x0, th, th)
+                meta_t = dict(mode="tiles", tile_xy=(int(y0), int(x0)), tile_hw=(th, th))
+                tiles.append((img_t.astype(np.float32),
+                              cell_t.astype(np.float32),
+                              bound_t.astype(np.float32),
+                              inst_t.astype(np.int32),
+                              meta_t))
+        return tiles
+
     def __getitem__(self, idx):
-        rng = np.random.default_rng(int(self.base_rng.integers(0, 2**31-1)) ^ int(idx))
+        # per-scene RNG
+        rng = np.random.default_rng(int(self.base_rng.integers(0, 2**31 - 1)) ^ int(idx))
 
         # build sim kwargs strictly from configs
         sim_kwargs = self.scene_cfg.sample_kwargs(rng, camera=self.camera_cfg)
         sim_kwargs.setdefault("return_targets", True)
-    
-        img, meta, targets = simulate_image(**sim_kwargs)
 
+        # simulate
+        img, meta, targets = simulate_image(**sim_kwargs)
         cell  = targets["cell_mask"].astype(np.float32)
         bound = targets["boundary"].astype(np.float32)
         inst  = targets["instance_labels"].astype(np.int32)
 
-        # pick mode
+        # non-tile modes stay simple
         if self.mode == "pad_resize":
             img_o, cell_o, bound_o, inst_o, mode_meta = self._mode_pad_resize(img, cell, bound, inst)
+            tiles_raw = [(img_o, cell_o, bound_o, inst_o, mode_meta)]
+            full_meta = meta
         elif self.mode == "crop_well_resize":
             img_o, cell_o, bound_o, inst_o, mode_meta = self._mode_crop_well_resize(img, cell, bound, inst, meta)
-        else:  # "tiles"
-            img_o, cell_o, bound_o, inst_o, mode_meta = self._mode_tiles(img, cell, bound, inst, rng)
-            # we know _mode_tiles gave us: tile_xy=(y0, x0), tile_hw=(th, tw)
-            y0, x0 = mode_meta["tile_xy"]
-            th, tw = mode_meta["tile_hw"]
-
-            # 1) crop simulator meta to tile
-            meta = _crop_sim_meta_to_tile(meta, y0, x0, th, tw)
-
-            # 2) also fix sim_kwargs sizes so the saved record matches the tile
-            sim_kwargs = dict(sim_kwargs)  # copy so we don't affect future iters
-            sim_kwargs["H"] = th
-            sim_kwargs["W"] = tw
-
-        # targets (4 heads)
-        bound_soft = _make_soft_boundary_from_instances(
-            inst_o,
-            ring_width=max(1, self.boundary_ring_width),
-            soft_band=max(1, self.boundary_soft_band),
-            sigma=self.boundary_sigma,
-        ).astype(np.float32)
-
-        # centers: use meta centers if available and map through mode transform; otherwise derive from inst labels
-        if "centers" in meta and isinstance(meta["centers"], (list, tuple)) and len(meta["centers"]) > 0:
-            # best-effort mapping for modes:
-            if mode_meta["mode"] == "pad_resize":
-                # we padded to S, then scaled to target
-                # Recompute mapping by recreating pad and scale
-                sq, (pt, pl), S = _pad_to_square(img, pad_val=0.0)
-                scale = self.target / float(S)
-                centers = []
-                for (y, x) in meta["centers"]:
-                    yy = int(round((y + pt) * scale))
-                    xx = int(round((x + pl) * scale))
-                    if 0 <= yy < self.target and 0 <= xx < self.target:
-                        centers.append((yy, xx))
-            elif mode_meta["mode"] == "crop_well_resize":
-                y0, y1, x0, x1 = mode_meta["crop"]
-                scale = mode_meta["scale"]
-                centers = []
-                for (y, x) in meta["centers"]:
-                    yy = int(round((y - y0) * scale))
-                    xx = int(round((x - x0) * scale))
-                    if 0 <= yy < self.target and 0 <= xx < self.target:
-                        centers.append((yy, xx))
-            else:  # tiles
-                y0, x0 = mode_meta["tile_xy"]
-                centers = []
-                for (y, x) in meta["centers"]:
-                    yy = int(round(y - y0))
-                    xx = int(round(x - x0))
-                    if 0 <= yy < self.target and 0 <= xx < self.target:
-                        centers.append((yy, xx))
-            center_stem = _make_center_stem_from_centers(centers, (self.target, self.target))
+            tiles_raw = [(img_o, cell_o, bound_o, inst_o, mode_meta)]
+            full_meta = meta
         else:
-            # derive centers from instances: take eroded maxima
-            lbl = inst_o
-            centers = []
-            for k in range(1, int(lbl.max())+1):
-                ys, xs = np.where(lbl == k)
-                if ys.size == 0: 
-                    continue
-                cy = int(np.mean(ys))
-                cx = int(np.mean(xs))
-                centers.append((cy, cx))
-            center_stem = _make_center_stem_from_centers(centers, (lbl.shape[0], lbl.shape[1]))
+            # mode == "tiles"
+            if self.n_tiles == -1:
+                # full coverage
+                tiles_raw = self._enumerate_full_tiles(img, cell, bound, inst)
+                # full_meta should still be original sim meta
+                full_meta = meta
+            elif self.n_tiles > 0:
+                # pick N random tiles
+                tiles_raw = []
+                for _ in range(self.n_tiles):
+                    img_o, cell_o, bound_o, inst_o, mode_meta = self._mode_tiles_single(img, cell, bound, inst, rng)
+                    # crop sim meta to this tile
+                    y0, x0 = mode_meta["tile_xy"]
+                    th, tw = mode_meta["tile_hw"]
+                    meta_t = _crop_sim_meta_to_tile(meta, y0, x0, th, tw)
+                    tiles_raw.append((img_o, cell_o, bound_o, inst_o, mode_meta | {"sim_meta": meta_t}))
+                full_meta = meta
+            else:
+                # n_tiles == 0 (we can treat like 1 random tile)
+                img_o, cell_o, bound_o, inst_o, mode_meta = self._mode_tiles_single(img, cell, bound, inst, rng)
+                y0, x0 = mode_meta["tile_xy"]
+                th, tw = mode_meta["tile_hw"]
+                meta_t = _crop_sim_meta_to_tile(meta, y0, x0, th, tw)
+                tiles_raw = [(img_o, cell_o, bound_o, inst_o, mode_meta | {"sim_meta": meta_t})]
+                full_meta = meta
 
-        center_heat = _make_center_heatmap(center_stem, sigma=self.center_sigma)
-        energy = _make_energy_from_instances(inst_o)
+        # ---- now build tensors for ALL tiles in this sample ----
+        imgs_out = []
+        tgts_out = []
+        inst_out = []
+        tiles_meta_out = []
 
-        tgt = np.stack([cell_o, bound_soft, center_heat, energy], axis=0).astype(np.float32)
+        for (img_o, cell_o, bound_o, inst_o, mode_meta) in tiles_raw:
+            # targets (4 heads)
+            bound_soft = _make_soft_boundary_from_instances(
+                inst_o,
+                ring_width=max(1, self.boundary_ring_width),
+                soft_band=max(1, self.boundary_soft_band),
+                sigma=self.boundary_sigma,
+            ).astype(np.float32)
 
-        # optional transforms (e.g., Albumentations) applied jointly
-        if self.transforms is not None:
-            out = self.transforms(image=img_o, masks=[cell_o, bound_soft, center_heat, energy])
-            img_o = out["image"]
-            cell_o, bound_soft, center_heat, energy = out["masks"]
+            # centers: use meta centers if available and map through mode transform; otherwise derive
+            # get tile-level sim meta if present
+            tile_sim_meta = full_meta
+            if isinstance(mode_meta, dict) and "sim_meta" in mode_meta:
+                tile_sim_meta = mode_meta["sim_meta"]
+
+            if "centers" in tile_sim_meta and isinstance(tile_sim_meta["centers"], (list, tuple)) and len(tile_sim_meta["centers"]) > 0:
+                if mode_meta["mode"] == "pad_resize":
+                    sq, (pt, pl), S = _pad_to_square(img, pad_val=0.0)
+                    scale = self.target / float(S)
+                    centers = []
+                    for (y, x) in tile_sim_meta["centers"]:
+                        yy = int(round((y + pt) * scale))
+                        xx = int(round((x + pl) * scale))
+                        if 0 <= yy < self.target and 0 <= xx < self.target:
+                            centers.append((yy, xx))
+                elif mode_meta["mode"] == "crop_well_resize":
+                    y0, y1, x0, x1 = mode_meta["crop"]
+                    scale = mode_meta["scale"]
+                    centers = []
+                    for (y, x) in tile_sim_meta["centers"]:
+                        yy = int(round((y - y0) * scale))
+                        xx = int(round((x - x0) * scale))
+                        if 0 <= yy < self.target and 0 <= xx < self.target:
+                            centers.append((yy, xx))
+                else:  # tiles
+                    y0, x0 = mode_meta["tile_xy"]
+                    centers = []
+                    for (y, x) in tile_sim_meta["centers"]:
+                        yy = int(round(y - y0))
+                        xx = int(round(x - x0))
+                        if 0 <= yy < self.target and 0 <= xx < self.target:
+                            centers.append((yy, xx))
+                center_stem = _make_center_stem_from_centers(centers, (self.target, self.target))
+            else:
+                lbl = inst_o
+                centers = []
+                for k in range(1, int(lbl.max())+1):
+                    ys, xs = np.where(lbl == k)
+                    if ys.size == 0:
+                        continue
+                    cy = int(np.mean(ys))
+                    cx = int(np.mean(xs))
+                    centers.append((cy, cx))
+                center_stem = _make_center_stem_from_centers(centers, (lbl.shape[0], lbl.shape[1]))
+
+            center_heat = _make_center_heatmap(center_stem, sigma=self.center_sigma)
+            energy = _make_energy_from_instances(inst_o)
+
             tgt = np.stack([cell_o, bound_soft, center_heat, energy], axis=0).astype(np.float32)
 
-        # tensors
-        img_c = np.transpose(img_o, (2, 0, 1)).astype(np.float32)  # CHW
-        inst_o, _, _ = relabel_sequential(inst_o.astype(np.int32))
+            # optional transforms (note: per tile)
+            if self.transforms is not None:
+                out = self.transforms(image=img_o, masks=[cell_o, bound_soft, center_heat, energy])
+                img_o = out["image"]
+                cell_o, bound_soft, center_heat, energy = out["masks"]
+                tgt = np.stack([cell_o, bound_soft, center_heat, energy], axis=0).astype(np.float32)
+
+            # tensors
+            img_c = np.transpose(img_o, (2, 0, 1)).astype(np.float32)   # [3,H,W]
+            inst_o, _, _ = relabel_sequential(inst_o.astype(np.int32))
+
+            imgs_out.append(img_c)
+            tgts_out.append(tgt)
+            inst_out.append(inst_o)
+            tiles_meta_out.append(mode_meta)
+
+        # stack over tile dim
+        imgs_t = torch.from_numpy(np.stack(imgs_out, axis=0).astype(np.float32))      # [T,3,S,S]
+        tgts_t = torch.from_numpy(np.stack(tgts_out, axis=0).astype(np.float32))      # [T,4,S,S]
+        inst_t = torch.from_numpy(np.stack(inst_out, axis=0).astype(np.int32))        # [T,S,S]
 
         extras = {
-            "instance_labels": torch.from_numpy(inst_o.copy()),
+            "instance_labels": inst_t,
             "meta": {
-                **meta,
-                "mode_meta": mode_meta,
+                "full": full_meta,
+                "tiles": tiles_meta_out,
                 "sim_kwargs": {k: v for k, v in sim_kwargs.items() if k != "seed"},
-            }
+            },
         }
-
-        return torch.from_numpy(img_c.copy()), torch.from_numpy(tgt.copy()), extras
+        return imgs_t, tgts_t, extras
 
 class DiskSimCellsDataset(Dataset):
     """
     Read-only dataset for HDF5 files produced by create_dataset_h5/export_to_prealloc_h5_safe.
 
     Expects datasets:
-      /imgs: float32 [N, 3, S, S]
-      /tgts: float32 [N, C, S, S]
-      /inst: int32   [N, S, S]
+      /imgs: float32 [N, 1, 3, S, S]
+      /tgts: float32 [N, 1, C, S, S]
+      /inst: int32   [N, 1, S, S]
       /meta: vlen JSON strings (one per sample)
 
     Returns (per __getitem__):
-      img_t:  torch.float32 [3, S, S]
-      tgt_t:  torch.float32 [C, S, S]
+      img_t:  torch.float32 [1, 3, S, S]
+      tgt_t:  torch.float32 [1, C, S, S]
       extras: {
-        "instance_labels": torch.int32 [S, S],
+        "instance_labels": torch.int32 [1, S, S],
         "meta": dict
       }
     """
@@ -522,9 +579,10 @@ class DiskSimCellsDataset(Dataset):
         with h5py.File(self.h5_path, "r", libver="latest", swmr=True) as f:
             n = int(f["imgs"].shape[0])
             self._N = n
-            self._C_img = int(f["imgs"].shape[1])
-            self._S = int(f["imgs"].shape[2])
-            self._C_tgt = int(f["tgts"].shape[1])
+            self._T = int(f["imgs"].shape[1])  # should be 1
+            self._C_img = int(f["imgs"].shape[2])
+            self._S = int(f["imgs"].shape[3])
+            self._C_tgt = int(f["tgts"].shape[2])
             # optional sanity
             assert "inst" in f and "meta" in f, "Missing datasets 'inst' or 'meta' in HDF5."
 
@@ -555,10 +613,11 @@ class DiskSimCellsDataset(Dataset):
         k = int(self._idx[i])
 
         # read numpy views; h5py returns arrays on slicing
-        img = self._imgs[k]   # float32 [3,S,S]
-        tgt = self._tgts[k]   # float32 [C,S,S]
-        inst = self._inst[k]  # int32   [S,S]
+        img = self._imgs[k]   # float32 [1, 3, S, S]
+        tgt = self._tgts[k]   # float32 [1, C, S, S]
+        inst = self._inst[k]  # int32   [1, S, S]
         meta_json = self._meta[k]
+
         # h5py vlen str returns bytes or str depending on build
         if isinstance(meta_json, bytes):
             meta = json.loads(meta_json.decode("utf-8"))
@@ -566,9 +625,9 @@ class DiskSimCellsDataset(Dataset):
             meta = json.loads(meta_json)
 
         # convert to torch with exact dtypes
-        img_t = torch.from_numpy(np.asarray(img, dtype=np.float32))      # [3,S,S]
-        tgt_t = torch.from_numpy(np.asarray(tgt, dtype=np.float32))      # [C,S,S]
-        inst_t = torch.from_numpy(np.asarray(inst, dtype=np.int32))      # [S,S]
+        img_t = torch.from_numpy(np.asarray(img, dtype=np.float32))      # [1, 3, S, S]
+        tgt_t = torch.from_numpy(np.asarray(tgt, dtype=np.float32))      # [1, C, S, S]
+        inst_t = torch.from_numpy(np.asarray(inst, dtype=np.int32))      # [1, S, S]
 
         extras = {"instance_labels": inst_t, "meta": meta}
         return img_t, tgt_t, extras

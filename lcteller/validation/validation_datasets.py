@@ -932,9 +932,6 @@ def create_validation_h5_tiles(
 
             # batch is: (imgs_tiles, tgts_tiles, extras) but batched with batch_size=1
             imgs_tiles, tgts_tiles, extras = batch
-            print(type(imgs_tiles))
-            print(type(tgts_tiles))
-            print(type(extras))
             # remove batch dim
             imgs_tiles = imgs_tiles[0]     # [T, 3, tile, tile]
             tgts_tiles = tgts_tiles[0]     # [T, 4, tile, tile]
