@@ -23,22 +23,6 @@ def collate_no_meta(batch):
     metas = [e["meta"] for e in exs]
     return imgs, tgts, {"instance_labels": inst, "meta": metas}
 
-import os
-import json
-import signal
-from typing import Optional, Sequence
-
-import h5py
-import numpy as np
-from tqdm import tqdm
-import torch
-
-# assumes these exist in your package
-# from .sim_dataset import SimCellsDataset
-# from .defaults import default_camera, default_scene
-# from .utils import collate_no_meta
-
-
 def create_dataset_h5(
     out_path: str,
     length: int,
