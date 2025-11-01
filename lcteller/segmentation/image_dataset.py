@@ -430,29 +430,50 @@ class SimCellsDataset(Dataset):
         else:
             # mode == "tiles"
             if self.n_tiles == -1:
-                # full coverage
+                # full coverage -> we get a list of (img_t, cell_t, bound_t, inst_t, mode_meta)
                 tiles_raw = self._enumerate_full_tiles(img, cell, bound, inst)
-                # full_meta should still be original sim meta
+                # now attach *tile-specific* sim meta to each tile
+                tiles_with_meta = []
+                for (img_t, cell_t, bound_t, inst_t, mode_meta) in tiles_raw:
+                    y0, x0 = mode_meta["tile_xy"]
+                    th, tw = mode_meta["tile_hw"]
+                    meta_t = _crop_sim_meta_to_tile(meta, y0, x0, th, tw)
+                    # store both: per-tile (cropped) and full (original)
+                    mode_meta_full = {
+                        **mode_meta,
+                        "sim_meta": meta_t,
+                        "full_meta": meta,
+                    }
+                    tiles_with_meta.append((img_t, cell_t, bound_t, inst_t, mode_meta_full))
+                tiles_raw = tiles_with_meta
+                # full_meta stays the original simulator meta (full image)
                 full_meta = meta
+
             elif self.n_tiles > 0:
                 # pick N random tiles
                 tiles_raw = []
                 for _ in range(self.n_tiles):
                     img_o, cell_o, bound_o, inst_o, mode_meta = self._mode_tiles_single(img, cell, bound, inst, rng)
-                    # crop sim meta to this tile
                     y0, x0 = mode_meta["tile_xy"]
                     th, tw = mode_meta["tile_hw"]
                     meta_t = _crop_sim_meta_to_tile(meta, y0, x0, th, tw)
-                    tiles_raw.append((img_o, cell_o, bound_o, inst_o, mode_meta | {"sim_meta": meta_t}))
+                    tiles_raw.append(
+                        (
+                            img_o,
+                            cell_o,
+                            bound_o,
+                            inst_o,
+                            {
+                                **mode_meta,
+                                "sim_meta": meta_t,
+                                "full_meta": meta,
+                            },
+                        )
+                    )
                 full_meta = meta
+
             else:
-                # n_tiles == 0 (we can treat like 1 random tile)
-                img_o, cell_o, bound_o, inst_o, mode_meta = self._mode_tiles_single(img, cell, bound, inst, rng)
-                y0, x0 = mode_meta["tile_xy"]
-                th, tw = mode_meta["tile_hw"]
-                meta_t = _crop_sim_meta_to_tile(meta, y0, x0, th, tw)
-                tiles_raw = [(img_o, cell_o, bound_o, inst_o, mode_meta | {"sim_meta": meta_t})]
-                full_meta = meta
+                raise ValueError("Choose n_tiles to be a pos. integer or -1")
 
         # ---- now build tensors for ALL tiles in this sample ----
         imgs_out = []
