@@ -27,6 +27,18 @@ from ..segmentation.image_dataset import (
 )
 from .utils import jsonify
 
+def collate_tiles_single(batch):
+    """
+    For *grouped* tile datasets, but with batch_size=1.
+    Your dataset returns:
+        imgs:  [T, 3, S, S]
+        tgts:  [T, 4, S, S]
+        extras: {"inst_tiles": [T,S,S], "tiles_meta": [...], "full": {...}}
+    We just unwrap the single element so the caller sees exactly that.
+    """
+    assert len(batch) == 1, "collate_tiles_single expects batch_size=1"
+    return batch[0]
+
 def collate_no_meta_flat(batch):
     """
     Use this for flat/tile datasets:
@@ -805,7 +817,7 @@ def create_validation_h5_tiles(
         num_workers=int(num_workers_gen),
         pin_memory=False,
         persistent_workers=(num_workers_gen > 0),
-        collate_fn=collate_smart
+        collate_fn=collate_tiles_single
     )
 
     # --- open/create HDF5 ---
@@ -920,6 +932,8 @@ def create_validation_h5_tiles(
 
             # batch is: (imgs_tiles, tgts_tiles, extras) but batched with batch_size=1
             imgs_tiles, tgts_tiles, extras = batch
+            print(type(imgs_tiles))
+            print(type(tgts_tiles))
             print(type(extras))
             # remove batch dim
             imgs_tiles = imgs_tiles[0]     # [T, 3, tile, tile]
