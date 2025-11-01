@@ -362,10 +362,8 @@ class SimCellsDataset(Dataset):
         th = self.target
         if H <= th or W <= th:
             # fallback
-            img_o, cell_o, bound_o, inst_o, meta = self._mode_pad_resize(img, cell, bound, inst)
-            meta["tile_xy"] = (0,0)
-            meta["tile_hw"] = (th, th)
-            meta["mode"] = "tiles"
+            img_o, cell_o, bound_o, inst_o, _ = self._mode_pad_resize(img, cell, bound, inst)
+            meta = dict(mode="tiles", tile_xy=(0,0), tile_hw=(th, th))
             return img_o, cell_o, bound_o, inst_o, meta
 
         y0 = int(rng.integers(0, H - th + 1))
@@ -376,7 +374,6 @@ class SimCellsDataset(Dataset):
         bound_t = _crop_rect(bound,y0, x0, th, th)
         inst_t  = _crop_rect(inst, y0, x0, th, th)
 
-        meta = dict(mode="tiles", tile_xy=(int(y0), int(x0)), tile_hw=(th, th))
         return img_t.astype(np.float32), cell_t.astype(np.float32), bound_t.astype(np.float32), inst_t.astype(np.int32), meta
 
     # ---- new: full sliding tiler for mode="tiles", n_tiles == -1 ----

@@ -29,6 +29,39 @@ from .config import default_camera, default_scene
 from .utils import collate_no_meta
 
 # --------------------- utils ---------------------
+def flatten_tiles(img, tgt, extras):
+    # nothing to do if already 4D
+    if img.ndim == 4 and tgt.ndim == 4:
+        return img, tgt, extras
+
+    assert img.ndim == 5, f"img must be 4D or 5D, got {img.shape}"
+    assert tgt.ndim == 5, f"tgt must be 4D or 5D, got {tgt.shape}"
+
+    B, T, C, H, W = img.shape
+    _, T2, C2, H2, W2 = tgt.shape
+    assert T2 == T and H2 == H and W2 == W
+
+    # img: [B, T, 3, H, W] -> [B*T, 3, H, W]
+    img = img.view(B * T, C, H, W)
+    # tgt: [B, T, C, H, W] -> [B*T, C, H, W]
+    tgt = tgt.view(B * T, C2, H2, W2)
+
+    if "instance_labels" in extras:
+        inst = extras["instance_labels"]
+        # can be [B, T, H, W]
+        if inst.ndim == 4:
+            inst = inst.view(B * T, H, W)
+        # can be [B, 1, H, W]
+        elif inst.ndim == 4 and inst.shape[1] == 1:
+            inst = inst.view(B * T, H, W)
+        # can be [B, H, W] (rare)
+        elif inst.ndim == 3:
+            inst = inst.unsqueeze(1).expand(B, T, H, W).contiguous().view(B * T, H, W)
+        else:
+            raise ValueError(f"unexpected instance_labels shape {inst.shape}")
+        extras["instance_labels"] = inst
+
+    return img, tgt, extras
 
 _GK_CACHE = {}
 def gaussian_kernel1d(sigma: float, radius: int | None = None, device=None, dtype=None):
@@ -592,6 +625,7 @@ def train_epoch(model,
     pbar = _tqdm(loader, desc="train", position=1, disable=not show_bar, total=total)
 
     for step_idx, (img, tgt, extras) in enumerate(pbar, start=1):
+        img, tgt, extras = flatten_tiles(img, tgt, extras)
         img = img.to(device, non_blocking=True)            # [B,3,H,W]
         tgt = tgt.to(device, non_blocking=True)            # [B,C,H,W]
         B, C, H, W = tgt.shape
@@ -783,6 +817,7 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
     pbar = _tqdm(loader, desc="evaluation", position=2, disable=not show_bar)
 
     for img, tgt, extras in pbar:
+        img, tgt, extras = flatten_tiles(img, tgt, extras)
         img = img.to(device, non_blocking=True)
         tgt = tgt.to(device, non_blocking=True)
         B, C, H, W = tgt.shape

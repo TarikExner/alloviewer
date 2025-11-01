@@ -219,20 +219,37 @@ class SegmenterUNet:
 
     def _to_tensor(self, img: np.ndarray) -> torch.Tensor:
         """
-        img: (H,W,3) or (H,W). Returns float tensor [1,3,H,W] on self.device, normalized to [0,1].
+        Accepts:
+          - (H, W, 3)
+          - (3, H, W)
+          - (1, 3, H, W)
+          - (H, W)  -> broadcast to 3ch
+        Returns: [1, 3, H, W] on device in [0,1]
         """
+        # (1,3,H,W) -> (3,H,W)
+        if img.ndim == 4 and img.shape[0] == 1 and img.shape[1] == 3:
+            img = img[0]
+
+        # (3,H,W) -> (H,W,3)
+        if img.ndim == 3 and img.shape[0] == 3 and img.shape[2] != 3:
+            # CHW -> HWC
+            img = np.transpose(img, (1, 2, 0))
+
         if img.ndim == 2:
             img = np.stack([img, img, img], axis=-1)
+
         if img.shape[-1] != 3:
-            raise ValueError(f"Expected image with 3 channels, got shape {img.shape}")
+            raise ValueError(f"Expected image with 3 channels last, got shape {img.shape}")
 
         x = img.astype(np.float32, copy=False)
         if x.max() > 1.0:
-            x /= 255.0
+            x = x / 255.0
+
         x = np.transpose(x, (2, 0, 1))  # CHW
         x = np.ascontiguousarray(x, dtype=np.float32)
-        t = torch.from_numpy(x).unsqueeze(0).to(self.device, non_blocking=True)  # [1,3,H,W]
+        t = torch.from_numpy(x).unsqueeze(0).to(self.device, non_blocking=True)
         return t
+
 
     def _to_tensor_tiles(self, tiles: np.ndarray) -> torch.Tensor:
         """

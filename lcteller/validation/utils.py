@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Sequence, Tuple, Optional
 
 import numpy as np
 import cv2
+import torch
 from scipy.spatial import cKDTree
 from scipy.optimize import linear_sum_assignment
 from scipy.stats import spearmanr, wasserstein_distance
@@ -533,6 +534,10 @@ def jsonify(x: Any):
         return {str(k): jsonify(v) for k, v in x.items()}
     if isinstance(x, (list, tuple)):
         return [jsonify(v) for v in x]
+    if torch.is_tensor(x):
+        if x.numel() == 1:
+            return x.item()
+        return x.detach().cpu().tolist()
     return x
 
 def flatten_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
@@ -548,3 +553,13 @@ def flatten_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def get_dataset_mode(h5_path: str) -> str:
+    hp = h5_path.lower()
+    if "tile" in hp:
+        return "tiling"
+    elif "crop_well" in hp:
+        return "crop_well_resize"
+    elif "pad_resize" in hp:
+        return "pad_resize"
+    else:
+        return "unknown"
