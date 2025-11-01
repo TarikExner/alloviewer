@@ -19,7 +19,6 @@ from skimage.segmentation import relabel_sequential
 from ..image_utils.tiling import iter_sliding_windows
 from ..segmentation.config import test_scene, test_camera
 from ..segmentation.image_simulation import simulate_image
-from ..segmentation.utils import collate_no_meta
 from ..segmentation.image_dataset import (
     _make_soft_boundary_from_instances,
     _make_center_stem_from_centers,
@@ -27,6 +26,55 @@ from ..segmentation.image_dataset import (
     _make_energy_from_instances,
 )
 from .utils import jsonify
+
+def collate_no_meta_flat(batch):
+    """
+    Use this for flat/tile datasets:
+      (img: [3,H,W], tgt: [C,H,W], extras{"instance_labels": [H,W], "meta": dict})
+    → stacks nicely.
+    """
+    imgs, tgts, exs = zip(*batch)
+    imgs = torch.stack(imgs, dim=0)                 # [B,3,H,W]
+    tgts = torch.stack(tgts, dim=0)                 # [B,C,H,W]
+    inst = torch.stack([e["instance_labels"] for e in exs], dim=0)  # [B,H,W]
+    metas = [e["meta"] for e in exs]
+    extras_out = {
+        "instance_labels": inst,
+        "meta": metas,
+    }
+    return imgs, tgts, extras_out
+
+
+def collate_groups_keep_lists(batch):
+    """
+    Use this for group-mode datasets:
+      (imgs: [T,3,H,W], tgts: [T,4,H,W], extras{"inst_tiles": [T,H,W], "tiles_meta": [...]})
+    T may differ per sample, so we CANNOT stack across batch.
+    We return lists, 1 entry per sample in the batch.
+    DataLoader(batch_size>1) is still okay, but you must loop over the list.
+    """
+    imgs, tgts, exs = zip(*batch)   # each imgs[i] is [T_i,3,H,W]
+    return list(imgs), list(tgts), list(exs)
+
+
+def collate_smart(batch):
+    """
+    Auto-detects if this is flat or grouped.
+    - if first img is 3D  -> flat  -> stack
+    - if first img is 4D  -> group -> keep lists
+    """
+    first_img = batch[0][0]
+    if isinstance(first_img, torch.Tensor):
+        ndim = first_img.dim()
+    else:
+        ndim = torch.as_tensor(first_img).dim()
+
+    if ndim == 3:
+        return collate_no_meta_flat(batch)
+    elif ndim == 4:
+        return collate_groups_keep_lists(batch)
+    else:
+        raise ValueError(f"Unknown sample shape for collate: ndim={ndim}")
 
 def _find_pairs_strict(root_dir: str) -> List[Tuple[str, str]]:
     exts = (".tif", ".tiff")
@@ -757,7 +805,7 @@ def create_validation_h5_tiles(
         num_workers=int(num_workers_gen),
         pin_memory=False,
         persistent_workers=(num_workers_gen > 0),
-        collate_fn=collate_no_meta
+        collate_fn=collate_smart
     )
 
     # --- open/create HDF5 ---
