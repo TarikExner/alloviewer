@@ -185,8 +185,9 @@ def run_training_validation(out_dir: str,
     for unet_mode in ["large", "med", "small"]:
         for dataset_mode in ["crop_well_resize", "pad_resize", "tiles"]:
             print(f"... Starting calculations for UNet {unet_mode} and dataset {dataset_mode}")
+
             cfg = TrainingValidationConfig(
-                h5_path = h5_dir,
+                h5_path = os.path.join(h5_dir, f"{dataset_mode}_val.h5"),
                 cell_thr = 0.1,
                 out_csv = os.path.join(out_dir, f"training_val_{unet_mode}_{dataset_mode}.csv")
             )
