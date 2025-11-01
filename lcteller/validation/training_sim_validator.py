@@ -6,12 +6,14 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
+import torch
 from torch.utils.data import DataLoader
 from skimage.measure import label as sklabel
 
 from ..segmentation.image_dataset import DiskSimCellsDataset
 from ..segmentation.utils import collate_no_meta
-from ..segmenter import SegmenterUNet
+from ..segmenter import SegmenterUNet, SegmenterConfig
+import gc
 
 from tqdm import tqdm
 
@@ -175,5 +177,29 @@ def validate_unet_segmentation(
             json.dump(summary, f, indent=2)
 
     return df, summary
+
+def run_training_validation(out_dir: str,
+                            model_dir: str,
+                            h5_dir: str) -> None:
+
+    for unet_mode in ["large", "med", "small"]:
+        for dataset_mode in ["crop_well_resize", "pad_resize", "tiles"]:
+            print(f"... Starting calculations for UNet {unet_mode} and dataset {dataset_mode}")
+            cfg = TrainingValidationConfig(
+                h5_path = h5_dir,
+                cell_thr = 0.1,
+                out_csv = os.path.join(out_dir, f"training_val_{unet_mode}_{dataset_mode}.csv")
+            )
+            segmenter_cfg = SegmenterConfig(
+                unet_mode = unet_mode,
+                model_dir = model_dir,
+                model_file = f"best_{unet_mode}_{dataset_mode}_S512_seed187.pth",
+                device = "cuda" if torch.cuda.is_available() else "cpu",
+                use_amp = torch.cuda.is_available()
+            ).to_dict()
+            segmenter = SegmenterUNet.from_config(segmenter_cfg)
+            _, _ = validate_unet_segmentation(segmenter, cfg)
+            gc.collect()
+
 
 
