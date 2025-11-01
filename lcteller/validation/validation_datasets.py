@@ -19,6 +19,7 @@ from skimage.segmentation import relabel_sequential
 from ..image_utils.tiling import iter_sliding_windows
 from ..segmentation.config import test_scene, test_camera
 from ..segmentation.image_simulation import simulate_image
+from ..segmentation.utils import collate_no_meta
 from ..segmentation.image_dataset import (
     _make_soft_boundary_from_instances,
     _make_center_stem_from_centers,
@@ -756,6 +757,7 @@ def create_validation_h5_tiles(
         num_workers=int(num_workers_gen),
         pin_memory=False,
         persistent_workers=(num_workers_gen > 0),
+        collate_fn=collate_no_meta
     )
 
     # --- open/create HDF5 ---
