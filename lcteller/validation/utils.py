@@ -434,11 +434,6 @@ def energy_metrics_extended_full(
     cell_mask: np.ndarray,
     frac_delta: Optional[float] = 0.05,
 ) -> Dict[str, Any]:
-    """
-    Extended set for energy head inside cell mask.
-    Adds MAE, NRMSE (by GT range), Spearman, CCC, SSIM, grad corr,
-    Wasserstein-1, bias, slope, intercept, fraction within delta.
-    """
     m = cell_mask > 0.5
     n_pix = int(m.sum())
     if n_pix == 0:
@@ -467,7 +462,7 @@ def energy_metrics_extended_full(
     a, b = np.linalg.lstsq(A, g, rcond=None)[0]
     bias = float((p - g).mean())
 
-    # SSIM + gradient correlation on bbox (masked, min-max norm)
+    # --- SSIM + gradient part ---
     ys, xs = np.where(m)
     y0, y1 = ys.min(), ys.max() + 1
     x0, x1 = xs.min(), xs.max() + 1
@@ -475,39 +470,45 @@ def energy_metrics_extended_full(
     g_patch = energy_gt[y0:y1, x0:x1].astype(np.float32)
     m_patch = m[y0:y1, x0:x1]
 
-    p_in = p_patch[m_patch]
-    g_in = g_patch[m_patch]
-    if p_in.size > 0 and g_in.size > 0:
-        p_f = p_patch.copy()
-        g_f = g_patch.copy()
-        p_f[~m_patch] = p_in.mean()
-        g_f[~m_patch] = g_in.mean()
+    # default
+    ssim_val = np.nan
+    grad_corr = np.nan
 
-        def _mm(a):
-            amin, amax = float(a.min()), float(a.max())
-            return (a - amin) / (amax - amin + 1e-8)
+    # check size to avoid np.gradient crash
+    if p_patch.shape[0] >= 2 and p_patch.shape[1] >= 2:
+        p_in = p_patch[m_patch]
+        g_in = g_patch[m_patch]
+        if p_in.size > 0 and g_in.size > 0:
+            p_f = p_patch.copy()
+            g_f = g_patch.copy()
+            p_f[~m_patch] = p_in.mean()
+            g_f[~m_patch] = g_in.mean()
 
-        p_n = _mm(p_f)
-        g_n = _mm(g_f)
-        try:
-            ssim_val = float(ssim(p_n, g_n, data_range=1.0))
-        except Exception:
-            ssim_val = np.nan
+            def _mm(a):
+                amin, amax = float(a.min()), float(a.max())
+                return (a - amin) / (amax - amin + 1e-8)
 
-        gp_y, gp_x = np.gradient(p_n)
-        gg_y, gg_x = np.gradient(g_n)
-        gp_mag = np.sqrt(gp_y[m_patch] ** 2 + gp_x[m_patch] ** 2)
-        gg_mag = np.sqrt(gg_y[m_patch] ** 2 + gg_x[m_patch] ** 2)
-        grad_corr = float(np.corrcoef(gp_mag, gg_mag)[0, 1]) if gp_mag.size > 1 else np.nan
-    else:
-        ssim_val = np.nan
-        grad_corr = np.nan
+            p_n = _mm(p_f)
+            g_n = _mm(g_f)
+            try:
+                ssim_val = float(ssim(p_n, g_n, data_range=1.0))
+            except Exception:
+                ssim_val = np.nan
 
+            # safe now
+            gp_y, gp_x = np.gradient(p_n)
+            gg_y, gg_x = np.gradient(g_n)
+            gp_mag = np.sqrt(gp_y[m_patch] ** 2 + gp_x[m_patch] ** 2)
+            gg_mag = np.sqrt(gg_y[m_patch] ** 2 + gg_x[m_patch] ** 2)
+            grad_corr = float(np.corrcoef(gp_mag, gg_mag)[0, 1]) if gp_mag.size > 1 else np.nan
+
+    # wasserstein
     try:
         w1 = float(wasserstein_distance(p, g))
     except Exception:
         w1 = np.nan
 
+    # fraction within delta
     if frac_delta is None:
         delta = 0.05 * (float(np.nanmax(g) - np.nanmin(g)) + 1e-8)
     else:
