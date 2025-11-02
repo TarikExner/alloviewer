@@ -128,7 +128,6 @@ class TiledH5Dataset(Dataset):
 
 def validate_unet_on_tiled_h5(
     segmenter: SegmenterUNet,
-    h5_path: str,
     cfg: TrainingValidationConfig,                    # your validation cfg (has cell_thr, boundary_thr, etc.)
     indices: Optional[Sequence[int]] = None,
     workers: int = 0,
@@ -139,7 +138,7 @@ def validate_unet_on_tiled_h5(
 
     For each tile we compute the same metrics you already use.
     """
-    ds = TiledH5Dataset(h5_path, indices=indices)
+    ds = TiledH5Dataset(cfg.h5_path, indices=indices)
     dl = DataLoader(
         ds,
         batch_size=1,          # 1 sample -> many tiles
