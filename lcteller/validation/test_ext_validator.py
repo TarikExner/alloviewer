@@ -13,6 +13,8 @@ from ..segmentation.image_dataset import DiskSimCellsDataset
 from ..segmentation.utils import collate_no_meta
 from ..segmenter import SegmenterUNet
 
+import h5py
+
 from tqdm import tqdm
 
 from .utils import (
