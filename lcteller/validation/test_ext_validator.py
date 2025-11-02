@@ -149,6 +149,7 @@ def validate_unet_on_tiled_h5(
         num_workers=workers,
         pin_memory=True,
         drop_last=False,
+        collate_fn=collate_no_meta
     )
 
     rows: List[Dict[str, Any]] = []
