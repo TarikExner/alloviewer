@@ -14,6 +14,7 @@ from ..segmentation.utils import collate_no_meta
 from ..segmenter import SegmenterUNet
 
 import h5py
+import torch
 
 from tqdm import tqdm
 
