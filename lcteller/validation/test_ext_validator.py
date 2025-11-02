@@ -13,6 +13,8 @@ from ..segmentation.image_dataset import DiskSimCellsDataset
 from ..segmentation.utils import collate_no_meta
 from ..segmenter import SegmenterUNet
 
+from tqdm import tqdm
+
 from .utils import (
     iou_dice_overlap,
     boundary_f1_skeletonized,
@@ -281,4 +283,6 @@ def validate_unet_on_tiled_h5(
         os.makedirs(os.path.dirname(cfg.out_summary_json) or ".", exist_ok=True)
         with open(cfg.out_summary_json, "w") as f:
             json.dump(summary, f, indent=2)
+
+    return df, summary
 
