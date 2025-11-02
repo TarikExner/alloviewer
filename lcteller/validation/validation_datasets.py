@@ -321,33 +321,20 @@ def create_external_cells_h5_tiles(
     transforms=None,
 ):
     """
-    Build an HDF5 with tiled external images (real images + 8-bit masks).
+    Build an HDF5 with tiled external images, but keep tiles grouped per image.
 
-    Layout (flat over tiles, not over images):
+    Layout:
 
-        /imgs : float32 [N_tiles, 3, target, target]
-        /tgts : float32 [N_tiles, 4, target, target]
-        /inst : int32   [N_tiles, target, target]
-        /meta : vlen JSON, per tile:
-            {
-              "tile":  <tile meta>,
-              "full":  <full-image meta>,
-              "image_idx": <index in dataset>
-            }
+        /imgs     : float32 [N_img, max_T, 3, target, target]
+        /tgts     : float32 [N_img, max_T, 4, target, target]
+        /inst     : int32   [N_img, max_T, target, target]
+        /meta     : vlen str [N_img, max_T]  (per-tile json)
+        /n_tiles  : int32   [N_img]          (true tile count for each image)
 
-    Attributes:
-        - version
-        - source
-        - n_images
-        - n_images_written
-        - n_tiles_written
-        - target
-        - tile_overlap
-        - heal_radius
+    For images with fewer than max_T tiles we pad with zeros and empty meta.
     """
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
 
-    # dataset
     ds = ExternalCellsTilesDataset(
         root_dir=root_dir,
         target=target,
@@ -356,7 +343,6 @@ def create_external_cells_h5_tiles(
         transforms=transforms,
     )
 
-    # loader: batch_size=1 because each image has variable #tiles
     dl = DataLoader(
         ds,
         batch_size=1,
@@ -366,7 +352,6 @@ def create_external_cells_h5_tiles(
         pin_memory=False,
     )
 
-    # for ctrl+c
     stop = {"flag": False}
 
     def _handle(sig, frm):
@@ -381,62 +366,73 @@ def create_external_cells_h5_tiles(
     with h5py.File(out_path, "a", libver="latest") as f:
         if new_file:
             f.attrs.update({
-                "version": 1,
+                "version": 2,
                 "source": os.path.abspath(root_dir),
                 "n_images": len(ds),
                 "n_images_written": 0,
-                "n_tiles_written": 0,
+                "max_tiles": 0,              # will grow
                 "target": int(target),
                 "tile_overlap": int(tile_overlap),
                 "heal_radius": int(heal_radius),
             })
+            # we do not know max_T yet → start with 0 along tile axis
             f.create_dataset(
                 "imgs",
-                shape=(0, 3, target, target),
-                maxshape=(None, 3, target, target),
+                shape=(0, 0, 3, target, target),
+                maxshape=(None, None, 3, target, target),
                 dtype=np.float32,
-                chunks=(1, 3, target, target),
+                chunks=(1, 1, 3, target, target),
                 compression=compression,
             )
             f.create_dataset(
                 "tgts",
-                shape=(0, 4, target, target),
-                maxshape=(None, 4, target, target),
+                shape=(0, 0, 4, target, target),
+                maxshape=(None, None, 4, target, target),
                 dtype=np.float32,
-                chunks=(1, 4, target, target),
+                chunks=(1, 1, 4, target, target),
                 compression=compression,
             )
             f.create_dataset(
                 "inst",
-                shape=(0, target, target),
-                maxshape=(None, target, target),
+                shape=(0, 0, target, target),
+                maxshape=(None, None, target, target),
                 dtype=np.int32,
-                chunks=(1, target, target),
+                chunks=(1, 1, target, target),
                 compression=compression,
             )
+            # meta per tile
             f.create_dataset(
                 "meta",
+                shape=(0, 0),
+                maxshape=(None, None),
+                dtype=vlen_str,
+                chunks=(1, 128),
+            )
+            # true tile count per image
+            f.create_dataset(
+                "n_tiles",
                 shape=(0,),
                 maxshape=(None,),
-                dtype=vlen_str,
-                chunks=(1024,),
+                dtype=np.int32,
+                chunks=(128,),
             )
         else:
-            # sanity
+            # small checks
             assert int(f.attrs["target"]) == int(target), "target mismatch"
             assert int(f.attrs["tile_overlap"]) == int(tile_overlap), "tile_overlap mismatch"
             if "n_images_written" not in f.attrs:
                 f.attrs["n_images_written"] = 0
-            if "n_tiles_written" not in f.attrs:
-                f.attrs["n_tiles_written"] = 0
+            if "max_tiles" not in f.attrs:
+                f.attrs["max_tiles"] = 0
 
         d_imgs = f["imgs"]
         d_tgts = f["tgts"]
         d_inst = f["inst"]
         d_meta = f["meta"]
+        d_n_tiles = f["n_tiles"]
 
         n_images_written = int(f.attrs["n_images_written"])
-        n_tiles_written = int(f.attrs["n_tiles_written"])
+        max_tiles = int(f.attrs["max_tiles"])
 
         it = iter(dl)
 
@@ -451,7 +447,7 @@ def create_external_cells_h5_tiles(
         pbar = tqdm(
             total=len(ds),
             initial=n_images_written,
-            desc="export external cells tiles",
+            desc="export external cells tiles (grouped)",
             dynamic_ncols=True,
         )
 
@@ -479,47 +475,78 @@ def create_external_cells_h5_tiles(
             except StopIteration:
                 break
 
-
-            # strip the loader batch dim
+            # strip batch dim
             imgs_tiles = imgs_tiles[0]   # [T, 3, S, S]
             tgts_tiles = tgts_tiles[0]   # [T, 4, S, S]
             inst_tiles = extras["instance_labels"][0]  # [T, S, S]
             tiles_meta = extras["meta"]["tiles"]
-            full_meta = extras["meta"]["full"]
+            full_meta  = extras["meta"]["full"]
 
             T = int(imgs_tiles.shape[0])
-            cur_n = n_tiles_written
-            new_n = cur_n + T
 
-            # grow datasets
-            d_imgs.resize((new_n, 3, target, target))
-            d_tgts.resize((new_n, 4, target, target))
-            d_inst.resize((new_n, target, target))
-            d_meta.resize((new_n,))
+            # maybe we need to grow the tile axis if this image has more tiles
+            if T > max_tiles:
+                # grow second dim of all datasets to T
+                new_max_tiles = T
+                n_img_cur = d_imgs.shape[0]
 
-            # write data
-            d_imgs[cur_n:new_n] = imgs_tiles.detach().cpu().numpy().astype(np.float32)
-            d_tgts[cur_n:new_n] = tgts_tiles.detach().cpu().numpy().astype(np.float32)
-            d_inst[cur_n:new_n] = inst_tiles.detach().cpu().numpy().astype(np.int32)
+                d_imgs.resize((n_img_cur, new_max_tiles, 3, target, target))
+                d_tgts.resize((n_img_cur, new_max_tiles, 4, target, target))
+                d_inst.resize((n_img_cur, new_max_tiles, target, target))
+                d_meta.resize((n_img_cur, new_max_tiles))
 
-            # write meta (fixed part)
-            meta_jsons = []
-            # run both tile-level and full-image meta through jsonify
+                # also need to pad old images’ empty slots with something
+                if n_img_cur > 0 and max_tiles > 0:
+                    # nothing special, HDF5 will have zeros for the new area
+                    pass
+
+                max_tiles = new_max_tiles
+                f.attrs.modify("max_tiles", int(max_tiles))
+
+            # now we can append a new image (dim 0)
+            new_n_img = n_images_written + 1
+
+            # resize all datasets by +1 in image dim
+            d_imgs.resize((new_n_img, max_tiles, 3, target, target))
+            d_tgts.resize((new_n_img, max_tiles, 4, target, target))
+            d_inst.resize((new_n_img, max_tiles, target, target))
+            d_meta.resize((new_n_img, max_tiles))
+            d_n_tiles.resize((new_n_img,))
+
+            # write this image’s tiles
+            # fill first T slots
+            d_imgs[img_idx, :T, ...] = imgs_tiles.detach().cpu().numpy().astype(np.float32)
+            d_tgts[img_idx, :T, ...] = tgts_tiles.detach().cpu().numpy().astype(np.float32)
+            d_inst[img_idx, :T, ...] = inst_tiles.detach().cpu().numpy().astype(np.int32)
+
+            # pad the rest (if any) with zeros
+            if T < max_tiles:
+                d_imgs[img_idx, T:, ...] = 0.0
+                d_tgts[img_idx, T:, ...] = 0.0
+                d_inst[img_idx, T:, ...] = 0
+
+            # write meta per tile
             full_meta_jsonable = jsonify(full_meta)
-            for tm in tiles_meta:
+            tile_jsons = []
+            for t_i, tm in enumerate(tiles_meta):
                 tm_jsonable = jsonify(tm)
                 m = {
                     "tile": tm_jsonable,
                     "full": full_meta_jsonable,
                     "image_idx": int(img_idx),
+                    "tile_idx": int(t_i),
                 }
-                meta_jsons.append(json.dumps(m, separators=(",", ":")))
-            d_meta[cur_n:new_n] = meta_jsons
+                tile_jsons.append(json.dumps(m, separators=(",", ":")))
+            # fill valid metas
+            d_meta[img_idx, :T] = tile_jsons
+            # fill padded metas with empty string
+            if T < max_tiles:
+                d_meta[img_idx, T:] = ""
 
-            # update counters
-            n_tiles_written = new_n
-            n_images_written += 1
-            f.attrs.modify("n_tiles_written", int(n_tiles_written))
+            # record true tile count
+            d_n_tiles[img_idx] = T
+
+            n_images_written = new_n_img
             f.attrs.modify("n_images_written", int(n_images_written))
 
             img_since_flush += 1
@@ -529,12 +556,11 @@ def create_external_cells_h5_tiles(
 
             pbar.update(1)
 
-        # final flush
         _flush_safe()
         pbar.close()
 
         print(
-            f"[export] done: images={n_images_written}/{len(ds)}, tiles={n_tiles_written} → {out_path}"
+            f"[export] done: images={n_images_written}/{len(ds)}, max_tiles={max_tiles} → {out_path}"
         )
 
     return out_path

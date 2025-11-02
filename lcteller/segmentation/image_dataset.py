@@ -374,7 +374,14 @@ class SimCellsDataset(Dataset):
         bound_t = _crop_rect(bound,y0, x0, th, th)
         inst_t  = _crop_rect(inst, y0, x0, th, th)
 
-        return img_t.astype(np.float32), cell_t.astype(np.float32), bound_t.astype(np.float32), inst_t.astype(np.int32), meta
+        meta = dict(mode="tiles", tile_xy=(int(y0), int(x0)), tile_hw=(th, th))
+        return (
+            img_t.astype(np.float32),
+            cell_t.astype(np.float32),
+            bound_t.astype(np.float32),
+            inst_t.astype(np.int32),
+            meta
+        )
 
     # ---- new: full sliding tiler for mode="tiles", n_tiles == -1 ----
     def _enumerate_full_tiles(self, img, cell, bound, inst):
