@@ -88,6 +88,7 @@ class CameraSetup:
 
     # width range (int)
     W: NumOrRange = (512, 2500)
+    H: Optional[int] = None
 
     # aspect ratios as (width, height)
     aspect_ratios: Sequence[Tuple[int, int]] = ((16, 9), (16, 10), (3, 2), (4, 3))
@@ -104,8 +105,11 @@ class CameraSetup:
 
     def sample(self, rng: RNG) -> Dict[str, Any]:
         W = _sample_number(rng, self.W, integer=True)
-        ratio = _choose_ratio(rng, self.aspect_ratios, self.portrait_prob)  # width/height
-        H = _round_to_multiple(W / ratio, self.size_multiple)
+        if not self.H:
+            ratio = _choose_ratio(rng, self.aspect_ratios, self.portrait_prob)  # width/height
+            H = _round_to_multiple(W / ratio, self.size_multiple)
+        else:
+            H = self.H
 
         return {
             "H": int(H),
@@ -344,6 +348,17 @@ def test_camera() -> CameraSetup:
 def train_camera() -> CameraSetup:
     return default_camera()
 
+def img_export_camera() -> CameraSetup:
+    return CameraSetup(
+        name = "img_export_cam",
+        W = 2160,
+        H = 1620,
+        portrait_prob = 0,
+        blur_sigma_global = 0,
+        photon_level = 2500,
+        read_noise = 0.01
+    )
+
 def train_scene() -> SimulatorConfig:
     return default_scene()
 
@@ -387,3 +402,5 @@ def test_scene() -> SimulatorConfig:
         ghost_intensity = (0.02, 0.1),
     )
 
+def img_export_scene() -> SimulatorConfig:
+    return test_scene()

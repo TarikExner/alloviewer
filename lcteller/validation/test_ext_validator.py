@@ -296,11 +296,17 @@ def run_test_ext_validation(out_dir: str,
     for unet_mode in ["large", "medium", "small"]:
         for dataset_mode in ["external_images", "tiles"]:
             print(f"... Starting calculations for UNet {unet_mode} and dataset {dataset_mode}")
+            out_csv = os.path.join(out_dir, f"testing_val_{unet_mode}_{dataset_mode}.csv")
+
+            if os.path.isfile(out_csv):
+                df = pd.read_csv(out_csv, index_col = None)
+                res.append(df)
+                continue
 
             cfg = TrainingValidationConfig(
                 h5_path = os.path.join(h5_dir, f"{dataset_mode}_test.h5"),
                 cell_thr = 0.1,
-                out_csv = os.path.join(out_dir, f"testing_val_{unet_mode}_{dataset_mode}.csv")
+                out_csv = out_csv
             )
             segmenter_cfg = SegmenterConfig(
                 unet_mode = unet_mode,
