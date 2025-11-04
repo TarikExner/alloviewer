@@ -133,7 +133,6 @@ def validate_unet_on_tiled_h5(
     segmenter: SegmenterUNet,
     cfg: TrainingValidationConfig,                    # your validation cfg (has cell_thr, boundary_thr, etc.)
     indices: Optional[Sequence[int]] = None,
-    workers: int = 0,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     Run the UNet on every sample in a tiled H5 (sim or external),
@@ -146,7 +145,7 @@ def validate_unet_on_tiled_h5(
         ds,
         batch_size=1,          # 1 sample -> many tiles
         shuffle=False,
-        num_workers=workers,
+        num_workers=cfg.workers,
         pin_memory=True,
         drop_last=False,
         collate_fn=collate_no_meta
