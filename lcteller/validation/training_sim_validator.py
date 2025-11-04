@@ -181,7 +181,7 @@ def validate_unet_segmentation(
 def run_training_validation(out_dir: str,
                             model_dir: str,
                             h5_dir: str) -> None:
-
+    res = []
     for unet_mode in ["large", "medium", "small"]:
         for dataset_mode in ["crop_well_resize", "pad_resize", "tiles"]:
             print(f"... Starting calculations for UNet {unet_mode} and dataset {dataset_mode}")
@@ -199,8 +199,14 @@ def run_training_validation(out_dir: str,
                 use_amp = torch.cuda.is_available()
             ).to_dict()
             segmenter = SegmenterUNet.from_config(segmenter_cfg)
-            _, _ = validate_unet_segmentation(segmenter, cfg)
+            df, _ = validate_unet_segmentation(segmenter, cfg)
+            res.append(df)
             gc.collect()
+
+    final = pd.concat(res, axis = 0)
+    final.to_csv(os.path.join(out_dir, "training_val_combined.csv"), index = False)
+
+    return
 
 
 
