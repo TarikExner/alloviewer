@@ -81,6 +81,7 @@ def validate_unet_segmentation(
 
                 inst_gt = inst_all[b].numpy().astype(np.int32)
                 meta = metas[b]
+                full_meta = meta["full"]
 
                 # ---- model forward ----
                 out = segmenter(img_hwc)
@@ -130,8 +131,8 @@ def validate_unet_segmentation(
                     frac_delta=cfg.energy_frac_delta,
                 )
 
-                n_cells = int(meta.get("n_cells", n_gt))
-                frac_positive = float(meta.get("frac_positive"))
+                n_cells = int(full_meta.get("n_cells", n_gt))
+                frac_positive = float(full_meta.get("frac_positive", np.nan))
                 
                 params = meta.get("params", {})
                 params_out = {}
