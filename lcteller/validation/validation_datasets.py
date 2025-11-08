@@ -531,12 +531,16 @@ def create_external_cells_h5_tiles(
         # small helpers
         def _flush_safe():
             f.flush()
-            try: f.id.flush()
-            except Exception: pass
+            try:
+                f.id.flush()
+            except Exception: 
+                pass
             try:
                 fd = f.id.get_vfd_handle()
-                if fd is not None: os.fsync(fd)
-            except Exception: pass
+                if fd is not None:
+                    os.fsync(fd)
+            except Exception:
+                pass
 
         def _ensure_tile_dim(n_tiles_needed: int):
             cur_T = int(f.attrs.get("T", 1))

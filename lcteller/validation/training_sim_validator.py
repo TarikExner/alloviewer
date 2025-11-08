@@ -23,7 +23,6 @@ from .utils import (
     nms_peaks_np,           
     center_metrics_hungarian,
     energy_metrics_extended_full,
-    flatten_meta,
     get_dataset_mode
 )
 from .config import TrainingValidationConfig
@@ -131,11 +130,26 @@ def validate_unet_segmentation(
                     frac_delta=cfg.energy_frac_delta,
                 )
 
-                n_sim = int(meta.get("n_cells", n_gt))
+                n_cells = int(meta.get("n_cells", n_gt))
+                frac_positive = float(meta.get("frac_positive"))
+                
+                params = meta.get("params", {})
+                params_out = {}
+                for k, v in params.items():
+                    col = f"param_{k}"
+                    if isinstance(v, (int, float, np.floating)):
+                        params_out[col] = float(v)
+                    elif isinstance(v, (list, tuple, np.ndarray)):
+                        # keep lists compact and consistent in CSV
+                        params_out[col] = json.dumps([float(x) for x in list(v)])
+                    else:
+                        # ignore unexpected types
+                        continue
 
                 row: Dict[str, Any] = {
                     "idx": int(len(per_rows)),
-                    "n_cells_simulated": n_sim,
+                    "n_cells_simulated": n_cells,
+                    "frac_positive": frac_positive,
                     "n_cells_gt_instances": n_gt,
                     "n_cells_pred_components_thr0p5": n_cc,
                     "n_cells_pred_centers": n_centers_pred,
@@ -145,10 +159,9 @@ def validate_unet_segmentation(
                     "boundary_f1": float(boundary_f1),
                     **{f"center_{k}": v for k, v in center_stats.items()},
                     **{f"energy_{k}": v for k, v in energy_stats.items()},
+                    **params_out
                 }
 
-                meta_cols = flatten_meta(meta)
-                row.update(meta_cols)
                 per_rows.append(row)
 
                 pbar.update(1)

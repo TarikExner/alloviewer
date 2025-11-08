@@ -23,7 +23,6 @@ from .utils import (
     nms_peaks_np,           
     center_metrics_hungarian,
     energy_metrics_extended_full,
-    flatten_meta,
     get_dataset_mode
 )
 from .config import TrainingValidationConfig
@@ -179,6 +178,23 @@ def validate_unet_on_tiled_h5(
             full_meta = meta.get("full", {})
             # "n_cells" may or may not be there; we'll fallback to GT when missing
             n_cells_from_meta = full_meta.get("n_cells", None)
+            # NEW: pull only the needed bits from meta["full"]
+            frac_positive_from_meta = full_meta.get("frac_positive", None)
+            src_path = full_meta.get("src_path", None)
+
+            params = full_meta.get("params", {})
+            # normalize params into flat columns: floats stay numeric; small lists -> JSON string
+            params_out = {}
+            for k, v in params.items():
+                col = f"param_{k}"
+                if isinstance(v, (int, float, np.floating)):
+                    params_out[col] = float(v)
+                elif isinstance(v, (list, tuple, np.ndarray)):
+                    # keep lists compact and consistent in CSV
+                    params_out[col] = json.dumps([float(x) for x in list(v)])
+                else:
+                    # ignore unexpected types
+                    continue
 
             for t in range(T):
                 tgt = tgts_np[t]           # [4,H,W]
@@ -245,6 +261,10 @@ def validate_unet_on_tiled_h5(
                     "sample_idx": int(sample_idx),
                     "tile_idx": int(t),
                     "n_cells": n_cells,
+                    "frac_positive": (
+                        float(frac_positive_from_meta)
+                        if frac_positive_from_meta is not None else np.nan
+                    ),
                     "n_cells_gt_instances": n_gt,
                     "n_cells_pred_components_thr0p5": n_cc,
                     "n_cells_pred_centers": n_centers_pred,
@@ -254,10 +274,9 @@ def validate_unet_on_tiled_h5(
                     "boundary_f1": float(boundary_f1),
                     **{f"center_{k}": v for k, v in center_stats.items()},
                     **{f"energy_{k}": v for k, v in energy_stats.items()},
+                    "src_path": src_path if src_path is not None else "",
+                    **params_out
                 }
-
-                # flatten meta so we don’t lose info
-                row.update(flatten_meta(meta))
 
                 rows.append(row)
 
