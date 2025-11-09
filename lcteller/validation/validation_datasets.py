@@ -9,10 +9,11 @@ import h5py
 import numpy as np
 import torch
 import csv
+import cv2
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
+import math
 
-import tifffile as tiff
 from skimage import morphology
 from skimage.measure import label as sklabel
 from skimage.segmentation import relabel_sequential
@@ -205,35 +206,106 @@ class ExternalCellsTilesDataset(Dataset):
         return len(self.pairs)
 
     def _read_image_and_mask(self, img_path: str, mask_path: str):
-        # image
-        img = tiff.imread(img_path).astype(np.float32, copy=False)
-        if img.ndim == 2:
-            pass
-        elif img.ndim == 3:
-            if img.shape[2] == 1:
-                img = img[..., 0]
-            elif img.shape[2] > 3:
-                img = img[..., :3]
+        """
+        Returns:
+          img_rgb_f32 : float32 [H, W, 3] in [0,1]
+          msk_bin     : uint8   [H, W] with {0,1}
+          info        : dict with bit-depth details for auditing
+        """
 
-        # to [0,1]
-        if img.dtype.kind in ("u", "i"):
-            vmax = 65535.0 if img.max() > 255 else 255.0
-            img = img / max(vmax, 1.0)
+        def _detect_bitdepth_u16(a: np.ndarray, p: float = 99.9):
+            # a: uint16 HxW or HxWxC
+            vmax = int(a.max())
+            if vmax == 0:
+                return 16, (1 << 16) - 1, False  # b, white, shifted
+
+            # try left-shifted patterns (lower bits all zero), highest first
+            for b in (14, 12, 10, 8):
+                shift = 16 - b
+                low_mask = (1 << shift) - 1
+                if (a & low_mask).max() == 0:
+                    white_shifted = ((1 << b) - 1) << shift
+                    if vmax <= white_shifted:
+                        return b, white_shifted, True
+
+            # robust estimate from percentile
+            sample = float(np.percentile(a, p))
+            sample = max(1.0, sample)
+            est_bits = int(math.ceil(math.log2(sample + 1.0)))
+            est_bits = min(16, max(2, est_bits))
+            allowed = (8, 10, 12, 14, 16)
+            b = min(allowed, key=lambda k: abs(k - est_bits))
+            white = (1 << b) - 1
+            if vmax > white:
+                return 16, (1 << 16) - 1, False
+            return b, white, False
+
+        # --- read image (keep native depth) ---
+        img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            raise RuntimeError(f"Failed to read image: {img_path}")
+
+        shape_in = tuple(img.shape)
+        dtype_in = str(img.dtype)
+
+        # ensure HxWxC
+        if img.ndim == 2:
+            img = img[:, :, None]
+
+        # convert to RGB 3-ch
+        if img.shape[2] >= 3:
+            img = cv2.cvtColor(img[:, :, :3], cv2.COLOR_BGR2RGB)
+        elif img.shape[2] == 2:
+            c0 = img[:, :, 0:1]
+            c1 = img[:, :, 1:2]
+            img = np.concatenate([c0, c1, c0], axis=-1)
         else:
-            img = np.clip(img, 0.0, 1.0)
+            img = np.repeat(img, 3, axis=-1)
 
-        if img.ndim == 2:
-            img = np.stack([img, img, img], axis=-1)
-        elif img.ndim == 3 and img.shape[2] == 2:
-            img = np.concatenate([img, img[..., :1]], axis=-1)
+        # scale to float32 [0,1] with bit-depth sanity
+        info = {
+            "dtype_in": dtype_in,
+            "shape_in": shape_in,
+            "bit_depth": None,
+            "white_level": None,
+            "shifted": False,
+        }
 
-        # mask (8-bit, 255=cell)
-        msk = tiff.imread(mask_path)
-        if msk.ndim > 2:
-            msk = msk[..., 0]
-        msk = (msk >= 255).astype(np.uint8)
+        if img.dtype == np.uint8:
+            info["bit_depth"] = 8
+            info["white_level"] = 255
+            img_f32 = img.astype(np.float32) / 255.0
 
-        return img, msk
+        elif img.dtype == np.uint16:
+            b, white, shifted = _detect_bitdepth_u16(img)
+            info.update({"bit_depth": b, "white_level": int(white), "shifted": bool(shifted)})
+
+            # if left-shifted, undo shift before scaling
+            if shifted and b < 16:
+                shift = 16 - b
+                img = (img >> shift).astype(np.uint16)
+                white = (1 << b) - 1
+
+            img_f32 = img.astype(np.float32) / float(white)
+            img_f32 = np.clip(img_f32, 0.0, 1.0)
+
+        else:
+            # any other numeric type → clip to [0,1]
+            img_f32 = np.clip(img.astype(np.float32), 0.0, 1.0)
+            info.update({"bit_depth": 32, "white_level": 1, "shifted": False})
+
+        # --- read mask (binary uint8) ---
+        m = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        if m is None:
+            raise RuntimeError(f"Failed to read mask: {mask_path}")
+
+        # accept both 0/255 and 0/1 sources
+        if m.max() <= 1:
+            msk_bin = (m >= 1).astype(np.uint8)
+        else:
+            msk_bin = (m >= 255).astype(np.uint8)
+
+        return img_f32, msk_bin, info
 
     def _enumerate_full_tiles(self, H: int, W: int):
         th = self.target
@@ -250,7 +322,7 @@ class ExternalCellsTilesDataset(Dataset):
 
     def __getitem__(self, idx: int):
         img_path, mask_path = self.pairs[idx]
-        img, msk = self._read_image_and_mask(img_path, mask_path)
+        img, msk, read_info = self._read_image_and_mask(img_path, mask_path)
         H, W = msk.shape
 
         # heal watershed gaps if wanted
@@ -304,6 +376,7 @@ class ExternalCellsTilesDataset(Dataset):
             "n_cells": int(inst_full.max()),
             "centers": [(int(y), int(x)) for (y, x) in centers_full],
             "labels": [int(v) for v in labels_full],  # 1/0/-1
+            "read_info": read_info,
         }
 
         n_cells_full = len(centers_full)

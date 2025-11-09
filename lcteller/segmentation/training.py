@@ -1230,8 +1230,8 @@ def train(
 
         if is_rank0:
             state = (model.module.state_dict() if hasattr(model, "module") else model.state_dict())
-            epoch_path = os.path.join(out_dir, f"{unet_mode}_{tag}_epoch_{ep}.pth")
-            torch.save(state, epoch_path)
+            # epoch_path = os.path.join(out_dir, f"{unet_mode}_{tag}_epoch_{ep}.pth")
+            # torch.save(state, epoch_path)
 
             # use UNWEIGHTED val loss for model selection
             sel = va["loss_unweighted"]
@@ -1287,7 +1287,7 @@ def train(
                 "mode": mode,
                 "target": int(target),
                 "unet_mode": unet_mode,
-                "checkpoint": epoch_path,
+                # "checkpoint": epoch_path,
             }
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec) + "\n")
