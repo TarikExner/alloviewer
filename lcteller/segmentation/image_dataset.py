@@ -524,11 +524,10 @@ class SimCellsDataset(Dataset):
                         if 0 <= yy < self.target and 0 <= xx < self.target:
                             centers.append((yy, xx))
                 else:  # tiles
-                    y0, x0 = mode_meta["tile_xy"]
                     centers = []
                     for (y, x) in tile_sim_meta["centers"]:
-                        yy = int(round(y - y0))
-                        xx = int(round(x - x0))
+                        yy = int(round(y))
+                        xx = int(round(x))
                         if 0 <= yy < self.target and 0 <= xx < self.target:
                             centers.append((yy, xx))
                 center_stem = _make_center_stem_from_centers(centers, (self.target, self.target))
