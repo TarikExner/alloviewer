@@ -543,7 +543,7 @@ def simulate_image(
     cell_mask = (inst_in > 0)
 
     boundary = segmentation.find_boundaries(inst_in, mode="thick")
-    if boundary_width and boundary_width > 1:
+    if boundary_width and boundary_width >= 1:
         boundary = morphology.binary_dilation(boundary, morphology.disk(int(boundary_width)))
     boundary = np.logical_and(boundary, cell_mask)
 

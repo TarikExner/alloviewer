@@ -143,7 +143,7 @@ class SimulatorConfig:
     focus_frac_in: Union[float, Tuple[float, float]] = (0.0, 1.0)
     in_focus_sigma_thresh: Optional[Union[float, Tuple[float, float]]] = None
 
-    boundary_width: Union[int, Tuple[int, int]] = 1
+    boundary_width: Union[int, Tuple[int, int]] = 2
 
     # crowd near outer wall
     rim_bias: Union[float, Tuple[float, float]] = (0.5, 0.95)
@@ -337,7 +337,8 @@ def default_scene() -> SimulatorConfig:
 def test_camera() -> CameraSetup:
     return CameraSetup(
         name = "test_cam",
-        W = 2048,
+        W = 2160,
+        H = 1620,
         aspect_ratios = ((4,3), (4,3)),
         portrait_prob = 0,
         blur_sigma_global = 0,
@@ -353,7 +354,6 @@ def img_export_camera() -> CameraSetup:
         name = "img_export_cam",
         W = 2160,
         H = 1620,
-        portrait_prob = 0,
         blur_sigma_global = 0,
         photon_level = 2500,
         read_noise = 0.01
@@ -383,7 +383,7 @@ def test_scene() -> SimulatorConfig:
         focus_frac_in = (0.0, 1.0),
         in_focus_sigma_thresh = None,
 
-        boundary_width = 1,
+        boundary_width = 2,
 
         # crowd near outer wall
         rim_bias = (0.5, 0.95),
