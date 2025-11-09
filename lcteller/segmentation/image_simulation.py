@@ -562,7 +562,6 @@ def simulate_image(
         "labels": labels,
         "frac_positive": frac_positive,
         "n_cells": n_cells,
-        "final_sigmas": final_sigmas,
         "well_center": (float(cy), float(cx)),
         "radius_px": float(R),
         "params": all_params

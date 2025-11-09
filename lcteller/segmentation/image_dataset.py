@@ -33,7 +33,7 @@ def _resize_map(x, side, mode="image"):
     else:
         raise ValueError(mode)
 
-def _pad_to_square(arr, pad_val=0):
+def _pad_to_square(arr, pad_val=0.0):
     H, W = arr.shape[:2]
     S = max(H, W)
     dy = S - H
