@@ -853,6 +853,7 @@ def create_validation_h5_fullres(
     T_fixed = 1
 
     with h5py.File(out_path, "a", libver="latest") as f:
+        # create or validate file
         if new_file:
             f.attrs.update({
                 "version": 1,
@@ -897,23 +898,22 @@ def create_validation_h5_fullres(
             print(f"[export] already complete: {written}/{N} → {out_path}")
             return N, (H, W)
 
-        # make loader over unwritten tail
+        # build loader over the unwritten tail
         if resume and written > 0:
-            subset_idx = list(range(written, N))
-            gen_subset = torch.utils.data.Subset(gen_dataset, subset_idx)
+            gen_subset = Subset(gen_dataset, list(range(written, N)))
         else:
             gen_subset = gen_dataset
 
         dl = DataLoader(
             gen_subset,
-            batch_size=int(batch_size),
+            batch_size=gen_batch_size,
             shuffle=False,
-            num_workers=int(num_workers),
+            num_workers=int(num_workers_gen),
             pin_memory=bool(pin_memory),
             persistent_workers=(num_workers > 0),
             prefetch_factor=int(prefetch_factor) if num_workers > 0 else None,
             drop_last=False,
-            collate_fn=collate_keep_meta,
+            collate_fn=collate_no_meta,
         )
 
         def _flush_safe():
@@ -939,10 +939,11 @@ def create_validation_h5_fullres(
                 try:
                     d_meta[start_abs + j] = json.dumps(metas_b[j], separators=(",", ":"))
                 except TypeError:
-                    d_meta[start_abs + j] = json.dumps(jsonify(metas_b[j]), separators=(",", ":"))
+                    d_meta[start_abs + j] = json.dumps(_jsonify(metas_b[j]), separators=(",", ":"))
             return B
 
-        pbar = tqdm(total=N, initial=written, desc="export fullres h5", dynamic_ncols=True)
+        # --- progress bar here ---
+        pbar = tqdm(total=N, initial=written, desc=progress_desc, dynamic_ncols=True)
         idx_next = written
         since_flush = 0
 
@@ -956,8 +957,7 @@ def create_validation_h5_fullres(
             f.attrs.modify("written", int(idx_next))
             since_flush += wrote
             if (since_flush % max(1, flush_every)) == 0:
-                _flush_safe()
-                since_flush = 0
+                _flush_safe(); since_flush = 0
 
             if idx_next >= N:
                 break
