@@ -940,7 +940,7 @@ def create_validation_h5_fullres(
                 try:
                     d_meta[start_abs + j] = json.dumps(metas_b[j], separators=(",", ":"))
                 except TypeError:
-                    d_meta[start_abs + j] = json.dumps(_jsonify(metas_b[j]), separators=(",", ":"))
+                    d_meta[start_abs + j] = json.dumps(jsonify(metas_b[j]), separators=(",", ":"))
             return B
 
         # --- progress bar here ---
