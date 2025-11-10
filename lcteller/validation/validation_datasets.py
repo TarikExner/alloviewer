@@ -814,7 +814,8 @@ def create_validation_h5_fullres(
     flush_every: int = 16,
     resume: bool = True,
     camera_cfg=None,
-    scene_cfg=None
+    scene_cfg=None,
+    progress_desc: str = "export fullres h5"
 ) -> Tuple[int, int]:
     """
     Build a full-res HDF5 using a multi-worker DataLoader and write:
