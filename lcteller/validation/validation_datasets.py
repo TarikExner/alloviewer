@@ -714,9 +714,9 @@ def create_external_cells_h5_tiles(
 class FullResSimValDataset(Dataset):
     """
     Returns (per index):
-      img_t : float32 [1, 3, S, S] in [0,1]
-      tgt_t : float32 [1, 4, S, S]
-      extras: { "instance_labels": int32 [1, S, S], "meta": dict }
+      img_t : float32 [1, 3, H, W] in [0,1]
+      tgt_t : float32 [1, 4, H, W]
+      extras: { "instance_labels": int32 [1, H, W], "meta": dict }
     """
     def __init__(
         self,
@@ -740,7 +740,7 @@ class FullResSimValDataset(Dataset):
         self.boundary_sigma = float(boundary_sigma)
         self.center_sigma = float(center_sigma)
 
-        # probe one sample to fix S
+        # probe one sample to fix H, W
         rng0 = np.random.default_rng(self.rng_seed)
         skw = self.scene_cfg.sample_kwargs(rng0, camera=self.camera_cfg)
         skw.setdefault("return_targets", True)
@@ -748,15 +748,13 @@ class FullResSimValDataset(Dataset):
         H0, W0, C0 = img0.shape
         if C0 != 3:
             raise ValueError(f"Simulator must return 3 channels, got {C0}")
-        if H0 != W0:
-            raise ValueError(f"Expected square frames (S,S). Got {H0}x{W0}.")
-        self.S = H0
+        self.H, self.W = int(H0), int(W0)
 
     def __len__(self) -> int:
         return self.length
 
     def _build_targets(self, inst_lbl: np.ndarray, cell_mask: np.ndarray) -> np.ndarray:
-        S = self.S
+        H, W = self.H, self.W
         bound_soft = _make_soft_boundary_from_instances(
             inst_lbl.astype(np.int32),
             ring_width=max(1, self.boundary_ring_width),
@@ -770,45 +768,36 @@ class FullResSimValDataset(Dataset):
         for k in range(1, int(lbl.max()) + 1):
             ys, xs = np.where(lbl == k)
             if ys.size:
-                cy = int(np.mean(ys))
-                cx = int(np.mean(xs))
-                centers.append((cy, cx))
-        center_stem = _make_center_stem_from_centers(centers, (S, S))
+                centers.append((int(np.mean(ys)), int(np.mean(xs))))
+        center_stem = _make_center_stem_from_centers(centers, (H, W))
         center_heat = _make_center_heatmap(center_stem, sigma=self.center_sigma).astype(np.float32)
-
         energy = _make_energy_from_instances(lbl).astype(np.float32)
 
-        tgt = np.stack(
-            [cell_mask.astype(np.float32), bound_soft, center_heat, energy],
-            axis=0,
-        ).astype(np.float32)  # [4,S,S]
-        return tgt
+        return np.stack([cell_mask.astype(np.float32), bound_soft, center_heat, energy], axis=0).astype(np.float32)
 
     def __getitem__(self, idx: int):
-        # deterministic per index, per worker
-        # worker ID is mixed into np RNG by DataLoader worker_init_fn below
         rng = np.random.default_rng(self.rng_seed ^ int(idx))
-
         skw = self.scene_cfg.sample_kwargs(rng, camera=self.camera_cfg)
         skw.setdefault("return_targets", True)
-        img, meta, targets = simulate_image(**skw)  # (S,S,3)
+        img, meta, targets = simulate_image(**skw)  # (H,W,3)
 
-        if img.shape != (self.S, self.S, 3):
-            raise ValueError(f"Sample {idx}: expected {(self.S, self.S, 3)}, got {img.shape}")
+        if img.shape != (self.H, self.W, 3):
+            raise ValueError(f"Sample {idx}: expected {(self.H, self.W, 3)}, got {img.shape}")
 
-        cell = targets["cell_mask"].astype(np.float32)          # (S,S)
-        inst = targets["instance_labels"].astype(np.int32)      # (S,S)
+        cell = targets["cell_mask"].astype(np.float32)     # (H,W)
+        inst = targets["instance_labels"].astype(np.int32) # (H,W)
         inst_rel, _, _ = relabel_sequential(inst)
 
-        tgt = self._build_targets(inst_rel, cell)               # [4,S,S]
-        img_cyx = np.transpose(img.astype(np.float32), (2, 0, 1))  # [3,S,S]
+        tgt = self._build_targets(inst_rel, cell)          # [4,H,W]
+        img_cyx = np.transpose(img.astype(np.float32), (2, 0, 1))  # [3,H,W]
 
-        img_t = torch.from_numpy(img_cyx[None, ...])            # [1,3,S,S]
-        tgt_t = torch.from_numpy(tgt[None, ...])                # [1,4,S,S]
-        inst_t = torch.from_numpy(inst_rel[None, ...])          # [1,S,S]
+        img_t = torch.from_numpy(img_cyx[None, ...])       # [1,3,H,W]
+        tgt_t = torch.from_numpy(tgt[None, ...])           # [1,4,H,W]
+        inst_t = torch.from_numpy(inst_rel[None, ...])     # [1,H,W]
 
         extras = {"instance_labels": inst_t, "meta": meta}
         return img_t, tgt_t, extras
+
 
 def create_validation_h5_fullres(
     out_path: str,
@@ -860,18 +849,17 @@ def create_validation_h5_fullres(
         camera_cfg=camera_cfg,
         scene_cfg=scene_cfg,
     )
-
-    N = len(gen_dataset)
-    S = gen_dataset.S
+    N, H, W = len(gen_dataset), gen_dataset.H, gen_dataset.W
     T_fixed = 1
 
     with h5py.File(out_path, "a", libver="latest") as f:
-        # create or validate file structure
         if new_file:
             f.attrs.update({
                 "version": 1,
                 "length": int(N),
-                "T": 1,
+                "H": int(H),
+                "W": int(W),
+                "T": int(T_fixed),
                 "C_img": 3,
                 "C_tgt": 4,
                 "written": 0,
@@ -884,76 +872,64 @@ def create_validation_h5_fullres(
                 if compression == "gzip" and compression_level is not None:
                     dargs["compression_opts"] = int(compression_level)
 
-            # chunking tuned for per-sample writes
             chunk_N = max(1, min(16, N))
             f.create_dataset("imgs",
-                shape=(N, T_fixed, 3, S, S), dtype="float32",
-                chunks=(chunk_N, T_fixed, 3, min(S, 256), min(S, 256)), **dargs)
+                shape=(N, T_fixed, 3, H, W), dtype="float32",
+                chunks=(chunk_N, T_fixed, 3, min(H, 256), min(W, 256)), **dargs)
             f.create_dataset("tgts",
-                shape=(N, T_fixed, 4, S, S), dtype="float32",
-                chunks=(chunk_N, T_fixed, 4, min(S, 256), min(S, 256)), **dargs)
+                shape=(N, T_fixed, 4, H, W), dtype="float32",
+                chunks=(chunk_N, T_fixed, 4, min(H, 256), min(W, 256)), **dargs)
             f.create_dataset("inst",
-                shape=(N, T_fixed, S, S), dtype="int32",
-                chunks=(chunk_N, T_fixed, min(S, 256), min(S, 256)), **dargs)
+                shape=(N, T_fixed, H, W), dtype="int32",
+                chunks=(chunk_N, T_fixed, min(H, 256), min(W, 256)), **dargs)
             f.create_dataset("meta", shape=(N,), dtype=vlen_str, chunks=(min(1024, N),))
         else:
             assert int(f.attrs["length"]) == int(N), "length mismatch"
-            assert int(f.attrs["S"]) == int(S), "S mismatch"
+            assert int(f.attrs["H"]) == int(H), "H mismatch"
+            assert int(f.attrs["W"]) == int(W), "W mismatch"
             assert int(f.attrs["T"]) == int(T_fixed), "T mismatch"
             if "written" not in f.attrs:
                 f.attrs["written"] = 0
 
         d_imgs, d_tgts, d_inst, d_meta = f["imgs"], f["tgts"], f["inst"], f["meta"]
         written = int(f.attrs["written"])
-
-        # already done?
         if written >= N:
             print(f"[export] already complete: {written}/{N} → {out_path}")
-            return N, S
+            return N, (H, W)
 
-        # build loader over the unwritten tail
-        start_idx = written if resume else 0
-        if start_idx > 0:
-            subset_idx = list(range(start_idx, N))
-            gen_subset = Subset(gen_dataset, subset_idx)
+        # make loader over unwritten tail
+        if resume and written > 0:
+            subset_idx = list(range(written, N))
+            gen_subset = torch.utils.data.Subset(gen_dataset, subset_idx)
         else:
             gen_subset = gen_dataset
 
-        def _worker_init_fn(worker_id: int):
-            base = getattr(gen_dataset, "rng_seed", 123)
-            np.random.seed(base ^ (worker_id + 1))
-
         dl = DataLoader(
             gen_subset,
-            batch_size=gen_batch_size,
+            batch_size=int(batch_size),
             shuffle=False,
-            num_workers=int(num_workers_gen),
+            num_workers=int(num_workers),
             pin_memory=bool(pin_memory),
             persistent_workers=(num_workers > 0),
             prefetch_factor=int(prefetch_factor) if num_workers > 0 else None,
             drop_last=False,
-            collate_fn=collate_no_meta,
+            collate_fn=collate_keep_meta,
         )
 
-        # write helpers
         def _flush_safe():
             f.flush()
-            try:
-                f.id.flush()
-            except Exception:
-                pass
+            try: f.id.flush()
+            except Exception: pass
             try:
                 fd = f.id.get_vfd_handle()
-                if fd is not None:
-                    os.fsync(fd)
-            except Exception:
-                pass
+                if fd is not None: os.fsync(fd)
+            except Exception: pass
 
         def _write_batch(start_abs: int,
-                         imgs_b: torch.Tensor,          # [B,1,3,S,S]
-                         tgts_b: torch.Tensor,          # [B,1,4,S,S]
-                         inst_b: torch.Tensor,          # [B,1,S,S]
-                         metas_b: List[dict]) -> int:   # len B
+                         imgs_b: torch.Tensor,          # [B,1,3,H,W]
+                         tgts_b: torch.Tensor,          # [B,1,4,H,W]
+                         inst_b: torch.Tensor,          # [B,1,H,W]
+                         metas_b: List[dict]) -> int:
             B = imgs_b.shape[0]
             end_abs = start_abs + B
             d_imgs[start_abs:end_abs, :, :, :, :] = imgs_b.cpu().numpy().astype(np.float32)
@@ -963,18 +939,16 @@ def create_validation_h5_fullres(
                 try:
                     d_meta[start_abs + j] = json.dumps(metas_b[j], separators=(",", ":"))
                 except TypeError:
-                    d_meta[start_abs + j] = json.dumps(_jsonify(metas_b[j]), separators=(",", ":"))
+                    d_meta[start_abs + j] = json.dumps(jsonify(metas_b[j]), separators=(",", ":"))
             return B
 
-        # progress
-        pbar = tqdm(total=N, initial=start_idx, desc="export fullres h5", dynamic_ncols=True)
-        idx_next = start_idx
+        pbar = tqdm(total=N, initial=written, desc="export fullres h5", dynamic_ncols=True)
+        idx_next = written
         since_flush = 0
 
         for imgs_b, tgts_b, extras_b in dl:
             if stop["flag"]:
                 break
-
             wrote = _write_batch(idx_next, imgs_b, tgts_b, extras_b["instance_labels"], extras_b["meta"])
             idx_next += wrote
             pbar.update(wrote)
@@ -990,5 +964,5 @@ def create_validation_h5_fullres(
 
         _flush_safe()
         pbar.close()
-        print(f"[export] done: images={idx_next}/{N}, T=1 → {out_path}")
-        return N, S
+        print(f"[export] done: images={idx_next}/{N}, T=1, size={H}x{W} → {out_path}")
+        return N, (H, W)
