@@ -8,7 +8,7 @@ class TrainingValidationConfig:
     out_csv: Optional[str] = None
     out_summary_json: Optional[str] = None
     batch_size: int = 8
-    workers: int = 4
+    workers: int = 12
     cell_thr: float = 0.5
     center_peak_thr: float = 0.2
     center_nms_dist: int = 3

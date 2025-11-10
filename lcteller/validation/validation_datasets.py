@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
 import os
 import json
 import glob
@@ -10,7 +10,7 @@ import numpy as np
 import torch
 import csv
 import cv2
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, Subset
 from tqdm import tqdm
 import math
 
@@ -18,12 +18,17 @@ from skimage import morphology
 from skimage.measure import label as sklabel
 from skimage.segmentation import relabel_sequential
 
+from ..segmentation.config import test_camera, test_scene
+
 from ..segmentation.image_dataset import (
     _make_soft_boundary_from_instances,
     _make_center_stem_from_centers,
     _make_center_heatmap,
     _make_energy_from_instances,
+    DiskSimCellsDataset
 )
+from ..segmentation import simulate_image
+from ..segmentation.utils import collate_no_meta
 from .utils import jsonify
 
 
@@ -706,3 +711,284 @@ def create_external_cells_h5_tiles(
         print(f"[export] done: images={written}/{N}, T={int(f.attrs['T'])} → {out_path}")
         return out_path
 
+class FullResSimValDataset(Dataset):
+    """
+    Returns (per index):
+      img_t : float32 [1, 3, S, S] in [0,1]
+      tgt_t : float32 [1, 4, S, S]
+      extras: { "instance_labels": int32 [1, S, S], "meta": dict }
+    """
+    def __init__(
+        self,
+        length: int,
+        scene_cfg,
+        camera_cfg,
+        *,
+        rng_seed: int = 123,
+        boundary_ring_width: int = 1,
+        boundary_soft_band: int = 2,
+        boundary_sigma: float = 1.0,
+        center_sigma: float = 1.0,
+    ):
+        self.length = int(length)
+        self.scene_cfg = scene_cfg
+        self.camera_cfg = camera_cfg
+
+        self.rng_seed = int(rng_seed)
+        self.boundary_ring_width = int(boundary_ring_width)
+        self.boundary_soft_band = int(boundary_soft_band)
+        self.boundary_sigma = float(boundary_sigma)
+        self.center_sigma = float(center_sigma)
+
+        # probe one sample to fix S
+        rng0 = np.random.default_rng(self.rng_seed)
+        skw = self.scene_cfg.sample_kwargs(rng0, camera=self.camera_cfg)
+        skw.setdefault("return_targets", True)
+        img0, _, _ = simulate_image(**skw)  # (H,W,3)
+        H0, W0, C0 = img0.shape
+        if C0 != 3:
+            raise ValueError(f"Simulator must return 3 channels, got {C0}")
+        if H0 != W0:
+            raise ValueError(f"Expected square frames (S,S). Got {H0}x{W0}.")
+        self.S = H0
+
+    def __len__(self) -> int:
+        return self.length
+
+    def _build_targets(self, inst_lbl: np.ndarray, cell_mask: np.ndarray) -> np.ndarray:
+        S = self.S
+        bound_soft = _make_soft_boundary_from_instances(
+            inst_lbl.astype(np.int32),
+            ring_width=max(1, self.boundary_ring_width),
+            soft_band=max(1, self.boundary_soft_band),
+            sigma=self.boundary_sigma,
+        ).astype(np.float32)
+
+        # centers from instances
+        centers = []
+        lbl = inst_lbl.astype(np.int32)
+        for k in range(1, int(lbl.max()) + 1):
+            ys, xs = np.where(lbl == k)
+            if ys.size:
+                cy = int(np.mean(ys))
+                cx = int(np.mean(xs))
+                centers.append((cy, cx))
+        center_stem = _make_center_stem_from_centers(centers, (S, S))
+        center_heat = _make_center_heatmap(center_stem, sigma=self.center_sigma).astype(np.float32)
+
+        energy = _make_energy_from_instances(lbl).astype(np.float32)
+
+        tgt = np.stack(
+            [cell_mask.astype(np.float32), bound_soft, center_heat, energy],
+            axis=0,
+        ).astype(np.float32)  # [4,S,S]
+        return tgt
+
+    def __getitem__(self, idx: int):
+        # deterministic per index, per worker
+        # worker ID is mixed into np RNG by DataLoader worker_init_fn below
+        rng = np.random.default_rng(self.rng_seed ^ int(idx))
+
+        skw = self.scene_cfg.sample_kwargs(rng, camera=self.camera_cfg)
+        skw.setdefault("return_targets", True)
+        img, meta, targets = simulate_image(**skw)  # (S,S,3)
+
+        if img.shape != (self.S, self.S, 3):
+            raise ValueError(f"Sample {idx}: expected {(self.S, self.S, 3)}, got {img.shape}")
+
+        cell = targets["cell_mask"].astype(np.float32)          # (S,S)
+        inst = targets["instance_labels"].astype(np.int32)      # (S,S)
+        inst_rel, _, _ = relabel_sequential(inst)
+
+        tgt = self._build_targets(inst_rel, cell)               # [4,S,S]
+        img_cyx = np.transpose(img.astype(np.float32), (2, 0, 1))  # [3,S,S]
+
+        img_t = torch.from_numpy(img_cyx[None, ...])            # [1,3,S,S]
+        tgt_t = torch.from_numpy(tgt[None, ...])                # [1,4,S,S]
+        inst_t = torch.from_numpy(inst_rel[None, ...])          # [1,S,S]
+
+        extras = {"instance_labels": inst_t, "meta": meta}
+        return img_t, tgt_t, extras
+
+def create_validation_h5_fullres(
+    out_path: str,
+    length: int,
+    batch_size: int = 4,
+    num_workers: int = 8,
+    prefetch_factor: int = 2,
+    pin_memory: bool = False,
+    compression: Optional[str] = "lzf",          # None | "lzf" | "gzip"
+    rng_seed: int = 187,
+    gen_batch_size: int = 16,
+    num_workers_gen: int = 16,
+    compression_level: Optional[int] = None,     # for gzip
+    flush_every: int = 16,
+    resume: bool = True,
+    camera_cfg=None,
+    scene_cfg=None
+) -> Tuple[int, int]:
+    """
+    Build a full-res HDF5 using a multi-worker DataLoader and write:
+      /imgs: float32 [N, 1, 3, S, S]
+      /tgts: float32 [N, 1, 4, S, S]
+      /inst: int32   [N, 1, S, S]
+      /meta: vlen UTF-8 JSON
+
+    Returns (N, S).
+    """
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+
+    if camera_cfg is None:
+        camera_cfg = test_camera()
+    if scene_cfg is None:
+        scene_cfg = test_scene()
+
+
+    # signals for clean stop
+    stop = {"flag": False}
+    def _handle_signal(signum, frame): stop["flag"] = True
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
+    # resume offset read happens after file open
+    vlen_str = h5py.string_dtype(encoding="utf-8")
+    new_file = (not os.path.exists(out_path))
+
+    gen_dataset = FullResSimValDataset(
+        length=length,
+        rng_seed=rng_seed,
+        camera_cfg=camera_cfg,
+        scene_cfg=scene_cfg,
+    )
+
+    N = len(gen_dataset)
+    S = gen_dataset.S
+    T_fixed = 1
+
+    with h5py.File(out_path, "a", libver="latest") as f:
+        # create or validate file structure
+        if new_file:
+            f.attrs.update({
+                "version": 1,
+                "length": int(N),
+                "T": 1,
+                "C_img": 3,
+                "C_tgt": 4,
+                "written": 0,
+                "source": "simulate_image(fullres)",
+            })
+
+            dargs: Dict[str, Any] = {}
+            if compression:
+                dargs["compression"] = compression
+                if compression == "gzip" and compression_level is not None:
+                    dargs["compression_opts"] = int(compression_level)
+
+            # chunking tuned for per-sample writes
+            chunk_N = max(1, min(16, N))
+            f.create_dataset("imgs",
+                shape=(N, T_fixed, 3, S, S), dtype="float32",
+                chunks=(chunk_N, T_fixed, 3, min(S, 256), min(S, 256)), **dargs)
+            f.create_dataset("tgts",
+                shape=(N, T_fixed, 4, S, S), dtype="float32",
+                chunks=(chunk_N, T_fixed, 4, min(S, 256), min(S, 256)), **dargs)
+            f.create_dataset("inst",
+                shape=(N, T_fixed, S, S), dtype="int32",
+                chunks=(chunk_N, T_fixed, min(S, 256), min(S, 256)), **dargs)
+            f.create_dataset("meta", shape=(N,), dtype=vlen_str, chunks=(min(1024, N),))
+        else:
+            assert int(f.attrs["length"]) == int(N), "length mismatch"
+            assert int(f.attrs["S"]) == int(S), "S mismatch"
+            assert int(f.attrs["T"]) == int(T_fixed), "T mismatch"
+            if "written" not in f.attrs:
+                f.attrs["written"] = 0
+
+        d_imgs, d_tgts, d_inst, d_meta = f["imgs"], f["tgts"], f["inst"], f["meta"]
+        written = int(f.attrs["written"])
+
+        # already done?
+        if written >= N:
+            print(f"[export] already complete: {written}/{N} → {out_path}")
+            return N, S
+
+        # build loader over the unwritten tail
+        start_idx = written if resume else 0
+        if start_idx > 0:
+            subset_idx = list(range(start_idx, N))
+            gen_subset = Subset(gen_dataset, subset_idx)
+        else:
+            gen_subset = gen_dataset
+
+        def _worker_init_fn(worker_id: int):
+            base = getattr(gen_dataset, "rng_seed", 123)
+            np.random.seed(base ^ (worker_id + 1))
+
+        dl = DataLoader(
+            gen_subset,
+            batch_size=gen_batch_size,
+            shuffle=False,
+            num_workers=int(num_workers_gen),
+            pin_memory=bool(pin_memory),
+            persistent_workers=(num_workers > 0),
+            prefetch_factor=int(prefetch_factor) if num_workers > 0 else None,
+            drop_last=False,
+            collate_fn=collate_no_meta,
+        )
+
+        # write helpers
+        def _flush_safe():
+            f.flush()
+            try:
+                f.id.flush()
+            except Exception:
+                pass
+            try:
+                fd = f.id.get_vfd_handle()
+                if fd is not None:
+                    os.fsync(fd)
+            except Exception:
+                pass
+
+        def _write_batch(start_abs: int,
+                         imgs_b: torch.Tensor,          # [B,1,3,S,S]
+                         tgts_b: torch.Tensor,          # [B,1,4,S,S]
+                         inst_b: torch.Tensor,          # [B,1,S,S]
+                         metas_b: List[dict]) -> int:   # len B
+            B = imgs_b.shape[0]
+            end_abs = start_abs + B
+            d_imgs[start_abs:end_abs, :, :, :, :] = imgs_b.cpu().numpy().astype(np.float32)
+            d_tgts[start_abs:end_abs, :, :, :, :] = tgts_b.cpu().numpy().astype(np.float32)
+            d_inst[start_abs:end_abs, :, :, :]    = inst_b.cpu().numpy().astype(np.int32)
+            for j in range(B):
+                try:
+                    d_meta[start_abs + j] = json.dumps(metas_b[j], separators=(",", ":"))
+                except TypeError:
+                    d_meta[start_abs + j] = json.dumps(_jsonify(metas_b[j]), separators=(",", ":"))
+            return B
+
+        # progress
+        pbar = tqdm(total=N, initial=start_idx, desc="export fullres h5", dynamic_ncols=True)
+        idx_next = start_idx
+        since_flush = 0
+
+        for imgs_b, tgts_b, extras_b in dl:
+            if stop["flag"]:
+                break
+
+            wrote = _write_batch(idx_next, imgs_b, tgts_b, extras_b["instance_labels"], extras_b["meta"])
+            idx_next += wrote
+            pbar.update(wrote)
+
+            f.attrs.modify("written", int(idx_next))
+            since_flush += wrote
+            if (since_flush % max(1, flush_every)) == 0:
+                _flush_safe()
+                since_flush = 0
+
+            if idx_next >= N:
+                break
+
+        _flush_safe()
+        pbar.close()
+        print(f"[export] done: images={idx_next}/{N}, T=1 → {out_path}")
+        return N, S

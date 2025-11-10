@@ -5,12 +5,13 @@ import h5py
 import numpy as np
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from typing import Optional
+from typing import Optional, Sequence, Tuple, List
 import torch
+
+import cv2
 
 from .config import default_camera, default_scene
 
-# --- config fallbacks ---
 from . import SimCellsDataset
 
 # --------------------- collate ---------------------
@@ -299,4 +300,139 @@ def create_dataset_h5(
         pbar.close()
         print(f"done: {written}/{length} → {out_path}")
         return out_path
+
+def _scale_to_10bit(
+    img: np.ndarray,                # (C, S, S) float32
+    mode: str = "clip01",           # 'clip01' | 'minmax' | 'percentile'
+    percentiles: Tuple[float, float] = (1.0, 99.0),
+) -> np.ndarray:
+    """Scale float image to uint16 using 10-bit range (0..1023)."""
+    x = np.nan_to_num(img, copy=True)
+    C = x.shape[0]
+    out = np.empty_like(x, dtype=np.uint16)
+
+    if mode == "clip01":
+        x = np.clip(x, 0.0, 1.0)
+        return np.rint(x * 1023.0).astype(np.uint16)
+
+    for c in range(C):
+        xc = x[c]
+        if mode == "minmax":
+            lo, hi = float(np.min(xc)), float(np.max(xc))
+        elif mode == "percentile":
+            lo, hi = np.percentile(xc, [percentiles[0], percentiles[1]])
+        else:
+            raise ValueError(f"Unknown mode: {mode}")
+
+        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+            out[c] = 0
+            continue
+
+        yc = (xc - lo) / (hi - lo)
+        yc = np.clip(yc, 0.0, 1.0)
+        out[c] = np.rint(yc * 1023.0).astype(np.uint16)
+
+    return out
+
+
+def _imwrite_tiff_cv2(path: str, arr: np.ndarray) -> None:
+    """
+    Write a uint16 TIFF with OpenCV.
+
+    arr may be:
+      - (H, W) uint16
+      - (H, W, 3) uint16
+    """
+    ok = cv2.imwrite(path, arr)
+    if not ok:
+        raise IOError(f"cv2.imwrite failed for: {path}")
+
+
+def export_h5_to_tiff(
+    h5_path: str,
+    out_dir: str,
+    n_images: Optional[int] = None,           # cap how many to export
+    indices: Optional[Sequence[int]] = None,  # explicit sample indices
+    scale_mode: str = "clip01",               # 'clip01' | 'minmax' | 'percentile'
+    scale_percentiles: Tuple[float, float] = (1.0, 99.0),
+    overwrite: bool = False,
+) -> List[str]:
+    """
+    Open the HDF5 once (context manager) and export up to n_images
+    from /imgs as 10-bit data (0..1023) stored in uint16 TIFFs via OpenCV.
+
+    Channel handling:
+      - C == 3  -> one 3-channel TIFF (H,W,3)
+      - C == 1  -> one single-channel TIFF (H,W)
+      - C  > 3  -> one TIFF per channel: *_c{idx}.tif
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    written: List[str] = []
+
+    with h5py.File(h5_path, "r", libver="latest", swmr=True) as f:
+        # basic checks
+        for key in ("imgs", "tgts", "inst", "meta"):
+            if key not in f:
+                raise KeyError(f"Missing dataset '{key}' in HDF5.")
+
+        imgs = f["imgs"]     # float32 [N, 1, C, S, S]
+        meta_ds = f["meta"]  # vlen JSON strings
+        N = int(imgs.shape[0])
+
+        # pick samples
+        if indices is None:
+            chosen = list(range(N))
+        else:
+            chosen = [int(x) for x in indices]
+            if any(x < 0 or x >= N for x in chosen):
+                raise ValueError("indices out of range")
+
+        if n_images is not None:
+            chosen = chosen[:int(n_images)]
+
+        for k in chosen:
+            # read one sample
+            arr = imgs[k]                                   # [1, C, S, S]
+            img = np.asarray(arr, dtype=np.float32).squeeze(0)  # -> (C, S, S)
+            C, H, W = img.shape
+
+            # meta for naming (optional)
+            mj = meta_ds[k]
+            meta = json.loads(mj.decode("utf-8")) if isinstance(mj, bytes) else json.loads(mj)
+            uid = meta.get("uid") or meta.get("id")
+
+            # scale to 10-bit (uint16 0..1023)
+            img_u16 = _scale_to_10bit(img, mode=scale_mode, percentiles=scale_percentiles)
+
+            stem = f"{k:06d}_{uid}" if uid is not None else f"{k:06d}"
+
+            if C == 3:
+                # stack to (H, W, 3). OpenCV expects BGR; we pass as-is.
+                im = np.moveaxis(img_u16, 0, -1)  # (H, W, 3)
+                out_path = os.path.join(out_dir, f"{stem}.tif")
+                if (not overwrite) and os.path.exists(out_path):
+                    raise FileExistsError(f"File exists: {out_path}. Set overwrite=True to replace.")
+                _imwrite_tiff_cv2(out_path, im)
+                written.append(out_path)
+
+            elif C == 1:
+                # single-channel
+                im = img_u16[0]  # (H, W)
+                out_path = os.path.join(out_dir, f"{stem}.tif")
+                if (not overwrite) and os.path.exists(out_path):
+                    raise FileExistsError(f"File exists: {out_path}. Set overwrite=True to replace.")
+                _imwrite_tiff_cv2(out_path, im)
+                written.append(out_path)
+
+            else:
+                # more than 3 channels -> one file per channel
+                for c in range(C):
+                    im = img_u16[c]  # (H, W)
+                    out_path = os.path.join(out_dir, f"{stem}_c{c}.tif")
+                    if (not overwrite) and os.path.exists(out_path):
+                        raise FileExistsError(f"File exists: {out_path}. Set overwrite=True to replace.")
+                    _imwrite_tiff_cv2(out_path, im)
+                    written.append(out_path)
+
+    return written
 

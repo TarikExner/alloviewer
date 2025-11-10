@@ -553,7 +553,6 @@ def flatten_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
             out[f"meta__{k}"] = v
     return out
 
-
 def get_dataset_mode(h5_path: str) -> str:
     hp = h5_path.lower()
     if "tile" in hp:
