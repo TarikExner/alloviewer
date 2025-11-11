@@ -9,6 +9,7 @@ from typing import Optional, Sequence, Tuple, List
 import torch
 
 import cv2
+import tifffile as tiff
 
 from .config import default_camera, default_scene
 
@@ -348,6 +349,86 @@ def _imwrite_tiff_cv2(path: str, arr: np.ndarray) -> None:
     if not ok:
         raise IOError(f"cv2.imwrite failed for: {path}")
 
+def _imwrite_tiff_tifffile(    path: str,
+    arr: np.ndarray,
+    channel_names: Optional[Sequence[str]] = None,
+    force_rgb: bool = True,
+) -> None:
+    """
+    Write a uint16 TIFF with compression disabled and metadata for ImageJ/FIJI.
+
+    Accepts:
+      - (H, W) uint16                -> grayscale
+      - (H, W, 3) uint16             -> RGB (channel-last)
+      - (C, H, W) uint16             -> stack of C planes
+        * if C==3 and force_rgb=True -> RGB (true-color)
+        * else                       -> ImageJ stack (C,Y,X)
+
+    Notes:
+      - Values are assumed in 0..1023 (10-bit) but stored as uint16 unchanged.
+      - Sets photometric tag and axes metadata so ImageJ shows correct colors.
+      - Compression is disabled (compression=None).
+    """
+    if arr.dtype != np.uint16:
+        raise TypeError("arr must be uint16")
+
+    # Grayscale 2D
+    if arr.ndim == 2:
+        tiff.imwrite(
+            path,
+            arr,
+            compression=None,
+            photometric="minisblack",
+            metadata={"axes": "YX"},
+            software="export_h5_to_tiff",
+        )
+        return
+
+    # Channel-last RGB already
+    if arr.ndim == 3 and arr.shape[-1] == 3 and (force_rgb or arr.shape[0] != 3):
+        tiff.imwrite(
+            path,
+            arr,  # (H,W,3) RGB
+            compression=None,
+            photometric="rgb",
+            planarconfig="contig",
+            metadata={"axes": "YXS"},
+            software="export_h5_to_tiff",
+        )
+        return
+
+    # Channel-first -> RGB if desired
+    if arr.ndim == 3 and arr.shape[0] == 3 and force_rgb:
+        rgb = np.moveaxis(arr, 0, -1)  # (H,W,3)
+        tiff.imwrite(
+            path,
+            rgb,
+            compression=None,
+            photometric="rgb",
+            planarconfig="contig",
+            metadata={"axes": "YXS"},
+            software="export_h5_to_tiff",
+        )
+        return
+
+    # Channel-first stack (ImageJ-friendly)
+    if arr.ndim == 3 and arr.shape[0] >= 1:
+        md = {"axes": "CYX"}
+        if channel_names is not None:
+            md["channel_names"] = list(channel_names)
+        tiff.imwrite(
+            path,
+            arr,  # (C,H,W)
+            imagej=True,
+            compression=None,
+            photometric="minisblack",
+            metadata=md,
+            software="export_h5_to_tiff",
+        )
+        return
+
+    raise ValueError(f"Unsupported shape: {arr.shape} (dtype={arr.dtype})")
+
 
 def export_h5_to_tiff(
     h5_path: str,
@@ -413,7 +494,7 @@ def export_h5_to_tiff(
                 out_path = os.path.join(out_dir, f"{stem}.tif")
                 if (not overwrite) and os.path.exists(out_path):
                     raise FileExistsError(f"File exists: {out_path}. Set overwrite=True to replace.")
-                _imwrite_tiff_cv2(out_path, im)
+                _imwrite_tiff_tifffile(out_path, im)
                 written.append(out_path)
 
             elif C == 1:
@@ -422,7 +503,7 @@ def export_h5_to_tiff(
                 out_path = os.path.join(out_dir, f"{stem}.tif")
                 if (not overwrite) and os.path.exists(out_path):
                     raise FileExistsError(f"File exists: {out_path}. Set overwrite=True to replace.")
-                _imwrite_tiff_cv2(out_path, im)
+                _imwrite_tiff_tifffile(out_path, im)
                 written.append(out_path)
 
             else:
@@ -432,7 +513,7 @@ def export_h5_to_tiff(
                     out_path = os.path.join(out_dir, f"{stem}_c{c}.tif")
                     if (not overwrite) and os.path.exists(out_path):
                         raise FileExistsError(f"File exists: {out_path}. Set overwrite=True to replace.")
-                    _imwrite_tiff_cv2(out_path, im)
+                    _imwrite_tiff_tifffile(out_path, im)
                     written.append(out_path)
 
     return written
