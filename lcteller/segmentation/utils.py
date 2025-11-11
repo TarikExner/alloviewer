@@ -343,7 +343,8 @@ def _imwrite_tiff_cv2(path: str, arr: np.ndarray) -> None:
       - (H, W) uint16
       - (H, W, 3) uint16
     """
-    ok = cv2.imwrite(path, arr)
+    params = [cv2.IMWRITE_TIFF_COMPRESSION, 1]
+    ok = cv2.imwrite(path, arr, params)
     if not ok:
         raise IOError(f"cv2.imwrite failed for: {path}")
 

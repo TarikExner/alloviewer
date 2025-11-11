@@ -919,12 +919,16 @@ def create_validation_h5_fullres(
 
         def _flush_safe():
             f.flush()
-            try: f.id.flush()
-            except Exception: pass
+            try:
+                f.id.flush()
+            except Exception:
+                pass
             try:
                 fd = f.id.get_vfd_handle()
-                if fd is not None: os.fsync(fd)
-            except Exception: pass
+                if fd is not None:
+                    os.fsync(fd)
+            except Exception:
+                pass
 
         def _write_batch(start_abs: int,
                          imgs_b: torch.Tensor,          # [B,1,3,H,W]
