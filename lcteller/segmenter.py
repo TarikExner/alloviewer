@@ -75,13 +75,13 @@ class SegmenterConfig:
 @dataclass
 class InstanceSegmenterConfig:
     # -------- Probability → binary mask (hysteresis) --------
-    cell_mask_low_thr: float = 0.30     # low threshold for hysteresis
+    cell_mask_low_thr: float = 0.10     # low threshold for hysteresis
     cell_mask_high_thr: float = 0.60    # high threshold for hysteresis
-    mask_close_radius: int = 0          # morphological closing radius (px)
+    mask_close_radius: int = 2          # morphological closing radius (px)
 
     # Cleanup after hysteresis
-    min_hole_area: int = 0              # remove small holes (px^2)
-    min_object_area: int = 0            # remove small objects (px^2)
+    min_hole_area: int = 10              # remove small holes (px^2)
+    min_object_area: int = 10            # remove small objects (px^2)
 
     # -------- Distance transform --------
     distance_smooth_sigma: float = 1.0  # smooth EDT (px)
@@ -100,7 +100,7 @@ class InstanceSegmenterConfig:
     # -------- Energy term (subtracts from elevation) --------
     use_energy: bool = True
     energy_weight: float = 0.5          # attraction inside cells
-    energy_smooth_sigma: float = 0.0    # optional smoothing of P(energy)
+    energy_smooth_sigma: float = 1.0    # optional smoothing of P(energy)
 
     # center-driven seeds
     use_centers: bool = True

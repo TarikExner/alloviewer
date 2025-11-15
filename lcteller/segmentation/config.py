@@ -339,6 +339,7 @@ def test_camera() -> CameraSetup:
         name = "test_cam",
         W = 2160,
         H = 1620,
+
         aspect_ratios = ((4,3), (4,3)),
         portrait_prob = 0,
         blur_sigma_global = 0,
