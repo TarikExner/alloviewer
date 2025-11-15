@@ -25,8 +25,10 @@ from ..segmentation.image_dataset import (
     _make_center_stem_from_centers,
     _make_center_heatmap,
     _make_energy_from_instances,
-    DiskSimCellsDataset
+    _crop_rect,
+    _crop_sim_meta_to_tile,
 )
+
 from ..segmentation import simulate_image
 from ..segmentation.utils import collate_no_meta
 from .utils import jsonify
@@ -971,3 +973,380 @@ def create_validation_h5_fullres(
         pbar.close()
         print(f"[export] done: images={idx_next}/{N}, T=1, size={H}x{W} → {out_path}")
         return N, (H, W)
+
+
+def create_tiled_validation_h5_from_fullres(
+    in_path: str,
+    out_path: str,
+    target: int = 512,
+    tile_overlap: int = 64,
+    boundary_ring_width: int = 1,
+    boundary_soft_band: int = 2,
+    boundary_sigma: float = 1.0,
+    center_sigma: float = 1.0,
+    compression: Optional[str] = "lzf",          # None | "lzf" | "gzip"
+    compression_level: Optional[int] = None,     # for gzip
+    flush_every: int = 16,
+    resume: bool = True,
+    progress_desc: str = "export tiled h5",
+) -> Tuple[int, int, int]:
+    """
+    Read a full-res validation HDF5 file created by create_validation_h5_fullres
+    and build a tiled HDF5 file where each full image is split into fixed tiles.
+
+    Input file layout (full-res):
+      /imgs: float32 [N, 1, 3, H_in, W_in]
+      /tgts: float32 [N, 1, 4, H_in, W_in]   (ignored, we recompute per tile)
+      /inst: int32   [N, 1, H_in, W_in]
+      /meta: vlen UTF-8 JSON (per scene, simulator meta)
+
+    Output file layout (tiled):
+      /imgs: float32 [N, T_tiles, 3, target, target]
+      /tgts: float32 [N, T_tiles, 4, target, target]
+      /inst: int32   [N, T_tiles, target, target]
+      /meta: vlen UTF-8 JSON [N, T_tiles]
+             each entry is a dict:
+                 {
+                   "mode": "tiles",
+                   "tile_xy": (y0, x0),
+                   "tile_hw": (target, target),
+                   "sim_meta": <tile-level simulator meta>,
+                   "full_meta": <full-image simulator meta>,
+                 }
+
+    Tiling follows the same logic as SimCellsDataset with:
+        mode="tiles", n_tiles == -1,
+        stride = target - tile_overlap
+
+    Targets per tile are recomputed from inst using:
+        - _make_soft_boundary_from_instances
+        - _make_center_stem_from_centers + _make_center_heatmap
+        - _make_energy_from_instances
+
+    Returns:
+        (N, T_tiles, target)
+    """
+
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+
+    # --- signal handling (same idea as full-res creator) ---
+    stop = {"flag": False}
+
+    def _handle_signal(signum, frame):
+        stop["flag"] = True
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
+    # --- open input file, read basic info ---
+    if not os.path.exists(in_path):
+        raise FileNotFoundError(f"Input H5 not found: {in_path}")
+
+    with h5py.File(in_path, "r", libver="latest") as f_in:
+        d_imgs_in = f_in["imgs"]  # [N, 1, 3, H_in, W_in]
+        d_inst_in = f_in["inst"]  # [N, 1, H_in, W_in]
+        d_meta_in = f_in["meta"]  # [N]
+
+        N = int(f_in.attrs["length"])
+        H_in = int(f_in.attrs["H"])
+        W_in = int(f_in.attrs["W"])
+        T_in = int(f_in.attrs["T"])
+        assert T_in == 1, f"Expected T=1 in input file, got {T_in}"
+
+        # --- determine tiling pattern (same as _enumerate_full_tiles) ---
+        th = int(target)
+        tile_overlap = int(tile_overlap)
+
+        if H_in <= th or W_in <= th:
+            # fallback: single tile == resize/pad case
+            stride = None
+            tile_coords = [(0, 0)]
+            T_tiles = 1
+        else:
+            stride = max(1, th - tile_overlap)
+            tile_coords: List[Tuple[int, int]] = []
+            for y0 in range(0, H_in - th + 1, stride):
+                for x0 in range(0, W_in - th + 1, stride):
+                    tile_coords.append((int(y0), int(x0)))
+            T_tiles = len(tile_coords)
+
+    # --- (re-)create output file ---
+    vlen_str = h5py.string_dtype(encoding="utf-8")
+    new_file = (not os.path.exists(out_path))
+
+    with h5py.File(out_path, "a", libver="latest") as f_out:
+        if new_file:
+            f_out.attrs.update(
+                {
+                    "version": 1,
+                    "length": int(N),
+                    "H": int(target),
+                    "W": int(target),
+                    "T": int(T_tiles),
+                    "C_img": 3,
+                    "C_tgt": 4,
+                    "written": 0,
+                    "source": "simulate_image(tiles_from_fullres)",
+                    "tile_target": int(target),
+                    "tile_overlap": int(tile_overlap),
+                    "H_in": int(H_in),
+                    "W_in": int(W_in),
+                }
+            )
+
+            dargs: Dict[str, Any] = {}
+            if compression:
+                dargs["compression"] = compression
+                if compression == "gzip" and compression_level is not None:
+                    dargs["compression_opts"] = int(compression_level)
+
+            chunk_N = max(1, min(16, N))
+            chunk_T = max(1, min(T_tiles, 16))
+
+            f_out.create_dataset(
+                "imgs",
+                shape=(N, T_tiles, 3, target, target),
+                dtype="float32",
+                chunks=(chunk_N, chunk_T, 3, min(target, 256), min(target, 256)),
+                **dargs,
+            )
+            f_out.create_dataset(
+                "tgts",
+                shape=(N, T_tiles, 4, target, target),
+                dtype="float32",
+                chunks=(chunk_N, chunk_T, 4, min(target, 256), min(target, 256)),
+                **dargs,
+            )
+            f_out.create_dataset(
+                "inst",
+                shape=(N, T_tiles, target, target),
+                dtype="int32",
+                chunks=(chunk_N, chunk_T, min(target, 256), min(target, 256)),
+                **dargs,
+            )
+            f_out.create_dataset(
+                "meta",
+                shape=(N, T_tiles),
+                dtype=vlen_str,
+                chunks=(chunk_N, min(chunk_T, T_tiles)),
+            )
+        else:
+            # basic sanity checks
+            assert int(f_out.attrs["length"]) == int(N), "length mismatch (output vs input)"
+            assert int(f_out.attrs["H"]) == int(target), "H mismatch (output target)"
+            assert int(f_out.attrs["W"]) == int(target), "W mismatch (output target)"
+            assert int(f_out.attrs["T"]) == int(T_tiles), "T mismatch (tiles per image)"
+            if "written" not in f_out.attrs:
+                f_out.attrs["written"] = 0
+
+        d_imgs_out = f_out["imgs"]
+        d_tgts_out = f_out["tgts"]
+        d_inst_out = f_out["inst"]
+        d_meta_out = f_out["meta"]
+
+        written = int(f_out.attrs["written"])
+        if written >= N:
+            print(f"[export_tiles] already complete: {written}/{N} → {out_path}")
+            return N, T_tiles, target
+
+        # --- helpers for flushing ---
+        def _flush_safe():
+            f_out.flush()
+            try:
+                f_out.id.flush()
+            except Exception:
+                pass
+            try:
+                fd = f_out.id.get_vfd_handle()
+                if fd is not None:
+                    os.fsync(fd)
+            except Exception:
+                pass
+
+        # --- main loop over scenes ---
+        pbar = tqdm(total=N, initial=written, desc=progress_desc, dynamic_ncols=True)
+        since_flush = 0
+
+        with h5py.File(in_path, "r", libver="latest") as f_in_loop:
+            d_imgs_in = f_in_loop["imgs"]
+            d_inst_in = f_in_loop["inst"]
+            d_meta_in = f_in_loop["meta"]
+
+            for i in range(written, N):
+                if stop["flag"]:
+                    break
+
+                # load one full image, instances and meta
+                img_full = d_imgs_in[i, 0]  # [3, H_in, W_in]
+                img_full = np.transpose(img_full, (1, 2, 0)).astype(np.float32)  # [H_in, W_in, 3]
+
+                inst_full = d_inst_in[i, 0].astype(np.int32)  # [H_in, W_in]
+
+                meta_full = json.loads(d_meta_in[i])
+
+                # safe check on shapes
+                H, W = inst_full.shape
+                assert H == H_in and W == W_in, "Instance map size mismatch with attrs"
+
+                # prepare output buffers for this scene
+                imgs_scene = np.zeros((T_tiles, 3, target, target), dtype=np.float32)
+                tgts_scene = np.zeros((T_tiles, 4, target, target), dtype=np.float32)
+                inst_scene = np.zeros((T_tiles, target, target), dtype=np.int32)
+                meta_scene: List[str] = [""] * T_tiles
+
+                # iterate over tiles (same pattern as _enumerate_full_tiles)
+                if H_in <= th or W_in <= th:
+                    # fallback: single tile covering as much as possible
+                    y0, x0 = 0, 0
+                    h, w = min(H_in, th), min(W_in, th)
+                    # center crop or top-left? To keep it simple, use top-left.
+                    img_t = _crop_rect(img_full, y0, x0, h, w)
+                    inst_t = _crop_rect(inst_full, y0, x0, h, w)
+                    # pad to target if needed
+                    pad_h = target - h
+                    pad_w = target - w
+                    img_t = np.pad(
+                        img_t,
+                        ((0, pad_h), (0, pad_w), (0, 0)),
+                        mode="constant",
+                        constant_values=0.0,
+                    )
+                    inst_t = np.pad(
+                        inst_t,
+                        ((0, pad_h), (0, pad_w)),
+                        mode="constant",
+                        constant_values=0,
+                    )
+
+                    tile_idx = 0
+                    # recompute targets from inst_t
+                    cell_t = (inst_t > 0).astype(np.float32)
+                    bound_soft = _make_soft_boundary_from_instances(
+                        inst_t,
+                        ring_width=max(1, boundary_ring_width),
+                        soft_band=max(1, boundary_soft_band),
+                        sigma=float(boundary_sigma),
+                    ).astype(np.float32)
+                    # tile-level meta from simulator meta
+                    meta_t = _crop_sim_meta_to_tile(meta_full, y0, x0, target, target)
+
+                    # centers from meta_t (if present) or from instances
+                    centers = []
+                    if "centers" in meta_t and isinstance(meta_t["centers"], (list, tuple)):
+                        centers = [(int(y), int(x)) for (y, x) in meta_t["centers"]]
+                    else:
+                        lbl = inst_t
+                        for k in range(1, int(lbl.max()) + 1):
+                            ys, xs = np.where(lbl == k)
+                            if ys.size == 0:
+                                continue
+                            cy = int(np.mean(ys))
+                            cx = int(np.mean(xs))
+                            centers.append((cy, cx))
+
+                    center_stem = _make_center_stem_from_centers(centers, (target, target))
+                    center_heat = _make_center_heatmap(center_stem, sigma=float(center_sigma))
+                    energy = _make_energy_from_instances(inst_t)
+
+                    tgt_t = np.stack([cell_t, bound_soft, center_heat, energy], axis=0).astype(np.float32)
+
+                    imgs_scene[tile_idx] = np.transpose(img_t, (2, 0, 1))
+                    tgts_scene[tile_idx] = tgt_t
+                    inst_scene[tile_idx] = inst_t.astype(np.int32)
+
+                    mode_meta = {
+                        "mode": "tiles",
+                        "tile_xy": (int(y0), int(x0)),
+                        "tile_hw": (int(target), int(target)),
+                        "sim_meta": meta_t,
+                        "full_meta": meta_full,
+                    }
+                    meta_scene[tile_idx] = json.dumps(mode_meta, separators=(",", ":"))
+
+                else:
+                    # standard sliding tiles
+                    tile_idx = 0
+                    for (y0, x0) in tile_coords:
+                        img_t = _crop_rect(img_full, y0, x0, th, th)   # [th, th, 3]
+                        inst_t = _crop_rect(inst_full, y0, x0, th, th) # [th, th]
+
+                        # recompute targets for this tile (same as SimCellsDataset)
+                        cell_t = (inst_t > 0).astype(np.float32)
+                        bound_soft = _make_soft_boundary_from_instances(
+                            inst_t,
+                            ring_width=max(1, boundary_ring_width),
+                            soft_band=max(1, boundary_soft_band),
+                            sigma=float(boundary_sigma),
+                        ).astype(np.float32)
+
+                        # tile-level sim meta
+                        meta_t = _crop_sim_meta_to_tile(meta_full, y0, x0, th, th)
+
+                        # centers from meta_t if available; else from instances
+                        centers = []
+                        if "centers" in meta_t and isinstance(meta_t["centers"], (list, tuple)) and len(meta_t["centers"]) > 0:
+                            for (y, x) in meta_t["centers"]:
+                                yy = int(round(y))
+                                xx = int(round(x))
+                                if 0 <= yy < th and 0 <= xx < th:
+                                    centers.append((yy, xx))
+                        else:
+                            lbl = inst_t
+                            for k in range(1, int(lbl.max()) + 1):
+                                ys, xs = np.where(lbl == k)
+                                if ys.size == 0:
+                                    continue
+                                cy = int(np.mean(ys))
+                                cx = int(np.mean(xs))
+                                centers.append((cy, cx))
+
+                        center_stem = _make_center_stem_from_centers(centers, (th, th))
+                        center_heat = _make_center_heatmap(center_stem, sigma=float(center_sigma))
+                        energy = _make_energy_from_instances(inst_t)
+
+                        tgt_t = np.stack(
+                            [cell_t, bound_soft, center_heat, energy], axis=0
+                        ).astype(np.float32)
+
+                        # fill buffers
+                        imgs_scene[tile_idx] = np.transpose(img_t, (2, 0, 1)).astype(np.float32)
+                        tgts_scene[tile_idx] = tgt_t
+                        inst_scene[tile_idx] = inst_t.astype(np.int32)
+
+                        mode_meta = {
+                            "mode": "tiles",
+                            "tile_xy": (int(y0), int(x0)),
+                            "tile_hw": (int(th), int(th)),
+                            "sim_meta": meta_t,
+                            "full_meta": meta_full,
+                        }
+                        meta_scene[tile_idx] = json.dumps(mode_meta, separators=(",", ":"))
+
+                        tile_idx += 1
+
+                    assert tile_idx == T_tiles, "Tile count mismatch"
+
+                # write this scene to output
+                d_imgs_out[i, :, :, :, :] = imgs_scene
+                d_tgts_out[i, :, :, :, :] = tgts_scene
+                d_inst_out[i, :, :, :] = inst_scene
+                for t in range(T_tiles):
+                    d_meta_out[i, t] = meta_scene[t]
+
+                f_out.attrs.modify("written", int(i + 1))
+                since_flush += 1
+                pbar.update(1)
+
+                if (since_flush % max(1, flush_every)) == 0:
+                    _flush_safe()
+                    since_flush = 0
+
+        _flush_safe()
+        pbar.close()
+
+        print(
+            f"[export_tiles] done: scenes={f_out.attrs['written']}/{N}, "
+            f"T_tiles={T_tiles}, size={target}x{target} → {out_path}"
+        )
+        return N, T_tiles, target
+
