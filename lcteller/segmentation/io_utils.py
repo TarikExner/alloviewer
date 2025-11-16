@@ -186,7 +186,8 @@ def init_or_validate_varT_in_file(
     T0: int,
     C_img: int,
     C_tgt: int,
-    S: int,
+    H: int,
+    W: int,
     compression: Optional[str],
     chunk_N: int,
     extra_attrs: Dict[str, Any],
@@ -219,26 +220,26 @@ def init_or_validate_varT_in_file(
 
         f.create_dataset(
             "imgs",
-            shape=(length, T0, C_img, S, S),
-            maxshape=(length, None, C_img, S, S),
+            shape=(length, T0, C_img, H, W),
+            maxshape=(length, None, C_img, H, W),
             dtype=np.float32,
-            chunks=(int(chunk_N), T0, C_img, S, S),
+            chunks=(int(chunk_N), T0, C_img, H, W),
             compression=compression,
         )
         f.create_dataset(
             "tgts",
-            shape=(length, T0, C_tgt, S, S),
-            maxshape=(length, None, C_tgt, S, S),
+            shape=(length, T0, C_tgt, H, W),
+            maxshape=(length, None, C_tgt, H, W),
             dtype=np.float32,
-            chunks=(int(chunk_N), T0, C_tgt, S, S),
+            chunks=(int(chunk_N), T0, C_tgt, H, W),
             compression=compression,
         )
         f.create_dataset(
             "inst",
-            shape=(length, T0, S, S),
-            maxshape=(length, None, S, S),
+            shape=(length, T0, H, W),
+            maxshape=(length, None, H, W),
             dtype=np.int32,
-            chunks=(int(chunk_N), T0, S, S),
+            chunks=(int(chunk_N), T0, H, W),
             compression=compression,
         )
         f.create_dataset(
@@ -257,9 +258,9 @@ def init_or_validate_varT_in_file(
         file_T = int(f.attrs.get("T", T0))
         if T0 > file_T:
             # grow tile dim immediately to fit at least T0
-            f["imgs"].resize((length, T0, C_img, S, S))
-            f["tgts"].resize((length, T0, C_tgt, S, S))
-            f["inst"].resize((length, T0, S, S))
+            f["imgs"].resize((length, T0, C_img, H, W))
+            f["tgts"].resize((length, T0, C_tgt, H, W))
+            f["inst"].resize((length, T0, H, W))
             f.attrs.modify("T", int(T0))
         else:
             T0 = file_T

@@ -258,7 +258,7 @@ def create_sim_cells_dataset_h5(
     except StopIteration:
         raise RuntimeError("Empty dataset (length=0).")
 
-    B0, T0, C_img, S, _ = first_imgs.shape
+    B0, T0, C_img, H, W = first_imgs.shape
     _, _, C_tgt, _, _ = first_tgts.shape
 
     new_file = (not os.path.exists(out_path))
@@ -272,7 +272,8 @@ def create_sim_cells_dataset_h5(
             T0=T0,
             C_img=C_img,
             C_tgt=C_tgt,
-            S=S,
+            H=H,
+            W=W,
             compression=compression,
             chunk_N=gen_batch_size,
             extra_attrs={
@@ -298,9 +299,9 @@ def create_sim_cells_dataset_h5(
             if n_tiles_needed <= cur_T:
                 return cur_T
             new_T = int(n_tiles_needed)
-            d_imgs.resize((length, new_T, C_img, S, S))
-            d_tgts.resize((length, new_T, C_tgt, S, S))
-            d_inst.resize((length, new_T, S, S))
+            d_imgs.resize((length, new_T, C_img, H, W))
+            d_tgts.resize((length, new_T, C_tgt, H, W))
+            d_inst.resize((length, new_T, H, W))
             f.attrs.modify("T", new_T)
             return new_T
 
@@ -435,9 +436,9 @@ def create_external_cells_h5_tiles(
     except StopIteration:
         raise RuntimeError("Empty dataset (no external pairs found).")
 
-    _, T0, C_img, S, _ = first_imgs.shape
+    _, T0, C_img, H, W = first_imgs.shape
     _, _, C_tgt, _, _ = first_tgts.shape
-    assert int(S) == int(target), "target mismatch between dataset and writer"
+    assert int(H) == int(target), "target mismatch between dataset and writer"
 
     new_file = (not os.path.exists(out_path))
 
@@ -450,7 +451,8 @@ def create_external_cells_h5_tiles(
             T0=T0,
             C_img=C_img,
             C_tgt=C_tgt,
-            S=S,
+            H=H,
+            W=W,
             compression=compression,
             chunk_N=max(1, min(16, N)),
             extra_attrs={
@@ -469,9 +471,9 @@ def create_external_cells_h5_tiles(
             if n_tiles_needed <= cur_T:
                 return cur_T
             new_T = int(n_tiles_needed)
-            d_imgs.resize((N, new_T, C_img, S, S))
-            d_tgts.resize((N, new_T, C_tgt, S, S))
-            d_inst.resize((N, new_T, S, S))
+            d_imgs.resize((N, new_T, C_img, H, W))
+            d_tgts.resize((N, new_T, C_tgt, H, W))
+            d_inst.resize((N, new_T, H, W))
             f.attrs.modify("T", new_T)
             return new_T
 
