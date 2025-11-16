@@ -9,6 +9,8 @@ from tqdm import tqdm
 
 from typing import Optional, Sequence, List, Tuple, Any
 
+from . import UNET_MEAN, UNET_STD
+
 from .image_dataset import SimCellsDataset, ExternalCellsTilesDataset
 
 from .config import default_scene, default_camera
@@ -111,6 +113,15 @@ class H5CellsDataset(Dataset):
             self._inst = self._h5["inst"]
             self._meta = self._h5["meta"]
 
+    def _normalize_imgs(self, imgs: torch.Tensor) -> torch.Tensor:
+        """
+        imgs: [T, 3, S, S], float32, values in [0,1]
+        returns: normalized imgs with per-channel (x - mean) / std
+        """
+        mean = torch.as_tensor(UNET_MEAN, dtype=imgs.dtype, device=imgs.device).view(1, 3, 1, 1)
+        std  = torch.as_tensor(UNET_STD,  dtype=imgs.dtype, device=imgs.device).view(1, 3, 1, 1)
+        return (imgs - mean) / std
+
     def __getitem__(self, i: int):
         self._ensure_open()
         k = int(self.idx[i])
@@ -140,6 +151,8 @@ class H5CellsDataset(Dataset):
         imgs_t = torch.from_numpy(np.asarray(imgs, dtype=np.float32))
         tgts_t = torch.from_numpy(np.asarray(tgts, dtype=np.float32))
         inst_t = torch.from_numpy(np.asarray(inst, dtype=np.int32))
+
+        imgs_t = self._normalize_imgs(imgs_t)
 
         extras = {
             "instance_labels": inst_t,

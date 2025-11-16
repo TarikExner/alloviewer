@@ -1078,8 +1078,6 @@ def train(
     workers=8,
     target: int = 512,
     mode: Literal["pad_resize", "crop_well_resize", "tiles"] = "crop_well_resize",
-    camera_cfg=None,
-    scene_cfg=None,
     train_pct=0.9,
     val_pct=None,
     seed=187,
@@ -1119,12 +1117,6 @@ def train(
     use_amp = bool(amp and device.type == "cuda")
     use_bf16 = bool(use_amp and torch.cuda.is_bf16_supported())
     scaler = GradScaler(enabled=(use_amp and not use_bf16))
-
-    # Data (keep Dataset simple; no special soft-boundary logic inside it)
-    if camera_cfg is None:
-        camera_cfg = default_camera()
-    if scene_cfg is None:
-        scene_cfg = default_scene()
 
     train_ds, val_ds, train_dl, val_dl = build_h5_loaders(
         h5_path=h5_path,
@@ -1186,8 +1178,6 @@ def train(
             "out_dir": out_dir,
             "best_path": best_path,
             "log_path": log_path,
-            "camera_cfg_name": getattr(camera_cfg, "name", None),
-            "scene_cfg": getattr(scene_cfg, "name", None),
         }
         if device.type == "cuda":
             run_meta["gpu_name"] = torch.cuda.get_device_name(device)

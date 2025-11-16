@@ -14,6 +14,8 @@ from .segmentation import (
     build_unet_cpu_small,
     build_unet_cpu_medium,
     build_unet_cpu_large,
+    UNET_MEAN,
+    UNET_STD
 )
 
 MaskProvider = Callable[[np.ndarray], Tuple[np.ndarray, np.ndarray]]
@@ -248,6 +250,7 @@ class SegmenterUNet:
         x = np.transpose(x, (2, 0, 1))  # CHW
         x = np.ascontiguousarray(x, dtype=np.float32)
         t = torch.from_numpy(x).unsqueeze(0).to(self.device, non_blocking=True)
+        t = self._normalize(t)
         return t
 
 
@@ -270,7 +273,16 @@ class SegmenterUNet:
 
         x = np.ascontiguousarray(x, dtype=np.float32)
         t = torch.from_numpy(x).to(self.device, non_blocking=True)  # [T,3,H,W]
+        t = self._normalize(t)
         return t
+
+    def _normalize(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: [B, 3, H, W] on self.device
+        """
+        mean = torch.as_tensor(UNET_MEAN, dtype=x.dtype, device=x.device).view(1, 3, 1, 1)
+        std  = torch.as_tensor(UNET_STD,  dtype=x.dtype, device=x.device).view(1, 3, 1, 1)
+        return (x - mean) / std
 
     @torch.no_grad()
     def predict_tiles(self, tiles: torch.Tensor) -> torch.Tensor:
