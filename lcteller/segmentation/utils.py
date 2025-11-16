@@ -15,6 +15,18 @@ from typing import List, Tuple, Union
 
 import cv2
 
+# folders with images for the mean+-STD calculation
+EXT_IMAGES_FOLDERS = [
+    "./ext_images/20251106_25722269_iPhone_XR_JPEG",
+    "./ext_images/20251106_25722169_iPhone_XR_JPEG",
+    "./ext_images/20251106_25722269_iPhone_XR_JPEG",
+    "./ext_images/20251107_25065521_GooglePixel",
+    "./ext_images/20251107_25722332_GooglePixel",
+    "./ext_images/20251014_25719960",
+    "./ext_images/20251014_25720084",
+    "./ext_images/20251107_25065521",
+    "./ext_images/20251107_25722332"
+]
 
 def collate_no_meta(batch):
     imgs, tgts, exs = zip(*batch)

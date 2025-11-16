@@ -199,6 +199,7 @@ def create_sim_cells_dataset_h5(
     resume: bool = True,
     camera_cfg=None,
     scene_cfg=None,
+    camera_style_cfg=None,
 ):
     """
     Pre-allocate a single HDF5 and append EXACT tensors from SimCellsDataset.__getitem__:
@@ -236,6 +237,7 @@ def create_sim_cells_dataset_h5(
         rng_seed=rng_seed,
         camera_cfg=camera_cfg,
         scene_cfg=scene_cfg,
+        camera_style_cfg=camera_style_cfg
     )
     dl = DataLoader(
         ds,
