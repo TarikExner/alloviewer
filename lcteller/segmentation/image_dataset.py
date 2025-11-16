@@ -7,7 +7,9 @@ import cv2
 from skimage.segmentation import relabel_sequential
 from skimage.measure import label as sklabel
 
-from .image_simulation import simulate_image
+from typing import Optional
+
+from .image_simulation import simulate_image, apply_camera_style
 from .utils import (
     crop_sim_meta_to_tile,
     make_energy_from_instances,
@@ -24,6 +26,12 @@ from .utils import (
     guess_data_csv_path,
     load_com_labels_csv,
     crop_external_meta_to_tile,
+)
+from .config import (
+    simulated_raw_style,
+    CameraSetup,
+    SimulatorConfig,
+    CameraStyleConfig
 )
 
 
@@ -242,11 +250,15 @@ class SimCellsDataset(BaseCellsTilesDataset):
         transforms=None,              # optional Albumentations-style joint transforms
 
         # required
-        scene_cfg=None,               # SimulatorConfig
-        camera_cfg=None,              # CameraSetup
+        scene_cfg: Optional[SimulatorConfig]=None,               # SimulatorConfig
+        camera_cfg: Optional[CameraSetup]=None,              # CameraSetup
+        camera_style_cfg: Optional[CameraStyleConfig]=None,              # CameraSetup
     ):
         assert scene_cfg is not None, "scene_cfg (SimulatorConfig) is required"
         assert camera_cfg is not None, "camera_cfg (CameraSetup) is required"
+
+        if camera_style_cfg is None:
+            self.camera_style_cfg = simulated_raw_style()
 
         super().__init__(
             target=target,
@@ -496,8 +508,6 @@ class SimCellsDataset(BaseCellsTilesDataset):
 
         return tiles
 
-    # ---- main __getitem__ ----
-
     def __getitem__(self, idx):
         # per-scene RNG
         rng = np.random.default_rng(
@@ -510,6 +520,7 @@ class SimCellsDataset(BaseCellsTilesDataset):
 
         # simulate
         img, meta, targets = simulate_image(**sim_kwargs)
+        img = apply_camera_style(img, rng, self.camera_style_cfg)
         cell = targets["cell_mask"].astype(np.float32)
         inst = targets["instance_labels"].astype(np.int32)
 

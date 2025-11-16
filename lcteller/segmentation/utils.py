@@ -1,13 +1,17 @@
-from typing import List, Tuple, Union
 import os
+from pathlib import Path
 import glob
 import csv
 import math
 import numpy as np
 import torch
 
+from tqdm import tqdm
+
 from scipy import ndimage as ndi
 from skimage import filters, measure, morphology, exposure
+
+from typing import List, Tuple, Union
 
 import cv2
 
@@ -392,3 +396,58 @@ def crop_external_meta_to_tile(meta_full: dict, y0: int, x0: int, h: int, w: int
         new_meta["frac_positive"] = 0.0
 
     return new_meta
+
+
+def compute_rgb_channel_stats_cv2(
+    folders,
+    exts=(".png", ".jpg", ".jpeg", ".tif", ".tiff"),
+):
+    """
+    folders: list of paths (str or Path) with real images
+    exts: which file extensions to include
+    returns: mean, std (each shape (3,))
+    """
+    folders = [Path(f) for f in folders]
+
+    # Collect all image paths first so tqdm can show a proper progress bar
+    all_image_paths = []
+    for folder in folders:
+        if not folder.exists():
+            continue
+        for path in folder.rglob("*"):
+            if path.is_file() and path.suffix.lower() in exts:
+                all_image_paths.append(path)
+
+    if not all_image_paths:
+        raise RuntimeError("No image files found in the given folders.")
+
+    channel_sum = np.zeros(3, dtype=np.float64)
+    channel_sumsq = np.zeros(3, dtype=np.float64)
+    n_pixels = 0
+
+    for path in tqdm(all_image_paths, desc="Computing RGB channel stats"):
+        # Read with cv2 -> BGR uint8 (or None on failure)
+        img_bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if img_bgr is None:
+            continue
+
+        # Convert BGR -> RGB
+        img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+
+        # float32 in [0, 1]
+        img = img.astype(np.float32) / 255.0
+
+        pixels = img.reshape(-1, 3)  # (N, 3)
+
+        channel_sum   += pixels.sum(axis=0)
+        channel_sumsq += (pixels ** 2).sum(axis=0)
+        n_pixels      += pixels.shape[0]
+
+    if n_pixels == 0:
+        raise RuntimeError("No RGB pixels found in the given folders.")
+
+    mean = channel_sum / n_pixels
+    var  = channel_sumsq / n_pixels - mean ** 2
+    std  = np.sqrt(np.maximum(var, 1e-12))
+
+    return mean.astype(np.float32), std.astype(np.float32)

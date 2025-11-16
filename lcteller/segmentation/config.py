@@ -158,11 +158,26 @@ PIXEL_STYLE = CameraStyleParams(
     clip_prob=0.3,
 )
 
+SIMULATED_RAW_STYLE = CameraStyleParams(
+    name="simulated_raw",
+    c_range=(1.0, 1.0),
+    b_range=(0.0, 0.0),
+    gamma_range=(1.0, 1.0),
+    mix_range=(0.0, 0.0),
+    blur_sigma_range=(0.0, 0.0),
+    sharpen_strength=0.0,
+    noise_std_base=0.0,
+    wb_range=(1.0, 1.0),
+    vignette_amp=0.0,
+    illum_amp=0.0,
+    clip_prob=0.0,
+)
 
 STYLE_PARAMS_REGISTRY: Dict[str, CameraStyleParams] = {
     "microscope": MICROSCOPE_STYLE,
     "iphone": IPHONE_STYLE,
     "pixel": PIXEL_STYLE,
+    "raw": SIMULATED_RAW_STYLE,
 }
 
 @dataclass
@@ -515,14 +530,12 @@ def test_scene() -> SimulatorConfig:
 def img_export_scene() -> SimulatorConfig:
     return test_scene()
 
-
-def default_camera_style() -> CameraStyleConfig:
+def phone_mix_style() -> CameraStyleConfig:
     return CameraStyleConfig(
         styles=("microscope", "iphone", "pixel"),
         probs=None,
         jpeg_prob=0.3,
     )
-
 
 def microscope_only_style() -> CameraStyleConfig:
     return CameraStyleConfig(
@@ -531,10 +544,9 @@ def microscope_only_style() -> CameraStyleConfig:
         jpeg_prob=0.3,
     )
 
-
-def phone_mix_style() -> CameraStyleConfig:
+def simulated_raw_style() -> CameraStyleConfig:
     return CameraStyleConfig(
-        styles=("microscope", "iphone", "pixel"),
-        probs=(0.2, 0.4, 0.4),
-        jpeg_prob=0.3,
+        styles=("simulated_raw",),
+        probs=None,
+        jpeg_prob=0.0,
     )

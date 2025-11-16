@@ -34,14 +34,6 @@ from .utils import (
     crop_sim_meta_to_tile,
 )
 
-import json
-from typing import Optional, Sequence
-
-import h5py
-import numpy as np
-import torch
-from torch.utils.data import Dataset
-
 
 class H5CellsDataset(Dataset):
     """
