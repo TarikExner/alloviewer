@@ -4,6 +4,12 @@ from scipy import ndimage as ndi
 import inspect
 from collections.abc import Mapping, Sequence
 
+from .config import (
+    CameraStyleConfig,
+    STYLE_PARAMS_REGISTRY,
+    RNG,
+)
+
 def _to_jsonable(x):
     """Convert common numeric / numpy types to plain Python so JSON dump works."""
     # simple numbers
@@ -568,3 +574,111 @@ def simulate_image(
     }
 
     return noised, meta, targets
+
+def apply_camera_style(
+    img,
+    rng: RNG,
+    style_cfg: CameraStyleConfig,
+):
+    """
+    img      : float32 RGB image in [0, 1], shape (H, W, 3)
+    style_cfg: picks which style name to use
+    """
+    assert img.ndim == 3 and img.shape[2] == 3
+    img = img.astype(np.float32).copy()
+    img = np.clip(img, 0.0, 1.0)
+
+    H, W, _ = img.shape
+
+    # pick style name and params
+    style_name = style_cfg.sample_style(rng)
+    params = STYLE_PARAMS_REGISTRY[style_name]
+    jpeg_prob = style_cfg.jpeg_prob
+
+    # 1) global contrast / brightness
+    c = rng.uniform(*params.c_range)
+    b = rng.uniform(*params.b_range)
+    img = np.clip(img * c + b, 0.0, 1.0)
+
+    # 2) white balance / color cast
+    wb = rng.uniform(params.wb_range[0], params.wb_range[1], size=3).astype(np.float32)
+    wb = wb / np.mean(wb)
+    img = np.clip(img * wb[None, None, :], 0.0, 1.0)
+
+    # 3) R/G mixing
+    a = rng.uniform(*params.mix_range)
+    M = np.array([
+        [1 - a, a,       0.0],
+        [a,     1 - a,   0.0],
+        [0.0,   0.0,     1.0],
+    ], dtype=np.float32)
+    img = np.clip(img @ M.T, 0.0, 1.0)
+
+    # 4) uneven illumination
+    scale = 64
+    h_small = max(1, H // scale)
+    w_small = max(1, W // scale)
+    field_small = rng.normal(0.0, 1.0, size=(h_small, w_small)).astype(np.float32)
+
+    field = cv2.resize(field_small, (W, H), interpolation=cv2.INTER_CUBIC)
+    field = field - field.mean()
+    field = field / (field.std() + 1e-6)
+    field = 1.0 + params.illum_amp * field
+    field = np.clip(field, 1.0 - 2 * params.illum_amp, 1.0 + 2 * params.illum_amp)
+
+    img = np.clip(img * field[..., None], 0.0, 1.0)
+
+    # 5) vignette
+    if params.vignette_amp > 0:
+        yy, xx = np.mgrid[0:H, 0:W]
+        cy, cx = H / 2.0, W / 2.0
+        rr = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2)
+        r_norm = rr / (0.7 * max(H, W))
+        vignette = 1.0 - params.vignette_amp * (r_norm ** 2)
+        vignette = np.clip(vignette, 1.0 - params.vignette_amp, 1.0)
+        img = np.clip(img * vignette[..., None], 0.0, 1.0)
+
+    # 6) gamma
+    gamma = rng.uniform(*params.gamma_range)
+    img = np.clip(img, 1e-6, 1.0) ** gamma
+
+    # 7) clipping
+    if rng.random() < params.clip_prob:
+        gain = rng.uniform(1.05, 1.25)
+        img = np.clip(img * gain, 0.0, 1.0)
+
+    # 8) blur + unsharp
+    sigma = rng.uniform(*params.blur_sigma_range)
+    if sigma > 0.0:
+        tmp = np.clip(img * 255.0, 0, 255).astype(np.uint8)
+        tmp_bgr = cv2.cvtColor(tmp, cv2.COLOR_RGB2BGR)
+        ksize = max(3, int(2 * round(sigma) + 1))
+        blur_bgr = cv2.GaussianBlur(tmp_bgr, (ksize, ksize), sigmaX=sigma, sigmaY=sigma)
+        sharp_bgr = cv2.addWeighted(tmp_bgr, 1.0 + params.sharpen_strength,
+                                    blur_bgr, -params.sharpen_strength, 0)
+        sharp_rgb = cv2.cvtColor(sharp_bgr, cv2.COLOR_BGR2RGB)
+        img = np.clip(sharp_rgb.astype(np.float32) / 255.0, 0.0, 1.0)
+
+    # 9) per-channel noise
+    noise_std = np.array([
+        params.noise_std_base * rng.uniform(0.8, 1.2),
+        params.noise_std_base * rng.uniform(0.8, 1.2),
+        params.noise_std_base * rng.uniform(1.0, 1.4),
+    ], dtype=np.float32)
+    noise = rng.normal(0.0, 1.0, size=img.shape).astype(np.float32)
+    img = np.clip(img + noise * noise_std[None, None, :], 0.0, 1.0)
+
+    # 10) JPEG
+    if rng.random() < jpeg_prob:
+        tmp = np.clip(img * 255.0, 0, 255).astype(np.uint8)
+        tmp_bgr = cv2.cvtColor(tmp, cv2.COLOR_RGB2BGR)
+        quality = int(rng.uniform(60, 95))
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
+        ok, enc = cv2.imencode(".jpg", tmp_bgr, encode_param)
+        if ok:
+            dec_bgr = cv2.imdecode(enc, cv2.IMREAD_COLOR)
+            img = cv2.cvtColor(dec_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+            img = np.clip(img, 0.0, 1.0)
+
+    return img.astype(np.float32)
+

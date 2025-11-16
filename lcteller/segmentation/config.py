@@ -80,6 +80,115 @@ def _choose_ratio(rng: RNG, ratios: Sequence[Tuple[int, int]], portrait_prob: fl
     return r
 
 @dataclass
+class CameraStyleParams:
+    name: str
+
+    # global contrast / brightness
+    c_range: Tuple[float, float]
+    b_range: Tuple[float, float]
+
+    # gamma
+    gamma_range: Tuple[float, float]
+
+    # R/G mixing
+    mix_range: Tuple[float, float]
+
+    # blur + sharpen
+    blur_sigma_range: Tuple[float, float]
+    sharpen_strength: float
+
+    # noise
+    noise_std_base: float
+
+    # white balance / color cast
+    wb_range: Tuple[float, float]
+
+    # uneven illumination + vignette
+    vignette_amp: float
+    illum_amp: float
+
+    # clipping
+    clip_prob: float
+
+
+# concrete style presets (all numbers live here)
+
+MICROSCOPE_STYLE = CameraStyleParams(
+    name="microscope",
+    c_range=(0.9, 1.1),
+    b_range=(-0.03, 0.03),
+    gamma_range=(0.9, 1.1),
+    mix_range=(0.02, 0.08),
+    blur_sigma_range=(0.4, 1.0),
+    sharpen_strength=0.3,
+    noise_std_base=0.010,
+    wb_range=(0.95, 1.05),
+    vignette_amp=0.05,
+    illum_amp=0.05,
+    clip_prob=0.2,
+)
+
+IPHONE_STYLE = CameraStyleParams(
+    name="iphone",
+    c_range=(0.9, 1.2),
+    b_range=(-0.05, 0.05),
+    gamma_range=(0.8, 1.3),
+    mix_range=(0.08, 0.25),
+    blur_sigma_range=(0.8, 1.8),
+    sharpen_strength=0.7,
+    noise_std_base=0.015,
+    wb_range=(0.85, 1.20),
+    vignette_amp=0.12,
+    illum_amp=0.12,
+    clip_prob=0.4,
+)
+
+PIXEL_STYLE = CameraStyleParams(
+    name="pixel",
+    c_range=(0.9, 1.2),
+    b_range=(-0.04, 0.04),
+    gamma_range=(0.85, 1.2),
+    mix_range=(0.06, 0.20),
+    blur_sigma_range=(0.6, 1.5),
+    sharpen_strength=0.5,
+    noise_std_base=0.012,
+    wb_range=(0.9, 1.15),
+    vignette_amp=0.10,
+    illum_amp=0.10,
+    clip_prob=0.3,
+)
+
+
+STYLE_PARAMS_REGISTRY: Dict[str, CameraStyleParams] = {
+    "microscope": MICROSCOPE_STYLE,
+    "iphone": IPHONE_STYLE,
+    "pixel": PIXEL_STYLE,
+}
+
+@dataclass
+class CameraStyleConfig:
+    """
+    Controls which camera look(s) to sample in apply_camera_style.
+    """
+    styles: Sequence[str] = ("microscope", "iphone", "pixel")
+    probs: Optional[Sequence[float]] = None
+    jpeg_prob: float = 0.3
+
+    def sample_style(self, rng: RNG) -> str:
+        if len(self.styles) == 1:
+            return self.styles[0]
+
+        if self.probs is None:
+            idx = int(rng.integers(0, len(self.styles)))
+            return self.styles[idx]
+
+        p = np.asarray(self.probs, dtype=float)
+        p = p / p.sum()
+        idx = int(rng.choice(len(self.styles), p=p))
+        return self.styles[idx]
+
+
+@dataclass
 class CameraSetup:
     """
     Sample width first, then compute height from an aspect ratio.
@@ -405,3 +514,27 @@ def test_scene() -> SimulatorConfig:
 
 def img_export_scene() -> SimulatorConfig:
     return test_scene()
+
+
+def default_camera_style() -> CameraStyleConfig:
+    return CameraStyleConfig(
+        styles=("microscope", "iphone", "pixel"),
+        probs=None,
+        jpeg_prob=0.3,
+    )
+
+
+def microscope_only_style() -> CameraStyleConfig:
+    return CameraStyleConfig(
+        styles=("microscope",),
+        probs=None,
+        jpeg_prob=0.3,
+    )
+
+
+def phone_mix_style() -> CameraStyleConfig:
+    return CameraStyleConfig(
+        styles=("microscope", "iphone", "pixel"),
+        probs=(0.2, 0.4, 0.4),
+        jpeg_prob=0.3,
+    )
