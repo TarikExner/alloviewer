@@ -18,6 +18,7 @@ from .dataset_io import (
 )
 
 from .utils import compute_rgb_channel_stats_cv2
+from .config import UNET_MEAN, UNET_STD
 
 __all__ = [
     "UNetOptimized",
@@ -34,8 +35,10 @@ __all__ = [
     "export_h5_to_tiff",
     "create_tiled_from_fullres",
     "create_external_cells_h5_tiles",
-    "compute_rgb_channel_stats_cv2"
+    "compute_rgb_channel_stats_cv2",
+
+    "UNET_MEAN",
+    "UNET_STD"
 ]
 
-UNET_MEAN = [0.30352435,0.30428907, 0.16885266]
-UNET_STD = [0.17771362, 0.2031829, 0.1374358 ]
+

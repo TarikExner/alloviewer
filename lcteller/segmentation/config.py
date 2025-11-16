@@ -10,6 +10,9 @@ Param = Any
 RNG = np.random.Generator
 NumOrRange = Union[int, float, Tuple[float, float], Tuple[int, int]]
 
+UNET_MEAN = [0.30352435,0.30428907, 0.16885266]
+UNET_STD = [0.17771362, 0.2031829, 0.1374358 ]
+
 PASS_THROUGH_RANGES: Tuple[str, ...] = (
     # in-focus/out-of-focus blur ranges
     "sigma_in", "sigma_out",
