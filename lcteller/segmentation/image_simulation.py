@@ -4,6 +4,8 @@ from scipy import ndimage as ndi
 import inspect
 from collections.abc import Mapping, Sequence
 
+import cv2
+
 from .config import (
     CameraStyleConfig,
     STYLE_PARAMS_REGISTRY,
