@@ -259,6 +259,8 @@ class SimCellsDataset(BaseCellsTilesDataset):
 
         if camera_style_cfg is None:
             self.camera_style_cfg = simulated_raw_style()
+        else:
+            self.camera_style_cfg = camera_style_cfg
 
         super().__init__(
             target=target,
