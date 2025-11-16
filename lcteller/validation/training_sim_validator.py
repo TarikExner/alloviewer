@@ -10,7 +10,7 @@ import torch
 from torch.utils.data import DataLoader
 from skimage.measure import label as sklabel
 
-from ..segmentation.image_dataset import DiskSimCellsDataset
+from ..segmentation.dataset_io import DiskSimCellsDataset
 from ..segmentation.utils import collate_no_meta
 from ..segmenter import SegmenterUNet, SegmenterConfig
 import gc

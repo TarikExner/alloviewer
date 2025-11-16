@@ -1,6 +1,5 @@
 import os
 import time
-import glob
 import json
 import numpy as np
 import torch

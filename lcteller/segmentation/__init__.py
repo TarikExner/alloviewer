@@ -4,7 +4,16 @@ from .unet import (UNetOptimized,
                   build_unet_cpu_large)
 
 from .image_simulation import simulate_image
-from .image_dataset import SimCellsDataset, DiskSimCellsDataset
+from .image_dataset import SimCellsDataset, ExternalCellsTilesDataset
+
+from .dataset_io import (
+    DiskSimCellsDataset,
+
+    create_sim_cells_dataset_h5,
+    export_h5_to_tiff,
+    create_tiled_from_fullres,
+    create_external_cells_h5_tiles
+)
 
 __all__ = [
     "UNetOptimized",
@@ -13,5 +22,11 @@ __all__ = [
     "build_unet_cpu_large",
     "simulate_image",
     "SimCellsDataset",
-    "DiskSimCellsDataset"
+    "ExternalCellsTilesDataset",
+
+    "DiskSimCellsDataset",
+    "create_sim_cells_dataset_h5",
+    "export_h5_to_tiff",
+    "create_tiled_from_fullres",
+    "create_external_cells_h5_tiles"
 ]

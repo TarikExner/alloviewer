@@ -1,253 +1,31 @@
-import math
+import os
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 import cv2
-import json
-import h5py
-from scipy import ndimage as ndi
-from skimage import filters, measure, morphology, exposure
+import math
 from skimage.segmentation import relabel_sequential
+from skimage.measure import label as sklabel
 
-from . import simulate_image
+from .image_simulation import simulate_image
+from .utils import (
+    crop_sim_meta_to_tile,
+    make_energy_from_instances,
+    make_center_heatmap,
+    make_center_stem_from_centers,
+    make_soft_boundary_from_instances,
+    square_crop_from_center_radius,
+    estimate_well_mask,
+    crop_rect,
+    pad_to_square,
+    resize_map,
+    find_pairs_strict,
+    heal_watershed_gaps,
+    guess_data_csv_path,
+    load_com_labels_csv,
+    crop_external_meta_to_tile,
+)
 
-from typing import Optional, Sequence, Union
-
-
-def _resize_map(x, side, mode="image"):
-    H, W = x.shape[:2]
-    down = (side < H) or (side < W)
-    if mode == "image":
-        interp = cv2.INTER_AREA if down else cv2.INTER_CUBIC
-        y = cv2.resize(np.ascontiguousarray(x.astype(np.float32, copy=False)),
-                       (side, side), interpolation=interp)
-        return y.astype(np.float32, copy=False)
-    elif mode == "binary":
-        y = cv2.resize(np.ascontiguousarray(x.astype(np.uint8, copy=False)),
-                       (side, side), interpolation=cv2.INTER_NEAREST)
-        return y.astype(np.float32, copy=False)
-    elif mode == "label":
-        xin = np.ascontiguousarray(x.astype(np.float32, copy=False))
-        y = cv2.resize(xin, (side, side), interpolation=cv2.INTER_NEAREST)
-        return y.astype(np.int32, copy=False)
-    else:
-        raise ValueError(mode)
-
-def _pad_to_square(arr, pad_val=0.0):
-    H, W = arr.shape[:2]
-    S = max(H, W)
-    dy = S - H
-    dx = S - W
-    top = dy // 2
-    bottom = dy - top
-    left = dx // 2
-    right = dx - left
-    if arr.ndim == 3:
-        out = np.pad(arr, ((top, bottom), (left, right), (0, 0)),
-                     mode="constant", constant_values=((pad_val, pad_val), (pad_val, pad_val), (0, 0)))
-    else:
-        out = np.pad(arr, ((top, bottom), (left, right)),
-                     mode="constant", constant_values=pad_val)
-    return out, (top, left), S
-
-def _crop_rect(arr, y0, x0, h, w):
-    return arr[y0:y0+h, x0:x0+w, ...] if arr.ndim == 3 else arr[y0:y0+h, x0:x0+w]
-
-def _estimate_well_mask(img, blur_sigma=3.0, well_is_brighter="auto"):
-    g = img if img.ndim == 2 else (0.2989*img[...,0] + 0.5870*img[...,1] + 0.1140*img[...,2])
-    g = ndi.gaussian_filter(g.astype(np.float32), blur_sigma)
-    g = exposure.rescale_intensity(g, in_range='image', out_range=(0, 1))
-    thr = filters.threshold_otsu(g)
-    m1 = g > thr      # brighter region
-    m2 = g < thr      # darker region
-    if well_is_brighter == "auto":
-        m = m1 if m1.sum() >= m2.sum() else m2
-    elif well_is_brighter:
-        m = m1
-    else:
-        m = m2
-    m = morphology.remove_small_objects(m, 500)
-    m = morphology.remove_small_holes(m, 500)
-    if m.sum() == 0:
-        H, W = g.shape
-        return np.zeros_like(m, dtype=bool), (H/2, W/2), min(H, W)/2 * 0.9
-    lbl = measure.label(m)
-    props = measure.regionprops(lbl)
-    props.sort(key=lambda p: p.area, reverse=True)
-    p = props[0]
-    cy, cx = p.centroid
-    r = math.sqrt(p.area/np.pi)
-    return (lbl == p.label), (cy, cx), r
-
-def _square_crop_from_center_radius(mask_shape, center, radius, pad=8):
-    H, W = mask_shape
-    cy, cx = center
-    half = int(math.ceil(radius + pad))
-    y0, y1 = int(round(cy - half)), int(round(cy + half))
-    x0, x1 = int(round(cx - half)), int(round(cx + half))
-    # make square
-    h = y1 - y0
-    w = x1 - x0
-    if h > w:
-        d = h - w
-        x0 -= d//2
-        x1 += d - d//2
-    elif w > h:
-        d = w - h
-        y0 -= d//2
-        y1 += d - d//2
-    # clip
-    y0 = max(0, y0)
-    x0 = max(0, x0)
-    y1 = min(H, y1)
-    x1 = min(W, x1)
-    return y0, y1, x0, x1
-
-def _compute_inner_boundary(inst_np: np.ndarray) -> np.ndarray:
-    a = inst_np
-    H, W = a.shape
-    up    = (a != np.roll(a, -1, axis=0))
-    down  = (a != np.roll(a,  1, axis=0))
-    left  = (a != np.roll(a, -1, axis=1))
-    right = (a != np.roll(a,  1, axis=1))
-    b = (up | down | left | right)
-    b &= (a > 0)
-    b[H-1,:] &= (a[H-1,:] != 0)
-    b[0,:]   &= (a[0,:]   != 0)
-    b[:,W-1] &= (a[:,W-1] != 0)
-    b[:,0]   &= (a[:,0]   != 0)
-    return b.astype(np.uint8)
-
-def _make_soft_boundary_from_instances(inst: np.ndarray,
-                                       ring_width: int = 1,
-                                       soft_band: int = 2,
-                                       sigma: float = 1.0) -> np.ndarray:
-    ring = _compute_inner_boundary(inst).astype(bool)
-    if ring_width > 1:
-        rad = max(1, int(ring_width // 2))
-        ring = ndi.binary_dilation(ring, structure=ndi.generate_binary_structure(2,1), iterations=rad)
-    cell = (inst > 0)
-    if soft_band > 0:
-        not_ring = ~ring
-        dist = ndi.distance_transform_edt(not_ring)
-        dist[~cell] = np.inf
-        soft = np.exp(-(dist**2) / (2.0 * (sigma**2)))
-        soft[dist > float(soft_band)] = 0.0
-        soft[~np.isfinite(soft)] = 0.0
-        m = soft.max()
-        if m > 0:
-            soft = soft / m
-        return soft.astype(np.float32)
-    else:
-        return ring.astype(np.float32)
-
-def _make_center_stem_from_centers(centers, shape):
-    H, W = shape
-    stem = np.zeros((H, W), dtype=np.float32)
-    for (y, x) in centers or []:
-        if 0 <= y < H and 0 <= x < W:
-            stem[int(y), int(x)] = 1.0
-    return stem
-
-def _make_center_heatmap(stem, sigma: Union[int, float] = 1.0):
-    heat = stem.astype(np.float32)
-    if sigma and sigma > 0:
-        heat = ndi.gaussian_filter(heat, float(sigma))
-        m = float(heat.max())
-        if m > 0:
-            heat /= m
-    return heat.astype(np.float32)
-
-def _make_energy_from_instances(instances):
-    cell = (instances > 0)
-    dist = ndi.distance_transform_edt(cell).astype(np.float32)
-    if cell.any():
-        dmax = float(dist[cell].max())
-        if dmax > 0:
-            dist /= dmax
-    dist[~cell] = 0.0
-    return dist.astype(np.float32)
-
-def _crop_sim_meta_to_tile(meta, y0, x0, h, w):
-    """
-    Take simulator meta (full image) and make it consistent with a tile
-    that starts at (y0, x0) and has size (h, w).
-    """
-    # shallow copy so we don't mutate caller's dict
-    new_meta = dict(meta)
-
-    centers = meta.get("centers", [])
-    labels  = meta.get("labels", [])
-    sigmas  = meta.get("final_sigmas", None)
-
-    kept_centers = []
-    kept_labels  = []
-    kept_sigmas  = []
-
-    for i, c in enumerate(centers):
-        cy, cx = c
-        ny = cy - y0
-        nx = cx - x0
-        if 0 <= ny < h and 0 <= nx < w:
-            kept_centers.append((int(ny), int(nx)))
-            if isinstance(labels, (list, tuple, np.ndarray)) and i < len(labels):
-                kept_labels.append(int(labels[i]))
-            # sigmas can be np.ndarray
-            if sigmas is not None and i < len(sigmas):
-                kept_sigmas.append(float(sigmas[i]))
-
-    # update centers
-    new_meta["centers"] = kept_centers
-
-    # update labels (keep type: list of int)
-    if isinstance(labels, np.ndarray):
-        new_meta["labels"] = np.array(kept_labels, dtype=labels.dtype)
-    else:
-        new_meta["labels"] = kept_labels
-
-    # update final_sigmas
-    if sigmas is not None:
-        new_meta["final_sigmas"] = np.array(kept_sigmas, dtype=np.float32)
-
-    # counts
-    n_cells_tile = len(kept_centers)
-    new_meta["n_cells"] = int(n_cells_tile)
-
-    # frac_positive
-    if n_cells_tile > 0 and len(kept_labels) == n_cells_tile:
-        new_meta["frac_positive"] = float(np.mean(kept_labels))
-    else:
-        new_meta["frac_positive"] = 0.0
-
-    # well center shift (can be outside tile, that's fine)
-    if "well_center" in meta and meta["well_center"] is not None:
-        wy, wx = meta["well_center"]
-        new_meta["well_center"] = (float(wy - y0), float(wx - x0))
-
-    # radius stays as is
-
-    # fix params (the captured simulator args)
-    params = meta.get("params", None)
-    if isinstance(params, dict):
-        new_params = dict(params)
-        # sizes
-        new_params["H"] = int(h)
-        new_params["W"] = int(w)
-        # counts
-        if "n_cells" in new_params:
-            new_params["n_cells"] = int(n_cells_tile)
-        if "frac_positive" in new_params:
-            new_params["frac_positive"] = float(new_meta["frac_positive"])
-        if "well_center" in new_params and "well_center" in new_meta:
-            new_params["well_center"] = new_meta["well_center"]
-        # radius_px stays
-        new_meta["params"] = new_params
-
-    return new_meta
-
-# -----------------------------
-# main dataset
-# -----------------------------
 
 class SimCellsDataset(Dataset):
     """
@@ -256,6 +34,7 @@ class SimCellsDataset(Dataset):
       - crop_well_resize: square-crop around well, then resize
       - tiles: return a random target×target tile
                (or many tiles if n_tiles>0, or all tiles if n_tiles==-1)
+      - fullres: keep original resolution (no crop, no resize), one tile per scene
 
     Returns:
       img_t   : float32 [T, 3, S, S] in [0,1]
@@ -270,7 +49,7 @@ class SimCellsDataset(Dataset):
     def __init__(
         self,
         length=1000,
-        mode="pad_resize",            # "pad_resize" | "crop_well_resize" | "tiles"
+        mode="pad_resize",            # "pad_resize" | "crop_well_resize" | "tiles" | "fullres"
         target=512,
         n_tiles: int = 1,             # >0: pick that many random tiles; -1: cover full image; only for mode="tiles"
         tile_overlap=64,              # used when n_tiles == -1
@@ -291,7 +70,7 @@ class SimCellsDataset(Dataset):
 
         self.length = int(length)
         self.mode = str(mode)
-        assert self.mode in ("pad_resize", "crop_well_resize", "tiles")
+        assert self.mode in ("pad_resize", "crop_well_resize", "tiles", "fullres")
 
         self.target = int(target)
         self.n_tiles = int(n_tiles)
@@ -315,15 +94,15 @@ class SimCellsDataset(Dataset):
 
     # ---- mode mappers (single-tile helpers) ----
     def _mode_pad_resize(self, img, cell, bound, inst):
-        sq, (pad_top, pad_left), S = _pad_to_square(img, pad_val=0.0)
-        cell_sq, _, _ = _pad_to_square(cell, pad_val=0.0)
-        bound_sq, _, _ = _pad_to_square(bound, pad_val=0.0)
-        inst_sq,  _, _ = _pad_to_square(inst,  pad_val=0)
+        sq, (pad_top, pad_left), S = pad_to_square(img, pad_val=0.0)
+        cell_sq, _, _ = pad_to_square(cell, pad_val=0.0)
+        bound_sq, _, _ = pad_to_square(bound, pad_val=0.0)
+        inst_sq,  _, _ = pad_to_square(inst,  pad_val=0)
 
-        img_o   = _resize_map(sq,       self.target, "image")
-        cell_o  = _resize_map(cell_sq,  self.target, "binary")
-        bound_o = _resize_map(bound_sq, self.target, "binary")
-        inst_o  = _resize_map(inst_sq,  self.target, "label")
+        img_o   = resize_map(sq,       self.target, "image")
+        cell_o  = resize_map(cell_sq,  self.target, "binary")
+        bound_o = resize_map(bound_sq, self.target, "binary")
+        inst_o  = resize_map(inst_sq,  self.target, "label")
 
         meta = dict(mode="pad_resize", pad_top=pad_top, pad_left=pad_left, S_in=S, scale=self.target/float(S))
         return img_o, cell_o, bound_o, inst_o, meta
@@ -332,21 +111,21 @@ class SimCellsDataset(Dataset):
         cycx = sim_meta.get("well_center", None)
         R = sim_meta.get("radius_px", None)
         if (cycx is None) or (R is None):
-            _, center, radius = _estimate_well_mask(img, blur_sigma=3.0, well_is_brighter=self.well_is_brighter)
+            _, center, radius = estimate_well_mask(img, blur_sigma=3.0, well_is_brighter=self.well_is_brighter)
         else:
             center = (float(cycx[0]), float(cycx[1]))
             radius = float(R)
 
-        y0, y1, x0, x1 = _square_crop_from_center_radius(cell.shape, center, radius, pad=8)
-        img_c   = _crop_rect(img,  y0, x0, y1-y0, x1-x0)
-        cell_c  = _crop_rect(cell, y0, x0, y1-y0, x1-x0)
-        bound_c = _crop_rect(bound,y0, x0, y1-y0, x1-x0)
-        inst_c  = _crop_rect(inst, y0, x0, y1-y0, x1-x0)
+        y0, y1, x0, x1 = square_crop_from_center_radius(cell.shape, center, radius, pad=8)
+        img_c   = crop_rect(img,  y0, x0, y1-y0, x1-x0)
+        cell_c  = crop_rect(cell, y0, x0, y1-y0, x1-x0)
+        bound_c = crop_rect(bound,y0, x0, y1-y0, x1-x0)
+        inst_c  = crop_rect(inst, y0, x0, y1-y0, x1-x0)
 
-        img_o   = _resize_map(img_c,  self.target, "image")
-        cell_o  = _resize_map(cell_c, self.target, "binary")
-        bound_o = _resize_map(bound_c,self.target, "binary")
-        inst_o  = _resize_map(inst_c, self.target, "label")
+        img_o   = resize_map(img_c,  self.target, "image")
+        cell_o  = resize_map(cell_c, self.target, "binary")
+        bound_o = resize_map(bound_c,self.target, "binary")
+        inst_o  = resize_map(inst_c, self.target, "label")
 
         scale = self.target / max(1.0, float(max(y1-y0, x1-x0)))
         meta = dict(mode="crop_well_resize",
@@ -354,6 +133,25 @@ class SimCellsDataset(Dataset):
                     scale=scale,
                     well_center=(float(center[0]), float(center[1])),
                     well_radius=float(radius))
+        return img_o, cell_o, bound_o, inst_o, meta
+
+    def _mode_fullres(self, img, cell, bound, inst, sim_meta):
+        """
+        Keep full resolution, do not crop or resize.
+        Returns arrays as float32 / int32 with a simple meta dict.
+        """
+        img_o = img.astype(np.float32)
+        cell_o = cell.astype(np.float32)
+        bound_o = bound.astype(np.float32)
+        inst_o = inst.astype(np.int32)
+
+        H, W = cell_o.shape
+        meta = dict(
+            mode="fullres",
+            height=int(H),
+            width=int(W),
+            scale=1.0,
+        )
         return img_o, cell_o, bound_o, inst_o, meta
 
     def _mode_tiles_single(self, img, cell, bound, inst, rng):
@@ -369,10 +167,10 @@ class SimCellsDataset(Dataset):
         y0 = int(rng.integers(0, H - th + 1))
         x0 = int(rng.integers(0, W - th + 1))
 
-        img_t   = _crop_rect(img,  y0, x0, th, th)
-        cell_t  = _crop_rect(cell, y0, x0, th, th)
-        bound_t = _crop_rect(bound,y0, x0, th, th)
-        inst_t  = _crop_rect(inst, y0, x0, th, th)
+        img_t   = crop_rect(img,  y0, x0, th, th)
+        cell_t  = crop_rect(cell, y0, x0, th, th)
+        bound_t = crop_rect(bound,y0, x0, th, th)
+        inst_t  = crop_rect(inst, y0, x0, th, th)
 
         meta = dict(mode="tiles", tile_xy=(int(y0), int(x0)), tile_hw=(th, th))
         return (
@@ -400,10 +198,10 @@ class SimCellsDataset(Dataset):
         tiles = []
         for y0 in range(0, H - th + 1, stride):
             for x0 in range(0, W - th + 1, stride):
-                img_t   = _crop_rect(img,  y0, x0, th, th)
-                cell_t  = _crop_rect(cell, y0, x0, th, th)
-                bound_t = _crop_rect(bound,y0, x0, th, th)
-                inst_t  = _crop_rect(inst, y0, x0, th, th)
+                img_t   = crop_rect(img,  y0, x0, th, th)
+                cell_t  = crop_rect(cell, y0, x0, th, th)
+                bound_t = crop_rect(bound,y0, x0, th, th)
+                inst_t  = crop_rect(inst, y0, x0, th, th)
                 meta_t = dict(mode="tiles", tile_xy=(int(y0), int(x0)), tile_hw=(th, th))
                 tiles.append((img_t.astype(np.float32),
                               cell_t.astype(np.float32),
@@ -435,6 +233,10 @@ class SimCellsDataset(Dataset):
             img_o, cell_o, bound_o, inst_o, mode_meta = self._mode_crop_well_resize(img, cell, bound, inst, meta)
             tiles_raw = [(img_o, cell_o, bound_o, inst_o, mode_meta)]
             full_meta = meta
+        elif self.mode == "fullres":
+            img_o, cell_o, bound_o, inst_o, mode_meta = self._mode_fullres(img, cell, bound, inst, meta)
+            tiles_raw = [(img_o, cell_o, bound_o, inst_o, mode_meta)]
+            full_meta = meta
         else:
             # mode == "tiles"
             if self.n_tiles == -1:
@@ -445,7 +247,7 @@ class SimCellsDataset(Dataset):
                 for (img_t, cell_t, bound_t, inst_t, mode_meta) in tiles_raw:
                     y0, x0 = mode_meta["tile_xy"]
                     th, tw = mode_meta["tile_hw"]
-                    meta_t = _crop_sim_meta_to_tile(meta, y0, x0, th, tw)
+                    meta_t = crop_sim_meta_to_tile(meta, y0, x0, th, tw)
                     # store both: per-tile (cropped) and full (original)
                     mode_meta_full = {
                         **mode_meta,
@@ -464,7 +266,7 @@ class SimCellsDataset(Dataset):
                     img_o, cell_o, bound_o, inst_o, mode_meta = self._mode_tiles_single(img, cell, bound, inst, rng)
                     y0, x0 = mode_meta["tile_xy"]
                     th, tw = mode_meta["tile_hw"]
-                    meta_t = _crop_sim_meta_to_tile(meta, y0, x0, th, tw)
+                    meta_t = crop_sim_meta_to_tile(meta, y0, x0, th, tw)
                     tiles_raw.append(
                         (
                             img_o,
@@ -491,7 +293,7 @@ class SimCellsDataset(Dataset):
 
         for (img_o, cell_o, bound_o, inst_o, mode_meta) in tiles_raw:
             # targets (4 heads)
-            bound_soft = _make_soft_boundary_from_instances(
+            bound_soft = make_soft_boundary_from_instances(
                 inst_o,
                 ring_width=max(1, self.boundary_ring_width),
                 soft_band=max(1, self.boundary_soft_band),
@@ -506,7 +308,7 @@ class SimCellsDataset(Dataset):
 
             if "centers" in tile_sim_meta and isinstance(tile_sim_meta["centers"], (list, tuple)) and len(tile_sim_meta["centers"]) > 0:
                 if mode_meta["mode"] == "pad_resize":
-                    sq, (pt, pl), S = _pad_to_square(img, pad_val=0.0)
+                    sq, (pt, pl), S = pad_to_square(img, pad_val=0.0)
                     scale = self.target / float(S)
                     centers = []
                     for (y, x) in tile_sim_meta["centers"]:
@@ -514,6 +316,8 @@ class SimCellsDataset(Dataset):
                         xx = int(round((x + pl) * scale))
                         if 0 <= yy < self.target and 0 <= xx < self.target:
                             centers.append((yy, xx))
+                    center_shape = (self.target, self.target)
+
                 elif mode_meta["mode"] == "crop_well_resize":
                     y0, y1, x0, x1 = mode_meta["crop"]
                     scale = mode_meta["scale"]
@@ -523,6 +327,19 @@ class SimCellsDataset(Dataset):
                         xx = int(round((x - x0) * scale))
                         if 0 <= yy < self.target and 0 <= xx < self.target:
                             centers.append((yy, xx))
+                    center_shape = (self.target, self.target)
+
+                elif mode_meta["mode"] == "fullres":
+                    # centers already in full-res coordinates
+                    Hc, Wc = inst_o.shape
+                    centers = []
+                    for (y, x) in tile_sim_meta["centers"]:
+                        yy = int(round(y))
+                        xx = int(round(x))
+                        if 0 <= yy < Hc and 0 <= xx < Wc:
+                            centers.append((yy, xx))
+                    center_shape = (Hc, Wc)
+
                 else:  # tiles
                     centers = []
                     for (y, x) in tile_sim_meta["centers"]:
@@ -530,7 +347,10 @@ class SimCellsDataset(Dataset):
                         xx = int(round(x))
                         if 0 <= yy < self.target and 0 <= xx < self.target:
                             centers.append((yy, xx))
-                center_stem = _make_center_stem_from_centers(centers, (self.target, self.target))
+                    center_shape = (self.target, self.target)
+
+                center_stem = make_center_stem_from_centers(centers, center_shape)
+
             else:
                 lbl = inst_o
                 centers = []
@@ -541,10 +361,10 @@ class SimCellsDataset(Dataset):
                     cy = int(np.mean(ys))
                     cx = int(np.mean(xs))
                     centers.append((cy, cx))
-                center_stem = _make_center_stem_from_centers(centers, (lbl.shape[0], lbl.shape[1]))
+                center_stem = make_center_stem_from_centers(centers, (lbl.shape[0], lbl.shape[1]))
 
-            center_heat = _make_center_heatmap(center_stem, sigma=self.center_sigma)
-            energy = _make_energy_from_instances(inst_o)
+            center_heat = make_center_heatmap(center_stem, sigma=self.center_sigma)
+            energy = make_energy_from_instances(inst_o)
 
             tgt = np.stack([cell_o, bound_soft, center_heat, energy], axis=0).astype(np.float32)
 
@@ -579,96 +399,320 @@ class SimCellsDataset(Dataset):
         }
         return imgs_t, tgts_t, extras
 
-class DiskSimCellsDataset(Dataset):
+class ExternalCellsTilesDataset(Dataset):
     """
-    Read-only dataset for HDF5 files produced by create_dataset_h5/export_to_prealloc_h5_safe.
-
-    Expects datasets:
-      /imgs: float32 [N, 1, 3, S, S]
-      /tgts: float32 [N, 1, C, S, S]
-      /inst: int32   [N, 1, S, S]
-      /meta: vlen JSON strings (one per sample)
-
-    Returns (per __getitem__):
-      img_t:  torch.float32 [1, 3, S, S]
-      tgt_t:  torch.float32 [1, C, S, S]
-      extras: {
-        "instance_labels": torch.int32 [1, S, S],
-        "meta": dict
-      }
+    External images + 8-bit masks → same output shape as SimCellsDataset(mode="tiles", n_tiles=-1)
+    Adds support for per-image COM+labels CSV ({image}_data.csv) and passes
+    them to per-tile meta (cropped/shifted).
     """
-    def __init__(self, h5_path: str, indices: Optional[Sequence[int]] = None):
-        super().__init__()
-        self.h5_path = str(h5_path)
-        self._h5: Optional[h5py.File] = None
-        self._imgs = self._tgts = self._inst = self._meta = None
+    def __init__(
+        self,
+        root_dir: str,
+        target: int = 512,
+        tile_overlap: int = 64,
+        heal_radius: int = 1,
+        boundary_ring_width: int = 1,
+        boundary_soft_band: int = 2,
+        boundary_sigma: float = 1.0,
+        center_sigma: float = 1.0,
+        transforms=None,   # optional Albumentations-style joint transform
+    ):
+        assert os.path.isdir(root_dir), f"not a dir: {root_dir}"
+        self.root_dir = root_dir
+        self.target = int(target)
+        self.tile_overlap = int(tile_overlap)
+        self.heal_radius = int(heal_radius)
+        self.boundary_ring_width = int(boundary_ring_width)
+        self.boundary_soft_band = int(boundary_soft_band)
+        self.boundary_sigma = float(boundary_sigma)
+        self.center_sigma = float(center_sigma)
+        self.transforms = transforms
 
-        # lightweight probe (no persistent handle) to get shapes, attrs
-        with h5py.File(self.h5_path, "r", libver="latest", swmr=True) as f:
-            n = int(f["imgs"].shape[0])
-            self._N = n
-            self._T = int(f["imgs"].shape[1])  # should be 1
-            self._C_img = int(f["imgs"].shape[2])
-            self._S = int(f["imgs"].shape[3])
-            self._C_tgt = int(f["tgts"].shape[2])
-            # optional sanity
-            assert "inst" in f and "meta" in f, "Missing datasets 'inst' or 'meta' in HDF5."
+        self.pairs = find_pairs_strict(root_dir)
+        if not self.pairs:
+            raise RuntimeError("no (img, img_mask) pairs found in external folder")
 
-        if indices is None:
-            self._idx = np.arange(self._N, dtype=np.int64)
+    def __len__(self):
+        return len(self.pairs)
+
+    def _read_image_and_mask(self, img_path: str, mask_path: str):
+        """
+        Returns:
+          img_rgb_f32 : float32 [H, W, 3] in [0,1]
+          msk_bin     : uint8   [H, W] with {0,1}
+          info        : dict with bit-depth details for auditing
+        """
+
+        def _detect_bitdepth_u16(a: np.ndarray, p: float = 99.9):
+            # a: uint16 HxW or HxWxC
+            vmax = int(a.max())
+            if vmax == 0:
+                return 16, (1 << 16) - 1, False  # b, white, shifted
+
+            # try left-shifted patterns (lower bits all zero), highest first
+            for b in (14, 12, 10, 8):
+                shift = 16 - b
+                low_mask = (1 << shift) - 1
+                if (a & low_mask).max() == 0:
+                    white_shifted = ((1 << b) - 1) << shift
+                    if vmax <= white_shifted:
+                        return b, white_shifted, True
+
+            # robust estimate from percentile
+            sample = float(np.percentile(a, p))
+            sample = max(1.0, sample)
+            est_bits = int(math.ceil(math.log2(sample + 1.0)))
+            est_bits = min(16, max(2, est_bits))
+            allowed = (8, 10, 12, 14, 16)
+            b = min(allowed, key=lambda k: abs(k - est_bits))
+            white = (1 << b) - 1
+            if vmax > white:
+                return 16, (1 << 16) - 1, False
+            return b, white, False
+
+        # --- read image (keep native depth) ---
+        img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            raise RuntimeError(f"Failed to read image: {img_path}")
+
+        shape_in = tuple(img.shape)
+        dtype_in = str(img.dtype)
+
+        # ensure HxWxC
+        if img.ndim == 2:
+            img = img[:, :, None]
+
+        # convert to RGB 3-ch
+        if img.shape[2] >= 3:
+            img = cv2.cvtColor(img[:, :, :3], cv2.COLOR_BGR2RGB)
+        elif img.shape[2] == 2:
+            c0 = img[:, :, 0:1]
+            c1 = img[:, :, 1:2]
+            img = np.concatenate([c0, c1, c0], axis=-1)
         else:
-            idx = np.asarray(indices, dtype=np.int64)
-            if idx.ndim != 1:
-                raise ValueError("indices must be 1D")
-            if (idx < 0).any() or (idx >= self._N).any():
-                raise ValueError("indices out of range")
-            self._idx = idx
+            img = np.repeat(img, 3, axis=-1)
 
-    def __len__(self) -> int:
-        return int(self._idx.shape[0])
+        # scale to float32 [0,1] with bit-depth sanity
+        info = {
+            "dtype_in": dtype_in,
+            "shape_in": shape_in,
+            "bit_depth": None,
+            "white_level": None,
+            "shifted": False,
+        }
 
-    def _ensure_open(self):
-        # open per worker/process lazily
-        if self._h5 is None:
-            self._h5 = h5py.File(self.h5_path, "r", libver="latest", swmr=True)
-            self._imgs = self._h5["imgs"]
-            self._tgts = self._h5["tgts"]
-            self._inst = self._h5["inst"]
-            self._meta = self._h5["meta"]
+        if img.dtype == np.uint8:
+            info["bit_depth"] = 8
+            info["white_level"] = 255
+            img_f32 = img.astype(np.float32) / 255.0
 
-    def __getitem__(self, i: int):
-        self._ensure_open()
-        k = int(self._idx[i])
+        elif img.dtype == np.uint16:
+            b, white, shifted = _detect_bitdepth_u16(img)
+            info.update({"bit_depth": b, "white_level": int(white), "shifted": bool(shifted)})
 
-        # read numpy views; h5py returns arrays on slicing
-        img = self._imgs[k]   # float32 [1, 3, S, S]
-        tgt = self._tgts[k]   # float32 [1, C, S, S]
-        inst = self._inst[k]  # int32   [1, S, S]
-        meta_json = self._meta[k]
+            # if left-shifted, undo shift before scaling
+            if shifted and b < 16:
+                shift = 16 - b
+                img = (img >> shift).astype(np.uint16)
+                white = (1 << b) - 1
 
-        # h5py vlen str returns bytes or str depending on build
-        if isinstance(meta_json, bytes):
-            meta = json.loads(meta_json.decode("utf-8"))
+            img_f32 = img.astype(np.float32) / float(white)
+            img_f32 = np.clip(img_f32, 0.0, 1.0)
+
         else:
-            meta = json.loads(meta_json)
+            # any other numeric type → clip to [0,1]
+            img_f32 = np.clip(img.astype(np.float32), 0.0, 1.0)
+            info.update({"bit_depth": 32, "white_level": 1, "shifted": False})
 
-        # convert to torch with exact dtypes
-        img_t = torch.from_numpy(np.asarray(img, dtype=np.float32))      # [1, 3, S, S]
-        tgt_t = torch.from_numpy(np.asarray(tgt, dtype=np.float32))      # [1, C, S, S]
-        inst_t = torch.from_numpy(np.asarray(inst, dtype=np.int32))      # [1, S, S]
+        # --- read mask (binary uint8) ---
+        m = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        if m is None:
+            raise RuntimeError(f"Failed to read mask: {mask_path}")
 
-        extras = {"instance_labels": inst_t, "meta": meta}
-        return img_t, tgt_t, extras
+        # accept both 0/255 and 0/1 sources
+        if m.max() <= 1:
+            msk_bin = (m >= 1).astype(np.uint8)
+        else:
+            msk_bin = (m >= 255).astype(np.uint8)
 
-    def close(self):
-        if self._h5 is not None:
-            try:
-                self._h5.close()
-            except Exception:
-                pass
-            self._h5 = None
-            self._imgs = self._tgts = self._inst = self._meta = None
+        return img_f32, msk_bin, info
 
-    def __del__(self):
-        self.close()
+    def _enumerate_full_tiles(self, H: int, W: int):
+        th = self.target
+        if H <= th or W <= th:
+            return [(0, min(th, H), 0, min(th, W))]
+        stride = max(1, th - self.tile_overlap)
+        coords = []
+        for y0 in range(0, H - th + 1, stride):
+            for x0 in range(0, W - th + 1, stride):
+                y1 = y0 + th
+                x1 = x0 + th
+                coords.append((y0, y1, x0, x1))
+        return coords
 
+    def __getitem__(self, idx: int):
+        img_path, mask_path = self.pairs[idx]
+        img, msk, read_info = self._read_image_and_mask(img_path, mask_path)
+        H, W = msk.shape
+
+        # heal watershed gaps if wanted
+        msk_healed = heal_watershed_gaps(msk, radius=self.heal_radius)
+
+        # instances from mask
+        inst_full = sklabel(msk_healed, connectivity=1).astype(np.int32)
+        inst_full, _, _ = relabel_sequential(inst_full)
+
+        # try to load COM+labels CSV
+        csv_path = guess_data_csv_path(img_path, mask_path)
+        centers_csv, labels_csv = load_com_labels_csv(csv_path)
+
+        # centers: prefer CSV; fallback to instance centroids
+        if centers_csv:
+            centers_full = centers_csv
+            labels_full = labels_csv
+        else:
+            centers_full = []
+            max_id = int(inst_full.max())
+            for k in range(1, max_id + 1):
+                ys, xs = np.where(inst_full == k)
+                if ys.size == 0:
+                    continue
+                cy = int(np.mean(ys))
+                cx = int(np.mean(xs))
+                centers_full.append((cy, cx))
+            # If no CSV, labels unknown → map all to 0
+            labels_full = [0 for _ in range(len(centers_full))]
+
+        # full meta (include COM+labels so tiles can crop them)
+        full_meta = {
+            "src_path": img_path,
+            "mask_path": mask_path,
+            "data_csv": csv_path if os.path.exists(csv_path) else "",
+            "H_in": int(H),
+            "W_in": int(W),
+            "n_cells": int(inst_full.max()),
+            "centers": [(int(y), int(x)) for (y, x) in centers_full],
+            "labels": [int(v) for v in labels_full],  # 1/0/-1
+            "read_info": read_info,
+        }
+
+        n_cells_full = len(centers_full)
+        if n_cells_full > 0 and len(labels_full) == n_cells_full:
+            frac_positive_full = float(np.mean([1 if v == 1 else 0 for v in labels_full]))
+        else:
+            frac_positive_full = 0.0
+        full_meta["frac_positive"] = frac_positive_full
+
+        # enumerate tiles like SimCellsDataset._enumerate_full_tiles
+        th = self.target
+        if H <= th or W <= th:
+            tile_coords = [(0, 0)]
+        else:
+            stride = max(1, th - self.tile_overlap)
+            tile_coords = []
+            for y0 in range(0, H - th + 1, stride):
+                for x0 in range(0, W - th + 1, stride):
+                    tile_coords.append((int(y0), int(x0)))
+
+        imgs_out = []
+        tgts_out = []
+        inst_out = []
+        tiles_meta_out = []
+
+        for (y0, x0) in tile_coords:
+            if H <= th or W <= th:
+                # fallback: pad+resize whole image to target
+                img_sq, _, _ = pad_to_square(img, pad_val=0.0)
+                inst_sq, _, _ = pad_to_square(inst_full, pad_val=0)
+
+                img_t = resize_map(img_sq, th, mode="image")   # [th,th,3]
+                inst_t = resize_map(inst_sq, th, mode="label") # [th,th]
+            else:
+                # standard tile crop
+                img_t = crop_rect(img, y0, x0, th, th)         # [th,th,3]
+                inst_t = crop_rect(inst_full, y0, x0, th, th)  # [th,th]
+
+            # relabel per tile
+            inst_t, _, _ = relabel_sequential(inst_t.astype(np.int32))
+
+            # tile-level external meta (centers/labels shifted into tile coords)
+            tile_sim_meta = crop_external_meta_to_tile(
+                full_meta,
+                y0, x0,
+                th if H > th and W > th else th,  # h, w (both = target)
+                th if H > th and W > th else th,
+            )
+
+            # compute cell / boundary / center / energy for this tile
+            cell_t = (inst_t > 0).astype(np.float32)
+            bound_soft = make_soft_boundary_from_instances(
+                inst_t,
+                ring_width=max(1, self.boundary_ring_width),
+                soft_band=max(1, self.boundary_soft_band),
+                sigma=self.boundary_sigma,
+            ).astype(np.float32)
+
+            # centers: use meta centers if present, else from instances
+            centers = []
+            if "centers" in tile_sim_meta and isinstance(tile_sim_meta["centers"], (list, tuple)) and len(tile_sim_meta["centers"]) > 0:
+                for (y, x) in tile_sim_meta["centers"]:
+                    yy = int(round(y))
+                    xx = int(round(x))
+                    if 0 <= yy < th and 0 <= xx < th:
+                        centers.append((yy, xx))
+            else:
+                lbl = inst_t
+                for k in range(1, int(lbl.max()) + 1):
+                    ys, xs = np.where(lbl == k)
+                    if ys.size == 0:
+                        continue
+                    cy = int(np.mean(ys))
+                    cx = int(np.mean(xs))
+                    centers.append((cy, cx))
+
+            center_stem = make_center_stem_from_centers(centers, (th, th))
+            center_heat = make_center_heatmap(center_stem, sigma=self.center_sigma)
+            energy = make_energy_from_instances(inst_t)
+
+            tgt_t = np.stack([cell_t, bound_soft, center_heat, energy], axis=0).astype(np.float32)
+
+            # optional transforms (Albumentations-style)
+            if self.transforms is not None:
+                out = self.transforms(
+                    image=img_t,
+                    masks=[cell_t, bound_soft, center_heat, energy],
+                )
+                img_t = out["image"]
+                cell_t, bound_soft, center_heat, energy = out["masks"]
+                tgt_t = np.stack([cell_t, bound_soft, center_heat, energy], axis=0).astype(np.float32)
+
+            # final tensors
+            img_chw = np.transpose(img_t.astype(np.float32), (2, 0, 1))   # [3,th,th]
+            imgs_out.append(img_chw)
+            tgts_out.append(tgt_t)
+            inst_out.append(inst_t.astype(np.int32))
+
+            # tile meta, *same structure* as SimCellsDataset tiles
+            mode_meta = {
+                "mode": "tiles",
+                "tile_xy": (int(y0), int(x0)),
+                "tile_hw": (int(th), int(th)),
+                "sim_meta": tile_sim_meta,
+                "full_meta": full_meta,
+            }
+            tiles_meta_out.append(mode_meta)
+
+        # stack over tile dim
+        imgs_t = torch.from_numpy(np.stack(imgs_out, axis=0).astype(np.float32))  # [T,3,S,S]
+        tgts_t = torch.from_numpy(np.stack(tgts_out, axis=0).astype(np.float32))  # [T,4,S,S]
+        inst_t = torch.from_numpy(np.stack(inst_out, axis=0).astype(np.int32))    # [T,S,S]
+
+        extras = {
+            "instance_labels": inst_t,
+            "meta": {
+                "full": full_meta,
+                "tiles": tiles_meta_out,
+                "sim_kwargs": None,  # external data has no sim kwargs
+            },
+        }
+        return imgs_t, tgts_t, extras

@@ -71,44 +71,6 @@ def square_crop_from_center_radius(mask_shape: Tuple[int,int], center: Tuple[flo
     return y0, y1, x0, x1
 
 
-def pad_to_square(arr: np.ndarray, pad_val=0):
-    H, W = arr.shape[:2]
-    S = max(H, W)
-    dy = S - H
-    dx = S - W
-    top = dy // 2
-    bottom = dy - top
-    left = dx // 2
-    right = dx - left
-    if arr.ndim == 3:
-        out = np.pad(arr, ((top, bottom), (left, right), (0, 0)),
-                     mode="constant", constant_values=((pad_val, pad_val), (pad_val, pad_val), (0, 0)))
-    else:
-        out = np.pad(arr, ((top, bottom), (left, right)),
-                     mode="constant", constant_values=pad_val)
-    return out, (top, left), S
-
-
-
-def resize_map(x: np.ndarray, side: int, mode: str = "image") -> np.ndarray:
-    H, W = x.shape[:2]
-    down = (side < H) or (side < W)
-    if mode == "image":
-        interp = cv2.INTER_AREA if down else cv2.INTER_CUBIC
-        y = cv2.resize(np.ascontiguousarray(x.astype(np.float32, copy=False)),
-                       (side, side), interpolation=interp)
-        return y.astype(np.float32, copy=False)
-    elif mode == "binary":
-        y = cv2.resize(np.ascontiguousarray(x.astype(np.uint8, copy=False)),
-                       (side, side), interpolation=cv2.INTER_NEAREST)
-        return y.astype(np.float32, copy=False)
-    elif mode == "label":
-        xin = np.ascontiguousarray(x.astype(np.float32, copy=False))
-        y = cv2.resize(xin, (side, side), interpolation=cv2.INTER_NEAREST)
-        return y.astype(np.int32, copy=False)
-    else:
-        raise ValueError(mode)
-
 # ----------------------------
 # mask metrics
 # ----------------------------
