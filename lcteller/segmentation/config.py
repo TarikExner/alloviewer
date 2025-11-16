@@ -177,7 +177,7 @@ STYLE_PARAMS_REGISTRY: Dict[str, CameraStyleParams] = {
     "microscope": MICROSCOPE_STYLE,
     "iphone": IPHONE_STYLE,
     "pixel": PIXEL_STYLE,
-    "raw": SIMULATED_RAW_STYLE,
+    "simulated_raw": SIMULATED_RAW_STYLE,
 }
 
 @dataclass
