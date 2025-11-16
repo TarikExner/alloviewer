@@ -6,17 +6,17 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from skimage.measure import label as sklabel
 
 from ..segmentation.utils import collate_no_meta
 from ..segmenter import SegmenterUNet, SegmenterConfig, InstanceSegmenterConfig
 
-import h5py
 import torch
 
 from tqdm import tqdm
 
+from ..segmentation import TiledH5Dataset
 from .utils import (
     iou_dice_overlap,
     boundary_f1_skeletonized,
@@ -26,107 +26,8 @@ from .utils import (
     get_dataset_mode
 )
 from .config import TrainingValidationConfig
+
 import gc
-
-class TiledH5Dataset(Dataset):
-    """
-    Read HDF5 made by your create_dataset_h5(...) OR by your
-    ExternalCellsTilesDataset-exporter.
-
-    Expect layout:
-        /imgs : [N, T_max, 3, S, S]
-        /tgts : [N, T_max, 4, S, S]
-        /inst : [N, T_max, S, S]
-        /meta : length N, JSON
-
-    Real #tiles for sample i = len(meta["tiles"]).
-    We return only those real tiles.
-
-    __getitem__ -> (imgs_t, tgts_t, extras):
-        imgs_t  : [T, 3, S, S]
-        tgts_t  : [T, 4, S, S]
-        extras  : {
-            "instance_labels": [T, S, S],
-            "meta": meta_json_dict
-        }
-    """
-
-    def __init__(self, h5_path: str, indices: Optional[Sequence[int]] = None):
-        super().__init__()
-        self.h5_path = str(h5_path)
-        self._h5 = None
-        self._imgs = self._tgts = self._inst = self._meta = None
-
-        with h5py.File(self.h5_path, "r", libver="latest", swmr=True) as f:
-            N = int(f["imgs"].shape[0])
-            self.N = N
-            self.T_max = int(f["imgs"].shape[1])
-            self.C_img = int(f["imgs"].shape[2])
-            self.S = int(f["imgs"].shape[3])
-            self.C_tgt = int(f["tgts"].shape[2])
-
-        if indices is None:
-            self.idx = np.arange(self.N, dtype=np.int64)
-        else:
-            idx = np.asarray(indices, dtype=np.int64)
-            if idx.ndim != 1:
-                raise ValueError("indices must be 1D")
-            if (idx < 0).any() or (idx >= self.N).any():
-                raise ValueError("indices out of range")
-            self.idx = idx
-
-    def __len__(self) -> int:
-        return int(self.idx.shape[0])
-
-    def _ensure_open(self):
-        if self._h5 is None:
-            self._h5 = h5py.File(self.h5_path, "r", libver="latest", swmr=True)
-            self._imgs = self._h5["imgs"]
-            self._tgts = self._h5["tgts"]
-            self._inst = self._h5["inst"]
-            self._meta = self._h5["meta"]
-
-    def __getitem__(self, i: int):
-        self._ensure_open()
-        k = int(self.idx[i])
-
-        imgs = self._imgs[k]   # [T_max, 3, S, S]
-        tgts = self._tgts[k]   # [T_max, 4, S, S]
-        inst = self._inst[k]   # [T_max, S, S]
-        mj = self._meta[k]
-        if isinstance(mj, bytes):
-            mj = mj.decode("utf-8")
-        meta = json.loads(mj)
-
-        tiles_meta = meta.get("tiles", [])
-        if tiles_meta:
-            T_real = len(tiles_meta)
-        else:
-            # fallback, but in your case we always store tiles -> this should not happen
-            T_real = imgs.shape[0]
-
-        imgs = imgs[:T_real]  # [T,3,S,S]
-        tgts = tgts[:T_real]  # [T,4,S,S]
-        inst = inst[:T_real]  # [T,S,S]
-
-        imgs_t = torch.from_numpy(np.asarray(imgs, dtype=np.float32))
-        tgts_t = torch.from_numpy(np.asarray(tgts, dtype=np.float32))
-        inst_t = torch.from_numpy(np.asarray(inst, dtype=np.int32))
-
-        extras = {
-            "instance_labels": inst_t,
-            "meta": meta,
-        }
-        return imgs_t, tgts_t, extras
-
-    def close(self):
-        if self._h5 is not None:
-            try:
-                self._h5.close()
-            except Exception:
-                pass
-            self._h5 = None
-
 
 def validate_unet_on_tiled_h5(
     segmenter: SegmenterUNet,

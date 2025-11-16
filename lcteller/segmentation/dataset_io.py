@@ -34,56 +34,84 @@ from .utils import (
     crop_sim_meta_to_tile,
 )
 
-class DiskSimCellsDataset(Dataset):
+import json
+from typing import Optional, Sequence
+
+import h5py
+import numpy as np
+import torch
+from torch.utils.data import Dataset
+
+
+class H5CellsDataset(Dataset):
     """
-    Read-only dataset for HDF5 files
+    Generic HDF5-backed dataset for cells/tiles.
 
-    Expects datasets:
-      /imgs: float32 [N, 1, 3, S, S]
-      /tgts: float32 [N, 1, C, S, S]
-      /inst: int32   [N, 1, S, S]
-      /meta: vlen JSON strings (one per sample)
+    Supports:
+      - Tiled layout (created from ExternalCellsTilesDataset or similar):
+          /imgs: float32 [N, T_max, 3, S, S]
+          /tgts: float32 [N, T_max, C, S, S]
+          /inst: int32   [N, T_max, S, S]
+          /meta: vlen JSON (one per sample, with meta["tiles"] list)
 
-    Returns (per __getitem__):
-      img_t:  torch.float32 [1, 3, S, S]
-      tgt_t:  torch.float32 [1, C, S, S]
-      extras: {
-        "instance_labels": torch.int32 [1, S, S],
+        Real #tiles for sample i = len(meta["tiles"]).
+        We return only those real tiles.
+
+      - Single-tile layout (DiskSim style):
+          /imgs: float32 [N, 1, 3, S, S]
+          /tgts: float32 [N, 1, C, S, S]
+          /inst: int32   [N, 1, S, S]
+          /meta: vlen JSON (may or may not have "tiles")
+
+        In this case T_max == 1 and:
+          - if meta["tiles"] exists → T_real = len(meta["tiles"])
+          - else → T_real = 1
+
+    __getitem__ returns:
+      img_t  : torch.float32 [T, 3, S, S]
+      tgt_t  : torch.float32 [T, C, S, S]
+      extras : {
+        "instance_labels": torch.int32 [T, S, S],
         "meta": dict
       }
     """
+
     def __init__(self, h5_path: str, indices: Optional[Sequence[int]] = None):
         super().__init__()
         self.h5_path = str(h5_path)
         self._h5: Optional[h5py.File] = None
         self._imgs = self._tgts = self._inst = self._meta = None
 
-        # lightweight probe (no persistent handle) to get shapes, attrs
+        # lightweight probe to read shapes; no persistent handle here
         with h5py.File(self.h5_path, "r", libver="latest", swmr=True) as f:
-            n = int(f["imgs"].shape[0])
-            self._N = n
-            self._T = int(f["imgs"].shape[1])  # should be 1
-            self._C_img = int(f["imgs"].shape[2])
-            self._S = int(f["imgs"].shape[3])
-            self._C_tgt = int(f["tgts"].shape[2])
-            # optional sanity
-            assert "inst" in f and "meta" in f, "Missing datasets 'inst' or 'meta' in HDF5."
+            imgs = f["imgs"]
+            tgts = f["tgts"]
 
+            self.N = int(imgs.shape[0])
+            self.T_max = int(imgs.shape[1])
+            self.C_img = int(imgs.shape[2])
+            self.S = int(imgs.shape[3])
+            self.C_tgt = int(tgts.shape[2])
+
+            if "inst" not in f or "meta" not in f:
+                raise RuntimeError("HDF5 file must contain datasets 'inst' and 'meta'.")
+
+        # subset of indices (optional)
         if indices is None:
-            self._idx = np.arange(self._N, dtype=np.int64)
+            self.idx = np.arange(self.N, dtype=np.int64)
         else:
             idx = np.asarray(indices, dtype=np.int64)
             if idx.ndim != 1:
                 raise ValueError("indices must be 1D")
-            if (idx < 0).any() or (idx >= self._N).any():
+            if (idx < 0).any() or (idx >= self.N).any():
                 raise ValueError("indices out of range")
-            self._idx = idx
+            self.idx = idx
 
     def __len__(self) -> int:
-        return int(self._idx.shape[0])
+        return int(self.idx.shape[0])
 
     def _ensure_open(self):
-        # open per worker/process lazily
+        """Open HDF5 file (per worker) on first access."""
         if self._h5 is None:
             self._h5 = h5py.File(self.h5_path, "r", libver="latest", swmr=True)
             self._imgs = self._h5["imgs"]
@@ -93,27 +121,39 @@ class DiskSimCellsDataset(Dataset):
 
     def __getitem__(self, i: int):
         self._ensure_open()
-        k = int(self._idx[i])
+        k = int(self.idx[i])
 
-        # read numpy views; h5py returns arrays on slicing
-        img = self._imgs[k]   # float32 [1, 3, S, S]
-        tgt = self._tgts[k]   # float32 [1, C, S, S]
-        inst = self._inst[k]  # int32   [1, S, S]
-        meta_json = self._meta[k]
+        imgs = self._imgs[k]   # [T_max, 3, S, S]
+        tgts = self._tgts[k]   # [T_max, C, S, S]
+        inst = self._inst[k]   # [T_max, S, S]
+        meta_raw = self._meta[k]
 
-        # h5py vlen str returns bytes or str depending on build
-        if isinstance(meta_json, bytes):
-            meta = json.loads(meta_json.decode("utf-8"))
+        # h5py vlen str can be bytes or str depending on build
+        if isinstance(meta_raw, bytes):
+            meta = json.loads(meta_raw.decode("utf-8"))
         else:
-            meta = json.loads(meta_json)
+            meta = json.loads(meta_raw)
 
-        # convert to torch with exact dtypes
-        img_t = torch.from_numpy(np.asarray(img, dtype=np.float32))      # [1, 3, S, S]
-        tgt_t = torch.from_numpy(np.asarray(tgt, dtype=np.float32))      # [1, C, S, S]
-        inst_t = torch.from_numpy(np.asarray(inst, dtype=np.int32))      # [1, S, S]
+        tiles_meta = meta.get("tiles", [])
+        if tiles_meta:
+            T_real = len(tiles_meta)
+        else:
+            # fallback for single-tile data without a "tiles" list
+            T_real = imgs.shape[0]
 
-        extras = {"instance_labels": inst_t, "meta": meta}
-        return img_t, tgt_t, extras
+        imgs = imgs[:T_real]  # [T,3,S,S]
+        tgts = tgts[:T_real]  # [T,C,S,S]
+        inst = inst[:T_real]  # [T,S,S]
+
+        imgs_t = torch.from_numpy(np.asarray(imgs, dtype=np.float32))
+        tgts_t = torch.from_numpy(np.asarray(tgts, dtype=np.float32))
+        inst_t = torch.from_numpy(np.asarray(inst, dtype=np.int32))
+
+        extras = {
+            "instance_labels": inst_t,
+            "meta": meta,
+        }
+        return imgs_t, tgts_t, extras
 
     def close(self):
         if self._h5 is not None:
@@ -126,6 +166,31 @@ class DiskSimCellsDataset(Dataset):
 
     def __del__(self):
         self.close()
+
+class TiledH5Dataset(H5CellsDataset):
+    """
+    Backwards-compatible alias for tiled H5 datasets.
+
+    Same behaviour as H5CellsDataset, but keeps the old name.
+    """
+    def __init__(self, h5_path: str, indices: Optional[Sequence[int]] = None):
+        super().__init__(h5_path=h5_path, indices=indices)
+
+
+class DiskSimCellsDataset(H5CellsDataset):
+    """
+    Backwards-compatible alias for single-tile H5 datasets.
+
+    Optionally checks that T_max == 1.
+    """
+    def __init__(self, h5_path: str, indices: Optional[Sequence[int]] = None):
+        super().__init__(h5_path=h5_path, indices=indices)
+        # optional sanity: enforce single tile layout if you want
+        if self.T_max != 1:
+            raise ValueError(
+                f"DiskSimCellsDataset expects T_max == 1, got {self.T_max}. "
+                f"Use H5CellsDataset or TiledH5Dataset instead."
+            )
 
 def create_sim_cells_dataset_h5(
     out_path: str,
