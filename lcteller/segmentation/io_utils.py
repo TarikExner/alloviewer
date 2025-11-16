@@ -211,6 +211,8 @@ def init_or_validate_varT_in_file(
             "version": 1,
             "length": int(length),
             "T": int(T0),
+            "H": int(H),
+            "W": int(W),
             "C_img": int(C_img),
             "C_tgt": int(C_tgt),
             "written": 0,
