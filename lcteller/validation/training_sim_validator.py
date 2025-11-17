@@ -210,7 +210,8 @@ def run_training_validation(out_dir: str,
                 model_dir = model_dir,
                 model_file = f"best_{unet_mode}_{dataset_mode}_S512_seed187.pth",
                 device = "cuda" if torch.cuda.is_available() else "cpu",
-                use_amp = torch.cuda.is_available()
+                use_amp = torch.cuda.is_available(),
+                normalize = False # DiskSimCellsDataset already normalizes
             ).to_dict()
             segmenter = SegmenterUNet.from_config(segmenter_cfg)
             df, _ = validate_unet_segmentation(segmenter, cfg)

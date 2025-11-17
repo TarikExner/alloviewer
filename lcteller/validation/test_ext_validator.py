@@ -287,6 +287,7 @@ def run_single_ext_validation(
         model_file=f"best_{unet_mode}_tiles_S512_seed187.pth",
         device="cuda" if torch.cuda.is_available() else "cpu",
         use_amp=torch.cuda.is_available(),
+        normalize=False #DiskSimCellsDataset already normalizes
     )
 
     if seg_method == "conventional":

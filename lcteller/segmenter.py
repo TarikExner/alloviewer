@@ -44,6 +44,9 @@ class SegmenterConfig:
     # nested instance config (dict or InstanceSegmenterConfig)
     instance_cfg: Dict[str, Any] = field(default_factory=dict)
 
+    # normalize data
+    normalize: bool = True
+
     # ---- helpers ----
     def to_dict(self) -> Dict[str, Any]:
         """Serialize config; nests instance_cfg as a dict."""
@@ -250,7 +253,8 @@ class SegmenterUNet:
         x = np.transpose(x, (2, 0, 1))  # CHW
         x = np.ascontiguousarray(x, dtype=np.float32)
         t = torch.from_numpy(x).unsqueeze(0).to(self.device, non_blocking=True)
-        t = self._normalize(t)
+        if self.cfg.normalize:
+            t = self._normalize(t)
         return t
 
 
@@ -273,7 +277,8 @@ class SegmenterUNet:
 
         x = np.ascontiguousarray(x, dtype=np.float32)
         t = torch.from_numpy(x).to(self.device, non_blocking=True)  # [T,3,H,W]
-        t = self._normalize(t)
+        if self.cfg.normalize:
+            t = self._normalize(t)
         return t
 
     def _normalize(self, x: torch.Tensor) -> torch.Tensor:
