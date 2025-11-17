@@ -56,7 +56,7 @@ def validate_unet_on_tiled_h5(
     ds = TiledH5Dataset(cfg.h5_path, indices=indices)
     dl = DataLoader(
         ds,
-        batch_size=1,          # 1 sample -> many tiles
+        batch_size=1,
         shuffle=False,
         num_workers=cfg.workers,
         pin_memory=True,

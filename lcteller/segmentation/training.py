@@ -24,7 +24,6 @@ from . import (
     DiskSimCellsDataset,
     build_unet_cpu_small, build_unet_cpu_medium, build_unet_cpu_large
 )
-from .config import default_camera, default_scene
 from .utils import collate_no_meta
 
 # --------------------- utils ---------------------
