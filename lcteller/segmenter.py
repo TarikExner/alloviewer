@@ -1,13 +1,12 @@
 import os
 from dataclasses import dataclass, field, asdict
 import numpy as np
-from typing import Dict, Any, Optional, Tuple, Callable, List, Literal
+from typing import Dict, Any, Optional, Tuple, Callable, List
 from scipy import ndimage as ndi
 from collections import deque
 import torch
 
 from skimage import morphology, segmentation, measure, feature
-from skimage.measure import label as cc_label
 
 from .contracts import ISegmenter
 from .segmentation import (

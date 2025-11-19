@@ -31,9 +31,11 @@ import gc
 
 def validate_unet_on_tiled_h5(
     segmenter: SegmenterUNet,
+    gt_segmenter: SegmenterUNet,
     cfg: TrainingValidationConfig,                    # your validation cfg (has cell_thr, boundary_thr, etc.)
     indices: Optional[Sequence[int]] = None,
     segmentation_method: str = "conventional",        # "conventional" | "inst_seg"
+    stop: Optional[int] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     Run the UNet on every sample in a tiled H5 (sim or external),
@@ -68,6 +70,8 @@ def validate_unet_on_tiled_h5(
 
     with tqdm(total=len(ds), desc="validate tiled h5", unit="img") as pbar:
         for sample_idx, batch in enumerate(dl):
+            if sample_idx == stop:
+                break
             imgs_t, tgts_t, extras = batch
             # remove batch dim
             imgs_t = imgs_t[0]                    # [T,3,S,S]
@@ -86,6 +90,7 @@ def validate_unet_on_tiled_h5(
             bound_prob = out["probs"]["bound"]
             center_pred = out["probs"]["center"]
             energy_pred = out["probs"]["energy"]
+
 
             # optional instance predictions (only present if compute_instances=True)
             inst_pred_list = out.get("instance_labels", None)
@@ -123,6 +128,23 @@ def validate_unet_on_tiled_h5(
                 bound_p = bound_prob[t]
                 center_p = center_pred[t]
                 energy_p = energy_pred[t]
+
+                inst_seg_dict = {
+                    "probs": {
+                        "cell":   cell_p,
+                        "bound":  bound_p,
+                        "center": center_p,
+                        "energy": energy_p,
+                    },
+                    "cell_mask": (cell_p >= segmenter.cfg.thr_cell).astype(np.uint8),
+                    "boundary":  (bound_p >= segmenter.cfg.thr_bound).astype(np.uint8),
+                    "instance_labels": None,
+                    "meta": {},
+
+                }
+                inst_seg_dict = gt_segmenter.inst_seg(inst_seg_dict, update_cell_mask = True)
+                instances = inst_seg_dict["instance_labels"]
+                n_cells_tile = instances.max()
 
                 # --- choose prediction mask / counts depending on method ---
                 if segmentation_method == "conventional":
@@ -190,7 +212,8 @@ def validate_unet_on_tiled_h5(
                 row: Dict[str, Any] = {
                     "sample_idx": int(sample_idx),
                     "tile_idx": int(t),
-                    "n_cells": n_cells,
+                    "n_cells": n_cells_tile,
+                    "n_cells_per_img": n_cells,
                     "frac_positive": (
                         float(frac_positive_from_meta)
                         if frac_positive_from_meta is not None else np.nan
@@ -303,10 +326,21 @@ def run_single_ext_validation(
             **seg_params,
         ).to_dict()
 
+    # ground truth labels for external images need to be segmented properly
+    gt_segmenter_cfg = SegmenterConfig(
+        instance_cfg=InstanceSegmenterConfig().to_dict(),
+        compute_instances=True,
+        **seg_params,
+    ).to_dict()
+
+
+    gt_segmenter = SegmenterUNet.from_config(gt_segmenter_cfg)
+
     segmenter = SegmenterUNet.from_config(segmenter_cfg)
 
     df, _ = validate_unet_on_tiled_h5(
         segmenter,
+        gt_segmenter,
         cfg,
         segmentation_method=seg_method,
     )
