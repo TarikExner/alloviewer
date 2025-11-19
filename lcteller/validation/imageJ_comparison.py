@@ -383,7 +383,7 @@ def run_fullres_unet_vs_imagej_validation(
 
     out_csv = os.path.join(
         out_dir,
-        f"testing_val_fullres_{unet_mode}_{seg_method}.csv"
+        f"testing_val_imageJ_{unet_mode}_{seg_method}.csv"
     )
 
     # cache
