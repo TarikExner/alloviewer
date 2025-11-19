@@ -129,20 +129,20 @@ def validate_unet_on_tiled_h5(
                 center_p = center_pred[t]
                 energy_p = energy_pred[t]
 
-                inst_seg_dict = {
+                gt_inst_seg_dict = {
                     "probs": {
-                        "cell":   cell_p,
-                        "bound":  bound_p,
-                        "center": center_p,
-                        "energy": energy_p,
+                        "cell":   (tgt[0]>gt_segmenter.cfg.thr_cell).astype(np.uint8),
+                        "bound":  (tgt[1]>gt_segmenter.cfg.thr_bound).astype(np.uint8),
+                        "center": (tgt[2]),
+                        "energy": (tgt[3]),
                     },
-                    "cell_mask": (cell_p >= segmenter.cfg.thr_cell).astype(np.uint8),
-                    "boundary":  (bound_p >= segmenter.cfg.thr_bound).astype(np.uint8),
+                    "cell_mask": (tgt[0]>= segmenter.cfg.thr_cell).astype(np.uint8),
+                    "boundary":  (tgt[1]>= segmenter.cfg.thr_bound).astype(np.uint8),
                     "instance_labels": None,
                     "meta": {},
 
                 }
-                inst_seg_dict = gt_segmenter.inst_seg(inst_seg_dict, update_cell_mask = True)
+                inst_seg_dict = gt_segmenter.inst_seg(gt_inst_seg_dict, update_cell_mask = True)
                 instances = inst_seg_dict["instance_labels"]
                 n_cells_tile = instances.max()
 
