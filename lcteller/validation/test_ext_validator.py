@@ -144,7 +144,7 @@ def validate_unet_on_tiled_h5(
                 }
                 inst_seg_dict = gt_segmenter.inst_seg(gt_inst_seg_dict, update_cell_mask = True)
                 instances = inst_seg_dict["instance_labels"]
-                n_cells_tile = instances.max()
+                n_gt = int(instances.max())
 
                 # --- choose prediction mask / counts depending on method ---
                 if segmentation_method == "conventional":
@@ -162,7 +162,6 @@ def validate_unet_on_tiled_h5(
                     # for compatibility, use instance count as "components" count
                     n_cc = n_cells_pred_instances
 
-                n_gt = int(inst_gt.max())
 
                 # centers (count)
                 peaks = nms_peaks_np(
@@ -212,8 +211,7 @@ def validate_unet_on_tiled_h5(
                 row: Dict[str, Any] = {
                     "sample_idx": int(sample_idx),
                     "tile_idx": int(t),
-                    "n_cells": n_cells_tile,
-                    "n_cells_per_img": n_cells,
+                    "n_cells_per_img": n_cells, # total cells per img meta["full"]
                     "frac_positive": (
                         float(frac_positive_from_meta)
                         if frac_positive_from_meta is not None else np.nan
