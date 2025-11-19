@@ -149,7 +149,7 @@ def validate_unet_segmentation(
 
                 row: Dict[str, Any] = {
                     "idx": int(len(per_rows)),
-                    "n_cells_simulated": n_cells,
+                    "n_cells_per_img": n_cells,
                     "frac_positive": frac_positive,
                     "n_cells_gt_instances": n_gt,
                     "n_cells_pred_components_thr0p5": n_cc,
