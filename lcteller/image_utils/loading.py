@@ -344,7 +344,6 @@ def open_image(
     source: SourceType,
     *,
     page: int = 0,
-    exif_orient: bool = True,  # kept for API compat; not used with cv2
     base_dir: Optional[Union[str, Path]] = None,
     max_mp: Optional[float] = 200.0,
 ) -> Tuple[np.ndarray, LoadReport]:
@@ -419,6 +418,7 @@ def scale_image(
     scaled, bit_depth = _infer_bit_depth_and_normalize_scale(arr, report)
     report.shape = scaled.shape
     report.bit_depth = bit_depth
+    print(bit_depth)
     return scaled, report
 
 
@@ -426,7 +426,6 @@ def load_image(
     source: SourceType,
     *,
     page: int = 0,
-    exif_orient: bool = True,   # unused with cv2, kept for signature compat
     base_dir: Optional[Union[str, Path]] = None,
     max_mp: Optional[float] = 200.0,
     as_chw: bool = True,
@@ -446,7 +445,6 @@ def load_image(
     arr, report = open_image(
         source,
         page=page,
-        exif_orient=exif_orient,
         base_dir=base_dir,
         max_mp=max_mp,
     )
