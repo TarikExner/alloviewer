@@ -18,7 +18,7 @@ image_filenames=[
 """
 import numpy as np
 from typing import List
-from .image_utils import load_image
+from .image_utils import load_image, tile_image_numpy
 from .structs import (
     PlateLayout, Plate, WellImage,
     ROIResult, SegmentationResults,
@@ -42,6 +42,12 @@ def load_images(filenames: List[str],
         res.append(img)
     return res
 
+def tile_images(imgs: List[np.ndarray]) -> List[np.ndarray]:
+    return [
+        tile_image_numpy(img)
+        for img in imgs
+    ]
+
 def create_plate(layout: PlateLayout,
                  images: List[np.ndarray]) -> Plate:
     plate = Plate(plate_id="SIM001")
@@ -56,21 +62,22 @@ def run_job(layout: PlateLayout,
             image_filenames: List[str],
             data_dir: str):
 
+    segmenter = SegmenterUNet.from_config(UNET_CONFIG)
+    instance_segmenter= InstanceSegmenter.from_config(INSTANCE_CONFIG)
+    extractor = RGBExtractor()
+    calibrator = PCNCMedianCalibrator()
+    classifier_ctor = ROIClassifier
+    qc_monitor = QCMonitor()
+    per_well: dict[str, WellResult] = {}
+
+    # Function start: Load images
     images: List[np.ndarray] = load_images(image_filenames, data_dir)
+    images: List[np.ndarray] = tile_images(images)
+
 
     cfg_id = "123"
 
     plate = create_plate(layout, images)
-    segmenter = SegmenterUNet.from_config(UNET_CONFIG)
-    instance_segmenter= InstanceSegmenter.from_config(INSTANCE_CONFIG)
-    extractor = RGBExtractor()
-
-    calibrator = PCNCMedianCalibrator()
-
-    classifier_ctor = ROIClassifier
-    qc_monitor = QCMonitor()
-
-    per_well: dict[str, WellResult] = {}
 
     for well in plate.get():
         print(f"Calculating well {well.well_id}")
