@@ -8,30 +8,12 @@ from dataclasses import dataclass, field
 from typing import Optional, Tuple, Union, BinaryIO, Any
 
 import numpy as np
-
-try:
-    from PIL import Image, ImageOps
-    _HAS_PIL = True
-except Exception:
-    _HAS_PIL = False
-
-# Optional: imageio as a fallback
-try:
-    import imageio.v3 as iio  # type: ignore
-    _HAS_IMAGEIO_V3 = True
-    _HAS_IMAGEIO = False
-except Exception:
-    _HAS_IMAGEIO_V3 = False
-    try:
-        import imageio as iio  # type: ignore
-        _HAS_IMAGEIO = True
-    except Exception:
-        _HAS_IMAGEIO = False
-SourceType = Union[str, Path, bytes, bytearray, BinaryIO]
+import cv2
 
 # default data root (same as FastAPI DATA_DIR). You can override via env.
 DATA_ROOT = Path(os.environ.get("DATA_DIR", "/tmp/lcteller")).resolve()
 
+SourceType = Union[str, Path, bytes, bytearray, BinaryIO]
 
 def _resolve_to_data_root(p: Union[str, Path], base_dir: Optional[Path] = None) -> Path:
     """
@@ -52,9 +34,9 @@ class LoadReport:
     path: str
     shape: Tuple[int, ...]
     dtype: str
-    mode: Optional[str] = None          # PIL image mode if Pillow was used
+    mode: Optional[str] = None          # not really used with cv2, kept for compat
     pages: Optional[int] = None         # number of frames/pages (TIFF etc.)
-    used_backend: str = "unknown"       # "Pillow" | "imageio"
+    used_backend: str = "opencv"
     bit_depth: Optional[int] = None     # 8, 10, 12, 14, 16, ...
     white_level: Optional[int] = None   # nominal white level before scaling
     shifted: Optional[bool] = None      # did it look left-shifted in uint16?
@@ -66,7 +48,7 @@ def _ensure_rgb_anydepth(arr: np.ndarray, report: LoadReport) -> np.ndarray:
     Ensure HxWx3, keep dtype as-is.
 
     - Gray → stack to 3 channels
-    - RGBA → drop alpha (no premultiply correction)
+    - RGBA / BGRA → drop alpha later (we already converted color channels)
     - >3 channels → first 3
     """
     if arr.ndim == 2:
@@ -117,11 +99,10 @@ def _detect_bitdepth_u16(a: np.ndarray, p: float = 99.9) -> Tuple[int, int, bool
 
     # look for left-shifted patterns:
     # low bits all zero across the image
-    # use smaller bit depths first, so 10/12-bit shifted are not mis-labeled as 14-bit
+    # use smaller bit depths first so 10/12-bit shifted are not mis-labeled as 14-bit
     for b in (8, 10, 12, 14):
         shift = 16 - b
         low_mask = (1 << shift) - 1
-        # if all low bits are zero, this is a strong signal of left-shifted storage
         if (a & low_mask).max() == 0:
             white = (1 << b) - 1
             return b, white, True
@@ -237,7 +218,7 @@ def _infer_bit_depth_and_normalize_scale(arr: np.ndarray, report: LoadReport) ->
         vmax = float(np.nanmax(arr[finite]))
         arr32 = arr.astype(np.float32)
 
-        # already [0,1] (within tolerance)
+        # already [0,1]
         if vmin >= 0.0 and vmax <= 1.0:
             scaled = np.clip(arr32, 0.0, 1.0)
             report.bit_depth = None
@@ -245,7 +226,7 @@ def _infer_bit_depth_and_normalize_scale(arr: np.ndarray, report: LoadReport) ->
             report.shifted = False
             return scaled, None
 
-        # common [0,255] range
+        # common [0,255]
         if vmin >= 0.0 and vmax <= 255.0:
             report.warnings.append("float image assumed in [0,255] → scaled by 255.")
             scaled = np.clip(arr32, 0.0, 255.0) / 255.0
@@ -254,7 +235,7 @@ def _infer_bit_depth_and_normalize_scale(arr: np.ndarray, report: LoadReport) ->
             report.shifted = False
             return scaled, 8
 
-        # common [0,65535] range
+        # common [0,65535]
         if vmin >= 0.0 and vmax <= 65535.0:
             report.warnings.append("float image assumed in [0,65535] → scaled by 65535.")
             scaled = np.clip(arr32, 0.0, 65535.0) / 65535.0
@@ -298,77 +279,64 @@ def _infer_bit_depth_and_normalize_scale(arr: np.ndarray, report: LoadReport) ->
     return scaled, None
 
 
-def _open_with_pillow(
-    src: SourceType,
-    *,
-    page: int,
-    exif_orient: bool,
-    report: LoadReport,
-) -> np.ndarray:
-    # Prepare a file object for Pillow
-    if isinstance(src, (str, Path)):
-        p = Path(src)
-        im = Image.open(p)
-        report.path = str(p.resolve())
-    elif isinstance(src, (bytes, bytearray)):
-        bio = io.BytesIO(src)
-        im = Image.open(bio)
-        report.path = "<bytes>"
-    else:  # file-like
-        im = Image.open(src)  # type: ignore[arg-type]
-        report.path = "<file-like>"
 
-    with im:
-        n_frames = getattr(im, "n_frames", 1)
-        report.pages = int(n_frames)
 
-        if page and page < n_frames:
-            im.seek(page)
+def _read_cv2_from_path(path: Path, page: int, report: LoadReport) -> np.ndarray:
+    """
+    Read from disk using cv2.
 
-        if exif_orient:
-            try:
-                im = ImageOps.exif_transpose(im)
-            except Exception:
-                report.warnings.append("EXIF transpose failed or not present.")
+    - For TIFF and page>0, use imreadmulti.
+    - For all others or page==0, use imread (first page only).
+    """
+    report.path = str(path.resolve())
+    ext = path.suffix.lower()
 
-        report.mode = im.mode
-        report.used_backend = "Pillow"
+    if ext in (".tif", ".tiff") and page != 0:
+        ok, imgs = cv2.imreadmulti(str(path), flags=cv2.IMREAD_UNCHANGED)
+        if not ok or not imgs:
+            raise RuntimeError(f"Failed to read TIFF (multi-page) with OpenCV: {path}")
+        report.pages = len(imgs)
+        if page >= len(imgs):
+            raise ValueError(f"Requested page {page}, but TIFF has {len(imgs)} pages.")
+        arr = imgs[page]
+    else:
+        arr = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+        if arr is None:
+            raise RuntimeError(f"Failed to read image with OpenCV: {path}")
+        report.pages = 1
 
-        # We do not force convert("RGB") here, to keep depth.
-        arr = np.array(im)
-
+    report.used_backend = "opencv"
     return arr
 
 
-def _open_with_imageio(
-    src: SourceType,
-    *,
-    page: int,
-    report: LoadReport,
-) -> np.ndarray:
-    if isinstance(src, (str, Path)):
-        p = Path(src)
-        report.path = str(p.resolve())
-        if _HAS_IMAGEIO_V3:
-            arr = iio.imread(p, index=page)  # type: ignore[arg-type]
-        else:
-            arr = iio.imread(p)  # type: ignore[arg-type]
-    elif isinstance(src, (bytes, bytearray)):
-        if _HAS_IMAGEIO_V3:
-            arr = iio.imread(src, index=page)  # type: ignore[arg-type]
-        else:
-            bio = io.BytesIO(src)
-            arr = iio.imread(bio)  # type: ignore[arg-type]
+def _read_cv2_from_bytes_or_file(src: SourceType, page: int, report: LoadReport) -> np.ndarray:
+    """
+    Read from bytes or file-like using cv2.imdecode.
+
+    Only first page is available for multi-page TIFFs here.
+    """
+    if isinstance(src, (bytes, bytearray)):
+        buf = bytes(src)
         report.path = "<bytes>"
-    else:  # file-like
-        if _HAS_IMAGEIO_V3:
-            arr = iio.imread(src, index=page)  # type: ignore[arg-type]
-        else:
-            arr = iio.imread(src)  # type: ignore[arg-type]
+    else:
+        # file-like
+        if hasattr(src, "seek"):
+            try:
+                src.seek(0)
+            except Exception:
+                pass
+        buf = src.read()  # type: ignore[attr-defined]
         report.path = "<file-like>"
 
-    report.used_backend = "imageio"
-    report.mode = None
+    data = np.frombuffer(buf, dtype=np.uint8)
+    arr = cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
+    if arr is None:
+        raise RuntimeError("Failed to decode image from memory with OpenCV.")
+
+    report.pages = 1
+    report.used_backend = "opencv"
+    if page != 0:
+        report.warnings.append("page>0 requested for in-memory image; only first page is returned.")
     return arr
 
 
@@ -376,15 +344,14 @@ def open_image(
     source: SourceType,
     *,
     page: int = 0,
-    exif_orient: bool = True,
     base_dir: Optional[Union[str, Path]] = None,
     max_mp: Optional[float] = 200.0,
 ) -> Tuple[np.ndarray, LoadReport]:
     """
-    Low-level image loader.
+    Low-level image loader using OpenCV.
 
     - Accepts paths (str/Path), raw bytes, or file-like objects (e.g. FastAPI UploadFile.file).
-    - Supports common formats: TIFF, PNG, JPEG, and others supported by Pillow/imageio.
+    - Supports common formats: TIFF, PNG, JPEG, and others supported by OpenCV.
     - Returns an array in HxW or HxWxC with the original dtype.
     - Does not scale or reorder channels. That is handled by `scale_image` / `load_image`.
     """
@@ -406,15 +373,13 @@ def open_image(
         dtype="",
         mode=None,
         pages=None,
-        used_backend="unknown",
+        used_backend="opencv",
     )
 
-    if _HAS_PIL:
-        arr = _open_with_pillow(resolved_source, page=page, exif_orient=exif_orient, report=report)
-    elif _HAS_IMAGEIO_V3 or _HAS_IMAGEIO:
-        arr = _open_with_imageio(resolved_source, page=page, report=report)
+    if isinstance(resolved_source, Path):
+        arr = _read_cv2_from_path(resolved_source, page=page, report=report)
     else:
-        raise RuntimeError("No Pillow or imageio installed. Please install 'pillow' or 'imageio'.")
+        arr = _read_cv2_from_bytes_or_file(resolved_source, page=page, report=report)
 
     if arr.ndim < 2:
         raise ValueError(f"Unsupported image ndim {arr.ndim}; expected at least 2D.")
@@ -442,18 +407,18 @@ def scale_image(
     Returns (scaled_arr, report).
     """
     if report is None:
-        # minimal report if not provided
         report = LoadReport(
             path="<unknown>",
             shape=arr.shape,
             dtype=str(arr.dtype),
             mode=None,
             pages=None,
-            used_backend="unknown",
+            used_backend="opencv",
         )
     scaled, bit_depth = _infer_bit_depth_and_normalize_scale(arr, report)
     report.shape = scaled.shape
     report.bit_depth = bit_depth
+    print(bit_depth)
     return scaled, report
 
 
@@ -461,7 +426,6 @@ def load_image(
     source: SourceType,
     *,
     page: int = 0,
-    exif_orient: bool = True,
     base_dir: Optional[Union[str, Path]] = None,
     max_mp: Optional[float] = 200.0,
     as_chw: bool = True,
@@ -470,7 +434,8 @@ def load_image(
     """
     High-level helper for most use cases.
 
-    - Opens the image (path/bytes/file-like).
+    - Opens the image (path/bytes/file-like) with OpenCV.
+    - Converts BGR → RGB for color images.
     - Ensures RGB (3 channels).
     - Optionally scales to [0,1] float32.
     - Optionally returns as [3, H, W] instead of [H, W, 3].
@@ -480,10 +445,16 @@ def load_image(
     arr, report = open_image(
         source,
         page=page,
-        exif_orient=exif_orient,
         base_dir=base_dir,
         max_mp=max_mp,
     )
+
+    # OpenCV gives BGR for color images; convert to RGB before channel handling.
+    if arr.ndim == 3 and arr.shape[2] >= 3:
+        # only use first 3 channels for color conversion; alpha handled later
+        bgr = arr[..., :3]
+        arr_rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        arr = arr_rgb
 
     arr = _ensure_rgb_anydepth(arr, report)
 
@@ -495,3 +466,4 @@ def load_image(
         arr = np.moveaxis(arr, -1, 0)
 
     return arr, report
+
