@@ -418,7 +418,6 @@ def scale_image(
     scaled, bit_depth = _infer_bit_depth_and_normalize_scale(arr, report)
     report.shape = scaled.shape
     report.bit_depth = bit_depth
-    print(bit_depth)
     return scaled, report
 
 
