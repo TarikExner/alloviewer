@@ -330,7 +330,7 @@ def validate_unet_vs_imagej_on_fullres_h5(
                     "n_cells_gt_instances": n_gt,
                     "n_cells_pred_components_thr0p5": n_cc_ij,
                     "n_cells_pred_centers": n_centers_ij,
-                    "n_cells_pred_instances": ij_inst_n,
+                    "n_cells_pred_instances": ij_inst_n if segmentation_method == "inst_seg" else np.nan,
                     "count_error_components": int(n_cc_ij - n_gt),
                     "count_error_centers": int(n_centers_ij - n_gt),
                     **{f"mask_{k}": v for k, v in mask_stats_ij.items()},
