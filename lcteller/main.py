@@ -18,7 +18,9 @@ image_filenames=[
 """
 import numpy as np
 from typing import List
-from .image_utils import load_image, tile_image_numpy
+from .image_utils import (
+    load_images, tile_images 
+)
 from .structs import (
     PlateLayout, Plate, WellImage,
     ROIResult, SegmentationResults,
@@ -34,13 +36,6 @@ from .qc import QCMonitor
 from .config import UNET_CONFIG, INSTANCE_CONFIG, WELL_QC_CONFIG
 
 
-def load_images(filenames: List[str],
-                data_dir: str) -> List[np.ndarray]:
-    res = []
-    for file in filenames:
-        img, _ = load_image(file, base_dir = data_dir)
-        res.append(img)
-    return res
 
 def tile_images(imgs: List[np.ndarray]) -> List[np.ndarray]:
     return [
@@ -73,11 +68,11 @@ def run_job(layout: PlateLayout,
     # Function start: Load images
     images: List[np.ndarray] = load_images(image_filenames, data_dir)
     images: List[np.ndarray] = tile_images(images)
+    plate = create_plate(layout, images)
 
 
     cfg_id = "123"
 
-    plate = create_plate(layout, images)
 
     for well in plate.get():
         print(f"Calculating well {well.well_id}")

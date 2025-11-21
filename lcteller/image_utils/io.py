@@ -1,11 +1,10 @@
 from __future__ import annotations
-import io
 import os
 import math
 from pathlib import Path
 
 from dataclasses import dataclass, field
-from typing import Optional, Tuple, Union, BinaryIO, Any
+from typing import Optional, Tuple, Union, BinaryIO, Any, List
 
 import numpy as np
 import cv2
@@ -465,4 +464,12 @@ def load_image(
         arr = np.moveaxis(arr, -1, 0)
 
     return arr, report
+
+def load_images(filenames: List[str],
+                data_dir: str) -> List[np.ndarray]:
+    res = []
+    for file in filenames:
+        img, _ = load_image(file, base_dir = data_dir)
+        res.append(img)
+    return res
 

@@ -145,11 +145,11 @@ def validate_unet_vs_imagej_on_fullres_h5(
             for t in range(T):
                 # ground-truth targets per tile
                 tgt_gt = tgts_gt_np[t]      # [4,H,W]
-                cell_gt = (tgt_gt[0] > 0.5).astype(np.uint8)
-                energy_gt = tgt_gt[3].astype(np.float32)
-
                 # ImageJ targets per tile (will be treated as "predictions")
                 tgt_ij = tgts_ij_np[t]      # [4,H,W]
+
+                cell_gt = (tgt_gt[0] > 0.5).astype(np.uint8)
+                energy_gt = tgt_gt[3].astype(np.float32)
 
                 # build instance labels for ground truth using gt_segmenter
                 gt_inst_seg_dict = {
@@ -269,6 +269,22 @@ def validate_unet_vs_imagej_on_fullres_h5(
                 # no real instance segmentation from ImageJ here
                 n_cells_pred_instances_ij = np.nan
 
+                ij_inst_seg_dict = {
+                    "probs": {
+                        "cell":   (cell_p_ij > gt_segmenter.cfg.thr_cell).astype(np.uint8),
+                        "bound":  (bound_p_ij > gt_segmenter.cfg.thr_bound).astype(np.uint8),
+                        "center": center_p_ij,
+                        "energy": energy_p_ij,
+                    },
+                    "cell_mask": (cell_p_ij >= gt_segmenter.cfg.thr_cell).astype(np.uint8),
+                    "boundary":  (bound_p_ij >= gt_segmenter.cfg.thr_bound).astype(np.uint8),
+                    "instance_labels": None,
+                    "meta": {},
+                }
+                ij_inst_seg_dict = gt_segmenter.inst_seg(ij_inst_seg_dict, update_cell_mask=True)
+                ij_inst = ij_inst_seg_dict["instance_labels"]
+                ij_inst_n = int(ij_inst.max())
+
                 peaks_ij = nms_peaks_np(
                     center_p_ij,
                     thr=cfg.center_peak_thr,
@@ -314,10 +330,7 @@ def validate_unet_vs_imagej_on_fullres_h5(
                     "n_cells_gt_instances": n_gt,
                     "n_cells_pred_components_thr0p5": n_cc_ij,
                     "n_cells_pred_centers": n_centers_ij,
-                    "n_cells_pred_instances": (
-                        float(n_cells_pred_instances_ij)
-                        if not np.isnan(n_cells_pred_instances_ij) else np.nan
-                    ),
+                    "n_cells_pred_instances": ij_inst_n,
                     "count_error_components": int(n_cc_ij - n_gt),
                     "count_error_centers": int(n_centers_ij - n_gt),
                     **{f"mask_{k}": v for k, v in mask_stats_ij.items()},
