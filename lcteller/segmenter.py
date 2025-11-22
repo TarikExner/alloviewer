@@ -1,4 +1,5 @@
 import os
+import copy
 from dataclasses import dataclass, field, asdict
 import numpy as np
 from typing import Dict, Any, Optional, Tuple, Callable, List
@@ -45,6 +46,11 @@ class SegmenterConfig:
 
     # normalize data
     normalize: bool = True
+
+    # tiling parameters
+    tile_size: int = 512
+    tile_overlap: int = 64
+    tile_pad_value: float = 0.0
 
     # ---- helpers ----
     def to_dict(self) -> Dict[str, Any]:
@@ -219,17 +225,25 @@ class SegmenterUNet:
             InstanceSegmenterConfig(**(cfg.instance_cfg or {}))
         ) if cfg.compute_instances else None
 
-    # ---------- utils ----------
-
-    def _to_tensor(self, img: np.ndarray) -> torch.Tensor:
+    def _to_chw_numpy(self, img: np.ndarray) -> np.ndarray:
         """
+        Convert various input shapes to [3, H, W] float32 in [0,1].
         Accepts:
           - (H, W, 3)
           - (3, H, W)
           - (1, 3, H, W)
           - (H, W)  -> broadcast to 3ch
-        Returns: [1, 3, H, W] on device in [0,1]
         """
+
+        # Fast path: already CHW float32, typically from `load_image(..., as_chw=True, scale=True)`
+        if (
+            img.ndim == 3
+            and img.shape[0] == 3
+            and img.dtype == np.float32
+        ):
+            # assume in [0,1]; just ensure contiguous
+            return np.ascontiguousarray(img)
+
         # (1,3,H,W) -> (3,H,W)
         if img.ndim == 4 and img.shape[0] == 1 and img.shape[1] == 3:
             img = img[0]
@@ -249,13 +263,24 @@ class SegmenterUNet:
         if x.max() > 1.0:
             x = x / 255.0
 
-        x = np.transpose(x, (2, 0, 1))  # CHW
+        x = np.transpose(x, (2, 0, 1))  # [3, H, W]
         x = np.ascontiguousarray(x, dtype=np.float32)
+        return x
+
+    def _to_tensor(self, img: np.ndarray) -> torch.Tensor:
+        """
+        Accepts:
+          - (H, W, 3)
+          - (3, H, W)
+          - (1, 3, H, W)
+          - (H, W)  -> broadcast to 3ch
+        Returns: [1, 3, H, W] on device in [0,1] (then normalized if cfg.normalize)
+        """
+        x = self._to_chw_numpy(img)  # [3, H, W] float32 in [0,1]
         t = torch.from_numpy(x).unsqueeze(0).to(self.device, non_blocking=True)
         if self.cfg.normalize:
             t = self._normalize(t)
         return t
-
 
     def _to_tensor_tiles(self, tiles: np.ndarray) -> torch.Tensor:
         """
@@ -306,8 +331,6 @@ class SegmenterUNet:
             probs = torch.sigmoid(logits)
 
         return probs.detach().to(torch.float32).cpu()  # [B,4,H,W]
-
-    # ---------- main call ----------
 
     @torch.no_grad()
     def __call__(self, img: np.ndarray) -> Dict[str, Any]:
@@ -381,7 +404,6 @@ class SegmenterUNet:
 
             return out
 
-        # --- case 2: single image (old behavior) ---
         x = self._to_tensor(img)
         use_bf16 = (self.use_amp and torch.cuda.is_bf16_supported())
 
@@ -429,6 +451,194 @@ class SegmenterUNet:
         cfg = SegmenterConfig(**filtered)
         return cls(cfg)
 
+
+class SegmenterUNetInference(SegmenterUNet):
+    """
+    Inference wrapper:
+
+    - Takes full images.
+    - Tiles into [T, 3, tile_size, tile_size] (cfg.tile_size / cfg.tile_overlap).
+    - Runs UNet on tiles (batch).
+    - Stitches probs (and optional logits) back to [4, H, W].
+    - Always computes instance segmentation on the stitched result.
+    """
+
+    def __init__(self, cfg: SegmenterConfig):
+        cfg = copy.deepcopy(cfg)
+
+        cfg.compute_instances = True
+        cfg.input_is_tiles = False
+
+        super().__init__(cfg)
+
+        self.tile_size = int(self.cfg.tile_size)
+        self.overlap = int(self.cfg.tile_overlap)
+        self.pad_value = float(self.cfg.tile_pad_value)
+
+        if self.inst_seg is None:
+            self.inst_seg = InstanceSegmenter(
+                InstanceSegmenterConfig(**(self.cfg.instance_cfg or {}))
+            )
+
+    def _iter_sliding_windows(self, H: int, W: int):
+        tile = self.tile_size
+        overlap = self.overlap
+        stride = tile - overlap
+        assert stride > 0, "overlap must be smaller than tile_size"
+
+        ys = list(range(0, max(1, H - tile + 1), stride))
+        if ys[-1] + tile < H:
+            ys.append(H - tile)
+
+        xs = list(range(0, max(1, W - tile + 1), stride))
+        if xs[-1] + tile < W:
+            xs.append(W - tile)
+
+        for y0 in ys:
+            y1 = y0 + tile
+            for x0 in xs:
+                x1 = x0 + tile
+                yield (y0, y1, x0, x1)
+
+    def _tile_image_numpy(self, image_chw: np.ndarray) -> Tuple[np.ndarray, Tuple[int, int]]:
+        """
+        image_chw: [3, H, W] -> tiles [N, 3, tile_size, tile_size], (H, W)
+        """
+        assert image_chw.ndim == 3 and image_chw.shape[0] == 3, "image must be [3, H, W]"
+        _, H, W = image_chw.shape
+
+        tiles = []
+        for (y0, y1, x0, x1) in self._iter_sliding_windows(H, W):
+            crop = image_chw[:, y0:y1, x0:x1]         # [3, th, tw]
+            th, tw = crop.shape[1], crop.shape[2]
+
+            if th < self.tile_size or tw < self.tile_size:
+                pad_bottom = self.tile_size - th
+                pad_right = self.tile_size - tw
+                crop = np.pad(
+                    crop,
+                    ((0, 0), (0, pad_bottom), (0, pad_right)),
+                    mode="constant",
+                    constant_values=self.pad_value,
+                )
+
+            tiles.append(crop)
+
+        if not tiles:
+            raise RuntimeError(
+                "No tiles produced. Check tile_size / overlap / image size."
+            )
+
+        tiles_arr = np.stack(tiles, axis=0)       # [N, 3, tile_size, tile_size]
+        return tiles_arr, (H, W)
+
+    def _reconstruct_from_tiles_probability(
+        self,
+        tiles: np.ndarray,
+        orig_hw: Tuple[int, int],
+    ) -> np.ndarray:
+        """
+        tiles: [N, C, tile_size, tile_size] -> [C, H, W] by averaging overlaps
+        """
+        assert tiles.ndim == 4, "tiles must be [N, C, tile_size, tile_size]"
+        N, C, tH, tW = tiles.shape
+        assert tH == self.tile_size and tW == self.tile_size, "tile_size mismatch"
+
+        H, W = orig_hw
+
+        def _iter_tiles():
+            idx = 0
+            for (y0, y1, x0, x1) in self._iter_sliding_windows(H, W):
+                if idx >= N:
+                    raise RuntimeError(
+                        "Not enough tiles for given H/W/tile_size/overlap."
+                    )
+                th = min(self.tile_size, H - y0)
+                tw = min(self.tile_size, W - x0)
+                patch = tiles[idx, :, :th, :tw]  # [C, th, tw]
+                yield idx, y0, x0, th, tw, patch
+                idx += 1
+            if idx != N:
+                raise RuntimeError(
+                    f"Number of tiles ({N}) does not match tiling scheme ({idx})."
+                )
+
+        acc = np.zeros((C, H, W), dtype=np.float32)
+        acc_w = np.zeros((1, H, W), dtype=np.float32)
+
+        for idx, y0, x0, th, tw, patch in _iter_tiles():
+            acc[:, y0:y0 + th, x0:x0 + tw] += patch
+            acc_w[:, y0:y0 + th, x0:x0 + tw] += 1.0
+
+        acc_w[acc_w == 0] = 1.0
+        out = acc / acc_w
+        return out.astype(np.float32)  # [C, H, W]
+
+    # ---- main call ----
+
+    @torch.no_grad()
+    def __call__(self, img: np.ndarray) -> Dict[str, Any]:
+        """
+        Full-image inference with internal tiling.
+
+        If you pass tiles directly (4D array), we just fall back to the
+        base class behavior and do not tile again.
+        """
+        # If user passes tiles explicitly, keep old interface
+        if img.ndim == 4:
+            return super().__call__(img)
+
+        # 1) preprocess to CHW numpy using base helper
+        img_chw = self._to_chw_numpy(img)          # [3, H, W], float32 in [0,1]
+        tiles_np, orig_hw = self._tile_image_numpy(img_chw)  # [T, 3, tile, tile], (H, W)
+
+        # 2) convert tiles to torch with same path as everywhere else
+        tiles_t = self._to_tensor_tiles(tiles_np)  # [T, 3, tile, tile] on device
+
+        # 3) forward pass on tiles using predict_tiles (no logits)
+        probs_t = self.predict_tiles(tiles_t)      # [T, 4, tile, tile] on CPU (float32)
+        probs_np_tiles = probs_t.numpy()           # view, no copy
+
+        # 4) stitch probability maps to full size
+        probs_full = self._reconstruct_from_tiles_probability(
+            probs_np_tiles, orig_hw
+        )  # [4, H, W], float32
+        cell_p, bound_p, center_p, energy_p = probs_full
+
+        # Build minimal seg_out for InstanceSegmenter (no copies here)
+        seg_out: Dict[str, Any] = {
+            "probs": {
+                "cell":   cell_p,
+                "bound":  bound_p,
+                "center": center_p,
+                "energy": energy_p,
+            },
+            "instance_labels": None,
+            "meta": {
+                "unet_mode": self.cfg.unet_mode,
+                "device": str(self.device),
+                "checkpoint": os.path.abspath(self.ckpt_path),
+                "tile_size": int(self.tile_size),
+                "overlap": int(self.overlap),
+            },
+        }
+
+        # 5) instance segmentation updates seg_out in place
+        if self.inst_seg is not None:
+            seg_out = self.inst_seg(seg_out, update_cell_mask=False)
+
+        instances = seg_out["instance_labels"]
+
+        # 6) Final result: only keep what is really needed outside
+        result: Dict[str, Any] = {
+            "instance_labels": instances,   # np.int32 [H, W]
+            "probs": {                     # only those needed for QC
+                "cell":  cell_p,
+                "bound": bound_p,
+            },
+            "meta": seg_out["meta"],
+        }
+        return result
 
 class InstanceSegmenter:
     def __init__(self, cfg: InstanceSegmenterConfig):
@@ -575,8 +785,8 @@ class InstanceSegmenter:
         if update_cell_mask:
             seg_out["cell_mask"] = mask.astype(np.uint8)
         seg_out["instance_labels"] = instances
-        seg_out["elevation"] = elevation
-        seg_out["markers"] = markers
+        # seg_out["elevation"] = elevation
+        # seg_out["markers"] = markers
         return seg_out
 
     @classmethod

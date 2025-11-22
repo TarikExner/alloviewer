@@ -19,7 +19,8 @@ DEFAULT_CALIB_RG_GAUSS = {
 
 WELL_QC_CONFIG = QCMonitorConfig()
 
-INSTANCE_CONFIG = InstanceSegmenterConfig().to_dict()
+INSTANCE_CONFIG = InstanceSegmenterConfig()
+INSTANCE_CONFIG_DICT = INSTANCE_CONFIG.to_dict()
 
 UNET_CONFIG = SegmenterConfig.from_dict({
     "device": DEVICE,

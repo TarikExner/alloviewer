@@ -18,6 +18,7 @@ image_filenames=[
 """
 import numpy as np
 from typing import List
+import copy
 from .image_utils import (
     load_images, tile_images 
 )
@@ -26,7 +27,7 @@ from .structs import (
     ROIResult, SegmentationResults,
     WellResult
 )
-from .segmenter import SegmenterUNet, InstanceSegmenter
+from .segmenter import SegmenterUNetInference, InstanceSegmenter
 from .extractor import RGBExtractor
 from .calibrators import PCNCMedianCalibrator
 from .classifiers import ROIClassifier
@@ -35,13 +36,6 @@ from .qc import QCMonitor
 
 from .config import UNET_CONFIG, INSTANCE_CONFIG, WELL_QC_CONFIG
 
-
-
-def tile_images(imgs: List[np.ndarray]) -> List[np.ndarray]:
-    return [
-        tile_image_numpy(img)
-        for img in imgs
-    ]
 
 def create_plate(layout: PlateLayout,
                  images: List[np.ndarray]) -> Plate:
@@ -56,9 +50,11 @@ def run_job(layout: PlateLayout,
             template_filename: str,
             image_filenames: List[str],
             data_dir: str):
+    
+    unet_config = copy.deepcopy(UNET_CONFIG)
+    unet_config["instance_cfg"] = INSTANCE_CONFIG
 
-    segmenter = SegmenterUNet.from_config(UNET_CONFIG)
-    instance_segmenter= InstanceSegmenter.from_config(INSTANCE_CONFIG)
+    segmenter = SegmenterUNetInference.from_config(UNET_CONFIG)
     extractor = RGBExtractor()
     calibrator = PCNCMedianCalibrator()
     classifier_ctor = ROIClassifier
@@ -66,13 +62,8 @@ def run_job(layout: PlateLayout,
     per_well: dict[str, WellResult] = {}
 
     # Function start: Load images
-    images: List[np.ndarray] = load_images(image_filenames, data_dir)
-    images: List[np.ndarray] = tile_images(images)
+    images: List[np.ndarray] = load_images(image_filenames, data_dir, scale = True)
     plate = create_plate(layout, images)
-
-
-    cfg_id = "123"
-
 
     for well in plate.get():
         print(f"Calculating well {well.well_id}")
@@ -81,24 +72,22 @@ def run_job(layout: PlateLayout,
         if image.shape[0] == 0:
             raise ValueError("No image provided!")
 
-        segmentation_results = segmenter(image)
-        segmentation_results = instance_segmenter(segmentation_results)
-        # qc_out = qc_monitor(
-        #     instance_labels=segmentation_results["instance_labels"],
-        #     probs=segmentation_results.get("probs"),
-        #     image=image,
-        #     markers=segmentation_results.get("markers"),
-        # )
+        segmentation_results: dict = segmenter(image)
+        qc_out = qc_monitor(
+            instance_labels=segmentation_results["instance_labels"],
+            probs=segmentation_results.get("probs"),
+            image=image,
+        )
 
-        # segmentation_results["qc"] = {
-        #     "well": qc_out["well"],
-        #     "roi_table": qc_out["roi_table"],
-        # }
-        # 
-        # segmentation_results["instance_labels_qc"] = qc_out["instances_filtered"]
+        segmentation_results["qc"] = {
+            "well": qc_out["well"],
+            "roi_table": qc_out["roi_table"],
+        }
+        
+        segmentation_results["instance_labels_qc"] = qc_out["instances_filtered"]
 
-        # rois_dict = extractor(image, segmentation_results["instance_labels_qc"])
-        rois_dict = extractor(image, segmentation_results["instance_labels"])
+        rois_dict = extractor(image, segmentation_results["instance_labels_qc"])
+
         rois = [ROIResult(**d) for d in rois_dict]
 
         probs = segmentation_results.get("probs", None)
@@ -111,7 +100,7 @@ def run_job(layout: PlateLayout,
         )
         wr = WellResult(
             well_id=well.well_id,
-            cfg_hash=cfg_id,
+            cfg_hash="1",
             rois=rois,
             results=results,
             qc=segmentation_results.get("qc", {}),
@@ -132,7 +121,7 @@ def run_job(layout: PlateLayout,
         wr.rois = [ROIResult(**d) for d in updated]
 
     return {
-        "cfg_hash": cfg_id,
+        "cfg_hash": "1",
         "calib": calib,
         "wells": {wid: wr.summary() for wid, wr in per_well.items()},
     }

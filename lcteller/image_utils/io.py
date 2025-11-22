@@ -466,10 +466,11 @@ def load_image(
     return arr, report
 
 def load_images(filenames: List[str],
-                data_dir: str) -> List[np.ndarray]:
+                data_dir: str,
+                scale: bool = True) -> List[np.ndarray]:
     res = []
     for file in filenames:
-        img, _ = load_image(file, base_dir = data_dir)
+        img, _ = load_image(file, base_dir = data_dir, scale = scale)
         res.append(img)
     return res
 
