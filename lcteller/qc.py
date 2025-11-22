@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
 from scipy.spatial import cKDTree
 from skimage import measure, morphology, filters
@@ -46,6 +47,9 @@ class QCMonitorConfig:
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
+
+# ===================== Monitor =====================
+
 class QCMonitor:
     """
     Crowding:
@@ -87,6 +91,9 @@ class QCMonitor:
 
         # ---------- geometry ----------
         props = measure.regionprops(lab)
+        labels = np.array([p.label for p in props], dtype=np.int32)  # [n_props]
+        n_props = len(props)
+
         areas = np.array([p.area for p in props], dtype=np.float32)
         perims = np.array([p.perimeter if p.perimeter > 0 else 1.0 for p in props], dtype=np.float32)
         circularity = 4.0 * np.pi * areas / (perims ** 2)
@@ -95,11 +102,17 @@ class QCMonitor:
         centroids = np.array([p.centroid for p in props], dtype=np.float32)  # (y, x)
 
         # ---------- border touching ----------
-        border_touch = self._border_touching(lab, max_id)
+        border_touch_all = self._border_touching(lab, max_id)  # [max_id]
+        border_touch = border_touch_all[labels - 1]            # [n_props]
 
         # ---------- adjacency (touching) ----------
         neighbors, edges = self._adjacency(lab, connectivity=self.cfg.connectivity)
-        degrees = np.array([len(neighbors.get(i+1, set())) for i in range(max_id)], dtype=np.int32)
+
+        # degrees in props order
+        degrees = np.array(
+            [len(neighbors.get(int(rid), set())) for rid in labels],
+            dtype=np.int32,
+        )
 
         # Find violating edges (any endpoint degree > allowed_neighbors)
         K = int(self.cfg.allowed_neighbors)
@@ -108,18 +121,20 @@ class QCMonitor:
         for a, b in edges:
             if (len(neighbors.get(a, ())) > K) or (len(neighbors.get(b, ())) > K):
                 violating_edges.append((a, b))
-                violating_ids.add(a); violating_ids.add(b)
+                violating_ids.add(a)
+                violating_ids.add(b)
 
         # ---------- NN distance (info only) ----------
         nn_dist = self._nearest_neighbor_distances(centroids)
 
         # ---------- boundary confidence gap ----------
-        gap = None
+        gap: Optional[np.ndarray] = None
         if self.cfg.use_boundary_gap and probs is not None:
             pc = probs.get("cell", None)
             pb = probs.get("bound", None)
             if (pc is not None) and (pb is not None):
-                gap = self._boundary_gap(lab, pc, pb)
+                gap_all = self._boundary_gap(lab, pc, pb)  # [max_id]
+                gap = gap_all[labels - 1]                  # [n_props]
 
         # ---------- intensity / focus ----------
         sat_frac = None
@@ -139,10 +154,13 @@ class QCMonitor:
         # ---------- reasons + exclusions ----------
         exclude_ids: List[int] = []
         reasons: Dict[int, List[str]] = {}
-        neighbor_ids_per_roi: Dict[int, List[int]] = {rid: sorted(list(neighbors.get(rid, set()))) for rid in range(1, max_id+1)}
+        neighbor_ids_per_roi: Dict[int, List[int]] = {
+            rid: sorted(list(neighbors.get(rid, set())))
+            for rid in range(1, max_id + 1)
+        }
 
         for i, p in enumerate(props):
-            rid = p.label
+            rid = int(p.label)
             r: List[str] = []
 
             # touching violation (propagate to both endpoints of violating edges)
@@ -186,9 +204,9 @@ class QCMonitor:
         # ---------- per-ROI table ----------
         roi_table: List[Dict[str, Any]] = []
         for i, p in enumerate(props):
-            rid = p.label
+            rid = int(p.label)
             roi_table.append({
-                "roi_id": int(rid),
+                "roi_id": rid,
                 "area": float(areas[i]),
                 "perimeter": float(perims[i]),
                 "circularity": float(circularity[i]),
@@ -205,12 +223,12 @@ class QCMonitor:
             })
 
         # ---------- well summary ----------
-        border_frac = float(np.mean(border_touch)) if max_id > 0 else 0.0
+        border_frac = float(np.mean(border_touch)) if n_props > 0 else 0.0
         gap_median = float(np.median(gap)) if gap is not None else np.nan
-        excl_frac = float(len(exclude_ids)) / float(max_id)
+        excl_frac = float(len(exclude_ids)) / float(n_props) if n_props > 0 else 0.0
 
         well = {
-            "n_instances": int(max_id),
+            "n_instances": int(n_props),
             "border_touch_frac": border_frac,
             "boundary_gap_median": gap_median,
             "focus_vlap": (float(vlap) if vlap is not None else np.nan),
@@ -230,12 +248,13 @@ class QCMonitor:
 
     # ---------------- helpers ----------------
 
-    def _adjacency(self, lab: np.ndarray, connectivity: int = 8) -> Tuple[Dict[int, set], List[Tuple[int,int]]]:
+    def _adjacency(self, lab: np.ndarray, connectivity: int = 8) -> Tuple[Dict[int, set], List[Tuple[int, int]]]:
         """Pairs of labels that touch (8-connected by default)."""
         assert connectivity in (4, 8)
-        shifts = [(1,0),(0,1),(-1,0),(0,-1)]
+        shifts = [(1, 0), (0, 1), (-1, 0), (0, -1)]
         if connectivity == 8:
-            shifts += [(1,1),(1,-1),(-1,1),(-1,-1)]
+            shifts += [(1, 1), (1, -1), (-1, 1), (-1, -1)]
+
         pairs = set()
         for dy, dx in shifts:
             B = np.roll(lab, shift=(dy, dx), axis=(0, 1))
@@ -249,6 +268,7 @@ class QCMonitor:
                     if x > y:
                         x, y = y, x
                     pairs.add((int(x), int(y)))
+
         neigh: Dict[int, set] = {}
         for a, b in pairs:
             neigh.setdefault(a, set()).add(b)
