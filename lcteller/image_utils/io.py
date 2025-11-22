@@ -428,6 +428,7 @@ def load_image(
     max_mp: Optional[float] = 200.0,
     as_chw: bool = True,
     scale: bool = True,
+    **kwargs
 ) -> Tuple[np.ndarray, Optional[LoadReport]]:
     """
     High-level helper for most use cases.
@@ -467,10 +468,16 @@ def load_image(
 
 def load_images(filenames: List[str],
                 data_dir: str,
-                scale: bool = True) -> List[np.ndarray]:
+                scale: bool = True,
+                **kwargs) -> List[np.ndarray]:
     res = []
     for file in filenames:
-        img, _ = load_image(file, base_dir = data_dir, scale = scale)
+        img, _ = load_image(
+            file,
+            base_dir = data_dir,
+            scale = scale,
+            **kwargs
+        )
         res.append(img)
     return res
 

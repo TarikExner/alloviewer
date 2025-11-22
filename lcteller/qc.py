@@ -64,7 +64,6 @@ class QCMonitor:
         instance_labels: np.ndarray,
         probs: Optional[Dict[str, np.ndarray]] = None,
         image: Optional[np.ndarray] = None,
-        markers: Optional[np.ndarray] = None,
     ) -> Dict[str, Any]:
         lab = instance_labels.astype(np.int32, copy=False)
         max_id = int(lab.max())
@@ -292,26 +291,64 @@ class QCMonitor:
 
     def _intensity_focus_metrics(self, image: np.ndarray, fg_mask: np.ndarray) -> Tuple[float, float, float]:
         img = image
+
+        # ---- 3D images: support both HWC and CHW ----
         if img.ndim == 3:
-            if img.dtype == np.uint8:
-                gray = img.mean(axis=2).astype(np.float32) / 255.0
-                sat_hi = (img >= 255).any(axis=2)
-                sat_lo = (img <= 0).any(axis=2)
+            # Heuristic: CHW if channel dim is first and last dim is not 1/3
+            is_chw = (img.shape[0] in (1, 3)) and (img.shape[-1] not in (1, 3))
+
+            if is_chw:
+                # CHW: [C, H, W]
+                C, H, W = img.shape
+
+                if img.dtype == np.uint8:
+                    if C == 1:
+                        gray = img[0].astype(np.float32) / 255.0
+                    else:
+                        gray = img[:3].astype(np.float32).mean(axis=0) / 255.0
+                    sat_hi = (img >= 255).any(axis=0)   # -> [H, W]
+                    sat_lo = (img <= 0).any(axis=0)
+                else:
+                    if C == 1:
+                        gray = img[0].astype(np.float32)
+                    else:
+                        gray = img[:3].astype(np.float32).mean(axis=0)
+                    vmax = img.max()
+                    vmin = img.min()
+                    sat_hi = (img >= vmax).any(axis=0)
+                    sat_lo = (img <= vmin).any(axis=0)
+
             else:
-                gray = img.mean(axis=2).astype(np.float32)
-                sat_hi = (img >= img.max()).any(axis=2)
-                sat_lo = (img <= img.min()).any(axis=2)
+                # HWC: [H, W, C]
+                H, W, C = img.shape
+
+                if img.dtype == np.uint8:
+                    gray = img.mean(axis=2).astype(np.float32) / 255.0
+                    sat_hi = (img >= 255).any(axis=2)  # -> [H, W]
+                    sat_lo = (img <= 0).any(axis=2)
+                else:
+                    gray = img.mean(axis=2).astype(np.float32)
+                    vmax = img.max()
+                    vmin = img.min()
+                    sat_hi = (img >= vmax).any(axis=2)
+                    sat_lo = (img <= vmin).any(axis=2)
+
+        # ---- 2D images: grayscale ----
         else:
             gray = img.astype(np.float32)
             if img.dtype == np.uint8:
                 sat_hi = (img >= 255)
                 sat_lo = (img <= 0)
             else:
-                sat_hi = (img >= img.max())
-                sat_lo = (img <= img.min())
+                vmax = img.max()
+                vmin = img.min()
+                sat_hi = (img >= vmax)
+                sat_lo = (img <= vmin)
 
+        # ---- saturation fraction ----
         sat_frac = float(np.mean(sat_hi | sat_lo))
 
+        # ---- SNR between fg and bg ----
         bg = ~fg_mask
         if np.any(bg):
             mean_fg = float(gray[fg_mask].mean()) if np.any(fg_mask) else float(gray.mean())
@@ -321,6 +358,7 @@ class QCMonitor:
         else:
             snr = 0.0
 
+        # ---- focus measure: Laplacian variance ----
         lap = filters.laplace(gray)
         vlap = float(np.var(lap))
 
