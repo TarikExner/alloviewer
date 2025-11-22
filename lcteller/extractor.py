@@ -33,23 +33,47 @@ class RGBExtractor:
                 f"img {img_hwc.shape[:2]} vs inst {inst.shape}"
             )
 
-        res: List[Dict[str, Any]] = []
-        max_id = int(inst.max())
-        if max_id <= 0:
-            return res
+        # ensure contiguous for fast flattening
+        img_hwc = np.ascontiguousarray(img_hwc)
+        inst = np.ascontiguousarray(inst)
 
-        for rid in range(1, max_id + 1):
-            m = (inst == rid)
-            if not m.any():
-                continue
-            vals = img_hwc[m]  # [N, 3]
-            mean = vals.mean(axis=0)
+        # flatten
+        H, W, _ = img_hwc.shape
+        inst_flat = inst.ravel()
+
+        # ignore background (0)
+        mask = inst_flat > 0
+        if not np.any(mask):
+            return []
+
+        labels = inst_flat[mask].astype(np.int64)
+
+        # flatten image to [N, 3] and mask
+        pixels = img_hwc.reshape(-1, 3)[mask].astype(np.float64)
+
+        # per-label sums with bincount
+        sum_r = np.bincount(labels, weights=pixels[:, 0])
+        sum_g = np.bincount(labels, weights=pixels[:, 1])
+        sum_b = np.bincount(labels, weights=pixels[:, 2])
+        counts = np.bincount(labels)
+
+        # labels that actually exist (counts > 0)
+        roi_ids = np.nonzero(counts)[0]
+        # just in case, drop label 0 if it sneaks in
+        roi_ids = roi_ids[roi_ids > 0]
+
+        res: List[Dict[str, Any]] = []
+        for rid in roi_ids:
+            area = int(counts[rid])
+            mean_r = float(sum_r[rid] / area)
+            mean_g = float(sum_g[rid] / area)
+            mean_b = float(sum_b[rid] / area)
             res.append({
                 "roi_id": int(rid),
-                "mean_r": float(mean[0]),
-                "mean_g": float(mean[1]),
-                "mean_b": float(mean[2]),
-                "area": int(m.sum()),
+                "mean_r": mean_r,
+                "mean_g": mean_g,
+                "mean_b": mean_b,
+                "area": area,
             })
 
         return res
