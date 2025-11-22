@@ -30,21 +30,6 @@ class Plate:
 class PlateLayout(BaseModel):
   wells: Dict[WellID, WellType]
 
-@dataclass
-class SegmentationResults:
-    """Big arrays from segmentation. Often saved to disk; keep paths in WellResult."""
-    instances: np.ndarray                # int32 [H,W]
-    cell_mask: np.ndarray                # bool/uint8 [H,W]
-    bound_mask: np.ndarray               # bool/uint8 [H,W]
-    probs: Optional[np.ndarray] = None   # float32 [2,H,W] (optional / large)
-
-    def to_shapes(self) -> Dict[str, Any]:
-        return {
-            "instances": tuple(self.instances.shape),
-            "cell_mask": tuple(self.cell_mask.shape),
-            "bound_mask": tuple(self.bound_mask.shape),
-            "probs": None if self.probs is None else tuple(self.probs["cell"].shape),
-        }
 
 @dataclass
 class ROIResult:
@@ -71,9 +56,7 @@ class ROIResult:
 @dataclass
 class WellResult:
     well_id: str
-    cfg_hash: str
     rois: List[ROIResult] = field(default_factory=list)
-    results: Optional[SegmentationResults] = None
     qc: Dict[str, Any] = field(default_factory=dict)
     store_paths: Dict[str, str] = field(default_factory=dict)
     preview_path: Optional[str] = None
@@ -83,12 +66,10 @@ class WellResult:
         n_rois = len(self.rois)
         return {
             "well_id": self.well_id,
-            "cfg_hash": self.cfg_hash,
             "n_rois": n_rois,
             "n_pos": n_pos,
             "frac_pos": int((n_pos/n_rois)*100),
             "qc": self.qc,
-            "results_shapes": None if self.results is None else self.results.to_shapes(),
             "store_paths": self.store_paths,
             "preview_path": self.preview_path,
         }
