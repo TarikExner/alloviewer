@@ -1,4 +1,3 @@
-
 """
 
 layout=PlateLayout(
@@ -38,10 +37,18 @@ from .config import UNET_CONFIG, INSTANCE_CONFIG, WELL_QC_CONFIG
 
 
 def create_plate(layout: PlateLayout,
-                 images: List[np.ndarray]) -> Plate:
+                 images: List[np.ndarray],
+                 image_paths: List[str]) -> Plate:
     plate = Plate(plate_id="SIM001")
     for i, (well_id, role) in enumerate(layout.wells.items()):
-        plate.add(WellImage(well_id, role=role, image=images[i]))
+        plate.add(
+            WellImage(
+                well_id,
+                role=role,
+                image=images[i],
+                path=image_paths[i]
+            )
+        )
 
     return plate
 
@@ -63,7 +70,7 @@ def run_job(layout: PlateLayout,
 
     # Function start: Load images
     images: List[np.ndarray] = load_images(image_filenames, data_dir, scale = True)
-    plate = create_plate(layout, images)
+    plate = create_plate(layout, images, image_filenames)
 
     for well in plate.get():
         print(f"Calculating well {well.well_id}")
