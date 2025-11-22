@@ -201,6 +201,7 @@ class SegmenterUNet:
         self.model = builder(in_channels=3, out_channels=4).to(self.device)
         self.model.eval()
 
+
         # resolve checkpoint
         model_file = cfg.model_file or f"best_{cfg.unet_mode}.pth"
         self.ckpt_path = os.path.join(cfg.model_dir, model_file)
@@ -313,13 +314,10 @@ class SegmenterUNet:
         std  = torch.as_tensor(UNET_STD,  dtype=x.dtype, device=x.device).view(1, 3, 1, 1)
         return (x - mean) / std
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def predict_tiles(self, tiles: torch.Tensor) -> torch.Tensor:
-        """
-        tiles: [B, 3, H, W] on any device
-        returns: probs [B, 4, H, W] on CPU (float32)
-        """
-        tiles = tiles.to(self.device, non_blocking=True)
+        if tiles.device != self.device:
+            tiles = tiles.to(self.device, non_blocking=True)
         use_bf16 = (self.use_amp and torch.cuda.is_bf16_supported())
 
         with torch.amp.autocast(
@@ -330,9 +328,9 @@ class SegmenterUNet:
             logits = self.model(tiles)          # [B, 4, H, W]
             probs = torch.sigmoid(logits)
 
-        return probs.detach().to(torch.float32).cpu()  # [B,4,H,W]
+        return probs.detach().to(torch.float32).cpu()
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def __call__(self, img: np.ndarray) -> Dict[str, Any]:
         """
         If cfg.input_is_tiles == False (default):
@@ -507,29 +505,50 @@ class SegmenterUNetInference(SegmenterUNet):
         assert image_chw.ndim == 3 and image_chw.shape[0] == 3, "image must be [3, H, W]"
         _, H, W = image_chw.shape
 
-        tiles = []
-        for (y0, y1, x0, x1) in self._iter_sliding_windows(H, W):
-            crop = image_chw[:, y0:y1, x0:x1]         # [3, th, tw]
-            th, tw = crop.shape[1], crop.shape[2]
+        tile = self.tile_size
+        overlap = self.overlap
+        stride = tile - overlap
+        assert stride > 0, "overlap must be smaller than tile_size"
 
-            if th < self.tile_size or tw < self.tile_size:
-                pad_bottom = self.tile_size - th
-                pad_right = self.tile_size - tw
-                crop = np.pad(
-                    crop,
-                    ((0, 0), (0, pad_bottom), (0, pad_right)),
-                    mode="constant",
-                    constant_values=self.pad_value,
-                )
+        # same logic as _iter_sliding_windows, but we keep windows in a list
+        ys = list(range(0, max(1, H - tile + 1), stride))
+        if ys[-1] + tile < H:
+            ys.append(H - tile)
 
-            tiles.append(crop)
+        xs = list(range(0, max(1, W - tile + 1), stride))
+        if xs[-1] + tile < W:
+            xs.append(W - tile)
 
-        if not tiles:
+        N = len(ys) * len(xs)
+        tiles_arr = np.empty((N, 3, tile, tile), dtype=image_chw.dtype)
+
+        idx = 0
+        for y0 in ys:
+            y1 = y0 + tile
+            for x0 in xs:
+                x1 = x0 + tile
+
+                crop = image_chw[:, y0:y1, x0:x1]   # [3, th, tw]
+                th, tw = crop.shape[1], crop.shape[2]
+
+                # fill actual content
+                tiles_arr[idx, :, :th, :tw] = crop
+
+                # pad bottom/right if needed
+                if th < tile:
+                    tiles_arr[idx, :, th:tile, :tw] = self.pad_value
+                if tw < tile:
+                    tiles_arr[idx, :, :th, tw:tile] = self.pad_value
+                if th < tile and tw < tile:
+                    tiles_arr[idx, :, th:tile, tw:tile] = self.pad_value
+
+                idx += 1
+
+        if N == 0:
             raise RuntimeError(
                 "No tiles produced. Check tile_size / overlap / image size."
             )
 
-        tiles_arr = np.stack(tiles, axis=0)       # [N, 3, tile_size, tile_size]
         return tiles_arr, (H, W)
 
     def _reconstruct_from_tiles_probability(
@@ -643,49 +662,69 @@ class SegmenterUNetInference(SegmenterUNet):
 class InstanceSegmenter:
     def __init__(self, cfg: InstanceSegmenterConfig):
         self.cfg = cfg
+        r = int(self.cfg.mask_close_radius)
+        self._mask_close_selem = morphology.disk(r) if r > 0 else None
 
     def _hysteresis_mask(self, pc: np.ndarray) -> np.ndarray:
         """Two-threshold hysteresis on cell prob to get a robust watershed mask."""
         low = float(self.cfg.cell_mask_low_thr)
         high = float(self.cfg.cell_mask_high_thr)
+
         strong = (pc >= high)
         weak   = (pc >= low)
 
         # label weak components and keep those connected to any strong pixel
         lab = measure.label(weak, connectivity=1)
-        keep = np.zeros_like(weak, dtype=bool)
+
         if strong.any():
+            # labels that touch any strong pixel
             strong_ids = np.unique(lab[strong])
+            # drop background label
             strong_ids = strong_ids[strong_ids != 0]
-            for sid in strong_ids:
-                keep |= (lab == sid)
-        mask = keep
+
+            if strong_ids.size > 0:
+                # build label -> keep lookup table
+                max_lab = lab.max()
+                lut = np.zeros(max_lab + 1, dtype=bool)
+                lut[strong_ids] = True
+
+                # vectorized "keep |= (lab == sid)" for all sids
+                mask = lut[lab]
+            else:
+                mask = np.zeros_like(weak, dtype=bool)
+        else:
+            mask = np.zeros_like(weak, dtype=bool)
 
         # small closing & hole handling
-        if self.cfg.mask_close_radius > 0:
-            mask = morphology.binary_closing(mask, morphology.disk(int(self.cfg.mask_close_radius)))
+        if self._mask_close_selem is not None:
+            mask = morphology.binary_closing(mask, self._mask_close_selem)
+
         mask = ndi.binary_fill_holes(mask)
+
         if self.cfg.min_hole_area > 0:
-            mask = morphology.remove_small_holes(mask, area_threshold=int(self.cfg.min_hole_area))
+            mask = morphology.remove_small_holes(
+                mask,
+                area_threshold=int(self.cfg.min_hole_area)
+            )
+
         if self.cfg.min_object_area > 0:
-            mask = morphology.remove_small_objects(mask, min_size=int(self.cfg.min_object_area))
-        return mask.astype(bool)
+            mask = morphology.remove_small_objects(
+                mask,
+                min_size=int(self.cfg.min_object_area)
+            )
+
+        return mask.astype(bool, copy=False)
 
     def _smooth01(self, x: np.ndarray, sigma: float) -> np.ndarray:
         if sigma and sigma > 0:
-            y = ndi.gaussian_filter(x.astype(np.float32), float(sigma))
-            # keep as probability-like
+            y = ndi.gaussian_filter(x, float(sigma))
             y = np.clip(y, 0.0, 1.0)
             return y
-        return x.astype(np.float32)
+        return x
 
     def _make_markers(self, mask: np.ndarray, p_center: np.ndarray | None, dist_s: np.ndarray) -> np.ndarray:
-        """
-        Build boolean seed map from center heat/prob and distance peaks/h-maxima, then label.
-        Returns int32 markers with 0 as background.
-        """
         # ensure boolean working mask
-        work_mask = (mask.astype(bool) if mask.dtype != bool else mask)
+        work_mask = mask if mask.dtype == bool else mask.astype(bool, copy=False)
 
         seeds_bool = np.zeros_like(work_mask, dtype=bool)
 
@@ -693,20 +732,17 @@ class InstanceSegmenter:
         if self.cfg.use_centers and (p_center is not None):
             if getattr(self.cfg, "center_seed_method", "nms") == "nms":
                 coords = feature.peak_local_max(
-                    p_center.astype(np.float32),
+                    p_center,  # already float32
                     min_distance=int(self.cfg.center_min_distance),
                     threshold_abs=float(self.cfg.center_thr),
                     labels=work_mask,
                     exclude_border=False,
                 )
-                seeds_center = np.zeros_like(work_mask, dtype=bool)
                 if coords.size:
-                    seeds_center[tuple(coords.T)] = True
+                    seeds_bool[tuple(coords.T)] = True
             else:
                 # simple threshold
-                seeds_center = (p_center >= float(self.cfg.center_thr)) & work_mask
-
-            seeds_bool |= seeds_center  # both bool
+                seeds_bool |= (p_center >= float(self.cfg.center_thr)) & work_mask
 
         # Label seeds; fallback to CCs of mask if empty
         markers = measure.label(seeds_bool, connectivity=1).astype(np.int32)
@@ -722,6 +758,19 @@ class InstanceSegmenter:
         p_center = probs.get("center", None)
         p_energy = probs.get("energy", None)
 
+
+        def as_f32(x):
+            if x is None:
+                return None
+            if x.dtype == np.float32 and x.flags['C_CONTIGUOUS']:
+                return x
+            return np.ascontiguousarray(x, dtype=np.float32)
+
+        p_cell = as_f32(p_cell)
+        p_bound = as_f32(p_bound)
+        p_center = as_f32(p_center)
+        p_energy = as_f32(p_energy)
+
         if p_cell is None:
             raise ValueError("seg_out['probs']['cell'] required")
 
@@ -732,19 +781,28 @@ class InstanceSegmenter:
 
         # --- 2) base distance inside the (binary) mask (still keeps prob influence) ---
         dist = ndi.distance_transform_edt(mask).astype(np.float32)
-        dist_s = dist
+
         if self.cfg.distance_smooth_sigma > 0:
-            dist_s = ndi.gaussian_filter(dist, float(self.cfg.distance_smooth_sigma))
+            ndi.gaussian_filter(
+                dist,
+                float(self.cfg.distance_smooth_sigma),
+                output=dist,
+            )
+        dist_s = dist
 
         # --- 3) elevation (minimize) built from PROBABILITIES ---
         # start with zero elevation, then add/subtract weighted terms
         elevation = np.zeros((H, W), dtype=np.float32)
+        tmp = np.empty_like(elevation, dtype=np.float32)  # scratch buffer
+
         # subtract distance (attract to centers => lower elevation)
         if self.cfg.distance_weight != 0:
             # normalize to [0,1] for stability
             dmax = dist_s.max()
             if dmax > 1e-6:
-                elevation -= self.cfg.distance_weight * (dist_s / dmax)
+                # elevation -= self.cfg.distance_weight * (dist_s / dmax)
+                np.divide(dist_s, dmax, out=tmp)
+                elevation -= self.cfg.distance_weight * tmp
 
         # add boundary (higher elevation where boundary prob is high)
         if self.cfg.use_boundary and (p_bound is not None):
@@ -753,16 +811,17 @@ class InstanceSegmenter:
 
         # add edge term from cell prob gradient magnitude
         if self.cfg.use_edge_term and (self.cfg.edge_weight != 0):
-            g = ndi.gaussian_gradient_magnitude(p_cell.astype(np.float32), sigma=float(self.cfg.edge_sigma))
+            g = ndi.gaussian_gradient_magnitude(p_cell, sigma=float(self.cfg.edge_sigma))
             gmax = g.max()
             if gmax > 1e-6:
-                elevation += self.cfg.edge_weight * (g / gmax)
+                # elevation += self.cfg.edge_weight * (g / gmax)
+                np.divide(g, gmax, out=g)
+                elevation += self.cfg.edge_weight * g
 
         # subtract energy (attract to high energy inside cells)
         if self.cfg.use_energy and (p_energy is not None) and (self.cfg.energy_weight != 0):
             e = self._smooth01(p_energy, self.cfg.energy_smooth_sigma)
             elevation -= self.cfg.energy_weight * e
-
         # --- 4) seeds from centers and/or distance peaks (probability-driven) ---
         # (For centers we use center prob directly; for distance we use dist_s)
         markers = self._make_markers(mask, p_center, dist_s)

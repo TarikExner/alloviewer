@@ -138,7 +138,7 @@ class ROIClassifierGaussian3Way:
       - 'neg' if z_pc <= -k
       - else 'uncertain'
     """
-    def __init__(self, calib: Optional[Dict[str, Any]] = None, k: float = 3.0):
+    def __init__(self, calib: Optional[Dict[str, Any]] = None, k: float = 2.0):
         c = _normalize_gauss_calib(calib)
         self.mu_nc = float(c["mu_nc"])
         self.sd_nc = float(c["sd_nc"])
