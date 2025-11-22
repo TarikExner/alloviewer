@@ -38,9 +38,11 @@ from .config import UNET_CONFIG, INSTANCE_CONFIG, WELL_QC_CONFIG
 
 def create_plate(layout: PlateLayout,
                  images: List[np.ndarray],
+                 image_order: List[str],
                  image_paths: List[str]) -> Plate:
     plate = Plate(plate_id="SIM001")
-    for i, (well_id, role) in enumerate(layout.wells.items()):
+    for i, well_id in enumerate(image_order):
+        role = layout.wells[well_id]
         plate.add(
             WellImage(
                 well_id,
@@ -70,7 +72,7 @@ def run_job(layout: PlateLayout,
 
     # Function start: Load images
     images: List[np.ndarray] = load_images(image_filenames, data_dir, scale = True)
-    plate = create_plate(layout, images, image_filenames)
+    plate = create_plate(layout, images, image_order, image_filenames)
 
     for well in plate.get():
         print(f"Calculating well {well.well_id}")
