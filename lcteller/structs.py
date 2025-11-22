@@ -27,7 +27,7 @@ class Plate:
         return [w for w in self.wells.values() if w.role == role]
 
 @dataclass
-class PlateLayout(BaseModel):
+class PlateLayout:
   wells: Dict[WellID, WellType]
 
 
