@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field, asdict
 import numpy as np
-from typing import Dict, List, Literal, Optional, Any
-from pydantic import BaseModel
+from typing import Dict, List, Literal, Optional, Any, Union, Iterable, Self
 
 WellType = Literal["positive", "negative", "IgM", "sample", "empty"]
 WellID = str
@@ -25,6 +24,25 @@ class Plate:
         if role is None:
             return list(self.wells.values())
         return [w for w in self.wells.values() if w.role == role]
+
+    def subset(self, wells: Union[str, Iterable[str]]) -> "Plate":
+        """
+        Return a new Plate containing only the wells with the given IDs.
+
+        Parameters
+        ----------
+        wells : str or iterable of str
+            A single well ID (e.g. "A01") or a list/tuple/set of well IDs.
+        """
+        # Normalize to a set of IDs
+        if isinstance(wells, str):
+            ids = {wells}
+        else:
+            ids = set(wells)
+
+        new_wells = {wid: w for wid, w in self.wells.items() if wid in ids}
+        return Plate(plate_id=self.plate_id, wells=new_wells)
+    
 
 @dataclass
 class PlateLayout:
@@ -61,14 +79,23 @@ class WellResult:
     store_paths: Dict[str, str] = field(default_factory=dict)
     preview_path: Optional[str] = None
 
+    corrected_frac_pos: Optional[float] = None
+
     def summary(self) -> Dict[str, Any]:
         n_pos = sum(1 for r in self.rois if r.label == "pos")
         n_rois = len(self.rois)
+
+        if n_rois == 0:
+            frac_pos = 0
+        else:
+            frac_pos = int((n_pos / n_rois) * 100)
+
         return {
             "well_id": self.well_id,
             "n_rois": n_rois,
             "n_pos": n_pos,
-            "frac_pos": int((n_pos/n_rois)*100),
+            "frac_pos": frac_pos,
+            "frac_pos_corrected": self.corrected_frac_pos,
             "qc": self.qc,
             "store_paths": self.store_paths,
             "preview_path": self.preview_path,

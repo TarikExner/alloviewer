@@ -16,72 +16,35 @@ image_filenames=[
 
 """
 import numpy as np
-from typing import List
+from typing import List, Optional
 import copy
 from .image_utils import load_images
 from .structs import (
     PlateLayout,
-    Plate,
-    WellImage,
     ROIResult, 
     WellResult
 )
 from .segmenter import SegmenterUNetInference
 from .extractor import RGBExtractor
-from .calibrators import PCNCMedianCalibrator
-from .classifiers import ROIClassifier
+from .calibrators import PCNCMedianCalibrator, PCNCGaussianRGCalibrator
+from .classifiers import ROIClassifier, ROIClassifierGaussian3Way
 
 from .qc import QCMonitor
 
-from .config import UNET_CONFIG, INSTANCE_CONFIG, WELL_QC_CONFIG
+from .config import UNET_CONFIG, INSTANCE_CONFIG
 
+from .utils import create_plate, frac_pos_raw
 
-def create_plate(layout: PlateLayout,
-                 images: List[np.ndarray],
-                 image_order: List[str],
-                 image_paths: List[str]) -> Plate:
-    plate = Plate(plate_id="SIM001")
-    for i, well_id in enumerate(image_order):
-        role = layout.wells[well_id]
-        plate.add(
-            WellImage(
-                well_id,
-                role=role,
-                image=images[i],
-                path=image_paths[i]
-            )
-        )
+def _extract_roi_from_image(image: np.ndarray,
+                            segmenter: SegmenterUNetInference,
+                            qc_monitor: Optional[QCMonitor],
+                            extractor: RGBExtractor,
+                            well_id: str,
+                            qc: bool = False) -> WellResult:
+    segmentation_results: dict = segmenter(image)
 
-    return plate
-
-def run_job(layout: PlateLayout,
-            image_order: List[str],
-            template_filename: str,
-            image_filenames: List[str],
-            data_dir: str):
-    
-    unet_config = copy.deepcopy(UNET_CONFIG)
-    unet_config["instance_cfg"] = INSTANCE_CONFIG
-
-    segmenter = SegmenterUNetInference.from_config(UNET_CONFIG)
-    qc_monitor = QCMonitor()
-    extractor = RGBExtractor()
-    calibrator = PCNCMedianCalibrator()
-    classifier_ctor = ROIClassifier
-    per_well: dict[str, WellResult] = {}
-
-    # Function start: Load images
-    images: List[np.ndarray] = load_images(image_filenames, data_dir, scale = True)
-    plate = create_plate(layout, images, image_order, image_filenames)
-
-    for well in plate.get():
-        print(f"Calculating well {well.well_id}")
-        image = well.image
-
-        if image.shape[0] == 0:
-            raise ValueError("No image provided!")
-
-        segmentation_results: dict = segmenter(image)
+    if qc:
+        assert qc_monitor is not None
         qc_out = qc_monitor(
             instance_labels=segmentation_results["instance_labels"],
             probs=segmentation_results.get("probs"),
@@ -92,20 +55,67 @@ def run_job(layout: PlateLayout,
             "well": qc_out["well"],
             "roi_table": qc_out["roi_table"],
         }
-        
         segmentation_results["instance_labels_qc"] = qc_out["instances_filtered"]
 
         rois_dict = extractor(image, segmentation_results["instance_labels_qc"])
+    else:
+        rois_dict = extractor(image, segmentation_results["instance_labels"])
 
-        rois = [ROIResult(**d) for d in rois_dict]
+    rois = [ROIResult(**d) for d in rois_dict]
 
-        wr = WellResult(
-            well_id=well.well_id,
-            rois=rois,
-            qc=segmentation_results.get("qc", {}),
+    return WellResult(
+        well_id=well_id,
+        rois=rois,
+        qc=segmentation_results.get("qc", {}),
+    )
+
+
+def run_job(
+    layout: PlateLayout,
+    image_order: List[str],
+    template_filename: str,
+    image_filenames: List[str],
+    data_dir: str,
+    unet_config: Optional[dict],
+    qc: bool = False,
+):
+
+    if not unet_config:
+        unet_config = copy.deepcopy(UNET_CONFIG)
+        unet_config["instance_cfg"] = INSTANCE_CONFIG
+
+    # use the (possibly updated) config
+    segmenter = SegmenterUNetInference.from_config(unet_config)
+    qc_monitor = QCMonitor()
+    extractor = RGBExtractor()
+    calibrator = PCNCGaussianRGCalibrator()
+    classifier_ctor = ROIClassifierGaussian3Way
+    per_well: dict[str, WellResult] = {}
+
+    # 1) load images and build plate
+    images: List[np.ndarray] = load_images(
+        image_filenames, data_dir, scale=True
+    )
+    plate = create_plate(layout, images, image_order, image_filenames)
+
+    # 2) segmentation + feature extraction
+    for well in plate.get():
+        print(f"Calculating well {well.well_id}")
+        image = well.image
+
+        if image.shape[0] == 0:
+            raise ValueError("No image provided!")
+
+        per_well[well.well_id] = _extract_roi_from_image(
+            image = image,
+            extractor = extractor,
+            segmenter = segmenter,
+            qc_monitor = qc_monitor,
+            well_id = well.well_id,
+            qc = qc
         )
-        per_well[well.well_id] = wr
 
+    # 3) build PC / NC sets for calibration
     pc = [per_well[w.well_id].rois for w in plate.get("positive")]
     nc = [per_well[w.well_id].rois for w in plate.get("negative")]
 
@@ -114,10 +124,39 @@ def run_job(layout: PlateLayout,
         nc_wells=[[r.__dict__ for r in rs] for rs in nc],
     )
 
+    # 4) classify ROIs
     clf = classifier_ctor(calib)
     for wr in per_well.values():
         updated = clf([r.__dict__ for r in wr.rois])
         wr.rois = [ROIResult(**d) for d in updated]
+
+    # 6) compute reference values from PC / NC wells
+    pc_well_ids = [w.well_id for w in plate.get("positive")]
+    nc_well_ids = [w.well_id for w in plate.get("negative")]
+
+    pc_fracs = [frac_pos_raw(per_well[wid]) for wid in pc_well_ids]
+    nc_fracs = [frac_pos_raw(per_well[wid]) for wid in nc_well_ids]
+
+    pc_ref = float(np.nanmean(pc_fracs))  # mean % positive in PC wells
+    nc_ref = float(np.nanmean(nc_fracs))  # mean % positive in NC wells
+
+    # 7) compute corrected_frac_pos for all wells
+    for wr in per_well.values():
+        raw = frac_pos_raw(wr)
+
+        if (
+            np.isnan(raw)
+            or np.isnan(pc_ref)
+            or np.isnan(nc_ref)
+            or pc_ref == nc_ref
+        ):
+            corr = np.nan
+        else:
+            # map NC mean -> 0, PC mean -> 100
+            corr = (raw - nc_ref) / (pc_ref - nc_ref) * 100.0
+            corr = float(np.clip(corr, 0.0, 100.0))
+
+        wr.corrected_frac_pos = corr
 
     return {
         "calib": calib,

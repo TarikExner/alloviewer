@@ -2,7 +2,7 @@ import os
 import copy
 from dataclasses import dataclass, field, asdict
 import numpy as np
-from typing import Dict, Any, Optional, Tuple, Callable, List
+from typing import Dict, Any, Optional, Tuple, Callable, List, Self
 from scipy import ndimage as ndi
 from collections import deque
 import torch
@@ -443,7 +443,7 @@ class SegmenterUNet:
         return out
 
     @classmethod
-    def from_config(cls, cfg_dict: Dict[str, Any]) -> "SegmenterUNet":
+    def from_config(cls, cfg_dict: Dict[str, Any]) -> Self:
         known = {f.name for f in SegmenterConfig.__dataclass_fields__.values()}
         filtered = {k: v for k, v in dict(cfg_dict or {}).items() if k in known}
         cfg = SegmenterConfig(**filtered)

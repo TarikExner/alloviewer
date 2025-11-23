@@ -79,7 +79,12 @@ def _ensure_rgb_anydepth(arr: np.ndarray, report: LoadReport) -> np.ndarray:
     return arr
 
 
-def _detect_bitdepth_u16(a: np.ndarray, p: float = 99.9) -> Tuple[int, int, bool]:
+def _detect_bitdepth_u16(
+    a: np.ndarray,
+    p: float = 99.9,
+    use_percentile: bool = True,
+    sample_stride: int = 16,
+) -> Tuple[int, int, bool]:
     """
     Detect bit depth (8/10/12/14/16) for a uint16 image.
 
@@ -91,10 +96,20 @@ def _detect_bitdepth_u16(a: np.ndarray, p: float = 99.9) -> Tuple[int, int, bool
     if a.dtype != np.uint16:
         raise TypeError("Expected uint16 array for _detect_bitdepth_u16")
 
-    vmax = int(a.max())
+    # work on a flat view once
+    flat = a.ravel()
+
+    vmax = int(flat.max())
     if vmax == 0:
         # no information; choose 16-bit as a safe default
         return 16, (1 << 16) - 1, False
+
+    # choose view: full or subsampled (fast path)
+    if use_percentile:
+        sample = flat
+    else:
+        # subsample pixels to reduce work; still enough to detect zero low bits
+        sample = flat[::sample_stride]
 
     # look for left-shifted patterns:
     # low bits all zero across the image
@@ -102,14 +117,24 @@ def _detect_bitdepth_u16(a: np.ndarray, p: float = 99.9) -> Tuple[int, int, bool
     for b in (8, 10, 12, 14):
         shift = 16 - b
         low_mask = (1 << shift) - 1
-        if (a & low_mask).max() == 0:
+        # this is the hot operation; now done on 'sample', not whole array
+        if (sample & low_mask).max() == 0:
             white = (1 << b) - 1
             return b, white, True
 
-    # fallback: estimate from a high percentile
-    sample = float(np.percentile(a, p))
-    sample = max(1.0, sample)
-    est_bits = int(math.ceil(math.log2(sample + 1.0)))
+    if not use_percentile:
+        # FAST heuristic: infer bit depth from vmax only, no percentile.
+        allowed = (8, 10, 12, 14, 16)
+        for b in allowed:
+            white = (1 << b) - 1
+            if vmax <= white:
+                return b, white, False
+        return 16, (1 << 16) - 1, False
+
+    # fallback: estimate from a high percentile (original slow path)
+    sample_val = float(np.percentile(flat, p))
+    sample_val = max(1.0, sample_val)
+    est_bits = int(math.ceil(math.log2(sample_val + 1.0)))
     est_bits = min(16, max(2, est_bits))
 
     allowed = (8, 10, 12, 14, 16)
@@ -123,7 +148,12 @@ def _detect_bitdepth_u16(a: np.ndarray, p: float = 99.9) -> Tuple[int, int, bool
     return b, white, False
 
 
-def _infer_bit_depth_and_normalize_scale(arr: np.ndarray, report: LoadReport) -> Tuple[np.ndarray, Optional[int]]:
+def _infer_bit_depth_and_normalize_scale(
+    arr: np.ndarray,
+    report: LoadReport,
+    *,
+    fast: bool = True
+) -> Tuple[np.ndarray, Optional[int]]:
     """
     Convert array to float32 in [0, 1].
 
@@ -150,7 +180,10 @@ def _infer_bit_depth_and_normalize_scale(arr: np.ndarray, report: LoadReport) ->
 
     # uint16 with possible 10/12/14/16-bit encoding
     if np.issubdtype(dtype, np.uint16):
-        bit_depth, white, shifted = _detect_bitdepth_u16(arr)
+        bit_depth, white, shifted = _detect_bitdepth_u16(
+            arr,
+            use_percentile=not fast,
+        )
         report.bit_depth = bit_depth
         report.white_level = white
         report.shifted = shifted
@@ -277,9 +310,6 @@ def _infer_bit_depth_and_normalize_scale(arr: np.ndarray, report: LoadReport) ->
     report.shifted = False
     return scaled, None
 
-
-
-
 def _read_cv2_from_path(path: Path, page: int, report: LoadReport) -> np.ndarray:
     """
     Read from disk using cv2.
@@ -396,6 +426,8 @@ def open_image(
 def scale_image(
     arr: np.ndarray,
     report: Optional[LoadReport] = None,
+    *,
+    fast: bool = False,
 ) -> Tuple[np.ndarray, Optional[LoadReport]]:
     """
     Scale a raw image array to float32 in [0,1].
@@ -403,7 +435,7 @@ def scale_image(
     - Keeps shape as-is.
     - If a report is given, updates dtype/bit_depth/white_level/shifted and adds warnings.
 
-    Returns (scaled_arr, report).
+    fast=True: skip percentile for uint16 bit depth detection (use vmax heuristic).
     """
     if report is None:
         report = LoadReport(
@@ -414,7 +446,7 @@ def scale_image(
             pages=None,
             used_backend="opencv",
         )
-    scaled, bit_depth = _infer_bit_depth_and_normalize_scale(arr, report)
+    scaled, bit_depth = _infer_bit_depth_and_normalize_scale(arr, report, fast=fast)
     report.shape = scaled.shape
     report.bit_depth = bit_depth
     return scaled, report
@@ -428,6 +460,7 @@ def load_image(
     max_mp: Optional[float] = 200.0,
     as_chw: bool = True,
     scale: bool = True,
+    fast_scale: bool = True,
     **kwargs
 ) -> Tuple[np.ndarray, Optional[LoadReport]]:
     """
@@ -458,7 +491,7 @@ def load_image(
     arr = _ensure_rgb_anydepth(arr, report)
 
     if scale:
-        arr, report = scale_image(arr, report)
+        arr, report = scale_image(arr, report, fast=fast_scale)
 
     if as_chw:
         # [H, W, 3] -> [3, H, W]
