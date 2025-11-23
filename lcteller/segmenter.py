@@ -2,7 +2,7 @@ import os
 import copy
 from dataclasses import dataclass, field, asdict
 import numpy as np
-from typing import Dict, Any, Optional, Tuple, Callable, List, Self
+from typing import Dict, Any, Optional, Tuple, Callable, List, TypeVar, Type
 from scipy import ndimage as ndi
 from collections import deque
 import torch
@@ -19,6 +19,7 @@ from .segmentation import (
 )
 
 MaskProvider = Callable[[np.ndarray], Tuple[np.ndarray, np.ndarray]]
+Segmenter = TypeVar("Segmenter", bound="SegmenterUNet")
 
 @dataclass
 class SegmenterConfig:
@@ -443,7 +444,7 @@ class SegmenterUNet:
         return out
 
     @classmethod
-    def from_config(cls, cfg_dict: Dict[str, Any]) -> Self:
+    def from_config(cls: Type[Segmenter], cfg_dict: Dict[str, Any]) -> Segmenter:
         known = {f.name for f in SegmenterConfig.__dataclass_fields__.values()}
         filtered = {k: v for k, v in dict(cfg_dict or {}).items() if k in known}
         cfg = SegmenterConfig(**filtered)
