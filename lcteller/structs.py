@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field, asdict
 import numpy as np
-from typing import Dict, List, Literal, Optional, Any, Union, Iterable, Self
+from typing import Dict, List, Literal, Optional, Any, Union, Iterable
 
 WellType = Literal["positive", "negative", "IgM", "sample", "empty"]
 WellID = str
