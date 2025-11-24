@@ -72,6 +72,30 @@ def denormalize_image(
     else:
         return x
 
+def instances_to_binary_uint8(mask: ArrayLike) -> np.ndarray:
+    """
+    Take an instance label map (0 = background, >0 = instance ID)
+    and convert it to a binary mask {0,1} with dtype uint8.
+    """
+    m = to_numpy(mask)
+
+    # squeeze possible extra dims (e.g. [1,H,W] or [H,W,1])
+    while m.ndim > 2:
+        m = np.squeeze(m, axis=0) if m.shape[0] == 1 else np.squeeze(m, axis=-1)
+        if m.ndim <= 2:
+            break
+
+    if m.ndim != 2:
+        raise ValueError(f"Expected 2D mask after squeeze, got shape {m.shape}")
+
+    m_bin = (m != 0).astype(np.uint8)
+    return m_bin
+
+def to_numpy(x: ArrayLike) -> np.ndarray:
+    if isinstance(x, torch.Tensor):
+        x = x.detach().cpu().numpy()
+    return np.asarray(x)
+
 def save_tile_triplet_as_tif(
     out_dir: str,
     img_no: int,
@@ -99,14 +123,12 @@ def save_tile_triplet_as_tif(
 
     os.makedirs(out_dir, exist_ok=True)
 
-    def to_numpy(x: ArrayLike) -> np.ndarray:
-        if isinstance(x, torch.Tensor):
-            x = x.detach().cpu().numpy()
-        return np.asarray(x)
 
-    img_np = to_numpy(img)
-    imgj_np = to_numpy(imgj_mask)
-    unet_np = to_numpy(unet_mask)
+    img_np = denormalize_image(img)
+    img_np = to_numpy(img_np)
+
+    imgj_bin = instances_to_binary_uint8(imgj_mask)
+    unet_bin = instances_to_binary_uint8(imgj_mask)
 
     base = f"{img_no}_{tile_no}"
 
@@ -116,8 +138,8 @@ def save_tile_triplet_as_tif(
 
     # write as float32 (change dtype here if you prefer uint16, etc.)
     tiff.imwrite(img_path, img_np.astype(np.float32).transpose((1,2,0)))
-    tiff.imwrite(imgj_path, imgj_np.astype(np.float32))
-    tiff.imwrite(unet_path, unet_np.astype(np.float32))
+    tiff.imwrite(imgj_path, imgj_bin)
+    tiff.imwrite(unet_path, unet_bin)
 
 def export_images(
     out_dir: str,
@@ -200,7 +222,7 @@ def export_images(
                     out_dir=out_dir,
                     img_no=sample_idx,
                     tile_no=t,
-                    img=denormalize_image(img),
+                    img=img,
                     imgj_mask=inst_gt,
                     unet_mask=inst_pred
                 )
