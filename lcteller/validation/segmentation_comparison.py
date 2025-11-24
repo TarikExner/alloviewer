@@ -163,6 +163,7 @@ def export_segmentation_comparison(
     model_dir: str,
     h5_dir: str,
     unet_mode: str,
+    stop: Optional[int]
 ) -> None:
     """
     Run validation for a single combination of:
@@ -214,6 +215,7 @@ def export_segmentation_comparison(
         segmenter,
         gt_segmenter,
         cfg,
+        stop = stop
     )
 
     return
