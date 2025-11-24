@@ -25,7 +25,8 @@ ArrayLike = Union[np.ndarray, torch.Tensor]
 
 def save_tile_triplet_as_tif(
     out_dir: str,
-    tile_number: int,
+    img_no: int,
+    tile_no: int,
     img: ArrayLike,
     imgj_mask: ArrayLike,
     unet_mask: ArrayLike,
@@ -58,7 +59,7 @@ def save_tile_triplet_as_tif(
     imgj_np = to_numpy(imgj_mask)
     unet_np = to_numpy(unet_mask)
 
-    base = f"{tile_number:06d}"
+    base = f"{img_no}_{tile_no}"
 
     img_path = os.path.join(out_dir, f"{base}.tif")
     imgj_path = os.path.join(out_dir, f"{base}_imageJ.tif")
@@ -147,7 +148,8 @@ def export_images(
 
                 save_tile_triplet_as_tif(
                     out_dir=out_dir,
-                    tile_number=t,
+                    img_no=sample_idx,
+                    tile_no=t,
                     img=img,
                     imgj_mask=inst_gt[t],
                     unet_mask=inst_pred
@@ -162,7 +164,6 @@ def export_segmentation_comparison(
     out_dir: str,
     model_dir: str,
     h5_dir: str,
-    unet_mode: str,
     stop: Optional[int]
 ) -> None:
     """
@@ -185,9 +186,9 @@ def export_segmentation_comparison(
     )
 
     seg_params: Dict[str, Any] = dict(
-        unet_mode=unet_mode,
+        unet_mode="small",
         model_dir=model_dir,
-        model_file=f"best_{unet_mode}_tiles_S512_seed187.pth",
+        model_file="best_small_tiles_S512_seed187.pth",
         device="cuda" if torch.cuda.is_available() else "cpu",
         use_amp=torch.cuda.is_available(),
         normalize=False #DiskSimCellsDataset already normalizes
@@ -199,7 +200,6 @@ def export_segmentation_comparison(
         **seg_params,
     ).to_dict()
 
-    # ground truth labels for external images need to be segmented properly
     gt_segmenter_cfg = SegmenterConfig(
         instance_cfg=InstanceSegmenterConfig().to_dict(),
         compute_instances=True,
