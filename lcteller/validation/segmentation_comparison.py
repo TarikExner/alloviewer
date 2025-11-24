@@ -151,7 +151,7 @@ def export_images(
                     img_no=sample_idx,
                     tile_no=t,
                     img=img,
-                    imgj_mask=inst_gt[t],
+                    imgj_mask=inst_gt,
                     unet_mask=inst_pred
                 )
 
