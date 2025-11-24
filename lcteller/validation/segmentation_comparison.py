@@ -238,7 +238,7 @@ def export_images(
 
                 inst_pred = np.asarray(inst_pred_list[t], dtype=np.int32)
 
-                save_tile_triplet_as_tif(
+                save_tile_triplet_as_jpg(
                     out_dir=out_dir,
                     img_no=sample_idx,
                     tile_no=t,
