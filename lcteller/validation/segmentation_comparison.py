@@ -172,7 +172,8 @@ def export_images(
                 )
 
             for t in range(T):
-                img = imgs_np
+                print(imgs_np.shape)
+                img = imgs_np[t]
 
                 tgt = tgts_np[t]
 
