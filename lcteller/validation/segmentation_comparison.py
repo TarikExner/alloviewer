@@ -115,7 +115,7 @@ def save_tile_triplet_as_tif(
     unet_path = os.path.join(out_dir, f"{base}_unet.tif")
 
     # write as float32 (change dtype here if you prefer uint16, etc.)
-    tiff.imwrite(img_path, img_np.astype(np.float32))
+    tiff.imwrite(img_path, img_np.astype(np.float32).transpose((1,2,0)))
     tiff.imwrite(imgj_path, imgj_np.astype(np.float32))
     tiff.imwrite(unet_path, unet_np.astype(np.float32))
 
