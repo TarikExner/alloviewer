@@ -96,6 +96,14 @@ def to_numpy(x: ArrayLike) -> np.ndarray:
         x = x.detach().cpu().numpy()
     return np.asarray(x)
 
+def format_img_number(n: int) -> str:
+    """Convert image index to zero-padded 5-digit string."""
+    return f"{n:05d}"
+
+def format_tile_number(n: int) -> str:
+    """Convert tile index to zero-padded 2-digit string."""
+    return f"{n:02d}"
+
 def save_tile_triplet_as_jpg(
     out_dir: str,
     img_no: int,
@@ -150,7 +158,9 @@ def save_tile_triplet_as_jpg(
     unet_pil = Image.fromarray(unet_bin * 255, mode="L")
 
     # ---- filenames ----
-    base = f"{img_no}_{tile_no}"
+    img_str = format_img_number(img_no)
+    tile_str = format_tile_number(tile_no)
+    base = f"{img_str}_{tile_str}"
 
     img_path = os.path.join(out_dir, f"{base}.jpg")
     imgj_path = os.path.join(out_dir, f"{base}_imageJ.jpg")
@@ -256,7 +266,7 @@ def export_segmentation_comparison(
     out_dir: str,
     model_dir: str,
     h5_dir: str,
-    stop: Optional[int]
+    stop: Optional[int] = None
 ) -> None:
     """
     Run validation for a single combination of:
