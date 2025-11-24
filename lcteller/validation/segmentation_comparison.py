@@ -172,8 +172,11 @@ def export_images(
                 )
 
             for t in range(T):
-                print(imgs_np.shape)
                 img = imgs_np[t]
+                if img.ndim == 4:
+                    img = img[0]
+
+                print(img.shape)
 
                 tgt = tgts_np[t]
 
