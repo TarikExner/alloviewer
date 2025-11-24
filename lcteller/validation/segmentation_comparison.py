@@ -14,7 +14,7 @@ import torch
 
 from tqdm import tqdm
 
-from ..segmentation import TiledH5Dataset
+from ..segmentation import TiledH5Dataset, UNET_MEAN, UNET_STD
 from .config import TrainingValidationConfig
 
 from typing import Union
@@ -22,6 +22,55 @@ import tifffile as tiff
 
 ArrayLike = Union[np.ndarray, torch.Tensor]
 
+def denormalize_image(
+    img: ArrayLike,
+) -> ArrayLike:
+    """
+    Reverse (img - mean) / std normalization.
+
+    img:  torch.Tensor or np.ndarray, shape [C,H,W] or [T,C,H,W]
+    mean: scalar or sequence of length C
+    std:  scalar or sequence of length C
+    """
+
+    mean = UNET_MEAN
+    std = UNET_STD
+
+    is_tensor = isinstance(img, torch.Tensor)
+
+    if is_tensor:
+        x = img.clone()
+        device = x.device
+        dtype = x.dtype
+        mean_t = torch.as_tensor(mean, dtype=dtype, device=device)
+        std_t = torch.as_tensor(std, dtype=dtype, device=device)
+    else:
+        x = np.asarray(img)
+        mean_t = np.asarray(mean, dtype=x.dtype)
+        std_t = np.asarray(std, dtype=x.dtype)
+
+    # Make mean/std broadcast over [C,H,W] or [T,C,H,W]
+    # We want shape [C,1,1] or [1,C,1,1] depending on ndim
+    if x.ndim == 3:       # [C,H,W]
+        shape = (-1, 1, 1)
+    elif x.ndim == 4:     # [T,C,H,W]
+        shape = (1, -1, 1, 1)
+    else:
+        raise ValueError(f"Expected img with 3 or 4 dims, got shape {x.shape}")
+
+    if mean_t.ndim == 0:
+        # scalar, fine
+        pass
+    else:
+        mean_t = mean_t.reshape(shape)
+        std_t = std_t.reshape(shape)
+
+    x = x * std_t + mean_t
+
+    if is_tensor:
+        return x
+    else:
+        return x
 
 def save_tile_triplet_as_tif(
     out_dir: str,
@@ -150,7 +199,7 @@ def export_images(
                     out_dir=out_dir,
                     img_no=sample_idx,
                     tile_no=t,
-                    img=img,
+                    img=denormalize_image(img),
                     imgj_mask=inst_gt,
                     unet_mask=inst_pred
                 )
