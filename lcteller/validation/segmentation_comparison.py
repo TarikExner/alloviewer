@@ -175,9 +175,6 @@ def export_images(
                 img = imgs_np[t]
                 if img.ndim == 4:
                     img = img[0]
-
-                print(img.shape)
-
                 tgt = tgts_np[t]
 
                 gt_inst_seg_dict = {
