@@ -19,7 +19,7 @@ from .config import TrainingValidationConfig
 
 from typing import Union
 import tifffile as tiff
-
+from PIL import Image
 ArrayLike = Union[np.ndarray, torch.Tensor]
 
 def denormalize_image(
@@ -96,7 +96,7 @@ def to_numpy(x: ArrayLike) -> np.ndarray:
         x = x.detach().cpu().numpy()
     return np.asarray(x)
 
-def save_tile_triplet_as_tif(
+def save_tile_triplet_as_jpg(
     out_dir: str,
     img_no: int,
     tile_no: int,
@@ -105,41 +105,61 @@ def save_tile_triplet_as_tif(
     unet_mask: ArrayLike,
 ) -> None:
     """
-    Save original tile + ImageJ GT mask + U-Net mask as .tif files.
+    Save original tile + ImageJ GT mask + U-Net mask as .jpg files.
 
-    File names (in `out_dir`):
-        {tile_number:06d}.tif
-        {tile_number:06d}_imageJ.tif
-        {tile_number:06d}_unet.tif
-
-    Args
-    ----
-    out_dir:     Folder where the .tif files will be written.
-    tile_number: Integer used for the base filename (ascending index).
-    img:         Original image tile.  Can be numpy array or torch tensor.
-    imgj_mask:   ImageJ ground truth mask.  Same HxW (or CxHxW) shape.
-    unet_mask:   U-Net prediction mask.   Same HxW (or CxHxW) shape.
+    Files written:
+        {img_no}_{tile_no}.jpg
+        {img_no}_{tile_no}_imageJ.jpg
+        {img_no}_{tile_no}_unet.jpg
     """
 
     os.makedirs(out_dir, exist_ok=True)
 
-
+    # ---- image ----
     img_np = denormalize_image(img)
     img_np = to_numpy(img_np)
 
-    imgj_bin = instances_to_binary_uint8(imgj_mask)
-    unet_bin = instances_to_binary_uint8(imgj_mask)
+    # ensure [H,W,C] or [H,W]
+    if img_np.ndim == 3:  # [C,H,W] -> [H,W,C]
+        img_np = img_np.transpose(1, 2, 0)
+    elif img_np.ndim != 2:
+        raise ValueError(f"Unexpected image shape after denorm: {img_np.shape}")
 
+    # scale to uint8 for JPEG
+    img_min = img_np.min()
+    img_max = img_np.max()
+    if img_max > img_min:
+        img_np = (img_np - img_min) / (img_max - img_min)
+    img_uint8 = (img_np * 255).astype(np.uint8)
+
+    # convert to PIL image
+    if img_uint8.ndim == 2:
+        img_pil = Image.fromarray(img_uint8, mode="L")
+    elif img_uint8.shape[2] == 3:
+        img_pil = Image.fromarray(img_uint8, mode="RGB")
+    else:
+        # fallback: use first channel as grayscale
+        img_pil = Image.fromarray(img_uint8[..., 0], mode="L")
+
+    # ---- masks (binary, uint8) ----
+    imgj_bin = instances_to_binary_uint8(imgj_mask)
+    unet_bin = instances_to_binary_uint8(unet_mask)
+
+    # scale binary masks to 0/255 for viewing
+    imgj_pil = Image.fromarray(imgj_bin * 255, mode="L")
+    unet_pil = Image.fromarray(unet_bin * 255, mode="L")
+
+    # ---- filenames ----
     base = f"{img_no}_{tile_no}"
 
-    img_path = os.path.join(out_dir, f"{base}.tif")
-    imgj_path = os.path.join(out_dir, f"{base}_imageJ.tif")
-    unet_path = os.path.join(out_dir, f"{base}_unet.tif")
+    img_path = os.path.join(out_dir, f"{base}.jpg")
+    imgj_path = os.path.join(out_dir, f"{base}_imageJ.jpg")
+    unet_path = os.path.join(out_dir, f"{base}_unet.jpg")
 
-    # write as float32 (change dtype here if you prefer uint16, etc.)
-    tiff.imwrite(img_path, img_np.astype(np.float32).transpose((1,2,0)))
-    tiff.imwrite(imgj_path, imgj_bin)
-    tiff.imwrite(unet_path, unet_bin)
+    # ---- write ----
+    img_pil.save(img_path, format="JPEG", quality=80)
+    imgj_pil.save(imgj_path, format="JPEG", quality=80)
+    unet_pil.save(unet_path, format="JPEG", quality=80)
 
 def export_images(
     out_dir: str,
