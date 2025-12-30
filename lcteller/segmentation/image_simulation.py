@@ -74,6 +74,10 @@ def simulate_image(
     # --- cells (sharp ones inside the well) ---
     n_cells=150,
     cell_diameter=20,
+
+    large_cell_frac=0.0,              # fraction of inside-well cells that are "large"
+    large_cell_diameter_factor=1.5,   # large size = factor * cell_diameter
+
     frac_positive=0.5,
     color_jitter=0.07,
     sigma_in=(0.5, 1.0),
@@ -226,10 +230,26 @@ def simulate_image(
     img[inside] *= tex[inside, None].astype(np.float32)
 
     # ---------- place sharp cells inside the well ----------
-    rad = max(2, int(round(cell_diameter / 2)))
     n_pos = int(round(frac_positive * n_cells))
     labels = np.array([1]*n_pos + [0]*(n_cells - n_pos), dtype=np.int32)
     rng.shuffle(labels)
+
+    # ---------- per-cell diameters (two populations) + per-cell jitter ----------
+    # base diameters: small vs large
+    large_cell_frac = float(np.clip(large_cell_frac, 0.0, 1.0))
+    is_large = (rng.random(n_cells) < large_cell_frac)
+
+    diameters = np.full(n_cells, float(cell_diameter), dtype=np.float32)
+    diameters[is_large] *= float(large_cell_diameter_factor)
+
+    # per-cell jitter: sample N(1, 0.10) then clip to [0.8, 1.2] == ±20%
+    # (0.10 std => about 95% within ±20% before clipping)
+    jitter = rng.normal(1.0, 0.10, size=n_cells).astype(np.float32)
+    jitter = np.clip(jitter, 0.8, 1.2)
+    diameters *= jitter
+
+    # integer radii in pixels for packing/painting (>=2 px)
+    radii = np.maximum(2, np.round(diameters / 2.0).astype(np.int32))
 
     # area-uniform radius sampling with optional rim pull
     def sample_radius():
@@ -268,7 +288,10 @@ def simulate_image(
         th = sample_theta(r_s)
         y = int(round(cy + r_s * np.sin(th)))
         x = int(round(cx + r_s * np.cos(th)))
-        if not (rad < y < H - rad - 1 and rad < x < W - rad - 1):
+        i = len(centers)
+        ri = int(radii[i])
+
+        if not (ri < y < H - ri - 1 and ri < x < W - ri - 1):
             continue
 
         # enforce spacing only for rim-band points (sampling-time hint)
@@ -286,46 +309,74 @@ def simulate_image(
             is_rim.append(is_this_rim)
 
     while len(centers) < n_cells:
-        y = rng.integers(rad+1, H-rad-1)
-        x = rng.integers(rad+1, W-rad-1)
-        centers.append((int(y), int(x)))
-        is_rim.append(False)
+        i = len(centers)
+        ri = int(radii[i])
+        for _ in range(2000):
+            y = int(rng.integers(ri+1, H-ri-1))
+            x = int(rng.integers(ri+1, W-ri-1))
+            if np.sqrt((y - cy)**2 + (x - cx)**2) <= (R - wall_margin_px - ri):
+                centers.append((y, x))
+                is_rim.append(False)
+                break
+        else:
+            # if we failed a lot, just accept (rare)
+            centers.append((y, x))
+            is_rim.append(False)
 
     # ---------- resolve overlaps: push-apart circle packing (vectorized) ----------
-    min_sep = float(min_cell_sep_px if min_cell_sep_px is not None else 0.9 * cell_diameter)
-    min_sep = max(2.0, min_sep)
-    max_r_center = max(0.0, R - wall_margin_px - rad)
+    r_px = radii.astype(np.float32)  # (N,)
+    eps = 1e-6
+
+    # default: scale separation with cell size; preserves old "0.9*diameter" feel
+    if min_cell_sep_px is None:
+        min_sep_mat = 0.9 * (r_px[:, None] + r_px[None, :])  # (N,N)
+    else:
+        min_sep_scalar = float(min_cell_sep_px)
 
     cf = np.array(centers, dtype=np.float32)  # (N, 2): (y, x)
-    eps = 1e-6
     N = cf.shape[0]
 
     for _ in range(int(pack_iters)):
-        # pairwise vectors v_ij = c_i - c_j
         v = cf[:, None, :] - cf[None, :, :]            # (N, N, 2)
-        d = np.sqrt((v**2).sum(axis=2)) + eps          # (N, N)
-        M = (d < min_sep) & (d > 0)
+        d = np.sqrt((v**2).sum(axis=2))                # (N, N)
+        np.fill_diagonal(d, np.inf)                    # exclude self-pairs
+
+        if min_cell_sep_px is None:
+            M = d < min_sep_mat
+        else:
+            M = d < min_sep_scalar
 
         if not M.any():
             break
 
-        u = v / d[..., None]                            # unit dir (N, N, 2)
-        overlap = (min_sep - d) * M                     # (N, N)
-        disp = (u * overlap[..., None]).sum(axis=1)     # (N, 2)
+        # safe division (inf on diagonal -> 0 direction there)
+        u = v / (d[..., None] + eps)
 
+        # IMPORTANT: avoid (±inf) * 0 -> NaN
+        overlap = np.zeros_like(d, dtype=np.float32)
+        if min_cell_sep_px is None:
+            overlap[M] = (min_sep_mat[M] - d[M]).astype(np.float32)
+        else:
+            overlap[M] = (min_sep_scalar - d[M]).astype(np.float32)
+
+        disp = (u * overlap[..., None]).sum(axis=1)    # (N,2)
         cf += (pack_strength * 0.5) * disp
 
-        # keep inside bounds
-        cf[:, 0] = np.clip(cf[:, 0], rad+1, H - rad - 2)
-        cf[:, 1] = np.clip(cf[:, 1], rad+1, W - rad - 2)
+        # keep inside image bounds (per-cell)
+        cf[:, 0] = np.clip(cf[:, 0], r_px + 1, H - r_px - 2)
+        cf[:, 1] = np.clip(cf[:, 1], r_px + 1, W - r_px - 2)
 
-        # keep inside well margin
+        # keep inside well margin (per-cell)
         vy = cf[:, 0] - cy
         vx = cf[:, 1] - cx
         rr_c = np.sqrt(vy*vy + vx*vx) + eps
+
+        max_r_center = (R - wall_margin_px - r_px).astype(np.float32)
+        max_r_center = np.maximum(0.0, max_r_center)
+
         too_far = rr_c > max_r_center
-        if max_r_center > 0 and np.any(too_far):
-            s = (max_r_center / rr_c[too_far]).astype(np.float32)
+        if np.any(too_far):
+            s = (max_r_center[too_far] / rr_c[too_far]).astype(np.float32)
             cf[too_far, 0] = cy + vy[too_far] * s
             cf[too_far, 1] = cx + vx[too_far] * s
 
@@ -333,11 +384,21 @@ def simulate_image(
 
     # ---------- instance map (fast paint) ----------
     inst = np.zeros((H, W), dtype=np.int32)
-    r = int(rad)
-    yy_p, xx_p = np.mgrid[-r:r+1, -r:r+1]
-    disk_mask = (yy_p**2 + xx_p**2) <= r*r
+    disk_cache = {}
+
+    def get_disk_mask(r: int):
+        r = int(r)
+        m = disk_cache.get(r, None)
+        if m is None:
+            yy_p, xx_p = np.mgrid[-r:r+1, -r:r+1]
+            m = (yy_p**2 + xx_p**2) <= (r * r)
+            disk_cache[r] = m
+        return m
 
     for k_id, (y, x) in enumerate(centers, start=1):
+        r = int(radii[k_id - 1])
+        disk_mask = get_disk_mask(r)
+
         y0, y1 = y - r, y + r + 1
         x0, x1 = x - r, x + r + 1
         if y1 <= 0 or x1 <= 0 or y0 >= H or x0 >= W:
@@ -350,7 +411,6 @@ def simulate_image(
         m = disk_mask[sy0:sy1, sx0:sx1]
         sl = (slice(y0c, y1c), slice(x0c, x1c))
         write_mask = m & (rr[y0c:y1c, x0c:x1c] <= R)
-        # last-writer-wins is fine because we enforced min_sep
         inst[sl] = np.where(write_mask, k_id, inst[sl])
 
     # ---------- render sharp cells ----------
@@ -362,9 +422,11 @@ def simulate_image(
         sig = rng.uniform(*sigma_in) if rng.random() < focus_frac_in else rng.uniform(*sigma_out)
         final_sigmas[k_id] = sig
 
-        radius = int(np.ceil(max(2, 0.5 * cell_diameter + 3 * sig)))
+        d0 = float(diameters[k_id])
+        radius = int(np.ceil(max(2, 0.5 * d0 + 3 * sig)))
         yx = np.mgrid[-radius:radius+1, -radius:radius+1]
-        g = np.exp(-(yx[0]**2 + yx[1]**2) / (2 * (cell_diameter/6 + sig)**2)).astype(np.float32)
+        gsig = (d0 / 6.0 + sig)
+        g = np.exp(-(yx[0]**2 + yx[1]**2) / (2 * (gsig**2))).astype(np.float32)
         g /= g.max() + 1e-8
         amp = float(rng.uniform(0.9, 1.1))
 
@@ -377,10 +439,10 @@ def simulate_image(
         img[y0c:y1c, x0c:x1c, :] += amp * g[sy0:sy1, sx0:sx1][..., None] * col[None, None, :]
 
     # ---------- elongated ghosts OUTSIDE the wall (not in masks) ----------
-    def draw_elliptical_gaussian(dst, gy, gx, sig_minor, stretch, angle_rad, amp, col):
+    def draw_elliptical_gaussian(dst, gy, gx, sig_minor, stretch, angle_rad, amp, col, ref_diameter):
         sig_x = sig_minor * stretch
         sig_y = sig_minor
-        radius = int(np.ceil(ghost_dilate * (0.5 * cell_diameter + 3 * max(sig_x, sig_y))))
+        radius = int(np.ceil(ghost_dilate * (0.5 * float(ref_diameter) + 3 * max(sig_x, sig_y))))
         yy_l, xx_l = np.mgrid[-radius:radius+1, -radius:radius+1].astype(np.float32)
         ca, sa = np.cos(angle_rad), np.sin(angle_rad)
         xr =  ca*xx_l + sa*yy_l
@@ -413,15 +475,15 @@ def simulate_image(
                 sig0 = rng.uniform(*ghost_sigma)
 
                 amp0 = float(rng.uniform(*ghost_intensity))
-                draw_elliptical_gaussian(img, base_y, base_x, sig0, ghost_stretch, ang, amp0, col)
+                draw_elliptical_gaussian(img, base_y, base_x, sig0, ghost_stretch, ang, amp0, col, diameters[i])
 
-                step = max(2.0, 0.6 * cell_diameter)  # outward spacing per lobe
+                step = max(2.0, 0.6 * float(diameters[i]))  # outward spacing per lobe
                 amp = amp0 * ghost_trail_decay
                 for t in range(1, int(ghost_trail)):
                     gy = int(round(base_y + t * step * np.sin(ang)))
                     gx = int(round(base_x + t * step * np.cos(ang)))
                     sig_t = sig0 * (1.0 + 0.4*t)  # grow a bit along the trail
-                    draw_elliptical_gaussian(img, gy, gx, sig_t, ghost_stretch, ang, amp, col)
+                    draw_elliptical_gaussian(img, gy, gx, sig_t, ghost_stretch, ang, amp, col, diameters[i])
                     amp *= ghost_trail_decay
 
     # --- RADIAL REFLECTIONS (outside the well) ---
@@ -545,9 +607,12 @@ def simulate_image(
         in_focus_sigma_thresh = 1.15 * max(sigma_in)
 
     inst_all = inst.astype(np.int32)
-    final_sigmas = np.array([max(sigma_in) for _ in range(n_cells)], dtype=np.float32)
-    keep_ids = set(range(1, n_cells+1))
-    inst_in = np.where(np.vectorize(lambda v: v in keep_ids)(inst_all), inst_all, 0).astype(np.int32)
+
+    # decide which instances are "in focus"
+    thr = float(in_focus_sigma_thresh)
+    keep_ids = np.flatnonzero(final_sigmas <= thr) + 1  # ids are 1..n_cells
+
+    inst_in = np.where(np.isin(inst_all, keep_ids), inst_all, 0).astype(np.int32)
     cell_mask = (inst_in > 0)
 
     boundary = segmentation.find_boundaries(inst_in, mode="thick")

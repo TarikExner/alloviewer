@@ -263,6 +263,10 @@ class SimulatorConfig:
     # --- cells ---
     n_cells: Union[int, Tuple[int, int]] = (10, 2000)
     cell_diameter: Union[float, Tuple[float, float]] = (2.0, 12.0)
+
+    large_cell_frac: Union[float, Tuple[float, float]] = (0.0, 0.5)
+    large_cell_diameter_factor: Union[float, Tuple[float, float]] = (1.2, 2.0)
+
     frac_positive: Union[float, Tuple[float, float]] = (0.0, 1.0)
     color_jitter: Union[float, Tuple[float, float]] = (0.0, 0.2)
     sigma_in: Union[Tuple[float, float], Tuple[float, float]] = (0.5, 1.5)   # pass-through
@@ -367,6 +371,8 @@ class SimulatorConfig:
         # cells
         set_num("n_cells", integer=True)
         set_num("cell_diameter")
+        set_num("large_cell_frac")
+        set_num("large_cell_diameter_factor")
         set_num("frac_positive")
         set_num("color_jitter")
         set_passthrough("sigma_in")
