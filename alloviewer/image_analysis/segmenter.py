@@ -10,7 +10,7 @@ import torch
 from skimage import morphology, segmentation, measure, feature
 
 from .contracts import ISegmenter
-from .segmentation import (
+from ..dev.segmentation import (
     build_unet_cpu_small,
     build_unet_cpu_medium,
     build_unet_cpu_large,

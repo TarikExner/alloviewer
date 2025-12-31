@@ -16,24 +16,26 @@ image_filenames=[
 
 """
 import numpy as np
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import copy
-from .image_utils import load_images
-from .structs import (
+from .image_analysis.image_utils import load_images
+from .image_analysis.structs import (
     PlateLayout,
     ROIResult, 
     WellResult
 )
-from .segmenter import SegmenterUNetInference
-from .extractor import RGBExtractor
-from .calibrators import PCNCMedianCalibrator, PCNCGaussianRGCalibrator
-from .classifiers import ROIClassifier, ROIClassifierGaussian3Way
+from .image_analysis.segmenter import SegmenterUNetInference
+from .image_analysis.extractor import RGBExtractor
+from .image_analysis.calibrators import PCNCMedianCalibrator, PCNCGaussianRGCalibrator
+from .image_analysis.classifiers import ROIClassifier, ROIClassifierGaussian3Way
 
-from .qc import QCMonitor
+from .image_analysis.qc import QCMonitor
 
-from .config import UNET_CONFIG, INSTANCE_CONFIG
+from .image_analysis.config import UNET_CONFIG, INSTANCE_CONFIG
 
-from .utils import create_plate, frac_pos_raw
+from .image_analysis.utils import create_plate, frac_pos_raw
+
+from app.models import JOB_PROGRESS, JOB_RESULTS
 
 def _extract_roi_from_image(image: np.ndarray,
                             segmenter: SegmenterUNetInference,
@@ -73,12 +75,15 @@ def _extract_roi_from_image(image: np.ndarray,
 def run_job(
     layout: PlateLayout,
     image_order: List[str],
-    template_filename: str,
     image_filenames: List[str],
     data_dir: str,
-    unet_config: Optional[dict],
+    template_filename: Optional[str],
+    job_id: Optional[str] = None,
+    unet_config: Optional[dict] = UNET_CONFIG,
     qc: bool = False,
 ):
+    if not job_id:
+        job_id = "MY_JOB"
 
     if not unet_config:
         unet_config = copy.deepcopy(UNET_CONFIG)
@@ -98,8 +103,21 @@ def run_job(
     )
     plate = create_plate(layout, images, image_order, image_filenames)
 
+    wells_list = list(plate.get())
+    total = len(wells_list)
+
+    JOB_PROGRESS[job_id] = {
+      "status": "running",
+      "done": 0,
+      "total": total,
+      "current_well": None,
+      "done_wells": [],
+    }
+
     # 2) segmentation + feature extraction
-    for well in plate.get():
+    for well_idx, well in enumerate(plate.get()):
+        JOB_PROGRESS[job_id]["current_well"] = well.well_id
+        JOB_PROGRESS[job_id]["done"] = well_idx
         print(f"Calculating well {well.well_id}")
         image = well.image
 
@@ -114,6 +132,8 @@ def run_job(
             well_id = well.well_id,
             qc = qc
         )
+        JOB_PROGRESS[job_id]["done_wells"].append(well.well_id)
+        
 
     # 3) build PC / NC sets for calibration
     pc = [per_well[w.well_id].rois for w in plate.get("positive")]
@@ -158,8 +178,16 @@ def run_job(
 
         wr.corrected_frac_pos = corr
 
-    return {
+
+    result = {
         "calib": calib,
         "wells": {wid: wr.summary() for wid, wr in per_well.items()},
     }
+
+    JOB_RESULTS[job_id] = result
+    JOB_PROGRESS[job_id]["status"] = "done"
+    JOB_PROGRESS[job_id]["done"] = total
+    JOB_PROGRESS[job_id]["current_well"] = None
+
+    return result
 

@@ -41,10 +41,10 @@ PRA_GENERIC_IMAGE_ORDER=[
 def frac_pos_raw(wr: WellResult) -> float:
     """Raw fraction positive in percent (0–100) for a WellResult."""
     n_pos = sum(1 for r in wr.rois if r.label == "pos")
-    n_rois = len(wr.rois)
-    if n_rois == 0:
+    n_neg = sum(1 for r in wr.rois if r.label == "neg")
+    if n_neg == 0:
         return np.nan
-    return 100.0 * (n_pos / n_rois)
+    return 100.0 * (n_pos / n_neg)
 
 def convert_frac_pos_to_score(frac_pos: int) -> int:
     if frac_pos <= 10:

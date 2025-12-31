@@ -1,0 +1,104 @@
+PAPER FIGURE
+
+Visualize image simulation parameters
+send CA simulated test images
+
+
+T-B comparison:
+%pos between cell type
+RGB-values for T- and B-cells -> suggest in T/B which cells are which
+
+
+
+SPECIFICITIES
+
+POLY: multiple positive wells, do not translate to a specific antigen
+UNSPECIFIC
+NEGATIVE
+POSITIVE
+
+
+
+In the order of appearance
+
+IMAGE SEGMENTATION
+
+    create validation pipeline
+    create validation pipeline with real-life-images
+
+
+QC Parameters per Well
+    
+    Cell Size
+    Cell Roundness/Eccentricity
+    Doublet Rate
+    Heavy Clustering
+    Overcrowding
+    Saturated pixels per well
+    Channel dynamic range
+    Blur/Focus
+    Background mean/sd
+    Radial background slope
+    Bleed ratios
+    Edge enrichment / area usage
+    Well Size
+    
+
+
+QC Parameters per Plate
+
+    cell density
+    Replicate Consistency!
+    Background illumination
+
+    same as per-well-QC
+
+
+WEBSITE
+
+    DTT-version of the assay, ideally side-by-side (only crossmatch)
+
+    Create algorithm to determine the antibody specificity!
+        - positive, negative, polyspecific (DD unspecific)
+
+    Implement different languages (German, English, French, Spanish)
+    
+
+FINAL RESULTS
+- well-specific override
+- Final output:
+    CM:
+        - ungetrennt
+        - nur B
+        - nur T
+        - ungetrennt + DTT
+        - nur B + DTT
+        - nur T + DTT
+        Gesamtbewertung:
+
+    AK-Spez
+        - LCT positiv/negativ
+        - positiv für XXX
+        - unspezifisch reaktiv
+        - Scorings per Well
+        - Durchschnittsparameter
+
+
+    QC-Parameter
+        - PC/NC Stats
+        - 
+
+NOTES
+
+
+
+
+
+
+
+
+
+
+
+
+

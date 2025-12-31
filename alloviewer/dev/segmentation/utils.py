@@ -419,6 +419,19 @@ def compute_rgb_channel_stats_cv2(
     exts: which file extensions to include
     returns: mean, std (each shape (3,))
     """
+
+    if folders is None:
+        folders = [
+            "./ext_images/20251106_25722269_iPhone_XR_JPEG",
+            "./ext_images/20251106_25722169_iPhone_XR_JPEG",
+            "./ext_images/20251106_25722269_iPhone_XR_JPEG",
+            "./ext_images/20251107_25065521_GooglePixel",
+            "./ext_images/20251107_25722332_GooglePixel",
+            "./ext_images/20251014_25719960",
+            "./ext_images/20251014_25720084",
+            "./ext_images/20251107_25065521",
+            "./ext_images/20251107_25722332"
+        ]
     folders = [Path(f) for f in folders]
 
     # Collect all image paths first so tqdm can show a proper progress bar
