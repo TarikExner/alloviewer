@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence
 
 import numpy as np
-import pandas as pd
 from torch.utils.data import DataLoader
 
 from ..segmentation.utils import collate_no_meta
-from ..segmenter import SegmenterUNet, SegmenterConfig, InstanceSegmenterConfig
+from ...image_analysis.segmenter import SegmenterUNet, SegmenterConfig, InstanceSegmenterConfig
 
 import torch
 
@@ -18,7 +17,6 @@ from ..segmentation import TiledH5Dataset, UNET_MEAN, UNET_STD
 from .config import TrainingValidationConfig
 
 from typing import Union
-import tifffile as tiff
 from PIL import Image
 ArrayLike = Union[np.ndarray, torch.Tensor]
 
