@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-import glob
 import csv
 import math
 import numpy as np
@@ -11,7 +10,7 @@ from tqdm import tqdm
 from scipy import ndimage as ndi
 from skimage import filters, measure, morphology, exposure
 
-from typing import List, Tuple, Union
+from typing import Union
 
 import cv2
 
@@ -266,29 +265,6 @@ def crop_sim_meta_to_tile(meta, y0, x0, h, w):
         new_meta["params"] = new_params
 
     return new_meta
-
-
-def find_pairs_strict(root_dir: str) -> List[Tuple[str, str]]:
-    exts = (".tif", ".tiff")
-    files = [
-        p
-        for ext in exts
-        for p in glob.glob(os.path.join(root_dir, f"**/*{ext}"), recursive=True)
-    ]
-    pairs: List[Tuple[str, str]] = []
-    for img_path in files:
-        base = os.path.basename(img_path)
-        stem, _ = os.path.splitext(base)
-        if stem.lower().endswith("_mask"):
-            continue
-        d = os.path.dirname(img_path)
-        m1 = os.path.join(d, f"{stem}_mask.tif")
-        m2 = os.path.join(d, f"{stem}_mask.tiff")
-        mask_path = m1 if os.path.exists(m1) else (m2 if os.path.exists(m2) else None)
-        if mask_path is not None:
-            pairs.append((os.path.abspath(img_path), os.path.abspath(mask_path)))
-    pairs.sort()
-    return pairs
 
 def heal_watershed_gaps(mask: np.ndarray, radius: int = 1) -> np.ndarray:
     """

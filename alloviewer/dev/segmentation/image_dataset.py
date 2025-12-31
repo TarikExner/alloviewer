@@ -1,4 +1,5 @@
 import os
+import glob
 import math
 import numpy as np
 import torch
@@ -7,7 +8,7 @@ import cv2
 from skimage.segmentation import relabel_sequential
 from skimage.measure import label as sklabel
 
-from typing import Optional
+from typing import Optional, List, Tuple
 
 from .image_simulation import simulate_image, apply_camera_style
 from .utils import (
@@ -21,7 +22,6 @@ from .utils import (
     crop_rect,
     pad_to_square,
     resize_map,
-    find_pairs_strict,
     heal_watershed_gaps,
     guess_data_csv_path,
     load_com_labels_csv,
@@ -625,7 +625,7 @@ class ExternalCellsTilesDataset(BaseCellsTilesDataset):
         self.root_dir = root_dir
         self.heal_radius = int(heal_radius)
 
-        self.pairs = find_pairs_strict(root_dir)
+        self.pairs = self.find_pairs_strict(root_dir)
         if not self.pairs:
             raise RuntimeError("no (img, img_mask) pairs found in external folder")
 
@@ -633,6 +633,35 @@ class ExternalCellsTilesDataset(BaseCellsTilesDataset):
         return len(self.pairs)
 
     # ---- IO helpers ----
+    def find_pairs_strict(self, root_dir: str) -> List[Tuple[str, str]]:
+        exts = (".tif", ".tiff")
+        files = [
+            p
+            for ext in exts
+            for p in glob.glob(os.path.join(root_dir, f"**/*{ext}"), recursive=True)
+        ]
+
+        pairs: List[Tuple[str, str]] = []
+        for img_path in files:
+            base = os.path.basename(img_path)
+            stem, _ = os.path.splitext(base)
+
+            # skip masks themselves if they got indexed
+            if stem.lower().endswith("_mask"):
+                continue
+
+            img_dir = os.path.dirname(img_path)                  # .../<folder>
+            masks_dir = img_dir + "_masks"                       # .../<folder>_masks
+
+            m1 = os.path.join(masks_dir, f"{stem}_mask.tif")
+            m2 = os.path.join(masks_dir, f"{stem}_mask.tiff")
+            mask_path = m1 if os.path.exists(m1) else (m2 if os.path.exists(m2) else None)
+
+            if mask_path is not None:
+                pairs.append((os.path.abspath(img_path), os.path.abspath(mask_path)))
+
+        pairs.sort()
+        return pairs
 
     def _detect_bitdepth_u16(self, a: np.ndarray, p: float = 99.9):
         # a: uint16 HxW or HxWxC
@@ -734,7 +763,6 @@ class ExternalCellsTilesDataset(BaseCellsTilesDataset):
         return img_f32, msk_bin, info
 
     # ---- main __getitem__ ----
-
     def __getitem__(self, idx: int):
         img_path, mask_path = self.pairs[idx]
         img, msk, read_info = self._read_image_and_mask(img_path, mask_path)
