@@ -9,8 +9,10 @@ from tqdm import tqdm
 
 from scipy import ndimage as ndi
 from skimage import filters, measure, morphology, exposure
+from skimage.segmentation import watershed
+from skimage.segmentation import relabel_sequential
 
-from typing import Union
+from typing import Union, List, Tuple
 
 import cv2
 
@@ -267,79 +269,87 @@ def crop_sim_meta_to_tile(meta, y0, x0, h, w):
     return new_meta
 
 def heal_watershed_gaps(mask: np.ndarray, radius: int = 1) -> np.ndarray:
-    """
-    Fix 1px (or very thin) background lines produced by ImageJ watershed.
-
-    Steps:
-      1. binarize (in case it's 8-bit 0/255 or 0/1/2/...),
-      2. binary closing with a small disk → fills cuts *inside* the mask,
-      3. AND with a dilated version of the original to avoid growing too far out.
-    """
+    """Return a healed *binary* foreground mask (no instance labels)."""
     mask_bin = (mask > 0)
 
     if radius <= 0:
-        return mask_bin.astype(np.uint8)
+        return mask_bin
 
     selem = morphology.disk(int(radius))
 
-    # fills the splits
     closed = morphology.binary_closing(mask_bin, selem)
+    grown  = morphology.binary_dilation(mask_bin, selem)
 
-    # limit growth — stay within original mask + radius
-    grown = morphology.binary_dilation(mask_bin, selem)
-
+    # keep it from growing too far outward
     healed = np.logical_and(closed, grown)
-    return healed.astype(np.uint8)
+    return healed
+
+def seeded_watershed_from_mask(mask_healed: np.ndarray, seeds: np.ndarray) -> np.ndarray:
+    """
+    Expand seed labels into mask_healed using distance-transform watershed.
+    Keeps instances separate even if mask_healed is connected.
+    """
+    mask_healed = mask_healed.astype(bool)
+
+    # make sure seeds are inside the allowed region
+    markers = seeds.copy()
+    markers[~mask_healed] = 0
+
+    # distance inside foreground; watershed on -distance expands seeds to fill mask
+    dist = ndi.distance_transform_edt(mask_healed)
+    inst = watershed(-dist, markers=markers, mask=mask_healed)
+
+    inst = inst.astype(np.int32)
+    inst, _, _ = relabel_sequential(inst)
+    return inst
 
 # --- helpers for external COM/labels -------------------------------------
 
-def guess_data_csv_path(img_path: str, mask_path: str) -> str:
+def load_com_labels_csv(
+    image_name: str,
+    folder: str,
+    csv_path
+):
     """
-    Try to locate the per-image CSV saved by ImageJ:
-      Preferred: {mask_base_without '_mask'}_data.csv
-      Fallback : {image_base}_data.csv
-    """
-    d_mask, mname = os.path.split(mask_path)
-    base_mask, ext = os.path.splitext(mname)
-    if base_mask.endswith("_mask"):
-        base = base_mask[:-5]  # strip "_mask"
-        cand = os.path.join(d_mask, f"{base}_data.csv")
-        if os.path.exists(cand):
-            return cand
+    Read rows from ONE combined CSV (ROOT/results/*.csv or a merged file)
+    with columns:
+      Folder, file_name, X, Y, mean_red, mean_green, mean_blue
 
-    d_img, iname = os.path.split(img_path)
-    base_img, _ = os.path.splitext(iname)
-    cand2 = os.path.join(d_img, f"{base_img}_data.csv")
-    return cand2  # may or may not exist; caller checks
+    Filters by (Folder == folder) AND (file_name == image_name).
 
-
-def load_com_labels_csv(csv_path: str):
-    """
-    Read X,Y,label from {image}_data.csv.
     Returns:
-      centers: List[(cy, cx)]  # (row, col) in image coords
-      labels : List[int]       # 1=pos, 0=neg, -1=ambiguous
+      centers: List[(cy, cx)]                 # (row, col)
+      means  : List[(mean_r, mean_g, mean_b)] # floats
     """
-    centers = []
-    labels = []
+    centers: List[Tuple[int, int]] = []
+    means: List[Tuple[float, float, float]] = []
+
     if not os.path.exists(csv_path):
-        return centers, labels  # empty → caller can fallback
+        return centers, means
+
+    # normalize for safer matching (optional but helps)
+    folder_key = folder.strip()
+    name_key = image_name.strip()
 
     with open(csv_path, "r", newline="") as f:
         reader = csv.DictReader(f)
-        # Expect headers X,Y,label
+
         for row in reader:
             try:
-                # macro saved X (col), Y (row)
+                if row.get("Folder", "").strip() != folder_key:
+                    continue
+                if row.get("file_name", "").strip() != name_key:
+                    continue
+
                 cx = float(row["X"])
                 cy = float(row["Y"])
-                labs = int(float(row["label"]))
+
                 centers.append((int(round(cy)), int(round(cx))))
-                labels.append(int(labs))
+
             except Exception:
-                # skip malformed rows
                 continue
-    return centers, labels
+
+    return centers
 
 def crop_external_meta_to_tile(meta_full: dict, y0: int, x0: int, h: int, w: int):
     """

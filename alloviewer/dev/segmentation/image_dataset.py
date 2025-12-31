@@ -23,7 +23,7 @@ from .utils import (
     pad_to_square,
     resize_map,
     heal_watershed_gaps,
-    guess_data_csv_path,
+    seeded_watershed_from_mask,
     load_com_labels_csv,
     crop_external_meta_to_tile,
 )
@@ -768,45 +768,43 @@ class ExternalCellsTilesDataset(BaseCellsTilesDataset):
         img, msk, read_info = self._read_image_and_mask(img_path, mask_path)
         H, W = msk.shape
 
-        # heal watershed gaps if wanted
-        msk_healed = heal_watershed_gaps(msk, radius=self.heal_radius)
+        # start from the raw mask
+        mask_bin = (msk > 0).astype(np.uint8)
 
-        # instances from mask
-        inst_full = sklabel(msk_healed, connectivity=1).astype(np.int32)
-        inst_full, _, _ = relabel_sequential(inst_full)
+        # seeds from the *unhealed* separated mask
+        seeds = sklabel(mask_bin, connectivity=1).astype(np.int32)
+        seeds, _, _ = relabel_sequential(seeds)
+
+        # heal only the *binary* mask (fills 1px cracks)
+        mask_healed = heal_watershed_gaps(mask_bin, radius=self.heal_radius)
+
+        # re-grow labels into healed mask without merging instances
+        inst_full = seeded_watershed_from_mask(mask_healed, seeds)
 
         # try to load COM+labels CSV
-        csv_path = guess_data_csv_path(img_path, mask_path)
-        centers_csv, labels_csv = load_com_labels_csv(csv_path)
+        d_img, iname = os.path.split(img_path)
+        folder = os.path.basename(d_img)
+        input_folder = os.path.dirname(d_img)
+        results_csv_path = os.path.join(input_folder, "results.csv")
+        centers_csv = load_com_labels_csv(iname, folder, results_csv_path)
 
         # centers: prefer CSV; fallback to instance centroids
         if centers_csv:
             centers_full = centers_csv
-            labels_full = labels_csv
         else:
             centers_full = self._compute_centers_from_instances(inst_full)
-            labels_full = [0 for _ in range(len(centers_full))]
+            print("did it from .csv file!")
 
         full_meta = {
             "src_path": img_path,
             "mask_path": mask_path,
-            "data_csv": csv_path if os.path.exists(csv_path) else "",
+            "data_csv": results_csv_path if os.path.exists(results_csv_path) else "",
             "H_in": int(H),
             "W_in": int(W),
             "n_cells": int(inst_full.max()),
             "centers": [(int(y), int(x)) for (y, x) in centers_full],
-            "labels": [int(v) for v in labels_full],  # 1/0/-1
             "read_info": read_info,
         }
-
-        n_cells_full = len(centers_full)
-        if n_cells_full > 0 and len(labels_full) == n_cells_full:
-            frac_positive_full = float(
-                np.mean([1 if v == 1 else 0 for v in labels_full])
-            )
-        else:
-            frac_positive_full = 0.0
-        full_meta["frac_positive"] = frac_positive_full
 
         # enumerate tiles
         th = self.target
