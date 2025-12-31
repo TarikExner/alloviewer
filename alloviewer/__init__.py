@@ -1,30 +1,30 @@
-from image_analysis.extractor import (
+from .image_analysis.extractor import (
     RGBExtractor
 )
 
-from image_analysis.calibrators import (
+from .image_analysis.calibrators import (
     PCNCMedianCalibrator,
     PCNCMeanCalibrator,
     PCNCGaussianRGCalibrator,
 )
 
-from image_analysis.classifiers import (
+from .image_analysis.classifiers import (
     ROIClassifier,
     ROIClassifierNCUpper,
     ROIClassifierPCLower,
     ROIClassifierGaussian3Way
 )
 
-from image_analysis.segmenter import (
+from .image_analysis.segmenter import (
     DummySegmenter,
     DummyByOrderSegmenter,
     SegmenterUNet,
     InstanceSegmenter
 )
 
-from dev.segmentation import simulate_image
+from .dev.segmentation import simulate_image
 
-from image_analysis.structs import Plate, WellImage
+from .image_analysis.structs import Plate, WellImage
 
 
 __all__ = [
