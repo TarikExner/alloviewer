@@ -1,9 +1,8 @@
 // === Batch mask + COM + per-ROI channel means (recursive) ===
-// Outputs per image:
-//   1) <base>_mask.tif
-//   2) <base>_data.csv  columns: X,Y,mean_red,mean_green,mean_blue
-// Master at root:
-//   master_stats.csv    columns: image_path,image_name,n_cells
+// Masks: saved into sibling folder "<folder>_masks" next to each image folder
+// CSVs : saved into ROOT/results/ with ascending 5-digit IDs (00001.csv, ...)
+// Per-image CSV columns: Folder,file_name,X,Y,mean_red,mean_green,mean_blue
+// Master CSV at root: master_stats.csv with only n_cells
 
 // ------ CONFIG ------
 minSize = 10;    // px
@@ -19,11 +18,20 @@ if (rstr == "null" || rstr == "") {
     exit();
 }
 
+sep = pathSep(root);
+
+// Global results folder at root
+resultsDir = root + "results" + sep;
+if (!File.isDirectory(resultsDir)) File.makeDirectory(resultsDir);
+
 // Master CSV at root (only n_cells)
 masterPath = root + "master_stats.csv";
 if (!File.exists(masterPath)) {
-    File.saveString("image_path,image_name,n_cells\n", masterPath);
+    File.saveString("n_cells\n", masterPath);
 }
+
+// Global CSV counter (ascending across the whole run)
+csvCounter = 1;
 
 setBatchMode(true);
 
@@ -61,13 +69,30 @@ function processImage(dir, name) {
     roiManager("Reset");
     run("Clear Results");
 
+    // CSV id and path (global ascending)
+    csvId = pad5(csvCounter);
+    dataCsvPath = resultsDir + csvId + ".csv";
+
+    // Folder name only (last folder in path)
+    folderName = basename(stripTrailingSlash(dir));
+
+    // Masks folder: sibling "<dir_without_slash>_masks/"
+	localSep = pathSep(dir);
+	
+	dirNoSlash = dir;
+	if (endsWith(dirNoSlash, "/") || endsWith(dirNoSlash, "\\")) {
+	    dirNoSlash = substring(dirNoSlash, 0, lengthOf(dirNoSlash)-1);
+	}
+	
+	masksDir = dirNoSlash + "_masks" + localSep;
+    if (!File.isDirectory(masksDir)) File.makeDirectory(masksDir);
+
     open(dir + name);
     origTitle = getTitle();
     getDimensions(width, height, channels, slices, frames);
 
     base = stripExt(name);
-    maskPath    = dir + base + "_mask.tif";
-    dataCsvPath = dir + base + "_data.csv"; // X,Y,mean_red,mean_green,mean_blue
+    maskPath = masksDir + base + "_mask.tif";
 
     // Set Scale AFTER opening the image (avoids error)
     run("Set Scale...", "distance=0 known=0 pixel=1 unit=pixel");
@@ -83,15 +108,18 @@ function processImage(dir, name) {
     if (greenTitle == "") greenTitle = findChannelWindow(origTitle, "c2");
     if (blueTitle == "")  blueTitle  = findChannelWindow(origTitle, "c3");
 
-    // If we can't segment (need at least red+green), write empty outputs and exit
+    // Need at least red+green for segmentation
     if (redTitle == "" || greenTitle == "") {
         saveEmptyMaskAndCSV(width, height, maskPath, dataCsvPath);
-        appendMaster(dir + name, base, 0);
+        appendMaster(0);
+
         closeAllLike(origTitle);
+
+        csvCounter++; // still consume an ID
         return;
     }
 
-    // Make read-only duplicates for measurement (like your second macro)
+    // Make read-only duplicates for measurement
     selectWindow(redTitle);
     run("Duplicate...", "title=" + base + "-red-read");
     readRedTitle = getTitle();
@@ -135,9 +163,11 @@ function processImage(dir, name) {
     n = roiManager("count");
 
     if (n == 0) {
-        if (filteredMaskTitle != "") { safeClose(filteredMaskTitle); }
+        if (filteredMaskTitle != "") safeClose(filteredMaskTitle);
+
+        // still save outputs
         saveEmptyMaskAndCSV(width, height, maskPath, dataCsvPath);
-        appendMaster(dir + name, base, 0);
+        appendMaster(0);
 
         // cleanup
         safeClose(segTitle);
@@ -145,6 +175,8 @@ function processImage(dir, name) {
         safeClose(readGreenTitle);
         safeClose(readBlueTitle);
         closeAllLike(origTitle);
+
+        csvCounter++;
         return;
     }
 
@@ -164,7 +196,7 @@ function processImage(dir, name) {
     selectWindow(segTitle);
     for (r = 0; r < n; r++) {
         roiManager("Select", r);
-        run("Measure"); // XM, YM (also Mean, but we ignore it here)
+        run("Measure");
     }
     comX = newArray(n); comY = newArray(n);
     for (r = 0; r < n; r++) {
@@ -172,25 +204,19 @@ function processImage(dir, name) {
         comY[r] = getResult("YM", r);
     }
 
-    // -------- Mean intensities on RED, GREEN, BLUE (read-only duplicates) --------
+    // -------- Mean intensities on read duplicates --------
     // RED
     redMeans = newArray(n);
     run("Clear Results");
     selectWindow(readRedTitle);
-    for (r = 0; r < n; r++) {
-        roiManager("Select", r);
-        run("Measure");
-    }
+    for (r = 0; r < n; r++) { roiManager("Select", r); run("Measure"); }
     for (r = 0; r < n; r++) redMeans[r] = getResult("Mean", r);
 
     // GREEN
     greenMeans = newArray(n);
     run("Clear Results");
     selectWindow(readGreenTitle);
-    for (r = 0; r < n; r++) {
-        roiManager("Select", r);
-        run("Measure");
-    }
+    for (r = 0; r < n; r++) { roiManager("Select", r); run("Measure"); }
     for (r = 0; r < n; r++) greenMeans[r] = getResult("Mean", r);
 
     // BLUE (if missing, fill with -1)
@@ -198,23 +224,17 @@ function processImage(dir, name) {
     if (readBlueTitle != "") {
         run("Clear Results");
         selectWindow(readBlueTitle);
-        for (r = 0; r < n; r++) {
-            roiManager("Select", r);
-            run("Measure");
-        }
+        for (r = 0; r < n; r++) { roiManager("Select", r); run("Measure"); }
         for (r = 0; r < n; r++) blueMeans[r] = getResult("Mean", r);
     } else {
         for (r = 0; r < n; r++) blueMeans[r] = -1;
     }
-    
-    folderName = stripTrailingSlash(dir);
-	folderName = basename(folderName);
 
-    // -------- SAVE per-image CSV: X,Y,mean_red,mean_green,mean_blue --------
+    // -------- SAVE per-image CSV into ROOT/results/ as 5-digit ID --------
     saveDataCsv(dataCsvPath, folderName, name, comX, comY, redMeans, greenMeans, blueMeans);
 
     // -------- Master stats (only n_cells) --------
-    appendMaster(dir + name, base, n);
+    appendMaster(n);
 
     // -------- CLEANUP --------
     safeClose(segTitle);
@@ -228,6 +248,8 @@ function processImage(dir, name) {
     run("Clear Results");
     run("Collect Garbage");
     call("java.lang.System.gc");
+
+    csvCounter++;
 }
 
 // ----- Save helpers -----
@@ -258,8 +280,8 @@ function saveDataCsv(path, folder, fileName, xs, ys, mR, mG, mB) {
     File.saveString(txt, path);
 }
 
-function appendMaster(imagePath, imageName, nCells) {
-    File.append(imagePath + "," + imageName + "," + nCells + "\n", masterPath);
+function appendMaster(nCells) {
+    File.append(nCells + "\n", masterPath);
 }
 
 // ----- Utilities -----
@@ -267,7 +289,6 @@ function ensureRoiManager() {
     if (!isOpen("ROI Manager")) run("ROI Manager...");
 }
 
-// Try to find a window belonging to this image that matches a channel tag
 function findChannelWindow(base, tag) {
     possibilities = newArray(
         base + " (" + tag + ")",
@@ -288,7 +309,6 @@ function findChannelWindow(base, tag) {
     return "";
 }
 
-// Close all windows related to a given base title
 function closeAllLike(base) {
     titles = getList("image.titles");
     baseLower  = toLowerCase(base);
@@ -315,7 +335,6 @@ function closeAllLike(base) {
     }
 }
 
-// Return the newly created window title after an operation
 function findNewWindow(before, after) {
     for (i = 0; i < after.length; i++) {
         exists = false;
@@ -327,7 +346,6 @@ function findNewWindow(before, after) {
     return "";
 }
 
-// Drop extension from filename
 function stripExt(f) {
     dot = lastIndexOf(f, ".");
     if (dot < 0) return f;
@@ -351,6 +369,18 @@ function basename(p) {
     last = lastIndexOf(p, "/");
     if (last < 0) return p;
     return substring(p, last+1);
+}
+
+// Decide which separator is used in a path string
+function pathSep(p) {
+    if (indexOf(p, "\\") >= 0) return "\\";
+    return "/";
+}
+
+function pad5(n) {
+    s = "" + n;
+    while (lengthOf(s) < 5) s = "0" + s;
+    return s;
 }
 
 function d2(x) { return toString(round(x*100)/100); }
