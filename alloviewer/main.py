@@ -18,7 +18,7 @@ image_filenames=[
 import numpy as np
 from typing import List, Optional, Dict, Any
 import copy
-from .image_analysis.image_utils import load_images
+from .image_analysis import load_images
 from .image_analysis.structs import (
     PlateLayout,
     ROIResult, 
