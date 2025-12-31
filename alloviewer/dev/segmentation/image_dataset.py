@@ -791,9 +791,9 @@ class ExternalCellsTilesDataset(BaseCellsTilesDataset):
         # centers: prefer CSV; fallback to instance centroids
         if centers_csv:
             centers_full = centers_csv
+            print("did it from .csv file!")
         else:
             centers_full = self._compute_centers_from_instances(inst_full)
-            print("did it from .csv file!")
 
         full_meta = {
             "src_path": img_path,
