@@ -78,6 +78,12 @@ def simulate_image(
     large_cell_frac=0.0,              # fraction of inside-well cells that are "large"
     large_cell_diameter_factor=1.5,   # large size = factor * cell_diameter
 
+    # --- cells: shape + brightness ---
+    cell_ellipse_enable=True,
+    cell_axis_jitter=0.20,          # ±20% axis ratio
+    cell_random_rotation=True,      # random rotation angle
+    cell_intensity_range=(0.70, 1.05),  # per-cell brightness multiplier (was ~0.9..1.1)
+
     frac_positive=0.5,
     color_jitter=0.07,
     sigma_in=(0.5, 1.0),
@@ -223,11 +229,20 @@ def simulate_image(
         img += rings[..., None] * bg_color[None, None, :]
 
     # small background texture inside the well
-    tex = rng.normal(0, 1.0, size=(H, W)).astype(np.float32)
-    tex = blur(tex, 6.0)
-    tex = (tex - tex.min()) / (tex.ptp() + 1e-8)
-    tex = 0.92 + 0.16 * tex
-    img[inside] *= tex[inside, None].astype(np.float32)
+    tex1 = rng.normal(0, 1.0, size=(H, W)).astype(np.float32)   # fine
+    tex2 = rng.normal(0, 1.0, size=(H, W)).astype(np.float32)   # coarse
+
+    tex1 = blur(tex1, 2.0)
+    tex2 = blur(tex2, 12.0)
+
+    tex = 0.65 * tex1 + 0.35 * tex2
+    tex = (tex - tex.mean()) / (tex.std() + 1e-6)
+
+    # multiplicative speckle strength (increase for more “grain”)
+    tex_mul = 0.18
+    tex = np.clip(1.0 + tex_mul * tex, 0.6, 1.6).astype(np.float32)
+
+    img[inside] *= tex[inside, None]
 
     # ---------- place sharp cells inside the well ----------
     n_pos = int(round(frac_positive * n_cells))
@@ -250,6 +265,20 @@ def simulate_image(
 
     # integer radii in pixels for packing/painting (>=2 px)
     radii = np.maximum(2, np.round(diameters / 2.0).astype(np.int32))
+
+    # ---------- per-cell ellipse params ----------
+    if cell_ellipse_enable:
+        # axis ratio around 1.0, clipped to [1-ax, 1+ax]
+        axis_ratio = rng.uniform(1.0 - cell_axis_jitter, 1.0 + cell_axis_jitter, size=n_cells).astype(np.float32)
+        axis_ratio = np.clip(axis_ratio, 1.0 - cell_axis_jitter, 1.0 + cell_axis_jitter)
+
+        if cell_random_rotation:
+            theta = rng.uniform(0.0, 2.0*np.pi, size=n_cells).astype(np.float32)
+        else:
+            theta = np.zeros(n_cells, dtype=np.float32)
+    else:
+        axis_ratio = np.ones(n_cells, dtype=np.float32)
+        theta = np.zeros(n_cells, dtype=np.float32)
 
     # area-uniform radius sampling with optional rim pull
     def sample_radius():
@@ -324,8 +353,10 @@ def simulate_image(
             is_rim.append(False)
 
     # ---------- resolve overlaps: push-apart circle packing (vectorized) ----------
-    r_px = radii.astype(np.float32)  # (N,)
+    # effective radius = major axis scale * radius (keeps overlaps similar to round case)
+    r_px = radii.astype(np.float32) * np.sqrt(np.maximum(axis_ratio, 1.0/axis_ratio)).astype(np.float32)
     eps = 1e-6
+
 
     # default: scale separation with cell size; preserves old "0.9*diameter" feel
     if min_cell_sep_px is None:
@@ -384,23 +415,27 @@ def simulate_image(
 
     # ---------- instance map (fast paint) ----------
     inst = np.zeros((H, W), dtype=np.int32)
-    disk_cache = {}
 
-    def get_disk_mask(r: int):
-        r = int(r)
-        m = disk_cache.get(r, None)
-        if m is None:
-            yy_p, xx_p = np.mgrid[-r:r+1, -r:r+1]
-            m = (yy_p**2 + xx_p**2) <= (r * r)
-            disk_cache[r] = m
-        return m
+    def ellipse_mask(radius, ratio, angle):
+        # keep area roughly constant: a*b = radius^2
+        s = float(np.sqrt(ratio))
+        a = float(radius) * s       # semi-major
+        b = float(radius) / s       # semi-minor
+
+        r_box = int(np.ceil(max(a, b)))
+        yy_p, xx_p = np.mgrid[-r_box:r_box+1, -r_box:r_box+1].astype(np.float32)
+        ca, sa = np.cos(angle), np.sin(angle)
+        xr =  ca*xx_p + sa*yy_p
+        yr = -sa*xx_p + ca*yy_p
+        m = (xr*xr)/(a*a + 1e-8) + (yr*yr)/(b*b + 1e-8) <= 1.0
+        return m, r_box
 
     for k_id, (y, x) in enumerate(centers, start=1):
         r = int(radii[k_id - 1])
-        disk_mask = get_disk_mask(r)
+        m, r_box = ellipse_mask(r, float(axis_ratio[k_id - 1]), float(theta[k_id - 1]))
 
-        y0, y1 = y - r, y + r + 1
-        x0, x1 = x - r, x + r + 1
+        y0, y1 = y - r_box, y + r_box + 1
+        x0, x1 = x - r_box, x + r_box + 1
         if y1 <= 0 or x1 <= 0 or y0 >= H or x0 >= W:
             continue
         y0c, y1c = max(0, y0), min(H, y1)
@@ -408,9 +443,10 @@ def simulate_image(
         sy0, sy1 = y0c - y0, y1c - y0
         sx0, sx1 = x0c - x0, x1c - x0
 
-        m = disk_mask[sy0:sy1, sx0:sx1]
+        m_loc = m[sy0:sy1, sx0:sx1]
         sl = (slice(y0c, y1c), slice(x0c, x1c))
-        write_mask = m & (rr[y0c:y1c, x0c:x1c] <= R)
+
+        write_mask = m_loc & (rr[y0c:y1c, x0c:x1c] <= R)
         inst[sl] = np.where(write_mask, k_id, inst[sl])
 
     # ---------- render sharp cells ----------

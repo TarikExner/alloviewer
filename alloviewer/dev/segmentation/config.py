@@ -267,6 +267,11 @@ class SimulatorConfig:
     large_cell_frac: Union[float, Tuple[float, float]] = (0.0, 0.5)
     large_cell_diameter_factor: Union[float, Tuple[float, float]] = (1.2, 2.0)
 
+    cell_ellipse_enable=True,
+    cell_axis_jitter=(0,0.2),          # ±20% axis ratio
+    cell_random_rotation=True,      # random rotation angle
+    cell_intensity_range=(0.70, 1.05),  # per-cell brightness multiplier (was ~0.9..1.1)
+
     frac_positive: Union[float, Tuple[float, float]] = (0.0, 1.0)
     color_jitter: Union[float, Tuple[float, float]] = (0.0, 0.2)
     sigma_in: Union[Tuple[float, float], Tuple[float, float]] = (0.5, 1.5)   # pass-through
@@ -316,7 +321,8 @@ class SimulatorConfig:
     ghost_trail_decay: Union[float, Tuple[float, float]] = 0.6
 
     # --- debris (inside well) ---
-    dirt_density: Union[float, Tuple[float, float]] = (0.0001, 0.001)
+    # 01.01.2026: We disable dirt for now, it may confuse the UNet
+    dirt_density: Union[float, Tuple[float, float]] = (0.0, 0.0)
     dirt_size: Union[Tuple[int, int], Tuple[int, int]] = (4, 12)  # pass-through (discrete range)
     dirt_sigma: Union[Tuple[float, float], Tuple[float, float]] = (0.0, 2.0)  # pass-through
     dirt_alpha: Union[Tuple[float, float], Tuple[float, float]] = (0.1, 1.0) # pass-through
@@ -371,6 +377,9 @@ class SimulatorConfig:
         # cells
         set_num("n_cells", integer=True)
         set_num("cell_diameter")
+        set_num("cell_axis_jitter")
+        set_num("cell_intensity_range")
+
         set_num("large_cell_frac")
         set_num("large_cell_diameter_factor")
         set_num("frac_positive")

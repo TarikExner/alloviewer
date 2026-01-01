@@ -179,7 +179,6 @@ class TiledH5Dataset(H5CellsDataset):
     def __init__(self, h5_path: str, indices: Optional[Sequence[int]] = None):
         super().__init__(h5_path=h5_path, indices=indices)
 
-
 class DiskSimCellsDataset(H5CellsDataset):
     """
     Backwards-compatible alias for single-tile H5 datasets.
