@@ -268,7 +268,7 @@ class SimulatorConfig:
     large_cell_diameter_factor: Union[float, Tuple[float, float]] = (1.2, 2.0)
 
     cell_ellipse_enable=True,
-    cell_axis_jitter=(0,0.2),          # ±20% axis ratio
+    cell_axis_jitter=(0.0,0.2),          # ±20% axis ratio
     cell_random_rotation=True,      # random rotation angle
     cell_intensity_range=(0.70, 1.05),  # per-cell brightness multiplier (was ~0.9..1.1)
 
