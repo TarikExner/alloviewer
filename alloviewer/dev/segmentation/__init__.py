@@ -17,7 +17,6 @@ from .dataset_io import (
     create_external_cells_h5_tiles
 )
 
-from .utils import compute_rgb_channel_stats_cv2
 from .config import UNET_MEAN, UNET_STD
 
 __all__ = [
@@ -35,7 +34,6 @@ __all__ = [
     "export_h5_to_tiff",
     "create_tiled_from_fullres",
     "create_external_cells_h5_tiles",
-    "compute_rgb_channel_stats_cv2",
 
     "UNET_MEAN",
     "UNET_STD"
