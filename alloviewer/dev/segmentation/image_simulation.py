@@ -6,11 +6,12 @@ from collections.abc import Mapping, Sequence
 
 import cv2
 
-from .config import (
+from .camera_styles import (
     CameraStyleConfig,
-    STYLE_PARAMS_REGISTRY,
-    RNG,
+    CameraStyleParams
 )
+from . import RNG
+from typing import Dict
 
 def _to_jsonable(x):
     """Convert common numeric / numpy types to plain Python so JSON dump works."""
@@ -678,104 +679,208 @@ def simulate_image(
 
     return noised, meta, targets
 
+def _apply_s_curve(img: np.ndarray, strength: float) -> np.ndarray:
+    """
+    strength in about [-0.25, 0.40]
+    positive => stronger midtone contrast
+    negative => flatter midtones
+    """
+    if abs(strength) < 1e-8:
+        return img
+
+    x = np.clip(img, 0.0, 1.0)
+    a = 1.0 + 8.0 * float(strength)
+
+    y = 1.0 / (1.0 + np.exp(-a * (x - 0.5)))
+    y0 = 1.0 / (1.0 + np.exp(-a * (0.0 - 0.5)))
+    y1 = 1.0 / (1.0 + np.exp(-a * (1.0 - 0.5)))
+    y = (y - y0) / (y1 - y0 + 1e-8)
+    return np.clip(y, 0.0, 1.0)
+
+
+def _lift_shadows(img: np.ndarray, amount: float) -> np.ndarray:
+    if amount <= 0:
+        return img
+    w = (1.0 - img) ** 2
+    out = img + amount * 0.35 * w
+    return np.clip(out, 0.0, 1.0)
+
+
+def _compress_highlights(img: np.ndarray, amount: float) -> np.ndarray:
+    if amount <= 0:
+        return img
+    thr = 0.72
+    out = img.copy()
+    mask = out > thr
+    if np.any(mask):
+        x = out[mask] - thr
+        out[mask] = thr + (1.0 - np.exp(-x / (amount + 1e-6))) * (1.0 - thr)
+    return np.clip(out, 0.0, 1.0)
+
 def apply_camera_style(
-    img,
+    img: np.ndarray,
     rng: RNG,
     style_cfg: CameraStyleConfig,
-):
+    style_registry: Dict[str, CameraStyleParams],
+) -> np.ndarray:
     """
-    img      : float32 RGB image in [0, 1], shape (H, W, 3)
-    style_cfg: picks which style name to use
+    Apply a sampled camera style to a synthetic RGB image in [0,1].
+
+    Parameters
+    ----------
+    img : np.ndarray
+        float32 RGB image, shape (H, W, 3), range [0,1]
+    rng : np.random.Generator
+    style_cfg : CameraStyleConfig
+    style_registry : dict[str, CameraStyleParams]
     """
     assert img.ndim == 3 and img.shape[2] == 3
-    img = img.astype(np.float32).copy()
-    img = np.clip(img, 0.0, 1.0)
 
+    img = np.clip(img.astype(np.float32).copy(), 0.0, 1.0)
     H, W, _ = img.shape
 
-    # pick style name and params
     style_name = style_cfg.sample_style(rng)
-    params = STYLE_PARAMS_REGISTRY[style_name]
-    jpeg_prob = style_cfg.jpeg_prob
+    if style_name not in style_registry:
+        raise KeyError(f"Style '{style_name}' not found in style_registry")
+    params = style_registry[style_name]
 
-    # 1) global contrast / brightness
+    # 1) exposure
+    exposure = rng.uniform(*params.exposure_range)
+    img = np.clip(img * exposure, 0.0, 1.0)
+
+    # 2) global contrast / brightness
     c = rng.uniform(*params.c_range)
     b = rng.uniform(*params.b_range)
     img = np.clip(img * c + b, 0.0, 1.0)
 
-    # 2) white balance / color cast
+    # 3) white balance
     wb = rng.uniform(params.wb_range[0], params.wb_range[1], size=3).astype(np.float32)
-    wb = wb / np.mean(wb)
+    wb = wb / (wb.mean() + 1e-8)
     img = np.clip(img * wb[None, None, :], 0.0, 1.0)
 
-    # 3) R/G mixing
+    # 4) explicit color-axis shifts
+    gm = rng.uniform(*params.green_magenta_shift_range)
+    by = rng.uniform(*params.blue_yellow_shift_range)
+
+    color_shift = np.array(
+        [
+            1.0 - 0.35 * gm - 0.50 * by,  # R
+            1.0 + 1.00 * gm,              # G
+            1.0 - 0.35 * gm + 0.50 * by,  # B
+        ],
+        dtype=np.float32,
+    )
+    color_shift = color_shift / (color_shift.mean() + 1e-8)
+    img = np.clip(img * color_shift[None, None, :], 0.0, 1.0)
+
+    # 5) saturation
+    sat = rng.uniform(*params.saturation_range)
+    gray = img.mean(axis=2, keepdims=True)
+    img = np.clip(gray + sat * (img - gray), 0.0, 1.0)
+
+    # 6) R/G mixing
     a = rng.uniform(*params.mix_range)
     M = np.array([
-        [1 - a, a,       0.0],
-        [a,     1 - a,   0.0],
-        [0.0,   0.0,     1.0],
+        [1.0 - a, a,       0.0],
+        [a,       1.0 - a, 0.0],
+        [0.0,     0.0,     1.0],
     ], dtype=np.float32)
     img = np.clip(img @ M.T, 0.0, 1.0)
 
-    # 4) uneven illumination
-    scale = 64
-    h_small = max(1, H // scale)
-    w_small = max(1, W // scale)
-    field_small = rng.normal(0.0, 1.0, size=(h_small, w_small)).astype(np.float32)
+    # 7) uneven illumination
+    illum_amp = rng.uniform(*params.illum_amp_range)
+    if illum_amp > 0:
+        scale = 64
+        h_small = max(1, H // scale)
+        w_small = max(1, W // scale)
+        field_small = rng.normal(0.0, 1.0, size=(h_small, w_small)).astype(np.float32)
 
-    field = cv2.resize(field_small, (W, H), interpolation=cv2.INTER_CUBIC)
-    field = field - field.mean()
-    field = field / (field.std() + 1e-6)
-    field = 1.0 + params.illum_amp * field
-    field = np.clip(field, 1.0 - 2 * params.illum_amp, 1.0 + 2 * params.illum_amp)
+        field = cv2.resize(field_small, (W, H), interpolation=cv2.INTER_CUBIC)
+        field = field - field.mean()
+        field = field / (field.std() + 1e-6)
+        field = 1.0 + illum_amp * field
+        field = np.clip(field, 1.0 - 2.0 * illum_amp, 1.0 + 2.0 * illum_amp)
+        img = np.clip(img * field[..., None], 0.0, 1.0)
 
-    img = np.clip(img * field[..., None], 0.0, 1.0)
-
-    # 5) vignette
-    if params.vignette_amp > 0:
+    # 8) vignette
+    vignette_amp = rng.uniform(*params.vignette_amp_range)
+    if vignette_amp > 0:
         yy, xx = np.mgrid[0:H, 0:W]
         cy, cx = H / 2.0, W / 2.0
         rr = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2)
-        r_norm = rr / (0.7 * max(H, W))
-        vignette = 1.0 - params.vignette_amp * (r_norm ** 2)
-        vignette = np.clip(vignette, 1.0 - params.vignette_amp, 1.0)
+        r_norm = rr / (0.72 * max(H, W))
+        vignette = 1.0 - vignette_amp * (r_norm ** 2)
+        vignette = np.clip(vignette, 1.0 - vignette_amp, 1.0)
         img = np.clip(img * vignette[..., None], 0.0, 1.0)
 
-    # 6) gamma
+    # 9) S-curve / midtone contrast
+    s = rng.uniform(*params.midtone_contrast_range)
+    img = _apply_s_curve(img, s)
+
+    # 10) shadow lift
+    shadow_lift = rng.uniform(*params.shadow_lift_range)
+    img = _lift_shadows(img, shadow_lift)
+
+    # 11) highlight compression
+    highlight_rolloff = rng.uniform(*params.highlight_rolloff_range)
+    img = _compress_highlights(img, highlight_rolloff)
+
+    # 12) gamma
     gamma = rng.uniform(*params.gamma_range)
     img = np.clip(img, 1e-6, 1.0) ** gamma
 
-    # 7) clipping
+    # 13) clipping event
     if rng.random() < params.clip_prob:
-        gain = rng.uniform(1.05, 1.25)
+        gain = rng.uniform(1.03, 1.25)
         img = np.clip(img * gain, 0.0, 1.0)
 
-    # 8) blur + unsharp
+    # 14) resampling artifacts
+    if rng.random() < params.resize_prob:
+        scale = rng.uniform(*params.resize_scale_range)
+        h2 = max(8, int(round(H * scale)))
+        w2 = max(8, int(round(W * scale)))
+        tmp = cv2.resize(img, (w2, h2), interpolation=cv2.INTER_AREA)
+        img = cv2.resize(tmp, (W, H), interpolation=cv2.INTER_LINEAR)
+        img = np.clip(img, 0.0, 1.0)
+
+    # 15) blur + sharpen
     sigma = rng.uniform(*params.blur_sigma_range)
-    if sigma > 0.0:
+    sharpen_strength = rng.uniform(*params.sharpen_strength_range)
+
+    if sigma > 0.0 or sharpen_strength > 0.0:
         tmp = np.clip(img * 255.0, 0, 255).astype(np.uint8)
         tmp_bgr = cv2.cvtColor(tmp, cv2.COLOR_RGB2BGR)
-        ksize = max(3, int(2 * round(sigma) + 1))
-        blur_bgr = cv2.GaussianBlur(tmp_bgr, (ksize, ksize), sigmaX=sigma, sigmaY=sigma)
-        sharp_bgr = cv2.addWeighted(tmp_bgr, 1.0 + params.sharpen_strength,
-                                    blur_bgr, -params.sharpen_strength, 0)
+
+        if sigma > 0.0:
+            ksize = max(3, int(2 * round(sigma) + 1))
+            blur_bgr = cv2.GaussianBlur(tmp_bgr, (ksize, ksize), sigmaX=sigma, sigmaY=sigma)
+        else:
+            blur_bgr = tmp_bgr
+
+        sharp_bgr = cv2.addWeighted(
+            tmp_bgr, 1.0 + sharpen_strength,
+            blur_bgr, -sharpen_strength,
+            0
+        )
         sharp_rgb = cv2.cvtColor(sharp_bgr, cv2.COLOR_BGR2RGB)
         img = np.clip(sharp_rgb.astype(np.float32) / 255.0, 0.0, 1.0)
 
-    # 9) per-channel noise
-    noise_std = np.array([
-        params.noise_std_base * rng.uniform(0.8, 1.2),
-        params.noise_std_base * rng.uniform(0.8, 1.2),
-        params.noise_std_base * rng.uniform(1.0, 1.4),
-    ], dtype=np.float32)
-    noise = rng.normal(0.0, 1.0, size=img.shape).astype(np.float32)
-    img = np.clip(img + noise * noise_std[None, None, :], 0.0, 1.0)
+    # 16) per-channel noise
+    noise_std_base = rng.uniform(*params.noise_std_base_range)
+    if noise_std_base > 0:
+        noise_std = np.array([
+            noise_std_base * rng.uniform(0.8, 1.2),
+            noise_std_base * rng.uniform(0.8, 1.2),
+            noise_std_base * rng.uniform(1.0, 1.4),
+        ], dtype=np.float32)
+        noise = rng.normal(0.0, 1.0, size=img.shape).astype(np.float32)
+        img = np.clip(img + noise * noise_std[None, None, :], 0.0, 1.0)
 
-    # 10) JPEG
-    if rng.random() < jpeg_prob:
+    # 17) JPEG
+    if rng.random() < params.jpeg_prob:
         tmp = np.clip(img * 255.0, 0, 255).astype(np.uint8)
         tmp_bgr = cv2.cvtColor(tmp, cv2.COLOR_RGB2BGR)
-        quality = int(rng.uniform(60, 95))
+        quality = int(rng.integers(params.jpeg_quality_range[0], params.jpeg_quality_range[1] + 1))
         encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
         ok, enc = cv2.imencode(".jpg", tmp_bgr, encode_param)
         if ok:
@@ -784,4 +889,3 @@ def apply_camera_style(
             img = np.clip(img, 0.0, 1.0)
 
     return img.astype(np.float32)
-

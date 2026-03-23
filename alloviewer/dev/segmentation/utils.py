@@ -11,23 +11,12 @@ from scipy import ndimage as ndi
 from skimage import filters, measure, morphology, exposure
 from skimage.segmentation import watershed
 from skimage.segmentation import relabel_sequential
+import pickle
 
-from typing import Union, List, Tuple, Iterable, Sequence, Optional
+from typing import Union, List, Tuple, Sequence, Optional, Dict
 
 import cv2
 
-# folders with images for the mean+-STD calculation
-EXT_IMAGES_FOLDERS = [
-    "./ext_images/20251106_25722269_iPhone_XR_JPEG",
-    "./ext_images/20251106_25722169_iPhone_XR_JPEG",
-    "./ext_images/20251106_25722269_iPhone_XR_JPEG",
-    "./ext_images/20251107_25065521_GooglePixel",
-    "./ext_images/20251107_25722332_GooglePixel",
-    "./ext_images/20251014_25719960",
-    "./ext_images/20251014_25720084",
-    "./ext_images/20251107_25065521",
-    "./ext_images/20251107_25722332"
-]
 
 def collate_no_meta(batch):
     imgs, tgts, exs = zip(*batch)
@@ -303,8 +292,6 @@ def seeded_watershed_from_mask(mask_healed: np.ndarray, seeds: np.ndarray) -> np
     inst, _, _ = relabel_sequential(inst)
     return inst
 
-# --- helpers for external COM/labels -------------------------------------
-
 def load_com_labels_csv(
     image_name: str,
     folder: str,
@@ -396,199 +383,4 @@ def crop_external_meta_to_tile(meta_full: dict, y0: int, x0: int, h: int, w: int
     return new_meta
 
 
-def extract_real_image_feature_table_cv2(
-    folders: Optional[Sequence[str | Path]] = None,
-    exts: Sequence[str] = (".png", ".jpg", ".jpeg", ".tif", ".tiff"),
-    hist_bins: int = 16,
-    percentiles: Sequence[float] = (1, 5, 25, 50, 75, 95, 99),
-    sample_pixels: Optional[int] = 300_000,
-    recursive: bool = True,
-    ignore_failures: bool = True,
-):
-    """
-    Extract per-image RGB histogram features from real images.
 
-    Purpose
-    -------
-    This is meant for later clustering of real image appearance into a few
-    camera / rendering families.
-
-    What it returns
-    ---------------
-    rows : list[dict]
-        One dict per image with scalar features and histogram-bin features.
-    feature_names : list[str]
-        Ordered numeric feature names for clustering.
-    X : np.ndarray, shape (N_images, N_features), dtype float32
-        Numeric feature matrix built from rows and feature_names.
-
-    Notes
-    -----
-    - Images are read with cv2 in BGR, then converted to RGB.
-    - All values are converted to float32 in [0, 1].
-    - Histograms are normalized per channel so each channel histogram sums to 1.
-    - If sample_pixels is not None and an image is very large, a random subset
-      of pixels is used for percentile / histogram / skew calculations.
-      Mean and std are still computed on the sampled set only in this function.
-      That is usually fine for clustering camera looks.
-    """
-
-    if folders is None:
-        folders = EXT_IMAGES_FOLDERS
-        if folders is None:
-            raise ValueError("folders must be provided")
-
-    folders = [Path(f) for f in folders]
-    exts = tuple(e.lower() for e in exts)
-    percentiles = tuple(float(p) for p in percentiles)
-
-    # -------------------------
-    # collect image paths
-    # -------------------------
-    image_paths = []
-    for folder in folders:
-        if not folder.exists():
-            continue
-        walker = folder.rglob("*") if recursive else folder.glob("*")
-        for path in walker:
-            if path.is_file() and path.suffix.lower() in exts:
-                image_paths.append(path)
-
-    if not image_paths:
-        raise RuntimeError("No image files found in the given folders.")
-
-    # -------------------------
-    # feature naming
-    # -------------------------
-    channel_names = ("r", "g", "b")
-    feature_names = []
-
-    # per-channel scalar stats
-    for ch in channel_names:
-        feature_names.append(f"{ch}_mean")
-        feature_names.append(f"{ch}_std")
-        feature_names.append(f"{ch}_skew")
-
-        for p in percentiles:
-            p_name = str(p).replace(".", "_")
-            feature_names.append(f"{ch}_p{p_name}")
-
-        for b in range(hist_bins):
-            feature_names.append(f"{ch}_hist_{b:02d}")
-
-    # global scalar stats
-    feature_names.extend([
-        "gray_mean",
-        "gray_std",
-        "gray_skew",
-        "sat_mean",
-        "sat_std",
-        "sat_skew",
-        "dark_frac",
-        "bright_frac",
-        "n_pixels_used",
-        "aspect_ratio",
-        "height",
-        "width",
-    ])
-
-    rows = []
-
-    # -------------------------
-    # helpers
-    # -------------------------
-    def _safe_skew(x: np.ndarray) -> float:
-        # x is 1D float32/float64
-        m = float(x.mean())
-        s = float(x.std())
-        if s < 1e-12:
-            return 0.0
-        z = (x - m) / s
-        return float(np.mean(z ** 3))
-
-    def _norm_hist_01(x: np.ndarray, bins: int) -> np.ndarray:
-        h, _ = np.histogram(x, bins=bins, range=(0.0, 1.0))
-        h = h.astype(np.float32)
-        h /= (h.sum() + 1e-8)
-        return h
-
-    # -------------------------
-    # main loop
-    # -------------------------
-    for path in tqdm(image_paths, desc="Extracting real-image histogram features"):
-        img_bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
-        if img_bgr is None:
-            if ignore_failures:
-                continue
-            raise RuntimeError(f"Could not read image: {path}")
-
-        img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-        H, W, _ = img.shape
-
-        pixels = img.reshape(-1, 3)
-        n_total = pixels.shape[0]
-
-        if sample_pixels is not None and n_total > sample_pixels:
-            idx = np.random.choice(n_total, size=sample_pixels, replace=False)
-            pixels_use = pixels[idx]
-        else:
-            pixels_use = pixels
-
-        # channel views
-        r = pixels_use[:, 0]
-        g = pixels_use[:, 1]
-        b = pixels_use[:, 2]
-
-        # gray and saturation
-        gray = 0.299 * r + 0.587 * g + 0.114 * b
-
-        rgb_max = np.max(pixels_use, axis=1)
-        rgb_min = np.min(pixels_use, axis=1)
-        sat = np.where(rgb_max > 1e-8, (rgb_max - rgb_min) / (rgb_max + 1e-8), 0.0).astype(np.float32)
-
-        row = {
-            "path": str(path),
-            "filename": path.name,
-            "height": int(H),
-            "width": int(W),
-            "aspect_ratio": float(W / max(H, 1)),
-            "n_pixels_used": int(pixels_use.shape[0]),
-        }
-
-        for ch_name, x in zip(channel_names, (r, g, b)):
-            row[f"{ch_name}_mean"] = float(np.mean(x))
-            row[f"{ch_name}_std"] = float(np.std(x))
-            row[f"{ch_name}_skew"] = float(_safe_skew(x))
-
-            pvals = np.percentile(x, percentiles)
-            for p, val in zip(percentiles, pvals):
-                p_name = str(p).replace(".", "_")
-                row[f"{ch_name}_p{p_name}"] = float(val)
-
-            hist = _norm_hist_01(x, bins=hist_bins)
-            for i, val in enumerate(hist):
-                row[f"{ch_name}_hist_{i:02d}"] = float(val)
-
-        row["gray_mean"] = float(np.mean(gray))
-        row["gray_std"] = float(np.std(gray))
-        row["gray_skew"] = float(_safe_skew(gray))
-
-        row["sat_mean"] = float(np.mean(sat))
-        row["sat_std"] = float(np.std(sat))
-        row["sat_skew"] = float(_safe_skew(sat))
-
-        # crude clipping / tail mass indicators
-        row["dark_frac"] = float(np.mean(gray <= 0.02))
-        row["bright_frac"] = float(np.mean(gray >= 0.98))
-
-        rows.append(row)
-
-    if not rows:
-        raise RuntimeError("No usable images were processed.")
-
-    X = np.array(
-        [[row[name] for name in feature_names] for row in rows],
-        dtype=np.float32,
-    )
-
-    return rows, feature_names, X

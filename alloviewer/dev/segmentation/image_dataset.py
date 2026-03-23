@@ -10,6 +10,7 @@ from skimage.measure import label as sklabel
 
 from typing import Optional, List, Tuple
 
+from . import STYLE_CACHE_PATH
 from .image_simulation import simulate_image, apply_camera_style
 from .utils import (
     crop_sim_meta_to_tile,
@@ -31,8 +32,8 @@ from .config import (
     simulated_raw_style,
     CameraSetup,
     SimulatorConfig,
-    CameraStyleConfig
 )
+from .camera_styles import CameraStyleConfig, build_style_registry_from_real_images
 
 
 class BaseCellsTilesDataset(Dataset):
@@ -261,6 +262,12 @@ class SimCellsDataset(BaseCellsTilesDataset):
             self.camera_style_cfg = simulated_raw_style()
         else:
             self.camera_style_cfg = camera_style_cfg
+
+        self.camera_style_registry, _, _, _ = style_registry, summaries, rows, feature_names = build_style_registry_from_real_images(
+            folders = None,
+            cache_path=STYLE_CACHE_PATH,
+            force_recompute=False,
+        )
 
         super().__init__(
             target=target,
