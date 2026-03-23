@@ -618,7 +618,7 @@ def build_style_registry_from_real_images(
 STYLE_PARAMS_REGISTRY: Dict[str, CameraStyleParams] = {}
 
 def load_or_build_default_style_registry(
-    folders: Sequence[str | Path],
+    folders: Optional[Sequence[str | Path]] = None,
     cache_path: str | Path = STYLE_CACHE_PATH,
     force_recompute: bool = False,
 ):
