@@ -629,3 +629,21 @@ def load_or_build_default_style_registry(
         force_recompute=force_recompute,
     )
     return STYLE_PARAMS_REGISTRY, summaries, rows, feature_names
+
+def phone_mix_style() -> CameraStyleConfig:
+    return CameraStyleConfig(
+        styles=("microscope", "iphone", "pixel"),
+        probs=None,
+    )
+
+def microscope_only_style() -> CameraStyleConfig:
+    return CameraStyleConfig(
+        styles=("microscope",),
+        probs=None,
+    )
+
+def simulated_raw_style() -> CameraStyleConfig:
+    return CameraStyleConfig(
+        styles=("simulated_raw",),
+        probs=None,
+    )

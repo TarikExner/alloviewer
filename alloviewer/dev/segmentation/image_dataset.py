@@ -28,12 +28,11 @@ from .utils import (
     crop_external_meta_to_tile,
 )
 from .config import (
-    simulated_raw_style,
     CameraSetup,
     SimulatorConfig,
     STYLE_CACHE_PATH
 )
-from .camera_styles import CameraStyleConfig, build_style_registry_from_real_images
+from .camera_styles import CameraStyleConfig, build_style_registry_from_real_images, simulated_raw_style
 
 
 class BaseCellsTilesDataset(Dataset):
