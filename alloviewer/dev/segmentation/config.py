@@ -6,7 +6,6 @@ from typing import Any, Dict, Optional, Tuple, Union, Sequence
 import numbers
 import numpy as np
 
-from . import RNG
 from .camera_styles import CameraStyleConfig
 
 Param = Any
