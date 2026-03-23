@@ -7,12 +7,15 @@ import numbers
 import numpy as np
 
 from . import RNG
+from .camera_styles import CameraStyleConfig
 
 Param = Any
 NumOrRange = Union[int, float, Tuple[float, float], Tuple[int, int]]
 
 UNET_MEAN = [0.30352435,0.30428907, 0.16885266]
 UNET_STD = [0.17771362, 0.2031829, 0.1374358 ]
+
+STYLE_CACHE_PATH = "./style_cache"
 
 PASS_THROUGH_RANGES: Tuple[str, ...] = (
     # in-focus/out-of-focus blur ranges
@@ -430,19 +433,16 @@ def phone_mix_style() -> CameraStyleConfig:
     return CameraStyleConfig(
         styles=("microscope", "iphone", "pixel"),
         probs=None,
-        jpeg_prob=0.3,
     )
 
 def microscope_only_style() -> CameraStyleConfig:
     return CameraStyleConfig(
         styles=("microscope",),
         probs=None,
-        jpeg_prob=0.3,
     )
 
 def simulated_raw_style() -> CameraStyleConfig:
     return CameraStyleConfig(
         styles=("simulated_raw",),
         probs=None,
-        jpeg_prob=0.0,
     )

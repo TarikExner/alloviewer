@@ -10,7 +10,6 @@ from skimage.measure import label as sklabel
 
 from typing import Optional, List, Tuple
 
-from . import STYLE_CACHE_PATH
 from .image_simulation import simulate_image, apply_camera_style
 from .utils import (
     crop_sim_meta_to_tile,
@@ -32,6 +31,7 @@ from .config import (
     simulated_raw_style,
     CameraSetup,
     SimulatorConfig,
+    STYLE_CACHE_PATH
 )
 from .camera_styles import CameraStyleConfig, build_style_registry_from_real_images
 

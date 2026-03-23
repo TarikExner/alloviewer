@@ -10,7 +10,9 @@ import pickle
 
 import cv2
 
-from . import RNG, STYLE_CACHE_PATH
+from .config import STYLE_CACHE_PATH
+
+RNG = np.random.Generator
 
 
 # folders with images for the mean+-STD calculation

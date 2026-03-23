@@ -20,9 +20,6 @@ from .dataset_io import (
 
 from .config import UNET_MEAN, UNET_STD
 
-STYLE_CACHE_PATH = "./style_cache"
-
-RNG = np.random.Generator
 
 __all__ = [
     "UNetOptimized",

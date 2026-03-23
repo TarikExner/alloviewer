@@ -10,8 +10,9 @@ from .camera_styles import (
     CameraStyleConfig,
     CameraStyleParams
 )
-from . import RNG
 from typing import Dict
+
+RNG = np.random.Generator
 
 def _to_jsonable(x):
     """Convert common numeric / numpy types to plain Python so JSON dump works."""
