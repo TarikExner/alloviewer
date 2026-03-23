@@ -6,8 +6,6 @@ from typing import Any, Dict, Optional, Tuple, Union, Sequence
 import numbers
 import numpy as np
 
-from .camera_styles import CameraStyleConfig
-
 Param = Any
 NumOrRange = Union[int, float, Tuple[float, float], Tuple[int, int]]
 
@@ -428,20 +426,4 @@ def test_scene() -> SimulatorConfig:
 def img_export_scene() -> SimulatorConfig:
     return test_scene()
 
-def phone_mix_style() -> CameraStyleConfig:
-    return CameraStyleConfig(
-        styles=("microscope", "iphone", "pixel"),
-        probs=None,
-    )
 
-def microscope_only_style() -> CameraStyleConfig:
-    return CameraStyleConfig(
-        styles=("microscope",),
-        probs=None,
-    )
-
-def simulated_raw_style() -> CameraStyleConfig:
-    return CameraStyleConfig(
-        styles=("simulated_raw",),
-        probs=None,
-    )
