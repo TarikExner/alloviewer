@@ -32,7 +32,13 @@ from .config import (
     SimulatorConfig,
     STYLE_CACHE_PATH
 )
-from .camera_styles import CameraStyleConfig, build_style_registry_from_real_images, simulated_raw_style
+from .camera_styles import (
+    CameraStyleConfig,
+    build_style_registry_from_real_images,
+    simulated_raw_style,
+    phone_mix_style,
+    microscope_only_style
+)
 
 
 class BaseCellsTilesDataset(Dataset):
@@ -258,7 +264,8 @@ class SimCellsDataset(BaseCellsTilesDataset):
         assert camera_cfg is not None, "camera_cfg (CameraSetup) is required"
 
         if camera_style_cfg is None:
-            self.camera_style_cfg = simulated_raw_style()
+            # self.camera_style_cfg = simulated_raw_style()
+            self.camera_style_cfg = phone_mix_style()
         else:
             self.camera_style_cfg = camera_style_cfg
 
@@ -528,7 +535,7 @@ class SimCellsDataset(BaseCellsTilesDataset):
 
         # simulate
         img, meta, targets = simulate_image(**sim_kwargs)
-        img = apply_camera_style(img, rng, self.camera_style_cfg)
+        img = apply_camera_style(img, rng, self.camera_style_cfg, self.camera_style_registry)
         cell = targets["cell_mask"].astype(np.float32)
         inst = targets["instance_labels"].astype(np.int32)
 

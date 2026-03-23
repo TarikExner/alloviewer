@@ -632,7 +632,7 @@ def load_or_build_default_style_registry(
 
 def phone_mix_style() -> CameraStyleConfig:
     return CameraStyleConfig(
-        styles=("microscope", "iphone", "pixel"),
+        styles=("microscope", "iphone", "googlepixel"),
         probs=None,
     )
 
