@@ -434,7 +434,9 @@ def extract_real_image_feature_table_cv2(
     """
 
     if folders is None:
-        raise ValueError("folders must be provided")
+        folders = EXT_IMAGES_FOLDERS
+        if folders is None:
+            raise ValueError("folders must be provided")
 
     folders = [Path(f) for f in folders]
     exts = tuple(e.lower() for e in exts)
