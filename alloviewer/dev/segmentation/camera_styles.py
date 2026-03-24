@@ -286,35 +286,35 @@ def build_camera_style_from_summary(
         resize_prob = 0.10
         resize_scale_range = (0.80, 0.96)
     elif phone == "microscope":
-        # less blue, less red spread, slightly less dark-bin mass
-        exposure_range = (0.72, 0.98)
-        c_range = (0.88, 1.04)
-        b_range = (-0.04, 0.01)
-        gamma_range = (0.98, 1.18)
+        # less blue, less red spread, tighter and flatter
+        exposure_range = (0.76, 0.98)
+        c_range = (0.90, 1.02)
+        b_range = (-0.03, 0.005)
+        gamma_range = (0.98, 1.12)
 
-        shadow_lift_range = (0.00, 0.02)
-        highlight_rolloff_range = (0.00, 0.03)
-        midtone_contrast_range = (-0.06, 0.04)
+        shadow_lift_range = (0.00, 0.015)
+        highlight_rolloff_range = (0.00, 0.025)
+        midtone_contrast_range = (-0.04, 0.025)
 
-        mix_range = (0.00, 0.02)
-        wb_range = (0.97, 1.02)
-        saturation_range = (0.35, 0.68)
-        green_magenta_shift_range = (-0.015, 0.015)
-        blue_yellow_shift_range = (-0.015, 0.00)
+        mix_range = (0.00, 0.015)
+        wb_range = (0.985, 1.015)
+        saturation_range = (0.24, 0.52)
+        green_magenta_shift_range = (-0.01, 0.01)
+        blue_yellow_shift_range = (-0.05, -0.01)
 
-        blur_sigma_range = (0.10, 0.40)
-        sharpen_strength_range = (0.00, 0.06)
-        noise_std_base_range = (0.0003, 0.002)
+        blur_sigma_range = (0.08, 0.28)
+        sharpen_strength_range = (0.00, 0.035)
+        noise_std_base_range = (0.0002, 0.0012)
 
-        vignette_amp_range = (0.00, 0.01)
-        illum_amp_range = (0.00, 0.015)
+        vignette_amp_range = (0.00, 0.008)
+        illum_amp_range = (0.00, 0.01)
 
         clip_prob = 0.00
         jpeg_prob = 0.0
         jpeg_quality_range = (95, 100)
 
         resize_prob = 0.0
-        resize_scale_range = (1.0, 1.0)    
+        resize_scale_range = (1.0, 1.0)
     else:
         blur_sigma_range = (0.5, 1.2)
         sharpen_strength_range = (0.10, 0.50)
