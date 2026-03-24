@@ -225,35 +225,35 @@ def build_camera_style_from_summary(
     ))
 
     if phone == "iphone":
-        # much milder iPhone look: less HDR, less saturation, less extreme tails
-        exposure_range = (0.94, 1.04)
-        c_range = (0.94, 1.06)
-        b_range = (-0.005, 0.02)
-        gamma_range = (0.95, 1.05)
+        # reduce both dark-bin and bright-tail mass; push more into midtones
+        exposure_range = (0.96, 1.04)
+        c_range = (0.92, 1.02)
+        b_range = (0.00, 0.025)
+        gamma_range = (0.98, 1.04)
 
-        shadow_lift_range = (0.01, 0.04)
-        highlight_rolloff_range = (0.02, 0.08)
-        midtone_contrast_range = (-0.01, 0.06)
+        shadow_lift_range = (0.03, 0.08)
+        highlight_rolloff_range = (0.08, 0.16)
+        midtone_contrast_range = (-0.01, 0.04)
 
-        mix_range = (0.02, 0.07)
-        wb_range = (0.96, 1.06)
-        saturation_range = (0.72, 0.92)
-        green_magenta_shift_range = (-0.03, 0.03)
-        blue_yellow_shift_range = (-0.03, 0.03)
+        mix_range = (0.015, 0.05)
+        wb_range = (0.97, 1.04)
+        saturation_range = (0.78, 0.92)
+        green_magenta_shift_range = (-0.02, 0.02)
+        blue_yellow_shift_range = (-0.02, 0.02)
 
-        blur_sigma_range = (0.25, 0.75)
-        sharpen_strength_range = (0.08, 0.22)
-        noise_std_base_range = (0.003, 0.008)
+        blur_sigma_range = (0.20, 0.55)
+        sharpen_strength_range = (0.04, 0.14)
+        noise_std_base_range = (0.002, 0.006)
 
-        vignette_amp_range = (0.01, 0.05)
-        illum_amp_range = (0.01, 0.04)
+        vignette_amp_range = (0.00, 0.03)
+        illum_amp_range = (0.00, 0.025)
 
-        clip_prob = 0.03
-        jpeg_prob = 0.08
-        jpeg_quality_range = (88, 98)
+        clip_prob = 0.01
+        jpeg_prob = 0.05
+        jpeg_quality_range = (90, 98)
 
-        resize_prob = 0.05
-        resize_scale_range = (0.88, 0.98)
+        resize_prob = 0.02
+        resize_scale_range = (0.92, 0.99)
     elif phone == "googlepixel":
         # less extreme than before: fewer crushed shadows, fewer blown highlights,
         # lower saturation, more midtone mass
