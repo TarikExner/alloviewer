@@ -227,15 +227,35 @@ def build_camera_style_from_summary(
     # The parts below are not well estimated from histograms alone.
     # Keep them device-sensitive but conservative.
     if phone == "iphone":
-        blur_sigma_range = (0.7, 1.6)
-        sharpen_strength_range = (0.35, 0.85)
-        noise_std_base_range = (0.008, 0.020)
-        vignette_amp_range = (0.04, 0.14)
-        illum_amp_range = (0.04, 0.10)
-        jpeg_prob = 0.3
-        jpeg_quality_range = (70, 95)
-        resize_prob = 0.30
-        resize_scale_range = (0.60, 0.90)
+        # less extreme contrast / HDR / saturation
+        exposure_range = (0.92, 1.08)
+        c_range = (0.92, 1.10)
+        b_range = (-0.01, 0.03)
+        gamma_range = (0.92, 1.08)
+
+        shadow_lift_range = (0.01, 0.06)
+        highlight_rolloff_range = (0.04, 0.12)
+        midtone_contrast_range = (-0.02, 0.10)
+
+        mix_range = (0.03, 0.10)
+        wb_range = (0.94, 1.08)
+        saturation_range = (0.78, 1.00)
+        green_magenta_shift_range = (-0.04, 0.04)
+        blue_yellow_shift_range = (-0.05, 0.05)
+
+        blur_sigma_range = (0.35, 1.00)
+        sharpen_strength_range = (0.12, 0.35)
+        noise_std_base_range = (0.004, 0.012)
+
+        vignette_amp_range = (0.02, 0.08)
+        illum_amp_range = (0.02, 0.06)
+
+        clip_prob = 0.08
+        jpeg_prob = 0.15
+        jpeg_quality_range = (82, 98)
+
+        resize_prob = 0.10
+        resize_scale_range = (0.80, 0.96)
     elif phone == "googlepixel":
         # less extreme than before: fewer crushed shadows, fewer blown highlights,
         # lower saturation, more midtone mass
