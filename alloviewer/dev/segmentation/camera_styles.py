@@ -422,7 +422,7 @@ def extract_real_image_feature_table_cv2(
 
         phone = _find_phone(path)
 
-        img, _ = load_image(file_name, base_dir = folder)
+        img, _ = load_image(file_name, base_dir = folder, as_chw = False)
 
         print(img.shape)
 
