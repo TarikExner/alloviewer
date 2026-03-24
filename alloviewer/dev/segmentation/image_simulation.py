@@ -738,13 +738,16 @@ def apply_camera_style(
     assert img.ndim == 3 and img.shape[2] == 3
 
     img = np.clip(img.astype(np.float32).copy(), 0.0, 1.0)
-    H, W, _ = img.shape
 
     style_name = style_cfg.sample_style(rng)
     if style_name not in style_registry:
         raise KeyError(f"Style '{style_name}' not found in style_registry")
     params = style_registry[style_name]
 
+    if style_name == "simulated_raw":
+        return img
+
+    H, W, _ = img.shape
     # 1) exposure
     exposure = rng.uniform(*params.exposure_range)
     img = np.clip(img * exposure, 0.0, 1.0)

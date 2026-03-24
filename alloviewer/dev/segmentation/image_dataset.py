@@ -269,12 +269,11 @@ class SimCellsDataset(BaseCellsTilesDataset):
         else:
             self.camera_style_cfg = camera_style_cfg
 
-        self.camera_style_registry, _, _, _ = style_registry, summaries, rows, feature_names = build_style_registry_from_real_images(
+        self.camera_style_registry, _, _, _ = build_style_registry_from_real_images(
             folders = None,
             cache_path=STYLE_CACHE_PATH,
             force_recompute=False,
         )
-        print(self.camera_style_registry.keys())
 
         super().__init__(
             target=target,
