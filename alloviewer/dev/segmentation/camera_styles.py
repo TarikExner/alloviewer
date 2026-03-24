@@ -12,6 +12,8 @@ import cv2
 
 from .config import STYLE_CACHE_PATH
 
+from ...image_analysis.io import load_image
+
 RNG = np.random.Generator
 
 
@@ -414,15 +416,13 @@ def extract_real_image_feature_table_cv2(
             return "microscope"
 
     for path in tqdm(image_paths, desc="Extracting real-image features"):
-        img_bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
-        if img_bgr is None:
-            if ignore_failures:
-                continue
-            raise RuntimeError(f"Could not read image: {path}")
+        file_name = os.path.basename(path)
+        folder = os.path.dirname(path)
 
         phone = _find_phone(path)
 
-        img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / np.max(img_bgr)
+        img = load_image(file_name, base_dir = folder)
+
         H, W, _ = img.shape
 
         pixels = img.reshape(-1, 3)
