@@ -274,6 +274,7 @@ class SimCellsDataset(BaseCellsTilesDataset):
             cache_path=STYLE_CACHE_PATH,
             force_recompute=False,
         )
+        print(self.camera_style_registry.keys())
 
         super().__init__(
             target=target,
