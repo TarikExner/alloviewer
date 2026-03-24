@@ -224,38 +224,36 @@ def build_camera_style_from_summary(
         0.0, 0.75
     ))
 
-    # The parts below are not well estimated from histograms alone.
-    # Keep them device-sensitive but conservative.
     if phone == "iphone":
-        # less extreme contrast / HDR / saturation
-        exposure_range = (0.92, 1.08)
-        c_range = (0.92, 1.10)
-        b_range = (-0.01, 0.03)
-        gamma_range = (0.92, 1.08)
+        # much milder iPhone look: less HDR, less saturation, less extreme tails
+        exposure_range = (0.94, 1.04)
+        c_range = (0.94, 1.06)
+        b_range = (-0.005, 0.02)
+        gamma_range = (0.95, 1.05)
 
-        shadow_lift_range = (0.01, 0.06)
-        highlight_rolloff_range = (0.04, 0.12)
-        midtone_contrast_range = (-0.02, 0.10)
+        shadow_lift_range = (0.01, 0.04)
+        highlight_rolloff_range = (0.02, 0.08)
+        midtone_contrast_range = (-0.01, 0.06)
 
-        mix_range = (0.03, 0.10)
-        wb_range = (0.94, 1.08)
-        saturation_range = (0.78, 1.00)
-        green_magenta_shift_range = (-0.04, 0.04)
-        blue_yellow_shift_range = (-0.05, 0.05)
+        mix_range = (0.02, 0.07)
+        wb_range = (0.96, 1.06)
+        saturation_range = (0.72, 0.92)
+        green_magenta_shift_range = (-0.03, 0.03)
+        blue_yellow_shift_range = (-0.03, 0.03)
 
-        blur_sigma_range = (0.35, 1.00)
-        sharpen_strength_range = (0.12, 0.35)
-        noise_std_base_range = (0.004, 0.012)
+        blur_sigma_range = (0.25, 0.75)
+        sharpen_strength_range = (0.08, 0.22)
+        noise_std_base_range = (0.003, 0.008)
 
-        vignette_amp_range = (0.02, 0.08)
-        illum_amp_range = (0.02, 0.06)
+        vignette_amp_range = (0.01, 0.05)
+        illum_amp_range = (0.01, 0.04)
 
-        clip_prob = 0.08
-        jpeg_prob = 0.15
-        jpeg_quality_range = (82, 98)
+        clip_prob = 0.03
+        jpeg_prob = 0.08
+        jpeg_quality_range = (88, 98)
 
-        resize_prob = 0.10
-        resize_scale_range = (0.80, 0.96)
+        resize_prob = 0.05
+        resize_scale_range = (0.88, 0.98)
     elif phone == "googlepixel":
         # less extreme than before: fewer crushed shadows, fewer blown highlights,
         # lower saturation, more midtone mass
