@@ -422,7 +422,7 @@ def extract_real_image_feature_table_cv2(
 
         phone = _find_phone(path)
 
-        img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / np.max(img_bgr)
         H, W, _ = img.shape
 
         pixels = img.reshape(-1, 3)
