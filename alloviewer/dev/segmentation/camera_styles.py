@@ -237,38 +237,59 @@ def build_camera_style_from_summary(
         resize_prob = 0.30
         resize_scale_range = (0.60, 0.90)
     elif phone == "googlepixel":
-        blur_sigma_range = (0.5, 1.4)
-        sharpen_strength_range = (0.25, 0.70)
-        noise_std_base_range = (0.006, 0.016)
-        vignette_amp_range = (0.03, 0.12)
-        illum_amp_range = (0.03, 0.09)
-        jpeg_prob = 0.30
-        jpeg_quality_range = (70, 95)
-        resize_prob = 0.25
-        resize_scale_range = (0.65, 0.92)
+        # less extreme than before: fewer crushed shadows, fewer blown highlights,
+        # lower saturation, more midtone mass
+        exposure_range = (0.90, 1.08)
+        c_range = (0.90, 1.10)
+        b_range = (-0.01, 0.03)
+        gamma_range = (0.90, 1.08)
+
+        shadow_lift_range = (0.02, 0.08)
+        highlight_rolloff_range = (0.03, 0.10)
+        midtone_contrast_range = (-0.02, 0.10)
+
+        mix_range = (0.02, 0.10)
+        wb_range = (0.94, 1.08)
+        saturation_range = (0.75, 1.00)
+        green_magenta_shift_range = (-0.04, 0.04)
+        blue_yellow_shift_range = (-0.05, 0.05)
+
+        blur_sigma_range = (0.35, 1.00)
+        sharpen_strength_range = (0.12, 0.40)
+        noise_std_base_range = (0.004, 0.012)
+
+        vignette_amp_range = (0.02, 0.08)
+        illum_amp_range = (0.02, 0.06)
+
+        clip_prob = 0.08
+        jpeg_prob = 0.15
+        jpeg_quality_range = (82, 98)
+
+        resize_prob = 0.10
+        resize_scale_range = (0.80, 0.96)
     elif phone == "microscope":
-        # broad cloud, but only mildly shifted toward real microscope images
-        exposure_range = (0.68, 0.98)
-        c_range = (0.86, 1.06)
-        b_range = (-0.05, 0.00)
-        gamma_range = (1.00, 1.24)
+        # less blue, less red spread, slightly less dark-bin mass
+        exposure_range = (0.72, 0.98)
+        c_range = (0.88, 1.04)
+        b_range = (-0.04, 0.01)
+        gamma_range = (0.98, 1.18)
 
-        shadow_lift_range = (0.00, 0.04)
-        highlight_rolloff_range = (0.00, 0.05)
-        midtone_contrast_range = (-0.08, 0.05)
+        shadow_lift_range = (0.00, 0.02)
+        highlight_rolloff_range = (0.00, 0.03)
+        midtone_contrast_range = (-0.06, 0.04)
 
-        mix_range = (0.00, 0.03)
-        wb_range = (0.94, 1.04)
-        saturation_range = (0.45, 0.82)
-        green_magenta_shift_range = (-0.03, 0.03)
-        blue_yellow_shift_range = (-0.04, 0.02)
+        mix_range = (0.00, 0.02)
+        wb_range = (0.97, 1.02)
+        saturation_range = (0.35, 0.68)
+        green_magenta_shift_range = (-0.015, 0.015)
+        blue_yellow_shift_range = (-0.015, 0.00)
 
-        blur_sigma_range = (0.12, 0.60)
-        sharpen_strength_range = (0.00, 0.10)
-        noise_std_base_range = (0.0005, 0.004)
+        blur_sigma_range = (0.10, 0.40)
+        sharpen_strength_range = (0.00, 0.06)
+        noise_std_base_range = (0.0003, 0.002)
 
-        vignette_amp_range = (0.00, 0.02)
-        illum_amp_range = (0.00, 0.025)
+        vignette_amp_range = (0.00, 0.01)
+        illum_amp_range = (0.00, 0.015)
 
         clip_prob = 0.00
         jpeg_prob = 0.0
@@ -654,6 +675,18 @@ def load_or_build_default_style_registry(
 def phone_mix_style() -> CameraStyleConfig:
     return CameraStyleConfig(
         styles=("microscope", "iphone", "googlepixel"),
+        probs=None,
+    )
+
+def googlepixel_style() -> CameraStyleConfig:
+    return CameraStyleConfig(
+        styles=("googlepixel",),
+        probs=None,
+    )
+
+def iphone_style() -> CameraStyleConfig:
+    return CameraStyleConfig(
+        styles=("iphone",),
         probs=None,
     )
 
