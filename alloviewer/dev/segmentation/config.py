@@ -14,6 +14,8 @@ UNET_STD = [0.17771362, 0.2031829, 0.1374358 ]
 
 STYLE_CACHE_PATH = "./style_cache.cache"
 
+RNG = np.random.Generator
+
 PASS_THROUGH_RANGES: Tuple[str, ...] = (
     # in-focus/out-of-focus blur ranges
     "sigma_in", "sigma_out",
@@ -45,7 +47,12 @@ INT_KEYS: Tuple[str, ...] = (
 def _is_pair(x) -> bool:
     return isinstance(x, (tuple, list)) and len(x) == 2 and all(isinstance(v, numbers.Number) for v in x)
 
-def _sample_number(rng: RNG, spec: Union[float, int, Tuple[float, float], Tuple[int, int]], integer: bool = False) -> Union[float, int]:
+def _sample_number(
+        rng: RNG,
+        spec: Union[float, int, Tuple[float, float],
+        Tuple[int, int]],
+        integer: bool = False
+) -> Union[float, int]:
     if _is_pair(spec):
         lo, hi = spec  # inclusive-exclusive for floats; inclusive-inclusive for ints below
         if integer:
@@ -256,7 +263,7 @@ class SimulatorConfig:
         set_num("n_cells", integer=True)
         set_num("cell_diameter")
         set_num("cell_axis_jitter")
-        set_num("cell_intensity_range")
+        set_passthrough("cell_intensity_range")
 
         set_num("large_cell_frac")
         set_num("large_cell_diameter_factor")
