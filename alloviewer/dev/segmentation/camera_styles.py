@@ -1,24 +1,19 @@
-import numpy as np
-import os
-from typing import Optional, Tuple, Sequence, Dict
+from __future__ import annotations
 
+import os
+import pickle
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional, Sequence, Dict, Any, Tuple
 
-from tqdm import tqdm
-
-import pickle
-
-import cv2
+import numpy as np
 
 from .config import STYLE_CACHE_PATH
-
 from ...image_analysis.io import load_image
 
 RNG = np.random.Generator
 
 
-# folders with images for the mean+-STD calculation
 EXT_IMAGES_FOLDERS = [
     "./ext_images/20251106_25722269_iPhone_XR_JPEG",
     "./ext_images/20251106_25722169_iPhone_XR_JPEG",
@@ -28,33 +23,27 @@ EXT_IMAGES_FOLDERS = [
     "./ext_images/20251014_25719960",
     "./ext_images/20251014_25720084",
     "./ext_images/20251107_25065521",
-    "./ext_images/20251107_25722332"
+    "./ext_images/20251107_25722332",
 ]
 
-def _pair_from_center_width(center: float, width: float, lo: float, hi: float) -> Tuple[float, float]:
-    a = max(lo, center - width)
-    b = min(hi, center + width)
-    if a > b:
-        a, b = b, a
-    return (float(a), float(b))
+
+# -----------------------------
+# cache paths
+# -----------------------------
+
+STYLE_CACHE_PATH = Path(STYLE_CACHE_PATH)
+STYLE_QUANTILE_CACHE_PATH = STYLE_CACHE_PATH.with_name("camera_quantile_band_cache.pkl")
 
 
-def _safe_range(a: float, b: float, lo: Optional[float] = None, hi: Optional[float] = None) -> Tuple[float, float]:
-    x0 = float(min(a, b))
-    x1 = float(max(a, b))
-    if lo is not None:
-        x0 = max(lo, x0)
-        x1 = max(lo, x1)
-    if hi is not None:
-        x0 = min(hi, x0)
-        x1 = min(hi, x1)
-    return (float(x0), float(x1))
+# -----------------------------
+# style params
+# -----------------------------
 
 @dataclass
 class CameraStyleParams:
     name: str
 
-    # basic tone
+    # global tone
     exposure_range: Tuple[float, float] = (1.0, 1.0)
     c_range: Tuple[float, float] = (1.0, 1.0)
     b_range: Tuple[float, float] = (0.0, 0.0)
@@ -72,7 +61,7 @@ class CameraStyleParams:
     green_magenta_shift_range: Tuple[float, float] = (0.0, 0.0)
     blue_yellow_shift_range: Tuple[float, float] = (0.0, 0.0)
 
-    # blur / sharpening / noise
+    # blur / sharpen / noise
     blur_sigma_range: Tuple[float, float] = (0.0, 0.0)
     sharpen_strength_range: Tuple[float, float] = (0.0, 0.0)
     noise_std_base_range: Tuple[float, float] = (0.0, 0.0)
@@ -81,14 +70,18 @@ class CameraStyleParams:
     vignette_amp_range: Tuple[float, float] = (0.0, 0.0)
     illum_amp_range: Tuple[float, float] = (0.0, 0.0)
 
-    # clipping / compression
+    # compression
     clip_prob: float = 0.0
     jpeg_prob: float = 0.0
     jpeg_quality_range: Tuple[int, int] = (60, 95)
 
-    # resampling artifacts
+    # resize artifacts
     resize_prob: float = 0.0
     resize_scale_range: Tuple[float, float] = (1.0, 1.0)
+
+    # soft histogram band match
+    histogram_match_strength_range: Tuple[float, float] = (0.0, 0.0)
+    use_histogram_match: bool = True
 
 
 @dataclass
@@ -109,586 +102,162 @@ class CameraStyleConfig:
         idx = int(rng.choice(len(self.styles), p=p))
         return self.styles[idx]
 
-def build_camera_style_from_summary(
-    phone: str,
-    summary: dict,
-) -> CameraStyleParams:
-    """
-    Map robust feature summaries to a CameraStyleParams.
-    """
-    med = summary["feature_median"]
-    qlo = summary["feature_q_lo"]
-    qhi = summary["feature_q_hi"]
-
-    gray_mean_med = med["gray_mean"]
-    gray_std_med = med["gray_std"]
-    sat_mean_med = med["sat_mean"]
-    dark_frac_med = med["dark_frac"]
-    bright_frac_med = med["bright_frac"]
-
-    r_mean = med["r_mean"]
-    g_mean = med["g_mean"]
-    b_mean = med["b_mean"]
-
-    gray_p05 = med.get("gray_p5", gray_mean_med)
-    gray_p50 = med.get("gray_p50", gray_mean_med)
-    gray_p95 = med.get("gray_p95", gray_mean_med)
-
-    p05_spread = qhi.get("gray_p5", gray_p05) - qlo.get("gray_p5", gray_p05)
-    p50_spread = qhi.get("gray_p50", gray_p50) - qlo.get("gray_p50", gray_p50)
-    p95_spread = qhi.get("gray_p95", gray_p95) - qlo.get("gray_p95", gray_p95)
-
-    tonal_spread = max(1e-6, gray_p95 - gray_p05)
-
-    # color bias signals
-    rg_bias = r_mean - g_mean
-    bg_bias = b_mean - g_mean
-    rb_bias = r_mean - b_mean
-
-    # exposure
-    # brighter families get slightly wider exposure range near 1
-    exposure_center = 1.0 + 0.35 * (gray_mean_med - 0.35)
-    exposure_width = 0.06 + 0.45 * p50_spread
-    exposure_range = _pair_from_center_width(exposure_center, exposure_width, 0.75, 1.35)
-
-    # contrast
-    contrast_center = 1.0 + 0.8 * (gray_std_med - 0.18)
-    contrast_width = 0.04 + 0.30 * max(0.01, qhi["gray_std"] - qlo["gray_std"])
-    c_range = _pair_from_center_width(contrast_center, contrast_width, 0.80, 1.25)
-
-    # brightness offset
-    b_center = 0.15 * (gray_mean_med - 0.35)
-    b_width = 0.01 + 0.10 * p50_spread
-    b_range = _pair_from_center_width(b_center, b_width, -0.08, 0.08)
-
-    # gamma
-    # broad tonal compression handled here
-    gamma_center = 1.0 - 0.5 * (gray_mean_med - 0.35) + 0.2 * (0.18 - gray_std_med)
-    gamma_width = 0.05 + 0.30 * p95_spread
-    gamma_range = _pair_from_center_width(gamma_center, gamma_width, 0.75, 1.30)
-
-    # shadow lift
-    # high dark_frac or elevated low percentile floor => more lift
-    shadow_center = 0.03 + 0.25 * dark_frac_med + 0.12 * gray_p05
-    shadow_width = 0.01 + 0.08 * p05_spread
-    shadow_lift_range = _pair_from_center_width(shadow_center, shadow_width, 0.0, 0.25)
-
-    # highlight rolloff
-    highlight_center = 0.02 + 0.35 * bright_frac_med + 0.25 * max(0.0, gray_p95 - 0.80)
-    highlight_width = 0.01 + 0.10 * p95_spread
-    highlight_rolloff_range = _pair_from_center_width(highlight_center, highlight_width, 0.0, 0.35)
-
-    # midtone contrast
-    midtone_center = 1.5 * (gray_std_med - 0.18)
-    midtone_width = 0.03 + 0.25 * max(0.01, qhi["gray_std"] - qlo["gray_std"])
-    midtone_contrast_range = _pair_from_center_width(midtone_center, midtone_width, -0.25, 0.40)
-
-    # RG mixing
-    mix_center = 0.04 + 0.15 * abs(rg_bias)
-    mix_width = 0.01 + 0.05 * abs(qhi["r_mean"] - qlo["r_mean"])
-    mix_range = _pair_from_center_width(mix_center, mix_width, 0.0, 0.25)
-
-    # WB spread
-    wb_center = 1.0
-    wb_width = 0.02 + 0.6 * max(
-        abs(qhi["r_mean"] - qlo["r_mean"]),
-        abs(qhi["g_mean"] - qlo["g_mean"]),
-        abs(qhi["b_mean"] - qlo["b_mean"]),
-    )
-    wb_range = _pair_from_center_width(wb_center, wb_width, 0.80, 1.25)
-
-    # saturation
-    sat_center = 1.0 + 0.7 * (sat_mean_med - 0.30)
-    sat_width = 0.05 + 0.8 * max(0.01, qhi["sat_mean"] - qlo["sat_mean"])
-    saturation_range = _pair_from_center_width(sat_center, sat_width, 0.70, 1.35)
-
-    # explicit color-axis shifts
-    green_magenta_center = np.clip(-0.8 * (0.5 * (r_mean + b_mean) - g_mean), -0.12, 0.12)
-    green_magenta_width = 0.01 + 0.03 * (
-        abs(qhi["g_mean"] - qlo["g_mean"]) +
-        0.5 * abs(qhi["r_mean"] - qlo["r_mean"]) +
-        0.5 * abs(qhi["b_mean"] - qlo["b_mean"])
-    )
-    green_magenta_shift_range = _pair_from_center_width(green_magenta_center, green_magenta_width, -0.15, 0.15)
-
-    blue_yellow_center = np.clip(-0.8 * rb_bias, -0.15, 0.15)
-    blue_yellow_width = 0.01 + 0.04 * (
-        abs(qhi["r_mean"] - qlo["r_mean"]) +
-        abs(qhi["b_mean"] - qlo["b_mean"])
-    )
-    blue_yellow_shift_range = _pair_from_center_width(blue_yellow_center, blue_yellow_width, -0.18, 0.18)
-
-    # clip probability
-    clip_prob = float(np.clip(
-        0.05 + 1.4 * bright_frac_med + 0.2 * max(0.0, gray_p95 - 0.90),
-        0.0, 0.75
-    ))
-
-    if phone == "iphone":
-        # stronger push into midtones, less dark-floor mass, less bright-tail mass
-        exposure_range = (0.98, 1.04)
-        c_range = (0.90, 0.99)
-        b_range = (0.01, 0.035)
-        gamma_range = (1.00, 1.03)
-
-        shadow_lift_range = (0.05, 0.10)
-        highlight_rolloff_range = (0.10, 0.18)
-        midtone_contrast_range = (-0.03, 0.02)
-
-        mix_range = (0.01, 0.04)
-        wb_range = (0.98, 1.03)
-        saturation_range = (0.76, 0.96)
-        green_magenta_shift_range = (-0.015, 0.015)
-        blue_yellow_shift_range = (-0.015, 0.015)
-
-        blur_sigma_range = (0.18, 0.45)
-        sharpen_strength_range = (0.02, 0.08)
-        noise_std_base_range = (0.002, 0.005)
-
-        vignette_amp_range = (0.00, 0.02)
-        illum_amp_range = (0.00, 0.015)
-
-        clip_prob = 0.00
-        jpeg_prob = 0.03
-        jpeg_quality_range = (92, 99)
-
-        resize_prob = 0.00
-        resize_scale_range = (0.95, 1.00)
-    elif phone == "googlepixel":
-        # less extreme than before: fewer crushed shadows, fewer blown highlights,
-        # lower saturation, more midtone mass
-        exposure_range = (0.90, 1.08)
-        c_range = (0.90, 1.10)
-        b_range = (-0.01, 0.03)
-        gamma_range = (0.90, 1.08)
-
-        shadow_lift_range = (0.02, 0.08)
-        highlight_rolloff_range = (0.03, 0.10)
-        midtone_contrast_range = (-0.02, 0.10)
-
-        mix_range = (0.02, 0.10)
-        wb_range = (0.94, 1.08)
-        saturation_range = (0.75, 1.00)
-        green_magenta_shift_range = (-0.04, 0.04)
-        blue_yellow_shift_range = (-0.05, 0.05)
-
-        blur_sigma_range = (0.35, 1.00)
-        sharpen_strength_range = (0.12, 0.40)
-        noise_std_base_range = (0.004, 0.012)
-
-        vignette_amp_range = (0.02, 0.08)
-        illum_amp_range = (0.02, 0.06)
-
-        clip_prob = 0.08
-        jpeg_prob = 0.15
-        jpeg_quality_range = (82, 98)
-
-        resize_prob = 0.10
-        resize_scale_range = (0.80, 0.96)
-    elif phone == "microscope":
-        # less blue, less red spread, tighter and flatter
-        exposure_range = (0.76, 0.98)
-        c_range = (0.90, 1.02)
-        b_range = (-0.03, 0.005)
-        gamma_range = (0.98, 1.12)
-
-        shadow_lift_range = (0.00, 0.015)
-        highlight_rolloff_range = (0.00, 0.025)
-        midtone_contrast_range = (-0.04, 0.025)
-
-        mix_range = (0.00, 0.015)
-        wb_range = (0.985, 1.015)
-        saturation_range = (0.24, 0.52)
-        green_magenta_shift_range = (-0.01, 0.01)
-        blue_yellow_shift_range = (-0.05, -0.01)
-
-        blur_sigma_range = (0.08, 0.28)
-        sharpen_strength_range = (0.00, 0.035)
-        noise_std_base_range = (0.0002, 0.0012)
-
-        vignette_amp_range = (0.00, 0.008)
-        illum_amp_range = (0.00, 0.01)
-
-        clip_prob = 0.00
-        jpeg_prob = 0.0
-        jpeg_quality_range = (95, 100)
-
-        resize_prob = 0.0
-        resize_scale_range = (1.0, 1.0)
-    else:
-        blur_sigma_range = (0.5, 1.2)
-        sharpen_strength_range = (0.10, 0.50)
-        noise_std_base_range = (0.005, 0.015)
-        vignette_amp_range = (0.02, 0.10)
-        illum_amp_range = (0.03, 0.08)
-        jpeg_prob = 0.30
-        jpeg_quality_range = (70, 95)
-        resize_prob = 0.20
-        resize_scale_range = (0.70, 0.95)
-
-    return CameraStyleParams(
-        name=phone,
-        exposure_range=_safe_range(*exposure_range, lo=0.75, hi=1.35),
-        c_range=_safe_range(*c_range, lo=0.80, hi=1.25),
-        b_range=_safe_range(*b_range, lo=-0.08, hi=0.08),
-        gamma_range=_safe_range(*gamma_range, lo=0.75, hi=1.30),
-        shadow_lift_range=_safe_range(*shadow_lift_range, lo=0.0, hi=0.25),
-        highlight_rolloff_range=_safe_range(*highlight_rolloff_range, lo=0.0, hi=0.35),
-        midtone_contrast_range=_safe_range(*midtone_contrast_range, lo=-0.25, hi=0.40),
-        mix_range=_safe_range(*mix_range, lo=0.0, hi=0.25),
-        wb_range=_safe_range(*wb_range, lo=0.80, hi=1.25),
-        saturation_range=_safe_range(*saturation_range, lo=0.70, hi=1.35),
-        green_magenta_shift_range=_safe_range(*green_magenta_shift_range, lo=-0.15, hi=0.15),
-        blue_yellow_shift_range=_safe_range(*blue_yellow_shift_range, lo=-0.18, hi=0.18),
-        blur_sigma_range=blur_sigma_range,
-        sharpen_strength_range=sharpen_strength_range,
-        noise_std_base_range=noise_std_base_range,
-        vignette_amp_range=vignette_amp_range,
-        illum_amp_range=illum_amp_range,
-        clip_prob=clip_prob,
-        jpeg_prob=jpeg_prob,
-        jpeg_quality_range=jpeg_quality_range,
-        resize_prob=resize_prob,
-        resize_scale_range=resize_scale_range,
-    )
-
-def extract_real_image_feature_table_cv2(
-    folders: Optional[Sequence[str | Path]] = None,
-    exts: Sequence[str] = (".png", ".jpg", ".jpeg", ".tif", ".tiff"),
-    hist_bins: int = 16,
-    percentiles: Sequence[float] = (1, 5, 25, 50, 75, 95, 99),
-    sample_pixels: Optional[int] = 300_000,
-    recursive: bool = True,
-    ignore_failures: bool = True,
-    cache_path: Optional[str | Path] = STYLE_CACHE_PATH,
-    force_recompute: bool = False,
-    rng_seed: int = 0,
-):
-    """
-    Extract per-image appearance features from real images.
-
-    Returns
-    -------
-    rows : list[dict]
-    feature_names : list[str]
-    X : np.ndarray
-    """
-    if cache_path is not None:
-        cache_path = Path(cache_path)
-        if cache_path.exists() and not force_recompute:
-            with open(cache_path, "rb") as f:
-                payload = pickle.load(f)
-            return payload["rows"], payload["feature_names"], payload["X"]
-
-    if folders is None:
-        folders = EXT_IMAGES_FOLDERS
-        if folders is None:
-            raise ValueError("folders must be provided")
-
-    rng = np.random.default_rng(rng_seed)
-    folders = [Path(f) for f in folders]
-    exts = tuple(e.lower() for e in exts)
-    percentiles = tuple(float(p) for p in percentiles)
-
-    image_paths = []
-    for folder in folders:
-        if not folder.exists():
-            continue
-        walker = folder.rglob("*") if recursive else folder.glob("*")
-        for path in walker:
-            if path.is_file() and path.suffix.lower() in exts:
-                image_paths.append(path)
-
-    if not image_paths:
-        raise RuntimeError("No image files found in the given folders.")
-
-    channel_names = ("r", "g", "b")
-    feature_names = []
-
-    for ch in channel_names:
-        feature_names.append(f"{ch}_mean")
-        feature_names.append(f"{ch}_std")
-        feature_names.append(f"{ch}_skew")
-        for p in percentiles:
-            p_name = str(p).replace(".", "_")
-            feature_names.append(f"{ch}_p{p_name}")
-        for b in range(hist_bins):
-            feature_names.append(f"{ch}_hist_{b:02d}")
-
-    feature_names.extend([
-        "gray_mean",
-        "gray_std",
-        "gray_skew",
-    ])
-    for p in percentiles:
-        p_name = str(p).replace(".", "_")
-        feature_names.append(f"gray_p{p_name}")
-
-    feature_names.extend([
-        "sat_mean",
-        "sat_std",
-        "sat_skew",
-        "dark_frac",
-        "bright_frac",
-        "n_pixels_used",
-        "aspect_ratio",
-        "height",
-        "width",
-    ])
-
-    rows = []
-
-    def _safe_skew(x: np.ndarray) -> float:
-        m = float(x.mean())
-        s = float(x.std())
-        if s < 1e-12:
-            return 0.0
-        z = (x - m) / s
-        return float(np.mean(z ** 3))
-
-    def _norm_hist_01(x: np.ndarray, bins: int) -> np.ndarray:
-        h, _ = np.histogram(x, bins=bins, range=(0.0, 1.0))
-        h = h.astype(np.float32)
-        h /= (h.sum() + 1e-8)
-        return h
-
-    def _find_phone(file_path: str | Path) -> str:
-        s = str(file_path).lower()
-        if "iphone" in s:
-            return "iphone"
-        if "googlepixel" in s or "pixel" in s:
-            return "googlepixel"
-        else:
-            return "microscope"
-
-    for path in tqdm(image_paths, desc="Extracting real-image features"):
-        file_name = os.path.basename(path)
-        folder = os.path.dirname(path)
-
-        phone = _find_phone(path)
-
-        img, _ = load_image(file_name, base_dir = folder, as_chw = False)
-
-        H, W, _ = img.shape
-
-        pixels = img.reshape(-1, 3)
-        n_total = pixels.shape[0]
-
-        if sample_pixels is not None and n_total > sample_pixels:
-            idx = rng.choice(n_total, size=sample_pixels, replace=False)
-            pixels_use = pixels[idx]
-        else:
-            pixels_use = pixels
-
-        r = pixels_use[:, 0]
-        g = pixels_use[:, 1]
-        b = pixels_use[:, 2]
-
-        gray = 0.299 * r + 0.587 * g + 0.114 * b
-
-        rgb_max = np.max(pixels_use, axis=1)
-        rgb_min = np.min(pixels_use, axis=1)
-        sat = np.where(rgb_max > 1e-8, (rgb_max - rgb_min) / (rgb_max + 1e-8), 0.0).astype(np.float32)
-
-        row = {
-            "path": str(path),
-            "filename": path.name,
-            "phone": phone,
-            "height": int(H),
-            "width": int(W),
-            "aspect_ratio": float(W / max(H, 1)),
-            "n_pixels_used": int(pixels_use.shape[0]),
-        }
-
-        for ch_name, x in zip(channel_names, (r, g, b)):
-            row[f"{ch_name}_mean"] = float(np.mean(x))
-            row[f"{ch_name}_std"] = float(np.std(x))
-            row[f"{ch_name}_skew"] = float(_safe_skew(x))
-
-            pvals = np.percentile(x, percentiles)
-            for p, val in zip(percentiles, pvals):
-                p_name = str(p).replace(".", "_")
-                row[f"{ch_name}_p{p_name}"] = float(val)
-
-            hist = _norm_hist_01(x, bins=hist_bins)
-            for i, val in enumerate(hist):
-                row[f"{ch_name}_hist_{i:02d}"] = float(val)
-
-        row["gray_mean"] = float(np.mean(gray))
-        row["gray_std"] = float(np.std(gray))
-        row["gray_skew"] = float(_safe_skew(gray))
-
-        gray_pvals = np.percentile(gray, percentiles)
-        for p, val in zip(percentiles, gray_pvals):
-            p_name = str(p).replace(".", "_")
-            row[f"gray_p{p_name}"] = float(val)
-
-        row["sat_mean"] = float(np.mean(sat))
-        row["sat_std"] = float(np.std(sat))
-        row["sat_skew"] = float(_safe_skew(sat))
-
-        row["dark_frac"] = float(np.mean(gray <= 0.02))
-        row["bright_frac"] = float(np.mean(gray >= 0.98))
-
-        rows.append(row)
-
-    if not rows:
-        raise RuntimeError("No usable images were processed.")
-
-    X = np.array([[row[name] for name in feature_names] for row in rows], dtype=np.float32)
-
-    if cache_path is not None:
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(cache_path, "wb") as f:
-            pickle.dump(
-                {
-                    "rows": rows,
-                    "feature_names": feature_names,
-                    "X": X,
-                    "folders": [str(f) for f in folders],
-                    "hist_bins": hist_bins,
-                    "percentiles": percentiles,
-                    "sample_pixels": sample_pixels,
-                },
-                f,
-            )
-
-    return rows, feature_names, X
-
-def summarize_features_by_phone(
-    rows: list[dict],
-    feature_names: Sequence[str],
-    phones: Sequence[str] = ("iphone", "googlepixel", "microscope"),
-    q_lo: float = 0.10,
-    q_hi: float = 0.90,
-):
-    """
-    Build robust per-phone summaries.
-
-    Returns
-    -------
-    summaries : dict[str, dict]
-        summaries[phone] contains:
-        - n_images
-        - fraction
-        - mean / std / median / q_lo / q_hi for each feature
-    """
-    if not rows:
-        raise ValueError("rows is empty")
-
-    q_lo = float(q_lo)
-    q_hi = float(q_hi)
-    if not (0.0 <= q_lo < q_hi <= 1.0):
-        raise ValueError("Need 0 <= q_lo < q_hi <= 1")
-
-    summaries: Dict[str, dict] = {}
-    total_n = len(rows)
-
-    for phone in phones:
-        subset = [row for row in rows if row.get("phone") == phone]
-        if len(subset) == 0:
-            continue
-
-        X = np.array([[row[f] for f in feature_names] for row in subset], dtype=np.float64)
-
-        means = X.mean(axis=0)
-        stds = X.std(axis=0)
-        meds = np.median(X, axis=0)
-        qlos = np.quantile(X, q_lo, axis=0)
-        qhis = np.quantile(X, q_hi, axis=0)
-
-        summaries[phone] = {
-            "phone": phone,
-            "n_images": len(subset),
-            "fraction": len(subset) / total_n,
-            "feature_mean": {f: float(v) for f, v in zip(feature_names, means)},
-            "feature_std": {f: float(v) for f, v in zip(feature_names, stds)},
-            "feature_median": {f: float(v) for f, v in zip(feature_names, meds)},
-            "feature_q_lo": {f: float(v) for f, v in zip(feature_names, qlos)},
-            "feature_q_hi": {f: float(v) for f, v in zip(feature_names, qhis)},
-        }
-
-    return summaries
-
-
-def build_style_registry_from_real_images(
-    folders: Optional[Sequence[str | Path]],
-    cache_path: str | Path = STYLE_CACHE_PATH,
-    exts: Sequence[str] = (".png", ".jpg", ".jpeg", ".tif", ".tiff"),
-    phones: Sequence[str] = ("iphone", "googlepixel", "microscope"),
-    hist_bins: int = 16,
-    percentiles: Sequence[float] = (1, 5, 25, 50, 75, 95, 99),
-    sample_pixels: Optional[int] = 300_000,
-    q_lo: float = 0.10,
-    q_hi: float = 0.90,
-    force_recompute: bool = False,
-):
-    rows, feature_names, _ = extract_real_image_feature_table_cv2(
-        folders=folders,
-        exts=exts,
-        hist_bins=hist_bins,
-        percentiles=percentiles,
-        sample_pixels=sample_pixels,
-        cache_path=cache_path,
-        force_recompute=force_recompute,
-    )
-
-    summaries = summarize_features_by_phone(
-        rows=rows,
-        feature_names=feature_names,
-        phones=phones,
-        q_lo=q_lo,
-        q_hi=q_hi,
-    )
-
-    style_registry: Dict[str, CameraStyleParams] = {}
-    for phone in phones:
-        if phone not in summaries:
-            continue
-        style_registry[phone] = build_camera_style_from_summary(phone, summaries[phone])
-
-    style_registry["simulated_raw"] = CameraStyleParams(
-        name="simulated_raw",
-        exposure_range=(1.0, 1.0),
-        c_range=(1.0, 1.0),
-        b_range=(0.0, 0.0),
-        gamma_range=(1.0, 1.0),
-        shadow_lift_range=(0.0, 0.0),
-        highlight_rolloff_range=(0.0, 0.0),
-        midtone_contrast_range=(0.0, 0.0),
-        mix_range=(0.0, 0.0),
-        wb_range=(1.0, 1.0),
-        saturation_range=(1.0, 1.0),
-        green_magenta_shift_range=(0.0, 0.0),
-        blue_yellow_shift_range=(0.0, 0.0),
-        blur_sigma_range=(0.0, 0.0),
-        sharpen_strength_range=(0.0, 0.0),
-        noise_std_base_range=(0.0, 0.0),
-        vignette_amp_range=(0.0, 0.0),
-        illum_amp_range=(0.0, 0.0),
-        clip_prob=0.0,
-        jpeg_prob=0.0,
-        jpeg_quality_range=(100, 100),
-        resize_prob=0.0,
-        resize_scale_range=(1.0, 1.0),
-    )
-
-    return style_registry, summaries, rows, feature_names
-
-STYLE_PARAMS_REGISTRY: Dict[str, CameraStyleParams] = {}
-
-def load_or_build_default_style_registry(
-    folders: Optional[Sequence[str | Path]] = None,
-    cache_path: str | Path = STYLE_CACHE_PATH,
-    force_recompute: bool = False,
-):
-    global STYLE_PARAMS_REGISTRY
-    STYLE_PARAMS_REGISTRY, summaries, rows, feature_names = build_style_registry_from_real_images(
-        folders=folders,
-        cache_path=cache_path,
-        force_recompute=force_recompute,
-    )
-    return STYLE_PARAMS_REGISTRY, summaries, rows, feature_names
+
+# -----------------------------
+# fixed style presets
+# -----------------------------
+
+IPHONE_STYLE = CameraStyleParams(
+    name="iphone",
+    exposure_range=(0.98, 1.04),
+    c_range=(0.90, 0.99),
+    b_range=(0.01, 0.035),
+    gamma_range=(1.00, 1.03),
+
+    shadow_lift_range=(0.05, 0.10),
+    highlight_rolloff_range=(0.10, 0.18),
+    midtone_contrast_range=(-0.03, 0.02),
+
+    mix_range=(0.01, 0.04),
+    wb_range=(0.98, 1.03),
+    saturation_range=(0.76, 0.96),
+    green_magenta_shift_range=(-0.015, 0.015),
+    blue_yellow_shift_range=(-0.015, 0.015),
+
+    blur_sigma_range=(0.18, 0.45),
+    sharpen_strength_range=(0.02, 0.08),
+    noise_std_base_range=(0.002, 0.005),
+
+    vignette_amp_range=(0.00, 0.02),
+    illum_amp_range=(0.00, 0.015),
+
+    clip_prob=0.00,
+    jpeg_prob=0.03,
+    jpeg_quality_range=(92, 99),
+
+    resize_prob=0.00,
+    resize_scale_range=(0.95, 1.00),
+
+    histogram_match_strength_range=(0.35, 0.70),
+    use_histogram_match=True,
+)
+
+GOOGLEPIXEL_STYLE = CameraStyleParams(
+    name="googlepixel",
+    exposure_range=(0.90, 1.08),
+    c_range=(0.90, 1.10),
+    b_range=(-0.01, 0.03),
+    gamma_range=(0.90, 1.08),
+
+    shadow_lift_range=(0.02, 0.08),
+    highlight_rolloff_range=(0.03, 0.10),
+    midtone_contrast_range=(-0.02, 0.10),
+
+    mix_range=(0.02, 0.10),
+    wb_range=(0.94, 1.08),
+    saturation_range=(0.75, 1.00),
+    green_magenta_shift_range=(-0.04, 0.04),
+    blue_yellow_shift_range=(-0.05, 0.05),
+
+    blur_sigma_range=(0.35, 1.00),
+    sharpen_strength_range=(0.12, 0.40),
+    noise_std_base_range=(0.004, 0.012),
+
+    vignette_amp_range=(0.02, 0.08),
+    illum_amp_range=(0.02, 0.06),
+
+    clip_prob=0.08,
+    jpeg_prob=0.15,
+    jpeg_quality_range=(82, 98),
+
+    resize_prob=0.10,
+    resize_scale_range=(0.80, 0.96),
+
+    histogram_match_strength_range=(0.35, 0.70),
+    use_histogram_match=True,
+)
+
+MICROSCOPE_STYLE = CameraStyleParams(
+    name="microscope",
+    exposure_range=(0.76, 0.98),
+    c_range=(0.90, 1.02),
+    b_range=(-0.03, 0.005),
+    gamma_range=(0.98, 1.12),
+
+    shadow_lift_range=(0.00, 0.015),
+    highlight_rolloff_range=(0.00, 0.025),
+    midtone_contrast_range=(-0.04, 0.025),
+
+    mix_range=(0.00, 0.015),
+    wb_range=(0.985, 1.015),
+    saturation_range=(0.24, 0.52),
+    green_magenta_shift_range=(-0.01, 0.01),
+    blue_yellow_shift_range=(-0.05, -0.01),
+
+    blur_sigma_range=(0.08, 0.28),
+    sharpen_strength_range=(0.00, 0.035),
+    noise_std_base_range=(0.0002, 0.0012),
+
+    vignette_amp_range=(0.00, 0.008),
+    illum_amp_range=(0.00, 0.01),
+
+    clip_prob=0.00,
+    jpeg_prob=0.0,
+    jpeg_quality_range=(95, 100),
+
+    resize_prob=0.0,
+    resize_scale_range=(1.0, 1.0),
+
+    histogram_match_strength_range=(0.55, 0.90),
+    use_histogram_match=True,
+)
+
+SIMULATED_RAW_STYLE = CameraStyleParams(
+    name="simulated_raw",
+    exposure_range=(1.0, 1.0),
+    c_range=(1.0, 1.0),
+    b_range=(0.0, 0.0),
+    gamma_range=(1.0, 1.0),
+
+    shadow_lift_range=(0.0, 0.0),
+    highlight_rolloff_range=(0.0, 0.0),
+    midtone_contrast_range=(0.0, 0.0),
+
+    mix_range=(0.0, 0.0),
+    wb_range=(1.0, 1.0),
+    saturation_range=(1.0, 1.0),
+    green_magenta_shift_range=(0.0, 0.0),
+    blue_yellow_shift_range=(0.0, 0.0),
+
+    blur_sigma_range=(0.0, 0.0),
+    sharpen_strength_range=(0.0, 0.0),
+    noise_std_base_range=(0.0, 0.0),
+
+    vignette_amp_range=(0.0, 0.0),
+    illum_amp_range=(0.0, 0.0),
+
+    clip_prob=0.0,
+    jpeg_prob=0.0,
+    jpeg_quality_range=(100, 100),
+
+    resize_prob=0.0,
+    resize_scale_range=(1.0, 1.0),
+
+    histogram_match_strength_range=(0.0, 0.0),
+    use_histogram_match=False,
+)
+
+STYLE_PARAMS_REGISTRY: Dict[str, CameraStyleParams] = {
+    "iphone": IPHONE_STYLE,
+    "googlepixel": GOOGLEPIXEL_STYLE,
+    "microscope": MICROSCOPE_STYLE,
+    "simulated_raw": SIMULATED_RAW_STYLE,
+}
+
+
+# -----------------------------
+# style config helpers
+# -----------------------------
 
 def phone_mix_style() -> CameraStyleConfig:
     return CameraStyleConfig(
@@ -719,3 +288,275 @@ def simulated_raw_style() -> CameraStyleConfig:
         styles=("simulated_raw",),
         probs=None,
     )
+
+
+# -----------------------------
+# quantile band cache
+# -----------------------------
+
+def _find_device_label(file_path: str | Path) -> str:
+    s = str(file_path).lower()
+    if "iphone" in s:
+        return "iphone"
+    if "googlepixel" in s or "pixel" in s:
+        return "googlepixel"
+    return "microscope"
+
+
+def _collect_image_paths(
+    folders: Optional[Sequence[str | Path]] = None,
+    exts: Sequence[str] = (".png", ".jpg", ".jpeg", ".tif", ".tiff"),
+    recursive: bool = True,
+) -> list[Path]:
+    if folders is None:
+        folders = EXT_IMAGES_FOLDERS
+
+    exts = tuple(e.lower() for e in exts)
+    image_paths: list[Path] = []
+
+    for folder in folders:
+        folder = Path(folder)
+        if not folder.exists():
+            continue
+
+        walker = folder.rglob("*") if recursive else folder.glob("*")
+        for path in walker:
+            if path.is_file() and path.suffix.lower() in exts:
+                image_paths.append(path)
+
+    if not image_paths:
+        raise RuntimeError("No image files found.")
+
+    return sorted(image_paths)
+
+
+def _sample_pixels_from_image(
+    img_hwc: np.ndarray,
+    sample_pixels: Optional[int],
+    rng: np.random.Generator,
+) -> np.ndarray:
+    pixels = img_hwc.reshape(-1, 3)
+    n_total = pixels.shape[0]
+
+    if sample_pixels is not None and n_total > sample_pixels:
+        idx = rng.choice(n_total, size=sample_pixels, replace=False)
+        pixels = pixels[idx]
+
+    return pixels.astype(np.float32, copy=False)
+
+
+def build_target_quantile_band_cache(
+    folders: Optional[Sequence[str | Path]] = None,
+    exts: Sequence[str] = (".png", ".jpg", ".jpeg", ".tif", ".tiff"),
+    devices: Sequence[str] = ("iphone", "googlepixel", "microscope"),
+    recursive: bool = True,
+    sample_pixels_per_image: Optional[int] = 300_000,
+    n_quantiles: int = 1024,
+    q_band_lo: float = 0.025,
+    q_band_hi: float = 0.975,
+    rng_seed: int = 0,
+    cache_path: Optional[str | Path] = STYLE_QUANTILE_CACHE_PATH,
+    force_recompute: bool = False,
+) -> Dict[str, Any]:
+    if cache_path is not None:
+        cache_path = Path(cache_path)
+        if cache_path.exists() and not force_recompute:
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+
+    rng = np.random.default_rng(rng_seed)
+    image_paths = _collect_image_paths(folders=folders, exts=exts, recursive=recursive)
+    q_probs = np.linspace(0.0, 1.0, int(n_quantiles), dtype=np.float32)
+
+    per_device_quantiles: Dict[str, list[np.ndarray]] = {d: [] for d in devices}
+    counts = {d: 0 for d in devices}
+
+    for path in image_paths:
+        device = _find_device_label(path)
+        if device not in devices:
+            continue
+
+        file_name = os.path.basename(path)
+        folder = os.path.dirname(path)
+
+        img, _ = load_image(
+            file_name,
+            base_dir=folder,
+            as_chw=False,
+            scale=True,
+            fast_scale=True,
+        )
+
+        if img.ndim != 3 or img.shape[2] != 3:
+            continue
+
+        pixels = _sample_pixels_from_image(
+            img_hwc=img,
+            sample_pixels=sample_pixels_per_image,
+            rng=rng,
+        )
+
+        q_img = []
+        for c in range(3):
+            qc = np.quantile(np.clip(pixels[:, c], 0.0, 1.0), q_probs).astype(np.float32)
+            q_img.append(qc)
+        q_img = np.stack(q_img, axis=0)
+
+        per_device_quantiles[device].append(q_img)
+        counts[device] += 1
+
+    devices_payload: Dict[str, Any] = {}
+    for device in devices:
+        if len(per_device_quantiles[device]) == 0:
+            continue
+
+        Q = np.stack(per_device_quantiles[device], axis=0)
+
+        q_center = np.quantile(Q, 0.50, axis=0).astype(np.float32)
+        q_lo = np.quantile(Q, q_band_lo, axis=0).astype(np.float32)
+        q_hi = np.quantile(Q, q_band_hi, axis=0).astype(np.float32)
+
+        q_center = np.maximum.accumulate(q_center, axis=1)
+        q_lo = np.maximum.accumulate(q_lo, axis=1)
+        q_hi = np.maximum.accumulate(q_hi, axis=1)
+        q_center = np.clip(q_center, q_lo, q_hi)
+
+        devices_payload[device] = {
+            "n_images": counts[device],
+            "q_center": q_center,
+            "q_lo": q_lo,
+            "q_hi": q_hi,
+        }
+
+    cache = {
+        "devices": devices_payload,
+        "q_probs": q_probs,
+        "devices_requested": tuple(devices),
+        "folders": [str(f) for f in (folders if folders is not None else EXT_IMAGES_FOLDERS)],
+        "sample_pixels_per_image": sample_pixels_per_image,
+        "n_quantiles": int(n_quantiles),
+        "q_band_lo": float(q_band_lo),
+        "q_band_hi": float(q_band_hi),
+    }
+
+    if cache_path is not None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache_path, "wb") as f:
+            pickle.dump(cache, f)
+
+    return cache
+
+
+def load_or_build_quantile_band_cache(
+    folders: Optional[Sequence[str | Path]] = None,
+    cache_path: str | Path = STYLE_QUANTILE_CACHE_PATH,
+    force_recompute: bool = False,
+    sample_pixels_per_image: Optional[int] = 300_000,
+    n_quantiles: int = 1024,
+    q_band_lo: float = 0.025,
+    q_band_hi: float = 0.975,
+) -> Dict[str, Any]:
+    return build_target_quantile_band_cache(
+        folders=folders,
+        cache_path=cache_path,
+        force_recompute=force_recompute,
+        sample_pixels_per_image=sample_pixels_per_image,
+        n_quantiles=n_quantiles,
+        q_band_lo=q_band_lo,
+        q_band_hi=q_band_hi,
+    )
+
+
+# -----------------------------
+# quantile band helpers
+# -----------------------------
+
+def _compute_image_channel_quantiles(
+    x: np.ndarray,
+    q_probs: np.ndarray,
+) -> np.ndarray:
+    x = np.clip(np.asarray(x, dtype=np.float32), 0.0, 1.0)
+    q = np.quantile(x, q_probs).astype(np.float32)
+    return np.maximum.accumulate(q)
+
+
+def _strictly_increasing_knots(x: np.ndarray, eps: float = 1e-6) -> np.ndarray:
+    y = np.asarray(x, dtype=np.float32).copy()
+    y = np.maximum.accumulate(y)
+    for i in range(1, y.size):
+        if y[i] <= y[i - 1]:
+            y[i] = y[i - 1] + eps
+    return y
+
+
+def _minimal_band_projection(
+    src_q: np.ndarray,
+    tgt_q_lo: np.ndarray,
+    tgt_q_hi: np.ndarray,
+) -> np.ndarray:
+    proj = np.clip(src_q, tgt_q_lo, tgt_q_hi).astype(np.float32)
+    return np.maximum.accumulate(proj)
+
+
+def _apply_quantile_map_1d(
+    x: np.ndarray,
+    src_quantiles: np.ndarray,
+    dst_quantiles: np.ndarray,
+) -> np.ndarray:
+    src_q = _strictly_increasing_knots(src_quantiles)
+    dst_q = np.maximum.accumulate(np.asarray(dst_quantiles, dtype=np.float32))
+
+    y = np.interp(
+        np.asarray(x, dtype=np.float32),
+        src_q,
+        dst_q,
+        left=dst_q[0],
+        right=dst_q[-1],
+    ).astype(np.float32)
+
+    return np.clip(y, 0.0, 1.0)
+
+
+def apply_device_quantile_band_match(
+    img: np.ndarray,
+    target_device: str,
+    quantile_band_cache: Dict[str, Any],
+    strength: float = 1.0,
+    preserve_input_layout: bool = True,
+) -> np.ndarray:
+    if target_device not in quantile_band_cache["devices"]:
+        raise KeyError(f"Target device '{target_device}' not in quantile_band_cache")
+
+    arr = np.asarray(img, dtype=np.float32)
+    input_chw = False
+
+    if arr.ndim != 3:
+        raise ValueError(f"Expected 3D image, got shape {arr.shape}")
+
+    if arr.shape[0] == 3 and arr.shape[-1] != 3:
+        arr = np.moveaxis(arr, 0, -1)
+        input_chw = True
+    elif arr.shape[-1] != 3:
+        raise ValueError(f"Expected CHW or HWC RGB image, got shape {img.shape}")
+
+    arr = np.clip(arr, 0.0, 1.0)
+    out = arr.copy()
+
+    q_probs = quantile_band_cache["q_probs"]
+    device_ref = quantile_band_cache["devices"][target_device]
+    q_lo = device_ref["q_lo"]
+    q_hi = device_ref["q_hi"]
+
+    for c in range(3):
+        src_q = _compute_image_channel_quantiles(arr[..., c], q_probs)
+        dst_q_full = _minimal_band_projection(src_q, q_lo[c], q_hi[c])
+        dst_q = ((1.0 - strength) * src_q + strength * dst_q_full).astype(np.float32)
+        dst_q = np.maximum.accumulate(dst_q)
+        out[..., c] = _apply_quantile_map_1d(arr[..., c], src_q, dst_q)
+
+    out = np.clip(out, 0.0, 1.0).astype(np.float32)
+
+    if preserve_input_layout and input_chw:
+        out = np.moveaxis(out, -1, 0)
+
+    return out

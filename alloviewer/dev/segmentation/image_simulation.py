@@ -2,13 +2,14 @@ import numpy as np
 from skimage import segmentation, morphology
 from scipy import ndimage as ndi
 import inspect
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Optional, Any
 
 import cv2
 
 from .camera_styles import (
     CameraStyleConfig,
-    CameraStyleParams
+    CameraStyleParams,
+    apply_device_quantile_band_match
 )
 from typing import Dict
 
@@ -210,7 +211,7 @@ def simulate_image(
     ry = (yy - H/2) / (0.5 * H)
     rx = (xx - W/2) / (0.5 * W)
     v = np.sqrt(rx**2 + ry**2)
-    img *= (1.0 - vignette_strength * (v**2))[..., None].clip(0.65, 1.0).astype(np.float32)
+    img *= (1.0 - vignette_strength * (v**2))[..., None].clip(0.15, 1.0).astype(np.float32)
 
     # soft wall glow (background only)
     rim = np.exp(-((rr - R)**2) / (2 * (0.8)**2)).astype(np.float32)
@@ -242,7 +243,7 @@ def simulate_image(
 
     # multiplicative speckle strength (increase for more “grain”)
     tex_mul = 0.18
-    tex = np.clip(1.0 + tex_mul * tex, 0.6, 1.6).astype(np.float32)
+    tex = np.clip(1.0 + tex_mul * tex, 0.1, 1.6).astype(np.float32)
 
     img[inside] *= tex[inside, None]
 
@@ -466,7 +467,7 @@ def simulate_image(
         gsig = (d0 / 6.0 + sig)
         g = np.exp(-(yx[0]**2 + yx[1]**2) / (2 * (gsig**2))).astype(np.float32)
         g /= g.max() + 1e-8
-        amp = float(rng.uniform(0.9, 1.1))
+        amp = float(rng.uniform(*cell_intensity_range))
 
         y0, y1 = y - radius, y + radius + 1
         x0, x1 = x - radius, x + radius + 1
@@ -723,17 +724,17 @@ def apply_camera_style(
     rng: RNG,
     style_cfg: CameraStyleConfig,
     style_registry: Dict[str, CameraStyleParams],
+    quantile_band_cache: Optional[Dict[str, Any]] = None,
 ) -> np.ndarray:
     """
-    Apply a sampled camera style to a synthetic RGB image in [0,1].
+    Apply a sampled camera style, then softly push the result into the
+    corresponding real-device histogram band.
 
-    Parameters
-    ----------
-    img : np.ndarray
-        float32 RGB image, shape (H, W, 3), range [0,1]
-    rng : np.random.Generator
-    style_cfg : CameraStyleConfig
-    style_registry : dict[str, CameraStyleParams]
+    Returns
+    -------
+    img_out : np.ndarray
+        RGB float32 image in [0,1]
+
     """
     assert img.ndim == 3 and img.shape[2] == 3
 
@@ -742,12 +743,14 @@ def apply_camera_style(
     style_name = style_cfg.sample_style(rng)
     if style_name not in style_registry:
         raise KeyError(f"Style '{style_name}' not found in style_registry")
+
     params = style_registry[style_name]
 
     if style_name == "simulated_raw":
         return img
 
     H, W, _ = img.shape
+
     # 1) exposure
     exposure = rng.uniform(*params.exposure_range)
     img = np.clip(img * exposure, 0.0, 1.0)
@@ -768,9 +771,9 @@ def apply_camera_style(
 
     color_shift = np.array(
         [
-            1.0 - 0.35 * gm - 0.50 * by,  # R
-            1.0 + 1.00 * gm,              # G
-            1.0 - 0.35 * gm + 0.50 * by,  # B
+            1.0 - 0.35 * gm - 0.50 * by,
+            1.0 + 1.00 * gm,
+            1.0 - 0.35 * gm + 0.50 * by,
         ],
         dtype=np.float32,
     )
@@ -840,9 +843,9 @@ def apply_camera_style(
 
     # 14) resampling artifacts
     if rng.random() < params.resize_prob:
-        scale = rng.uniform(*params.resize_scale_range)
-        h2 = max(8, int(round(H * scale)))
-        w2 = max(8, int(round(W * scale)))
+        resize_scale = rng.uniform(*params.resize_scale_range)
+        h2 = max(8, int(round(H * resize_scale)))
+        w2 = max(8, int(round(W * resize_scale)))
         tmp = cv2.resize(img, (w2, h2), interpolation=cv2.INTER_AREA)
         img = cv2.resize(tmp, (W, H), interpolation=cv2.INTER_LINEAR)
         img = np.clip(img, 0.0, 1.0)
@@ -891,5 +894,21 @@ def apply_camera_style(
             dec_bgr = cv2.imdecode(enc, cv2.IMREAD_COLOR)
             img = cv2.cvtColor(dec_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
             img = np.clip(img, 0.0, 1.0)
+
+    # 18) soft histogram band match
+    if (
+        params.use_histogram_match
+        and quantile_band_cache is not None
+        and style_name in quantile_band_cache.get("devices", {})
+    ):
+        hist_strength = rng.uniform(*params.histogram_match_strength_range)
+        if hist_strength > 0:
+            img = apply_device_quantile_band_match(
+                img=img,
+                target_device=style_name,
+                quantile_band_cache=quantile_band_cache,
+                strength=float(hist_strength),
+                preserve_input_layout=True,
+            )
 
     return img.astype(np.float32)

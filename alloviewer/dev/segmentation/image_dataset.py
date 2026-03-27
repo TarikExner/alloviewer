@@ -30,14 +30,12 @@ from .utils import (
 from .config import (
     CameraSetup,
     SimulatorConfig,
-    STYLE_CACHE_PATH
 )
 from .camera_styles import (
     CameraStyleConfig,
-    build_style_registry_from_real_images,
-    simulated_raw_style,
+    load_or_build_quantile_band_cache,
+    STYLE_PARAMS_REGISTRY,
     phone_mix_style,
-    microscope_only_style
 )
 
 
@@ -269,11 +267,13 @@ class SimCellsDataset(BaseCellsTilesDataset):
         else:
             self.camera_style_cfg = camera_style_cfg
 
-        self.camera_style_registry, _, _, _ = build_style_registry_from_real_images(
-            folders = None,
-            cache_path=STYLE_CACHE_PATH,
+
+        self.quantile_band_cache = load_or_build_quantile_band_cache(
+            folders=None,
             force_recompute=False,
         )
+
+        self.camera_style_registry = STYLE_PARAMS_REGISTRY
 
         super().__init__(
             target=target,
@@ -535,7 +535,13 @@ class SimCellsDataset(BaseCellsTilesDataset):
 
         # simulate
         img, meta, targets = simulate_image(**sim_kwargs)
-        img = apply_camera_style(img, rng, self.camera_style_cfg, self.camera_style_registry)
+        img = apply_camera_style(
+            img,
+            rng,
+            self.camera_style_cfg,
+            self.camera_style_registry,
+            quantile_band_cache=self.quantile_band_cache
+        )
         cell = targets["cell_mask"].astype(np.float32)
         inst = targets["instance_labels"].astype(np.int32)
 
