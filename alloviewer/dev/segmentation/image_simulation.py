@@ -2,7 +2,7 @@ import numpy as np
 from skimage import segmentation, morphology
 from scipy import ndimage as ndi
 import inspect
-from collections.abc import Mapping, Sequence, Optional, Any
+from typing import Mapping, Sequence, Optional, Any
 
 import cv2
 
