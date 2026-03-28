@@ -84,12 +84,12 @@ class CameraStyleParams:
     use_histogram_match: bool = True
 
     # median matching
-    median_match_strength: float = 0.0
+    median_match_strength: Tuple[float, float] = (0.0, 1.0)
 
 
 @dataclass
 class CameraStyleConfig:
-    styles: Sequence[str] = ("microscope", "iphone", "googlepixel")
+    styles: Sequence[str] = ("microscope", "iphone", "googlepixel", "simulated_raw")
     probs: Optional[Sequence[float]] = None
 
     def sample_style(self, rng: RNG) -> str:
@@ -135,16 +135,16 @@ IPHONE_STYLE = CameraStyleParams(
     illum_amp_range=(0.00, 0.015),
 
     clip_prob=0.00,
-    jpeg_prob=0.03,
-    jpeg_quality_range=(92, 99),
+    jpeg_prob=0.3,
+    jpeg_quality_range=(80, 100),
 
     resize_prob=0.00,
     resize_scale_range=(0.95, 1.00),
 
-    histogram_match_strength_range=(0.35, 0.70),
+    histogram_match_strength_range=(0.35, 1.00),
     use_histogram_match=True,
 
-    median_match_strength = 0.7
+    median_match_strength=(0.0, 0.7)
 
 )
 
@@ -173,16 +173,16 @@ GOOGLEPIXEL_STYLE = CameraStyleParams(
     illum_amp_range=(0.02, 0.06),
 
     clip_prob=0.08,
-    jpeg_prob=0.15,
-    jpeg_quality_range=(82, 98),
+    jpeg_prob=0.3,
+    jpeg_quality_range=(80, 100),
 
     resize_prob=0.10,
     resize_scale_range=(0.80, 0.96),
 
-    histogram_match_strength_range=(0.95, 1.00),
+    histogram_match_strength_range=(0.35, 1.00),
     use_histogram_match=True,
 
-    median_match_strength = 0.7
+    median_match_strength=(0.0, 0.7)
 )
 
 MICROSCOPE_STYLE = CameraStyleParams(
@@ -210,16 +210,16 @@ MICROSCOPE_STYLE = CameraStyleParams(
     illum_amp_range=(0.00, 0.01),
 
     clip_prob=0.00,
-    jpeg_prob=0.0,
-    jpeg_quality_range=(95, 100),
+    jpeg_prob=0.3,
+    jpeg_quality_range=(80, 100),
 
     resize_prob=0.0,
     resize_scale_range=(1.0, 1.0),
 
-    histogram_match_strength_range=(0.5, 0.99),
+    histogram_match_strength_range=(0.95, 1.00),
     use_histogram_match=True,
 
-    median_match_strength = 0.7
+    median_match_strength = (0.0, 0.7)
 )
 
 SIMULATED_RAW_STYLE = CameraStyleParams(
@@ -247,14 +247,16 @@ SIMULATED_RAW_STYLE = CameraStyleParams(
     illum_amp_range=(0.0, 0.0),
 
     clip_prob=0.0,
-    jpeg_prob=0.0,
-    jpeg_quality_range=(100, 100),
+    jpeg_prob=0.3,
+    jpeg_quality_range=(80, 100),
 
     resize_prob=0.0,
     resize_scale_range=(1.0, 1.0),
 
     histogram_match_strength_range=(0.0, 0.0),
     use_histogram_match=False,
+
+    median_match_strength = (0.0, 0.0)
 )
 
 STYLE_PARAMS_REGISTRY: Dict[str, CameraStyleParams] = {
@@ -268,6 +270,12 @@ STYLE_PARAMS_REGISTRY: Dict[str, CameraStyleParams] = {
 # -----------------------------
 # style config helpers
 # -----------------------------
+
+def diverse_cameras() -> CameraStyleConfig:
+    return CameraStyleConfig(
+        styles=("microscope", "iphone", "googlepixel", "simulated_raw"),
+        probs=None,
+    )
 
 def phone_mix_style() -> CameraStyleConfig:
     return CameraStyleConfig(
