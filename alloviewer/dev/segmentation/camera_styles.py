@@ -212,7 +212,7 @@ MICROSCOPE_STYLE = CameraStyleParams(
     resize_prob=0.0,
     resize_scale_range=(1.0, 1.0),
 
-    histogram_match_strength_range=(0.99, 1.0),
+    histogram_match_strength_range=(0.5, 0.99),
     use_histogram_match=True,
 
     median_match_strength = 0.7
