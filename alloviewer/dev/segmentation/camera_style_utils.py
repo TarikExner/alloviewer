@@ -732,7 +732,11 @@ def plot_real_and_synthetic_pca(
 
     if feature_subset is None:
         if drop_size_features:
-            drop = {"height", "width", "aspect_ratio", "n_pixels_used"}
+            if normalized:
+                drop = {"height", "width", "aspect_ratio", "n_pixels_used", "sat_mean", "sat_std", "sat_skew"}
+            else:
+                drop = {"height", "width", "aspect_ratio", "n_pixels_used"}
+
             feature_names_used = [f for f in feature_names if f not in drop]
         else:
             feature_names_used = list(feature_names)
