@@ -934,8 +934,10 @@ def _apply_device_histogram_polish(
             y_knots=[0.0, 0.05, 0.13, 0.27, 0.50, 1.0],
         )
 
-    # 5) mild histogram roughening
-    out = _weak_quantize(out, rng=rng, levels=112, blend=0.16, dither_scale=0.30)    elif style_name == "microscope":
+        # 5) mild histogram roughening
+        out = _weak_quantize(out, rng=rng, levels=112, blend=0.16, dither_scale=0.30)
+
+    elif style_name == "microscope":
         out = _compress_highlights_piecewise(out, threshold=0.82, strength=0.08)
         out = _apply_microscope_blue_cleanup(out, rng=rng)
         out = _weak_quantize(out, rng=rng, levels=128, blend=0.10, dither_scale=0.20)
