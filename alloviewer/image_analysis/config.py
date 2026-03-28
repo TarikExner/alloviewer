@@ -5,7 +5,7 @@ from .segmenter import SegmenterConfig, InstanceSegmenterConfig
 from .qc import QCMonitorConfig
 
 HERE = Path(__file__).resolve()
-PKG_DIR= HERE.parent
+PKG_DIR= HERE.parent.parent
 MODELS_DIR = PKG_DIR / "models"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 

@@ -208,7 +208,7 @@ MICROSCOPE_STYLE = CameraStyleParams(
     resize_prob=0.0,
     resize_scale_range=(1.0, 1.0),
 
-    histogram_match_strength_range=(0.55, 0.90),
+    histogram_match_strength_range=(0.99, 1.0),
     use_histogram_match=True,
 )
 
@@ -524,6 +524,74 @@ def apply_device_quantile_band_match(
     strength: float = 1.0,
     preserve_input_layout: bool = True,
 ) -> np.ndarray:
+    """
+    Move an RGB image toward the real-image intensity distribution of one device,
+    using per-channel quantile-band matching.
+
+    This function does not force the image to exactly match one fixed histogram.
+    Instead, for each channel separately, it computes the image's quantile curve
+    and projects it into the allowed quantile band learned from real images of
+    the chosen device. The amount of movement is controlled by `strength`.
+
+    In plain terms:
+      - `strength=0.0` leaves the image unchanged
+      - `strength=1.0` applies the full minimal correction needed to place the
+        channel quantiles inside the real-device band
+      - intermediate values apply only part of that correction
+
+    The operation is monotone per channel:
+      - darker pixels stay darker than brighter pixels within the same channel
+      - it changes the global channel intensity distribution
+      - it does not explicitly model local structures or semantic regions
+
+    Parameters
+    ----------
+    img : np.ndarray
+        RGB image to transform.
+        Notes:
+          - The function clips values to [0, 1] before processing.
+          - The function assumes RGB order, not BGR.
+
+    target_device : str
+        Name of the target device/domain whose real-image quantile band should
+        be used.
+
+        Typical values:
+          - "microscope"
+          - "iphone"
+          - "googlepixel"
+
+    quantile_band_cache : Dict[str, Any]
+        Cache dictionary produced by your quantile-band builder, for example
+        `build_target_quantile_band_cache(...)`.
+
+    strength : float, default=1.0
+        How strongly the image should be moved toward the target device band.
+
+        Interpretation:
+          - 0.0:
+                no change
+          - 1.0:
+                full minimal projection into the target quantile band
+          - 0.0 < strength < 1.0:
+                partial movement toward that projected curve
+
+    preserve_input_layout : bool, default=True
+        Whether to return the result in the same layout as the input.
+
+        Behavior:
+          - if input was HWC, output is HWC
+          - if input was CHW and this is True, output is converted back to CHW
+          - if input was CHW and this is False, output stays HWC internally
+
+        In most cases you want this set to True.
+
+    Returns
+    -------
+    np.ndarray
+        Transformed RGB image as float32 in [0, 1].
+
+    """
     if target_device not in quantile_band_cache["devices"]:
         raise KeyError(f"Target device '{target_device}' not in quantile_band_cache")
 

@@ -7,6 +7,12 @@ class NotCompensatedError(Exception):
         self.message = "File is not compensated. Please compensate first."
         super().__init__(self.message)
 
+class EventsNotFoundError(Exception):
+
+    def __init__(self, events: str):
+        self.message = f"Events {events} are not contained within this FCSFile."
+        super().__init__(self.message)
+
 class TruncationWarning(Warning):
     def __init__(self,
                  exceeded_channels,

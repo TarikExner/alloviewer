@@ -470,7 +470,7 @@ def load_image(
     - Converts BGR → RGB for color images.
     - Ensures RGB (3 channels).
     - Optionally scales to [0,1] float32.
-    - Optionally returns as [3, H, W] instead of [H, W, 3].
+    - Optionally returns as [C, H, W] instead of [H, W, C].
 
     This is handy for FastAPI endpoints: pass `UploadFile.file` directly as `source`.
     """

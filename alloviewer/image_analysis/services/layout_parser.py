@@ -5,7 +5,7 @@ import hashlib
 import io
 import re
 
-from lcteller.structs import ParsedPlateLayout, WellLayout, LociMap
+from ..structs import ParsedPlateLayout, WellLayout, LociMap
 
 # -------------------------------------------------------------------
 # Config

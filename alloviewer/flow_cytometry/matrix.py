@@ -6,7 +6,7 @@ import pandas as pd
 import flowutils
 
 
-class Matrix(object):
+class Matrix:
     """
     Represents a single compensation matrix from a CSV/TSV file, NumPy array or pandas
     DataFrame.
@@ -111,7 +111,7 @@ class Matrix(object):
         :return: pandas DataFrame
         """
         if fluoro_labels:
-            labels = self.fluorochomes
+            labels = self.fluorochromes
         else:
             labels = self.detectors
 

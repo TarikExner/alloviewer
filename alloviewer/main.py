@@ -35,7 +35,9 @@ from .image_analysis.config import UNET_CONFIG, INSTANCE_CONFIG
 
 from .image_analysis.utils import create_plate, frac_pos_raw
 
-from app.models import JOB_PROGRESS, JOB_RESULTS
+from app.models import IMAGE_JOB_PROGRESS, IMAGE_JOB_RESULTS
+
+from .flow_cytometry.pipeline import run_fcxm_pipeline
 
 def _extract_roi_from_image(image: np.ndarray,
                             segmenter: SegmenterUNetInference,
@@ -72,7 +74,7 @@ def _extract_roi_from_image(image: np.ndarray,
     )
 
 
-def run_job(
+def run_image_analysis(
     layout: PlateLayout,
     image_order: List[str],
     image_filenames: List[str],
@@ -106,7 +108,7 @@ def run_job(
     wells_list = list(plate.get())
     total = len(wells_list)
 
-    JOB_PROGRESS[job_id] = {
+    IMAGE_JOB_PROGRESS[job_id] = {
       "status": "running",
       "done": 0,
       "total": total,
@@ -116,8 +118,8 @@ def run_job(
 
     # 2) segmentation + feature extraction
     for well_idx, well in enumerate(plate.get()):
-        JOB_PROGRESS[job_id]["current_well"] = well.well_id
-        JOB_PROGRESS[job_id]["done"] = well_idx
+        IMAGE_JOB_PROGRESS[job_id]["current_well"] = well.well_id
+        IMAGE_JOB_PROGRESS[job_id]["done"] = well_idx
         print(f"Calculating well {well.well_id}")
         image = well.image
 
@@ -132,7 +134,7 @@ def run_job(
             well_id = well.well_id,
             qc = qc
         )
-        JOB_PROGRESS[job_id]["done_wells"].append(well.well_id)
+        IMAGE_JOB_PROGRESS[job_id]["done_wells"].append(well.well_id)
         
 
     # 3) build PC / NC sets for calibration
@@ -184,10 +186,13 @@ def run_job(
         "wells": {wid: wr.summary() for wid, wr in per_well.items()},
     }
 
-    JOB_RESULTS[job_id] = result
-    JOB_PROGRESS[job_id]["status"] = "done"
-    JOB_PROGRESS[job_id]["done"] = total
-    JOB_PROGRESS[job_id]["current_well"] = None
+    IMAGE_JOB_RESULTS[job_id] = result
+    IMAGE_JOB_PROGRESS[job_id]["status"] = "done"
+    IMAGE_JOB_PROGRESS[job_id]["done"] = total
+    IMAGE_JOB_PROGRESS[job_id]["current_well"] = None
 
     return result
 
+
+def run_fcxm_analysis(req_dict: Dict[str, Any]) -> Dict[str, Any]:
+    return run_fcxm_pipeline(req_dict)

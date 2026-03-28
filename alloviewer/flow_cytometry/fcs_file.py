@@ -7,10 +7,11 @@ from flowio.exceptions import FCSParsingError
 
 from flowutils.compensate import get_spill
 
-from typing import Optional, Union
+from typing import Optional, Union, Literal
 
 from .matrix import Matrix
 from .exceptions import (
+    EventsNotFoundError,
     NotCompensatedError,
     InfRemovalWarning,
     NaNRemovalWarning,
@@ -23,19 +24,18 @@ class FCSFile:
     Organization into an object is meant to facilitate cleaner code
     """
     def __init__(self,
-                 input_directory: str,
-                 file_name: str,
+                 file_dir: str,
                  subsample: Optional[int] = None,
                  truncate_max_range: bool = True
                  ) -> None:
         
-        self.original_filename = file_name
+        self.original_filename = os.path.basename(file_dir)
 
-        raw_data = self._load_fcs_file_from_disk(input_directory,
-                                                file_name,
-                                                ignore_offset_error = False)
+        raw_data = self._load_fcs_file_from_disk(
+            file_dir,
+            ignore_offset_error = False
+        )
         
-        self.compensation_status = "uncompensated"
         self.transform_status = "untransformed"
         self.gating_status = "ungated"
 
@@ -43,12 +43,17 @@ class FCSFile:
         self.version = self._parse_fcs_version(raw_data)
         self.fcs_metadata = self._parse_fcs_metadata(raw_data)
         self.channels = self._parse_channel_information(raw_data)
-        self.original_events = self._parse_and_process_original_events(raw_data,
-                                                                       subsample,
-                                                                       truncate_max_range)
+        self.original_events = self._parse_and_process_original_events(
+            raw_data,
+            subsample,
+            truncate_max_range
+        )
         self.event_count = self.original_events.shape[0]
-        self.compensated_events: Optional[np.ndarray] = None
-        self.fcs_compensation = self._parse_compensation_matrix_from_fcs()
+        self.matrix = self._parse_compensation_matrix_from_fcs()
+
+        self.compensated_events = self.matrix.apply(self)
+        self.compensation_status = "compensated"
+
 
     def __repr__(self) -> str:
         return (
@@ -63,17 +68,19 @@ class FCSFile:
         )
 
     def get_events(self,
-                   source: str) -> Optional[np.ndarray]:
+                   source: Literal["raw", "comp"]) -> np.ndarray:
         """returns the events by data-source (raw or compensated)"""
         if source == "raw":
             return self._get_original_events()
         elif source == "comp":
-            self._get_compensated_events()
+            return self._get_compensated_events()
         else:
             raise NotImplementedError("Only Raw ('raw') and compensated events ('comp') can be fetched.")
 
     def _get_original_events(self) -> np.ndarray:
         """returns uncompensated original events"""
+        if self.original_events is None:
+            raise EventsNotFoundError("original")
         return self.original_events
     
     def _get_compensated_events(self) -> np.ndarray:
@@ -90,32 +97,53 @@ class FCSFile:
         """
         return self.channels.loc[self.channels.index == channel_label, "channel_numbers"].iloc[0] - 1
 
+    def to_df(self,
+              source: Literal["raw", "comp"],
+              colnames: Literal["pnn", "pns"] = "pnn") -> pd.DataFrame:
+        """
+        Returns a dataframe where columns are the channels. Index is
+        an ascending integer array.
+        colnames: if pnn, returns the original channel names; if pns, returns
+        the user-defined channel names
+        """
+        return pd.DataFrame(
+            data = self.get_events(source),
+            columns = self.channels.index,
+        )
+
     def _parse_compensation_matrix_from_fcs(self) -> Matrix:
         """
         creates a compensation matrix from the fcs
         file or creates and empty matrix if spill is not saved within the fcs file
         """
 
-        if "spill" not in self.fcs_metadata:
+        mtx_kwds = ["spill", "spillover"]
+
+        if not any(k in self.fcs_metadata for k in mtx_kwds):
             detectors = [
                 channel for channel in self.channels.index
                 if any(k not in channel.lower() for k in ["fsc", "ssc", "time"])
             ]
             detector_n = len(detectors)
             fluorochromes = self.channels.loc[self.channels.index.isin(detectors), "pns"].tolist()
-            return Matrix(matrix_id = "FACSPy_empty",
-                          detectors = detectors,
-                          fluorochromes = fluorochromes,
-                          spill_data_or_file = np.eye(N = detector_n, M = detector_n))
+            return Matrix(
+                matrix_id = "empty_matrix",
+                detectors = detectors,
+                fluorochromes = fluorochromes,
+                spill_data_or_file = np.eye(N = detector_n, M = detector_n)
+            )
 
-        matrix, detectors = get_spill(self.fcs_metadata["spill"])
+        kwd_present = next((k for k in mtx_kwds if k in self.fcs_metadata), None)
+        matrix, detectors = get_spill(self.fcs_metadata[kwd_present])
         fluorochromes = self.channels.loc[self.channels.index.isin(detectors), "pns"].tolist()
         assert matrix.shape[0] == len(detectors)
         assert matrix.shape[0] == len(fluorochromes)
-        return Matrix(matrix_id = "acquisition_defined",
-                      detectors = detectors,
-                      fluorochromes = fluorochromes,
-                      spill_data_or_file = matrix)
+        return Matrix(
+            matrix_id = "acquisition_defined",
+            detectors = detectors,
+            fluorochromes = fluorochromes,
+            spill_data_or_file = matrix
+        )
 
     def _parse_event_count(self,
                            fcs_data: FlowData) -> int:
@@ -170,7 +198,7 @@ class FCSFile:
             number_of_exceeded_cells = range_exceeded_cells.sum(axis = 0)
             TruncationWarning(exceeded_channels, number_of_exceeded_cells)
             array_mins = np.min(arr, axis = 0).astype(arr.dtype)
-            return np.clip(arr, array_mins, channel_ranges, dtype = np.float64)
+            return np.clip(arr, array_mins, channel_ranges, dtype = np.float32)
         return arr
 
     def _remove_nans_from_events(self,
@@ -236,7 +264,7 @@ class FCSFile:
         """function to parse the original events from the fcs file"""
         return np.array(
             fcs_data.events,
-            dtype=np.float64,
+            dtype=np.float32,
             order = "C"
         ).reshape(-1, fcs_data.channel_count)
 
@@ -343,14 +371,13 @@ class FCSFile:
             return None
         
     def _load_fcs_file_from_disk(self,
-                                 input_directory: str,
-                                 file_name: str,
+                                 file_dir: str,
                                  ignore_offset_error: bool) -> FlowData:
         """function to load the fcs from the hard rive"""
         try:
-            return FlowData(os.path.join(input_directory, file_name), ignore_offset_error)
+            return FlowData(file_dir, ignore_offset_error)
         except FCSParsingError:
             warnings.warn("FACSPy IO: FCS file could not be read with " + 
                          f"ignore_offset_error set to {ignore_offset_error}. " +
                           "Parameter is set to True.")
-            return FlowData(os.path.join(input_directory, file_name), ignore_offset_error = True)
+            return FlowData(file_dir, ignore_offset_error = True)

@@ -377,7 +377,7 @@ def compare_real_and_synthetic_feature_tables(
 
     for group in group_names:
         real_sub = [r for r in real_rows if str(r.get("phone", "")).lower() == group]
-        syn_sub = [r for r in synthetic_rows if str(r.get("phone", "")).lower() == group]
+        syn_sub = [r for r in synthetic_rows if str(r.get("phone", "")).lower() == "synthetic"]
 
         if len(real_sub) == 0 or len(syn_sub) == 0:
             continue

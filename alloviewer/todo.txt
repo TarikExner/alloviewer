@@ -1,3 +1,11 @@
+08.03.2026:
+    - Create Figures
+    - Redo Summary PDF
+    - Think about IgG-readout
+    - Simulation of FCS files?
+
+
+
 PAPER FIGURE
 
 Visualize image simulation parameters
