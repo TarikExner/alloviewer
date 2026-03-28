@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import pickle
 from pathlib import Path
-from typing import Optional, Sequence, Dict, Any
+from typing import Optional, Sequence, Dict, Any, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -15,9 +15,12 @@ import torch
 
 from ...image_analysis.io import load_image
 from .config import STYLE_CACHE_PATH, UNET_MEAN, UNET_STD
-
 from .camera_styles import EXT_IMAGES_FOLDERS
 
+
+# -----------------------------------------------------------------------------
+# labels / paths
+# -----------------------------------------------------------------------------
 
 def _find_device_label(file_path: str | Path) -> str:
     s = str(file_path).lower()
@@ -55,6 +58,56 @@ def _collect_image_paths(
     return sorted(image_paths)
 
 
+# -----------------------------------------------------------------------------
+# normalization helpers
+# -----------------------------------------------------------------------------
+
+def _unet_mean_std_numpy() -> tuple[np.ndarray, np.ndarray]:
+    mean = np.asarray(UNET_MEAN, dtype=np.float32).reshape(1, 1, 3)
+    std = np.asarray(UNET_STD, dtype=np.float32).reshape(1, 1, 3)
+    return mean, std
+
+
+def normalize_rgb_image_with_unet(img_hwc: np.ndarray) -> np.ndarray:
+    """
+    img_hwc : float32 RGB image in [0,1], shape [H,W,3]
+    returns : normalized float32 RGB image, shape [H,W,3]
+    """
+    img_hwc = np.asarray(img_hwc, dtype=np.float32)
+    if img_hwc.ndim != 3 or img_hwc.shape[2] != 3:
+        raise ValueError(f"Expected HWC RGB image, got {img_hwc.shape}")
+
+    mean, std = _unet_mean_std_numpy()
+    return (img_hwc - mean) / std
+
+
+def denormalize_rgb_image_with_unet(img_hwc: np.ndarray) -> np.ndarray:
+    """
+    img_hwc : normalized float32 RGB image, shape [H,W,3]
+    returns : denormalized float32 RGB image, shape [H,W,3]
+    """
+    img_hwc = np.asarray(img_hwc, dtype=np.float32)
+    if img_hwc.ndim != 3 or img_hwc.shape[2] != 3:
+        raise ValueError(f"Expected HWC RGB image, got {img_hwc.shape}")
+
+    mean, std = _unet_mean_std_numpy()
+    return img_hwc * std + mean
+
+
+def denormalize_dataset_imgs(imgs_norm: torch.Tensor) -> torch.Tensor:
+    """
+    imgs_norm: [T,3,H,W], already normalized with UNET_MEAN/UNET_STD
+    returns : [T,3,H,W] in image space
+    """
+    mean = torch.as_tensor(UNET_MEAN, dtype=imgs_norm.dtype, device=imgs_norm.device).view(1, 3, 1, 1)
+    std = torch.as_tensor(UNET_STD, dtype=imgs_norm.dtype, device=imgs_norm.device).view(1, 3, 1, 1)
+    return imgs_norm * std + mean
+
+
+# -----------------------------------------------------------------------------
+# feature extraction
+# -----------------------------------------------------------------------------
+
 def _safe_skew(x: np.ndarray) -> float:
     m = float(x.mean())
     s = float(x.std())
@@ -64,27 +117,21 @@ def _safe_skew(x: np.ndarray) -> float:
     return float(np.mean(z ** 3))
 
 
-def _norm_hist_01(x: np.ndarray, bins: int) -> np.ndarray:
-    h, _ = np.histogram(x, bins=bins, range=(0.0, 1.0))
-    h = h.astype(np.float32)
-    h /= (h.sum() + 1e-8)
-    return h
-
-
 def _build_feature_names(
     hist_bins: int = 16,
     percentiles: Sequence[float] = (1, 5, 25, 50, 75, 95, 99),
 ) -> list[str]:
-    channel_names = ("r", "g", "b")
     feature_names: list[str] = []
 
-    for ch in channel_names:
+    for ch in ("r", "g", "b"):
         feature_names.append(f"{ch}_mean")
         feature_names.append(f"{ch}_std")
         feature_names.append(f"{ch}_skew")
+
         for p in percentiles:
             p_name = str(float(p)).replace(".", "_")
             feature_names.append(f"{ch}_p{p_name}")
+
         for b in range(hist_bins):
             feature_names.append(f"{ch}_hist_{b:02d}")
 
@@ -121,10 +168,30 @@ def extract_feature_row_from_rgb_image(
     rng: Optional[np.random.Generator] = None,
     phone_label: str = "synthetic",
     path_label: str = "<in_memory>",
+    hist_range: Optional[Tuple[float, float]] = (0.0, 1.0),
+    dark_threshold: Optional[float] = 0.02,
+    bright_threshold: Optional[float] = 0.98,
+    clip_input: bool = True,
 ) -> dict:
     """
-    Extract one feature row from an in-memory RGB image in [0,1].
-    Accepts HWC or CHW.
+    Extract one feature row from one RGB image.
+
+    Supports:
+      - HWC [H,W,3]
+      - CHW [3,H,W]
+
+    Parameters
+    ----------
+    hist_range
+        Histogram range for channel histograms.
+        Use (0,1) for image-space features.
+        Use something like (-3,3) for normalized-image features.
+        Use None to adapt range to each image/channel.
+    dark_threshold, bright_threshold
+        Thresholds for gray-level fractions.
+        Set to None to disable in normalized space.
+    clip_input
+        If True and hist_range is not None, clip the image to hist_range first.
     """
     if rng is None:
         rng = np.random.default_rng(0)
@@ -137,11 +204,20 @@ def extract_feature_row_from_rgb_image(
         img = np.moveaxis(img, 0, -1)
 
     if img.shape[-1] != 3:
-        raise ValueError(f"img must be RGB, got shape {img.shape}")
+        raise ValueError(f"Expected RGB image, got shape {img.shape}")
 
-    img = np.clip(img, 0.0, 1.0)
+    if hist_range is not None and clip_input:
+        lo, hi = hist_range
+        img = np.clip(img, lo, hi)
+
     H, W, _ = img.shape
     percentiles = tuple(float(p) for p in percentiles)
+
+    def _norm_hist(x: np.ndarray, bins: int, value_range: Tuple[float, float]) -> np.ndarray:
+        h, _ = np.histogram(x, bins=bins, range=value_range)
+        h = h.astype(np.float32)
+        h /= (h.sum() + 1e-8)
+        return h
 
     pixels = img.reshape(-1, 3)
     n_total = pixels.shape[0]
@@ -157,9 +233,14 @@ def extract_feature_row_from_rgb_image(
     b = pixels_use[:, 2]
 
     gray = 0.299 * r + 0.587 * g + 0.114 * b
+
     rgb_max = np.max(pixels_use, axis=1)
     rgb_min = np.min(pixels_use, axis=1)
-    sat = np.where(rgb_max > 1e-8, (rgb_max - rgb_min) / (rgb_max + 1e-8), 0.0).astype(np.float32)
+    sat = np.where(
+        np.abs(rgb_max) > 1e-8,
+        (rgb_max - rgb_min) / (np.abs(rgb_max) + 1e-8),
+        0.0,
+    ).astype(np.float32)
 
     row = {
         "path": path_label,
@@ -181,7 +262,15 @@ def extract_feature_row_from_rgb_image(
             p_name = str(p).replace(".", "_")
             row[f"{ch_name}_p{p_name}"] = float(val)
 
-        hist = _norm_hist_01(x, bins=hist_bins)
+        if hist_range is None:
+            x_lo = float(np.min(x))
+            x_hi = float(np.max(x))
+            if x_hi <= x_lo:
+                x_hi = x_lo + 1e-6
+            hist = _norm_hist(x, bins=hist_bins, value_range=(x_lo, x_hi))
+        else:
+            hist = _norm_hist(x, bins=hist_bins, value_range=hist_range)
+
         for i, val in enumerate(hist):
             row[f"{ch_name}_hist_{i:02d}"] = float(val)
 
@@ -198,13 +287,31 @@ def extract_feature_row_from_rgb_image(
     row["sat_std"] = float(np.std(sat))
     row["sat_skew"] = float(_safe_skew(sat))
 
-    row["dark_frac"] = float(np.mean(gray <= 0.02))
-    row["bright_frac"] = float(np.mean(gray >= 0.98))
+    row["dark_frac"] = float(np.mean(gray <= dark_threshold)) if dark_threshold is not None else np.nan
+    row["bright_frac"] = float(np.mean(gray >= bright_threshold)) if bright_threshold is not None else np.nan
 
     return row
 
 
-def extract_real_image_feature_table_cv2(
+# -----------------------------------------------------------------------------
+# cache path helpers
+# -----------------------------------------------------------------------------
+
+def get_feature_cache_path(
+    cache_path: str | Path = STYLE_CACHE_PATH,
+    normalized: bool = False,
+) -> Path:
+    cache_path = Path(cache_path)
+    if normalized:
+        return cache_path.with_name(f"{cache_path.stem}_normalized{cache_path.suffix}")
+    return cache_path
+
+
+# -----------------------------------------------------------------------------
+# real-image feature tables
+# -----------------------------------------------------------------------------
+
+def extract_real_image_feature_table(
     folders: Optional[Sequence[str | Path]] = None,
     exts: Sequence[str] = (".png", ".jpg", ".jpeg", ".tif", ".tiff"),
     hist_bins: int = 16,
@@ -212,19 +319,25 @@ def extract_real_image_feature_table_cv2(
     sample_pixels: Optional[int] = 300_000,
     recursive: bool = True,
     ignore_failures: bool = True,
-    cache_path: Optional[str | Path] = STYLE_CACHE_PATH,
+    cache_path: str | Path = STYLE_CACHE_PATH,
     force_recompute: bool = False,
+    normalize_imgs: bool = False,
+    normalized_hist_range: Tuple[float, float] = (-3.0, 3.0),
     rng_seed: int = 0,
 ):
     """
-    Extract per-image appearance features from real images and cache them.
+    Build and cache feature stats from real images.
+
+    Two separate caches are supported:
+      - normalize_imgs=False : image-space features
+      - normalize_imgs=True  : normalized-space features
     """
-    if cache_path is not None:
-        cache_path = Path(cache_path)
-        if cache_path.exists() and not force_recompute:
-            with open(cache_path, "rb") as f:
-                payload = pickle.load(f)
-            return payload["rows"], payload["feature_names"], payload["X"]
+    final_cache_path = get_feature_cache_path(cache_path=cache_path, normalized=normalize_imgs)
+
+    if final_cache_path.exists() and not force_recompute:
+        with open(final_cache_path, "rb") as f:
+            payload = pickle.load(f)
+        return payload["rows"], payload["feature_names"], payload["X"]
 
     rng = np.random.default_rng(rng_seed)
     percentiles = tuple(float(p) for p in percentiles)
@@ -255,15 +368,36 @@ def extract_real_image_feature_table_cv2(
                 continue
             raise RuntimeError(f"Bad image shape: {path} -> {img.shape}")
 
-        row = extract_feature_row_from_rgb_image(
-            img=img,
-            hist_bins=hist_bins,
-            percentiles=percentiles,
-            sample_pixels=sample_pixels,
-            rng=rng,
-            phone_label=_find_device_label(path),
-            path_label=str(path),
-        )
+        if normalize_imgs:
+            img = normalize_rgb_image_with_unet(img)
+            row = extract_feature_row_from_rgb_image(
+                img=img,
+                hist_bins=hist_bins,
+                percentiles=percentiles,
+                sample_pixels=sample_pixels,
+                rng=rng,
+                phone_label=_find_device_label(path),
+                path_label=str(path),
+                hist_range=normalized_hist_range,
+                dark_threshold=None,
+                bright_threshold=None,
+                clip_input=True,
+            )
+        else:
+            row = extract_feature_row_from_rgb_image(
+                img=img,
+                hist_bins=hist_bins,
+                percentiles=percentiles,
+                sample_pixels=sample_pixels,
+                rng=rng,
+                phone_label=_find_device_label(path),
+                path_label=str(path),
+                hist_range=(0.0, 1.0),
+                dark_threshold=0.02,
+                bright_threshold=0.98,
+                clip_input=True,
+            )
+
         row["filename"] = path.name
         rows.append(row)
 
@@ -272,22 +406,22 @@ def extract_real_image_feature_table_cv2(
 
     X = np.array([[row[name] for name in feature_names] for row in rows], dtype=np.float32)
 
-    if cache_path is not None:
-        cache_path = Path(cache_path)
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(cache_path, "wb") as f:
-            pickle.dump(
-                {
-                    "rows": rows,
-                    "feature_names": feature_names,
-                    "X": X,
-                    "folders": [str(f) for f in (folders if folders is not None else EXT_IMAGES_FOLDERS)],
-                    "hist_bins": hist_bins,
-                    "percentiles": percentiles,
-                    "sample_pixels": sample_pixels,
-                },
-                f,
-            )
+    final_cache_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(final_cache_path, "wb") as f:
+        pickle.dump(
+            {
+                "rows": rows,
+                "feature_names": feature_names,
+                "X": X,
+                "folders": [str(f) for f in (folders if folders is not None else EXT_IMAGES_FOLDERS)],
+                "hist_bins": hist_bins,
+                "percentiles": percentiles,
+                "sample_pixels": sample_pixels,
+                "normalize_imgs": normalize_imgs,
+                "normalized_hist_range": normalized_hist_range,
+            },
+            f,
+        )
 
     return rows, feature_names, X
 
@@ -299,11 +433,13 @@ def rebuild_style_feature_cache(
     hist_bins: int = 16,
     percentiles: Sequence[float] = (1, 5, 25, 50, 75, 95, 99),
     sample_pixels: Optional[int] = 300_000,
+    normalize_imgs: bool = False,
+    normalized_hist_range: Tuple[float, float] = (-3.0, 3.0),
 ):
     """
-    Force a full rebuild of the feature cache.
+    Force-rebuild one of the two caches.
     """
-    return extract_real_image_feature_table_cv2(
+    return extract_real_image_feature_table(
         folders=folders,
         exts=exts,
         hist_bins=hist_bins,
@@ -311,8 +447,14 @@ def rebuild_style_feature_cache(
         sample_pixels=sample_pixels,
         cache_path=cache_path,
         force_recompute=True,
+        normalize_imgs=normalize_imgs,
+        normalized_hist_range=normalized_hist_range,
     )
 
+
+# -----------------------------------------------------------------------------
+# summaries / mismatch tables
+# -----------------------------------------------------------------------------
 
 def summarize_features_by_phone(
     rows: list[dict],
@@ -321,9 +463,6 @@ def summarize_features_by_phone(
     q_lo: float = 0.10,
     q_hi: float = 0.90,
 ):
-    """
-    Build per-device summaries.
-    """
     if not rows:
         raise ValueError("rows is empty")
 
@@ -370,14 +509,11 @@ def compare_real_and_synthetic_feature_tables(
     q_lo: float = 0.10,
     q_hi: float = 0.90,
 ) -> list[dict]:
-    """
-    Build a mismatch table like the one you used before.
-    """
     out = []
 
     for group in group_names:
         real_sub = [r for r in real_rows if str(r.get("phone", "")).lower() == group]
-        syn_sub = [r for r in synthetic_rows if str(r.get("phone", "")).lower() == "synthetic"]
+        syn_sub = [r for r in synthetic_rows if str(r.get("phone", "")).lower() == group]
 
         if len(real_sub) == 0 or len(syn_sub) == 0:
             continue
@@ -437,16 +573,9 @@ def compare_real_and_synthetic_feature_tables(
     return out
 
 
-def _denormalize_imgs_if_needed(imgs: torch.Tensor) -> torch.Tensor:
-    x = imgs.detach()
-
-    if float(x.min()) >= 0.0 and float(x.max()) <= 1.0:
-        return x
-
-    mean = torch.as_tensor(UNET_MEAN, dtype=x.dtype, device=x.device).view(1, 3, 1, 1)
-    std = torch.as_tensor(UNET_STD, dtype=x.dtype, device=x.device).view(1, 3, 1, 1)
-    return x * std + mean
-
+# -----------------------------------------------------------------------------
+# dataset helpers
+# -----------------------------------------------------------------------------
 
 def _extract_style_name_from_extras(extras: Dict[str, Any]) -> str:
     if not isinstance(extras, dict):
@@ -486,43 +615,82 @@ def collect_synthetic_feature_rows_from_dataset(
     sample_pixels: Optional[int] = 300_000,
     rng_seed: int = 0,
     use_first_tile_only: bool = True,
+    normalized_features: bool = False,
+    normalized_hist_range: Tuple[float, float] = (-3.0, 3.0),
 ) -> list[dict]:
+    """
+    Collect feature rows from a dataset whose stored images are already normalized.
+
+    normalized_features=False:
+        dataset images are first denormalized, then image-space features are extracted.
+
+    normalized_features=True:
+        dataset images are used as-is, and normalized-space features are extracted.
+    """
     rng = np.random.default_rng(rng_seed)
     rows = []
 
     for i in range(int(n_synthetic)):
         imgs_t, _, extras = dataset[i]
-        imgs_t = _denormalize_imgs_if_needed(imgs_t)
-
         style_name = _extract_style_name_from_extras(extras)
+
+        if normalized_features:
+            imgs_work = imgs_t.detach()
+        else:
+            imgs_work = denormalize_dataset_imgs(imgs_t.detach())
 
         if use_first_tile_only:
             tile_indices = [0]
         else:
-            tile_indices = list(range(imgs_t.shape[0]))
+            tile_indices = list(range(imgs_work.shape[0]))
 
         for t_idx in tile_indices:
-            img = imgs_t[t_idx].permute(1, 2, 0).cpu().numpy()
-            img = np.clip(img.astype(np.float32), 0.0, 1.0)
+            img = imgs_work[t_idx].permute(1, 2, 0).cpu().numpy().astype(np.float32)
 
-            row = extract_feature_row_from_rgb_image(
-                img=img,
-                hist_bins=hist_bins,
-                percentiles=percentiles,
-                sample_pixels=sample_pixels,
-                rng=rng,
-                phone_label=style_name,
-                path_label=f"<synthetic_{i}_tile_{t_idx}>",
-            )
+            if normalized_features:
+                row = extract_feature_row_from_rgb_image(
+                    img=img,
+                    hist_bins=hist_bins,
+                    percentiles=percentiles,
+                    sample_pixels=sample_pixels,
+                    rng=rng,
+                    phone_label=style_name,
+                    path_label=f"<synthetic_{i}_tile_{t_idx}>",
+                    hist_range=normalized_hist_range,
+                    dark_threshold=None,
+                    bright_threshold=None,
+                    clip_input=True,
+                )
+            else:
+                img = np.clip(img, 0.0, 1.0)
+                row = extract_feature_row_from_rgb_image(
+                    img=img,
+                    hist_bins=hist_bins,
+                    percentiles=percentiles,
+                    sample_pixels=sample_pixels,
+                    rng=rng,
+                    phone_label=style_name,
+                    path_label=f"<synthetic_{i}_tile_{t_idx}>",
+                    hist_range=(0.0, 1.0),
+                    dark_threshold=0.02,
+                    bright_threshold=0.98,
+                    clip_input=True,
+                )
+
             rows.append(row)
 
     return rows
 
 
+# -----------------------------------------------------------------------------
+# PCA plotting
+# -----------------------------------------------------------------------------
+
 def plot_real_and_synthetic_pca(
     dataset,
-    cache_path: str | Path,
+    cache_path: str | Path = STYLE_CACHE_PATH,
     n_synthetic: int = 100,
+    normalized: bool = False,
     feature_subset: Optional[Sequence[str]] = None,
     drop_size_features: bool = True,
     hist_bins: int = 16,
@@ -534,13 +702,29 @@ def plot_real_and_synthetic_pca(
     s_real: float = 16,
     s_syn: float = 36,
     use_first_tile_only: bool = True,
-    title: str = "PCA of real vs synthetic image features",
+    normalized_hist_range: Tuple[float, float] = (-3.0, 3.0),
+    title: Optional[str] = None,
 ):
-    cache_path = Path(cache_path)
-    if not cache_path.exists():
-        raise FileNotFoundError(f"Cache file not found: {cache_path}")
+    """
+    PCA comparison between real images and dataset images.
 
-    with open(cache_path, "rb") as f:
+    Parameters
+    ----------
+    normalized
+        False:
+            real cache is image-space cache
+            dataset images are denormalized before feature extraction
+
+        True:
+            real cache is normalized-image cache
+            dataset images are used as stored
+    """
+    final_cache_path = get_feature_cache_path(cache_path=cache_path, normalized=normalized)
+
+    if not final_cache_path.exists():
+        raise FileNotFoundError(f"Cache file not found: {final_cache_path}")
+
+    with open(final_cache_path, "rb") as f:
         payload = pickle.load(f)
 
     real_rows = payload["rows"]
@@ -566,6 +750,8 @@ def plot_real_and_synthetic_pca(
         sample_pixels=sample_pixels,
         rng_seed=rng_seed,
         use_first_tile_only=use_first_tile_only,
+        normalized_features=normalized,
+        normalized_hist_range=normalized_hist_range,
     )
 
     all_rows = list(real_rows) + list(synthetic_rows)
@@ -614,6 +800,11 @@ def plot_real_and_synthetic_pca(
     evr = pca.explained_variance_ratio_
     ax.set_xlabel(f"PC1 ({100.0 * evr[0]:.1f}% var)")
     ax.set_ylabel(f"PC2 ({100.0 * evr[1]:.1f}% var)")
+
+    if title is None:
+        title = "PCA of normalized real vs normalized synthetic image features" if normalized \
+            else "PCA of real vs denormalized synthetic image features"
+
     ax.set_title(title)
     ax.grid(True, alpha=0.25)
     ax.legend()
@@ -622,6 +813,8 @@ def plot_real_and_synthetic_pca(
     plt.show()
 
     return {
+        "cache_path_used": str(final_cache_path),
+        "normalized": normalized,
         "real_rows": real_rows,
         "synthetic_rows": synthetic_rows,
         "feature_names_used": feature_names_used,
