@@ -736,6 +736,10 @@ def plot_real_and_synthetic_pca(
             feature_names_used = [f for f in feature_names if f not in drop]
         else:
             feature_names_used = list(feature_names)
+
+        if normalized:
+            drop_norm_only = {"dark_frac", "bright_frac"}
+            feature_names_used = [f for f in feature_names_used if f not in drop_norm_only]
     else:
         feature_names_used = list(feature_subset)
 
