@@ -144,6 +144,8 @@ IPHONE_STYLE = CameraStyleParams(
     histogram_match_strength_range=(0.35, 0.70),
     use_histogram_match=True,
 
+    median_match_strength = 0.7
+
 )
 
 GOOGLEPIXEL_STYLE = CameraStyleParams(
