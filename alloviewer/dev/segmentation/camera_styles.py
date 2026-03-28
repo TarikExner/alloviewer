@@ -177,7 +177,7 @@ GOOGLEPIXEL_STYLE = CameraStyleParams(
     resize_prob=0.10,
     resize_scale_range=(0.80, 0.96),
 
-    histogram_match_strength_range=(0.35, 0.70),
+    histogram_match_strength_range=(0.95, 1.00),
     use_histogram_match=True,
 
     median_match_strength = 0.7
