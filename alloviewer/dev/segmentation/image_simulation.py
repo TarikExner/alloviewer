@@ -967,7 +967,7 @@ def apply_camera_style(
         and quantile_band_cache is not None
         and style_name in quantile_band_cache.get("devices", {})
     ):
-        median_strength = getattr(params, "median_match_strength", 0.0)
+        median_strength = rng.uniform(*params.median_match_strength)
         if median_strength > 0:
             if style_name == "microscope":
                 channel_strength = np.array([0.35, 0.35, 1.00], dtype=np.float32)
