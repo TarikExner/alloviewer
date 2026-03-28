@@ -35,7 +35,7 @@ from .camera_styles import (
     CameraStyleConfig,
     load_or_build_quantile_band_cache,
     STYLE_PARAMS_REGISTRY,
-    phone_mix_style,
+    diverse_cameras
 )
 
 
@@ -263,7 +263,7 @@ class SimCellsDataset(BaseCellsTilesDataset):
 
         if camera_style_cfg is None:
             # self.camera_style_cfg = simulated_raw_style()
-            self.camera_style_cfg = phone_mix_style()
+            self.camera_style_cfg = diverse_cameras()
         else:
             self.camera_style_cfg = camera_style_cfg
 
