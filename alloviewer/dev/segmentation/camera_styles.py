@@ -83,6 +83,9 @@ class CameraStyleParams:
     histogram_match_strength_range: Tuple[float, float] = (0.0, 0.0)
     use_histogram_match: bool = True
 
+    # median matching
+    median_match_strength: float = 0.0
+
 
 @dataclass
 class CameraStyleConfig:
@@ -140,6 +143,7 @@ IPHONE_STYLE = CameraStyleParams(
 
     histogram_match_strength_range=(0.35, 0.70),
     use_histogram_match=True,
+
 )
 
 GOOGLEPIXEL_STYLE = CameraStyleParams(
@@ -210,6 +214,8 @@ MICROSCOPE_STYLE = CameraStyleParams(
 
     histogram_match_strength_range=(0.99, 1.0),
     use_histogram_match=True,
+
+    median_match_strength = 0.35
 )
 
 SIMULATED_RAW_STYLE = CameraStyleParams(

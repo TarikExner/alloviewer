@@ -719,6 +719,56 @@ def _compress_highlights(img: np.ndarray, amount: float) -> np.ndarray:
         out[mask] = thr + (1.0 - np.exp(-x / (amount + 1e-6))) * (1.0 - thr)
     return np.clip(out, 0.0, 1.0)
 
+def _apply_channel_median_match(
+    img: np.ndarray,
+    target_device: str,
+    quantile_band_cache: Dict[str, Any],
+    strength: float = 0.5,
+    per_channel_strength: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """
+    Shift each channel toward the target device median.
+
+    Parameters
+    ----------
+    img : np.ndarray
+        RGB image, HWC, float32 in [0,1]
+    target_device : str
+        "microscope", "iphone", or "googlepixel"
+    quantile_band_cache : dict
+        Cache from build_target_quantile_band_cache(...)
+    strength : float
+        Global median-match strength in [0,1]
+    per_channel_strength : np.ndarray or None
+        Optional shape (3,) multiplier for R/G/B.
+        Example for microscope: np.array([0.3, 0.3, 1.0], dtype=np.float32)
+        to hit blue harder than red/green.
+    """
+    if target_device not in quantile_band_cache["devices"]:
+        return img
+
+    device_ref = quantile_band_cache["devices"][target_device]
+    q_center = device_ref["q_center"]   # [3, Q]
+
+    # median of the target distribution
+    q_probs = np.asarray(quantile_band_cache["q_probs"], dtype=np.float32)
+    mid_idx = int(np.argmin(np.abs(q_probs - 0.5)))
+    target_medians = q_center[:, mid_idx].astype(np.float32)
+
+    current_medians = np.median(img.reshape(-1, 3), axis=0).astype(np.float32)
+
+    delta = target_medians - current_medians
+
+    if per_channel_strength is None:
+        per_channel_strength = np.ones(3, dtype=np.float32)
+    else:
+        per_channel_strength = np.asarray(per_channel_strength, dtype=np.float32)
+
+    shift = float(strength) * per_channel_strength * delta
+    out = img + shift.reshape(1, 1, 3)
+
+    return np.clip(out, 0.0, 1.0).astype(np.float32)
+
 def apply_camera_style(
     img: np.ndarray,
     rng: RNG,
@@ -909,6 +959,27 @@ def apply_camera_style(
                 quantile_band_cache=quantile_band_cache,
                 strength=float(hist_strength),
                 preserve_input_layout=True,
+            )
+
+    # 19) optional per-channel median correction
+    if (
+        params.use_histogram_match
+        and quantile_band_cache is not None
+        and style_name in quantile_band_cache.get("devices", {})
+    ):
+        median_strength = getattr(params, "median_match_strength", 0.0)
+        if median_strength > 0:
+            if style_name == "microscope":
+                channel_strength = np.array([0.35, 0.35, 1.00], dtype=np.float32)
+            else:
+                channel_strength = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+
+            img = _apply_channel_median_match(
+                img=img,
+                target_device=style_name,
+                quantile_band_cache=quantile_band_cache,
+                strength=float(median_strength),
+                per_channel_strength=channel_strength,
             )
 
     return img.astype(np.float32)
