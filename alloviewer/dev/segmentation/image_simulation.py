@@ -769,6 +769,179 @@ def _apply_channel_median_match(
 
     return np.clip(out, 0.0, 1.0).astype(np.float32)
 
+def _compress_highlights_piecewise(
+    img: np.ndarray,
+    threshold: float = 0.75,
+    strength: float = 0.15,
+) -> np.ndarray:
+    """
+    Mildly compress values above `threshold`.
+
+    strength:
+        0.0 -> no compression
+        larger -> stronger compression
+    """
+    out = np.clip(img.astype(np.float32), 0.0, 1.0).copy()
+    m = out > threshold
+    if not np.any(m):
+        return out
+
+    t = (out[m] - threshold) / max(1e-6, 1.0 - threshold)
+    # exponent > 1 compresses the upper tail
+    out[m] = threshold + (1.0 - threshold) * np.power(t, 1.0 + strength)
+    return np.clip(out, 0.0, 1.0)
+
+
+def _weak_quantize(
+    img: np.ndarray,
+    rng: RNG,
+    levels: int = 128,
+    blend: float = 0.15,
+    dither_scale: float = 0.25,
+) -> np.ndarray:
+    """
+    Very light quantization with tiny dither.
+
+    This is only meant to make histograms less smooth, not to create visible banding.
+    """
+    if levels <= 1 or blend <= 0:
+        return np.clip(img.astype(np.float32), 0.0, 1.0)
+
+    x = np.clip(img.astype(np.float32), 0.0, 1.0)
+    step = 1.0 / float(levels - 1)
+
+    noise = rng.normal(0.0, dither_scale * step, size=x.shape).astype(np.float32)
+    x_noisy = np.clip(x + noise, 0.0, 1.0)
+
+    q = np.round(x_noisy * (levels - 1)) / float(levels - 1)
+    out = (1.0 - blend) * x + blend * q
+    return np.clip(out, 0.0, 1.0)
+
+
+def _apply_microscope_blue_cleanup(
+    img: np.ndarray,
+    rng: RNG,
+) -> np.ndarray:
+    """
+    Real microscope images have much less blue bleed-through,
+    especially near zero and in the low/mid range.
+    """
+    out = np.clip(img.astype(np.float32), 0.0, 1.0).copy()
+    b = out[..., 2]
+
+    # stronger suppression in low and mid intensities
+    low = np.clip((0.40 - b) / 0.40, 0.0, 1.0)
+    mid = np.clip((0.70 - b) / 0.70, 0.0, 1.0)
+
+    b = b * (1.0 - 0.42 * np.power(low, 1.2) - 0.10 * np.power(mid, 2.0))
+    b = np.clip(b, 0.0, 1.0)
+
+    # snap a fraction of very-low blue values exactly to zero
+    near0 = np.clip((0.06 - b) / 0.06, 0.0, 1.0)
+    p_zero = 0.55 * np.power(near0, 1.5)
+    mask = rng.random(b.shape) < p_zero
+    b = np.where(mask, 0.0, b)
+
+    out[..., 2] = np.clip(b, 0.0, 1.0)
+    return out
+
+
+def _apply_iphone_blue_toe(
+    img: np.ndarray,
+) -> np.ndarray:
+    """
+    Small blue suppression in the low/mid range.
+    Helps reduce the overly smooth blue tail without changing the whole image too much.
+    """
+    out = np.clip(img.astype(np.float32), 0.0, 1.0).copy()
+    b = out[..., 2]
+
+    toe = np.clip((0.45 - b) / 0.45, 0.0, 1.0)
+    b = b * (1.0 - 0.10 * toe)
+
+    out[..., 2] = np.clip(b, 0.0, 1.0)
+    return out
+
+def _compress_channel_highlights(x: np.ndarray, threshold: float = 0.75, strength: float = 0.15) -> np.ndarray:
+    x = np.clip(x.astype(np.float32), 0.0, 1.0)
+    out = x.copy()
+    mask = out > threshold
+    if np.any(mask):
+        t = (out[mask] - threshold) / max(1e-6, 1.0 - threshold)
+        t = t / (1.0 + strength * 4.0 * t)
+        out[mask] = threshold + t * (1.0 - threshold)
+    return np.clip(out, 0.0, 1.0)
+
+
+def _lift_channel_midtones(
+    x: np.ndarray,
+    center: float = 0.4,
+    width: float = 0.18,
+    amount: float = 0.05,
+) -> np.ndarray:
+    x = np.clip(x.astype(np.float32), 0.0, 1.0)
+    w = np.exp(-0.5 * ((x - center) / max(width, 1e-6)) ** 2).astype(np.float32)
+    out = x + amount * w
+    return np.clip(out, 0.0, 1.0)
+
+
+def _remap_channel_curve(
+    x: np.ndarray,
+    x_knots,
+    y_knots,
+) -> np.ndarray:
+    x = np.clip(x.astype(np.float32), 0.0, 1.0)
+    xp = np.asarray(x_knots, dtype=np.float32)
+    fp = np.asarray(y_knots, dtype=np.float32)
+    return np.clip(np.interp(x, xp, fp).astype(np.float32), 0.0, 1.0)
+
+
+def _apply_device_histogram_polish(
+    img: np.ndarray,
+    style_name: str,
+    rng: RNG,
+) -> np.ndarray:
+    """
+    Final small device-specific histogram polish.
+
+    Purpose:
+      - reduce overshot tails
+      - make histograms less smooth
+      - add a bit of device-like irregularity
+    """
+    out = np.clip(img.astype(np.float32), 0.0, 1.0).copy()
+
+    if style_name == "iphone":
+        out = _compress_highlights_piecewise(out, threshold=0.72, strength=0.18)
+        out = _apply_iphone_blue_toe(out)
+        out = _weak_quantize(out, rng=rng, levels=96, blend=0.22, dither_scale=0.35)
+
+    elif style_name == "googlepixel":
+        # 1) global high-end control
+        out = _compress_highlights_piecewise(out, threshold=0.78, strength=0.14)
+    
+        # 2) extra channel-wise tail compression
+        out[..., 0] = _compress_channel_highlights(out[..., 0], threshold=0.74, strength=0.18)  # R
+        out[..., 1] = _compress_channel_highlights(out[..., 1], threshold=0.76, strength=0.16)  # G
+    
+        # 3) slight red midtone lift
+        out[..., 0] = _lift_channel_midtones(out[..., 0], center=0.42, width=0.18, amount=0.06)
+    
+        # 4) blue low/mid reshape
+        out[..., 2] = _remap_channel_curve(
+            out[..., 2],
+            x_knots=[0.0, 0.06, 0.16, 0.32, 0.55, 1.0],
+            y_knots=[0.0, 0.05, 0.13, 0.27, 0.50, 1.0],
+        )
+
+    # 5) mild histogram roughening
+    out = _weak_quantize(out, rng=rng, levels=112, blend=0.16, dither_scale=0.30)    elif style_name == "microscope":
+        out = _compress_highlights_piecewise(out, threshold=0.82, strength=0.08)
+        out = _apply_microscope_blue_cleanup(out, rng=rng)
+        out = _weak_quantize(out, rng=rng, levels=128, blend=0.10, dither_scale=0.20)
+
+    return np.clip(out, 0.0, 1.0)
+
 def apply_camera_style(
     img: np.ndarray,
     rng: RNG,
@@ -981,5 +1154,12 @@ def apply_camera_style(
                 strength=float(median_strength),
                 per_channel_strength=channel_strength,
             )
+
+    # 20) final device-specific histogram polish
+    img = _apply_device_histogram_polish(
+        img=img,
+        style_name=style_name,
+        rng=rng,
+    )
 
     return img.astype(np.float32)
