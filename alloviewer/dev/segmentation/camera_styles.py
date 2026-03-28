@@ -215,7 +215,7 @@ MICROSCOPE_STYLE = CameraStyleParams(
     histogram_match_strength_range=(0.99, 1.0),
     use_histogram_match=True,
 
-    median_match_strength = 0.35
+    median_match_strength = 0.7
 )
 
 SIMULATED_RAW_STYLE = CameraStyleParams(
