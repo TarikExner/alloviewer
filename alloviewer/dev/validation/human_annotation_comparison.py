@@ -172,20 +172,18 @@ def _extract_full_hw(meta: Dict[str, Any], tile_metas: List[Dict[str, Any]], til
 def _extract_tile_box(tile_meta: Dict[str, Any], tile_hw: Tuple[int, int]) -> Tuple[int, int, int, int]:
     """
     Returns (y0, y1, x0, x1) for one tile.
-    Supports the actual metadata format with:
-      - tile_xy
-      - tile_hw
+    For this dataset:
+      - tile_xy = (y0, x0)
+      - tile_hw = (h, w)
     """
-
-    # --- your actual format ---
     if "tile_xy" in tile_meta:
         xy = tile_meta["tile_xy"]
         if not isinstance(xy, (list, tuple)) or len(xy) < 2:
             raise ValueError(f"tile_xy has invalid format: {xy}")
 
-        # assuming tile_xy = [x0, y0]
-        x0 = int(xy[0])
-        y0 = int(xy[1])
+        # correct order from dataset export
+        y0 = int(xy[0])
+        x0 = int(xy[1])
 
         hw = tile_meta.get("tile_hw", tile_hw)
         if not isinstance(hw, (list, tuple)) or len(hw) < 2:
@@ -196,7 +194,7 @@ def _extract_tile_box(tile_meta: Dict[str, Any], tile_hw: Tuple[int, int]) -> Tu
 
         return y0, y0 + th, x0, x0 + tw
 
-    # --- old generic fallbacks ---
+    # generic fallbacks
     y0 = _first_present(tile_meta, ["y0", "top", "row0", "r0"], default=None)
     y1 = _first_present(tile_meta, ["y1", "bottom", "row1", "r1"], default=None)
     x0 = _first_present(tile_meta, ["x0", "left", "col0", "c0"], default=None)
@@ -204,27 +202,6 @@ def _extract_tile_box(tile_meta: Dict[str, Any], tile_hw: Tuple[int, int]) -> Tu
 
     if None not in (y0, y1, x0, x1):
         return int(y0), int(y1), int(x0), int(x1)
-
-    origin = _first_present(tile_meta, ["origin", "xy0", "yx0", "start"], default=None)
-    shape = _first_present(tile_meta, ["shape", "hw", "tile_shape", "size"], default=None)
-
-    if origin is not None:
-        if isinstance(origin, (list, tuple)) and len(origin) >= 2:
-            oy, ox = int(origin[0]), int(origin[1])
-        else:
-            oy, ox = None, None
-    else:
-        oy = _first_present(tile_meta, ["y", "row", "top"], default=None)
-        ox = _first_present(tile_meta, ["x", "col", "left"], default=None)
-
-    if shape is not None and isinstance(shape, (list, tuple)) and len(shape) >= 2:
-        th, tw = int(shape[0]), int(shape[1])
-    else:
-        th = _first_present(tile_meta, ["h", "height", "tile_h"], default=tile_hw[0])
-        tw = _first_present(tile_meta, ["w", "width", "tile_w"], default=tile_hw[1])
-
-    if oy is not None and ox is not None:
-        return int(oy), int(oy) + int(th), int(ox), int(ox) + int(tw)
 
     raise KeyError(
         "Could not extract tile box from tile metadata. "
