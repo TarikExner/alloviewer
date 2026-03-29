@@ -87,18 +87,24 @@ class BaseCellsTilesDataset(Dataset):
     def _enumerate_full_tiles(self, H: int, W: int):
         """
         Sliding window tiling with overlap; returns [(y0, x0), ...]
-        covering the image with tiles of size target×target.
+        covering the full image with tiles of size target×target.
         If the image is smaller than the target, returns a single (0,0) tile.
         """
         th = self.target
         if H <= th or W <= th:
             return [(0, 0)]
+
         stride = max(1, th - self.tile_overlap)
-        coords = []
-        for y0 in range(0, H - th + 1, stride):
-            for x0 in range(0, W - th + 1, stride):
-                coords.append((int(y0), int(x0)))
-        return coords
+
+        ys = list(range(0, max(1, H - th + 1), stride))
+        if ys[-1] + th < H:
+            ys.append(H - th)
+
+        xs = list(range(0, max(1, W - th + 1), stride))
+        if xs[-1] + th < W:
+            xs.append(W - th)
+
+        return [(int(y0), int(x0)) for y0 in ys for x0 in xs]
 
     @staticmethod
     def _compute_centers_from_instances(inst: np.ndarray):
@@ -156,6 +162,10 @@ class BaseCellsTilesDataset(Dataset):
           imgs_t : float32 [T,3,H,W]
           tgts_t : float32 [T,4,H,W]
           extras : dict with instance labels + meta
+
+        Important:
+          - heads are built from LOCAL relabeled instances
+          - stored /inst keeps GLOBAL instance ids so tiles remain stitchable
         """
         imgs_out = []
         tgts_out = []
@@ -164,15 +174,19 @@ class BaseCellsTilesDataset(Dataset):
 
         for t in tiles:
             img_t = t["img"]  # [H,W,3] float32
-            inst_t = t["inst"].astype(np.int32)
-            inst_t, _, _ = relabel_sequential(inst_t)
+
+            # keep global ids for output/stitching
+            inst_global = t["inst"].astype(np.int32)
+
+            # make a local compact copy only for head generation
+            inst_local, _, _ = relabel_sequential(inst_global)
 
             cell_t_init = t.get("cell", None)
             centers = t.get("centers", None)
 
-            # heads before transforms
+            # heads before transforms, based on LOCAL labels
             cell_t, bound_soft, center_heat, energy = self._make_heads(
-                inst_t, cell_t_init, centers
+                inst_local, cell_t_init, centers
             )
 
             # optional transforms
@@ -198,7 +212,10 @@ class BaseCellsTilesDataset(Dataset):
 
             imgs_out.append(img_chw)
             tgts_out.append(tgt_t)
-            inst_out.append(inst_t)
+
+            # store GLOBAL ids, not relabeled local ids
+            inst_out.append(inst_global.astype(np.int32))
+
             tiles_meta_out.append(t["mode_meta"])
 
         imgs_t = torch.from_numpy(np.stack(imgs_out, axis=0).astype(np.float32))
@@ -214,7 +231,6 @@ class BaseCellsTilesDataset(Dataset):
             },
         }
         return imgs_t, tgts_t, extras
-
 
 class SimCellsDataset(BaseCellsTilesDataset):
     """
@@ -836,8 +852,6 @@ class ExternalCellsTilesDataset(BaseCellsTilesDataset):
             img_t = resize_map(img_sq, th, mode="image")   # [th,th,3]
             inst_t = resize_map(inst_sq, th, mode="label") # [th,th]
 
-            inst_t, _, _ = relabel_sequential(inst_t.astype(np.int32))
-
             tile_sim_meta = crop_external_meta_to_tile(
                 full_meta,
                 0, 0,
@@ -868,9 +882,7 @@ class ExternalCellsTilesDataset(BaseCellsTilesDataset):
         else:
             for (y0, x0) in self._enumerate_full_tiles(H, W):
                 img_t = crop_rect(img, y0, x0, th, th)         # [th,th,3]
-                inst_t = crop_rect(inst_full, y0, x0, th, th)  # [th,th]
-
-                inst_t, _, _ = relabel_sequential(inst_t.astype(np.int32))
+                inst_t = crop_rect(inst_full, y0, x0, th, th)  # [th,th] with GLOBAL ids
 
                 tile_sim_meta = crop_external_meta_to_tile(
                     full_meta,
@@ -891,8 +903,8 @@ class ExternalCellsTilesDataset(BaseCellsTilesDataset):
                 tiles.append(
                     dict(
                         img=img_t.astype(np.float32),
-                        inst=inst_t.astype(np.int32),
-                        cell=None,  # derive from inst>0
+                        inst=inst_t.astype(np.int32),   # keep GLOBAL ids
+                        cell=None,
                         centers=centers_tile,
                         mode_meta=mode_meta,
                         sim_meta=tile_sim_meta,

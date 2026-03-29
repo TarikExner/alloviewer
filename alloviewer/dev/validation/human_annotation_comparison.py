@@ -146,8 +146,8 @@ def _extract_full_hw(meta: Dict[str, Any], tile_metas: List[Dict[str, Any]], til
         if isinstance(fm, dict):
             full = fm
 
-    H = _first_present(full, ["height", "H", "img_h", "image_height"], default=None)
-    W = _first_present(full, ["width", "W", "img_w", "image_width"], default=None)
+    H = _first_present(full, ["height", "H", "img_h", "image_height", "H_in"], default=None)
+    W = _first_present(full, ["width", "W", "img_w", "image_width", "W_in"], default=None)
     if H is not None and W is not None:
         return int(H), int(W)
 
@@ -440,18 +440,6 @@ def run_human_annotation_comparison():
     print("\nSaved: ./results/human_annotated_comparison.csv")
 
 
-def _extract_tile_box_debug(tile_meta: Dict[str, Any], tile_hw: Tuple[int, int]) -> Tuple[int, int, int, int]:
-    xy = tile_meta["tile_xy"]
-    hw = tile_meta.get("tile_hw", tile_hw)
-
-    # DEBUG CHOICE: try this first
-    y0 = int(xy[0])
-    x0 = int(xy[1])
-    th = int(hw[0])
-    tw = int(hw[1])
-
-    return y0, y0 + th, x0, x0 + tw
-
 def visualize_human_vs_unet_tile(
     image_idx: int,
     tile_idx: int,
@@ -554,7 +542,7 @@ def visualize_human_vs_unet_tile(
         full_cell_mask = seg_out["cell_mask"].astype(np.uint8)
 
         # ---- 4) crop chosen tile region from full-image result
-        y0, y1, x0, x1 = _extract_tile_box_debug(tile_metas[tile_idx], imgs_tiles.shape[-2:])
+        y0, y1, x0, x1 = _extract_tile_box(tile_metas[tile_idx], imgs_tiles.shape[-2:])
         y0 = max(0, y0)
         x0 = max(0, x0)
         y1 = min(full_hw[0], y1)
