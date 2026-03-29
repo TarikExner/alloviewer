@@ -77,17 +77,16 @@ def load_human_roi_counts(csv_dir: str) -> pd.DataFrame:
 
 def _extract_image_identity(meta: Dict[str, Any]) -> Tuple[str, str]:
     """
-    Tries a few common places for folder/image_name in the H5 meta.
+    Extract (Folder, image_name) from H5 meta.
 
-    Expected top-level form:
-        {
-          "full": {...},
-          "tiles": [...],
-          "sim_kwargs": None
-        }
+    Priority:
+      1) direct fields if present
+      2) parse from full["src_path"]
+      3) parse from first tile's full_meta["src_path"]
     """
     full = meta.get("full", {}) if isinstance(meta.get("full", {}), dict) else {}
 
+    # direct fields first
     folder = _first_present(
         full,
         ["Folder", "folder", "subfolder", "dir_name", "dirname", "source_folder"],
@@ -99,29 +98,36 @@ def _extract_image_identity(meta: Dict[str, Any]) -> Tuple[str, str]:
         default=None,
     )
 
-    # fallback: sometimes names live at top level
-    if folder is None:
-        folder = _first_present(
-            meta,
-            ["Folder", "folder", "subfolder", "dir_name", "dirname", "source_folder"],
-            default=None,
-        )
-    if image_name is None:
-        image_name = _first_present(
-            meta,
-            ["image_name", "filename", "file_name", "img_name", "name"],
-            default=None,
-        )
+    if folder is not None and image_name is not None:
+        return str(folder), str(image_name)
 
-    if folder is None or image_name is None:
-        raise KeyError(
-            "Could not extract Folder/image_name from H5 meta. "
-            f"Available top-level keys: {list(meta.keys())}, "
-            f"full keys: {list(full.keys()) if isinstance(full, dict) else 'n/a'}"
-        )
+    # next: parse src_path from full
+    src_path = _first_present(full, ["src_path", "image_path", "img_path", "path"], default=None)
 
-    return str(folder), str(image_name)
+    # fallback: some datasets duplicate full meta inside each tile
+    if src_path is None:
+        tiles = meta.get("tiles", [])
+        if isinstance(tiles, list) and len(tiles) > 0:
+            full_meta = tiles[0].get("full_meta", {})
+            if isinstance(full_meta, dict):
+                src_path = _first_present(
+                    full_meta,
+                    ["src_path", "image_path", "img_path", "path"],
+                    default=None,
+                )
 
+    if src_path is not None:
+        src_path = os.path.normpath(str(src_path))
+        image_name = os.path.basename(src_path)
+        folder = os.path.basename(os.path.dirname(src_path))
+        if folder and image_name:
+            return folder, image_name
+
+    raise KeyError(
+        "Could not extract Folder/image_name from H5 meta. "
+        f"Available top-level keys: {list(meta.keys())}, "
+        f"full keys: {list(full.keys()) if isinstance(full, dict) else 'n/a'}"
+    )
 
 def _extract_full_hw(meta: Dict[str, Any], tile_metas: List[Dict[str, Any]], tile_hw: Tuple[int, int]) -> Tuple[int, int]:
     """
