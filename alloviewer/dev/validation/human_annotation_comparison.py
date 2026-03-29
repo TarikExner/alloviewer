@@ -10,6 +10,8 @@ import h5py
 import numpy as np
 import pandas as pd
 
+from tqdm import tqdm
+
 from alloviewer.image_analysis.segmenter import SegmenterConfig, SegmenterUNet
 
 
@@ -366,7 +368,7 @@ def compare_human_annotations(
     if segmenter_cfg is None:
         segmenter_cfg = SegmenterConfig(
             compute_instances=True,
-            input_is_tiles=True,   # we are sending tiles directly
+            input_is_tiles=True,
         )
     else:
         segmenter_cfg = copy.deepcopy(segmenter_cfg)
@@ -388,7 +390,7 @@ def compare_human_annotations(
         n_written = int(f.attrs.get("written", n_total))
         n_use = min(n_total, n_written)
 
-        for i in range(n_use):
+        for i in tqdm(range(n_use), desc="Comparing human vs UNet", dynamic_ncols=True):
             meta = _decode_json_maybe(meta_ds[i])
             imgs_tiles = imgs_ds[i]   # [Tmax, 3, S, S]
             row = segment_one_h5_entry(segmenter, imgs_tiles, meta)
@@ -407,7 +409,6 @@ def compare_human_annotations(
     out_df.to_csv(output_csv, index=False)
 
     return out_df
-
 
 # ----------------------------
 # simple script use
