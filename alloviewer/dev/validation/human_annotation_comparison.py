@@ -625,4 +625,5 @@ def visualize_human_vs_unet_tile(
             "unet_boundary_probability": bound_p_crop,
             "unet_cell_mask": cell_mask_crop,
             "unet_instance_labels": pred_inst_crop,
+            "seg_out": seg_out
         }
