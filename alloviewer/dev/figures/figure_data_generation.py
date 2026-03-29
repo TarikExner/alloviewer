@@ -250,7 +250,6 @@ def get_dataset_statistics(
     return df
 
 def _maybe_float(x):
-    # many values are already floats; some may be strings like "0.1234"
     if isinstance(x, (int, float)) or x is None:
         return x
     if isinstance(x, str):

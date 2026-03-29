@@ -32,8 +32,8 @@ def generate_all_figures(
     sim_config: Any,
     camera: Any
 ):
-    figure_S1_generation(**DIRECTORIES)
-    figure_S2_generation(**DIRECTORIES)
+    figure_S1_generation(**DIRECTORIES) #works
+    figure_S2_generation(**DIRECTORIES) #works
     figure_S3_generation(**DIRECTORIES)
     figure_S4_generation(**DIRECTORIES)
     # figure_S6_generation(**DIRECTORIES)
