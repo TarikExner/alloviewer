@@ -425,6 +425,8 @@ def run_human_annotation_comparison():
         input_is_tiles=True,
         normalize=True,
         instance_cfg={},            # fill if you want custom instance settings
+        thr_cell=0.1,
+        thr_bound=0.1
     )
 
     df = compare_human_annotations(
@@ -435,4 +437,191 @@ def run_human_annotation_comparison():
     )
 
     print(df.head())
-    print(f"\nSaved: ./results/human_annotated_comparison.csv")
+    print("\nSaved: ./results/human_annotated_comparison.csv")
+
+def visualize_human_vs_unet_tile(
+    image_idx: int,
+    tile_idx: int,
+    h5_path: str = "./image_datasets/human_annotated_images.h5",
+    segmenter_cfg: Optional[SegmenterConfig] = None,
+    figsize: Tuple[int, int] = (16, 10),
+):
+    """
+    Visualize one chosen tile region, but using FULL-IMAGE stitched UNet inference
+    followed by FULL-IMAGE instance segmentation.
+
+    This is the correct view if you want to inspect the same pipeline that is used
+    in compare_human_annotations().
+
+    Returns a dict with the cropped arrays.
+    """
+    import matplotlib.pyplot as plt
+    from skimage.color import label2rgb
+    from skimage.segmentation import find_boundaries
+
+    if not os.path.isfile(h5_path):
+        raise FileNotFoundError(f"H5 file not found: {h5_path}")
+
+    # build segmenter
+    if segmenter_cfg is None:
+        segmenter_cfg = SegmenterConfig(
+            unet_mode="small",
+            model_dir="./models",
+            model_file="best_small_tiles_S512_seed187.pth",
+            device="cuda",
+            use_amp=True,
+            compute_instances=True,
+            input_is_tiles=True,
+            normalize=True,
+            instance_cfg={},
+            thr_cell=0.1,
+            thr_bound=0.1
+        )
+    else:
+        segmenter_cfg = copy.deepcopy(segmenter_cfg)
+        segmenter_cfg.compute_instances = True
+        segmenter_cfg.input_is_tiles = True
+
+    segmenter = SegmenterUNet(segmenter_cfg)
+    if segmenter.inst_seg is None:
+        raise RuntimeError("InstanceSegmenter is missing. Set compute_instances=True.")
+
+    with h5py.File(h5_path, "r") as f:
+        if "imgs" not in f or "meta" not in f or "inst" not in f:
+            raise KeyError("H5 file must contain '/imgs', '/meta', and '/inst'.")
+
+        imgs_ds = f["imgs"]
+        inst_ds = f["inst"]
+        meta_ds = f["meta"]
+
+        n_total = int(imgs_ds.shape[0])
+        if image_idx < 0 or image_idx >= n_total:
+            raise IndexError(f"image_idx={image_idx} out of range [0, {n_total - 1}]")
+
+        meta = _decode_json_maybe(meta_ds[image_idx])
+        tile_metas = meta.get("tiles", None)
+        if not isinstance(tile_metas, list) or len(tile_metas) == 0:
+            raise ValueError("H5 meta['tiles'] is missing or empty.")
+
+        if tile_idx < 0 or tile_idx >= len(tile_metas):
+            raise IndexError(f"tile_idx={tile_idx} out of range [0, {len(tile_metas) - 1}]")
+
+        # load valid tiles only
+        T = len(tile_metas)
+        imgs_tiles = imgs_ds[image_idx, :T]          # [T,3,S,S]
+        ref_inst_tile = inst_ds[image_idx, tile_idx].astype(np.int32)
+
+        # ---- 1) UNet on all tiles
+        tiles_t = segmenter._to_tensor_tiles(imgs_tiles)
+        probs_t = segmenter.predict_tiles(tiles_t).numpy()   # [T,4,h,w]
+
+        # ---- 2) stitch full-image probabilities
+        full_hw = _extract_full_hw(meta, tile_metas, imgs_tiles.shape[-2:])
+        probs_full = stitch_prob_tiles(probs_t, tile_metas, full_hw)
+
+        cell_p = probs_full[0]
+        bound_p = probs_full[1]
+        center_p = probs_full[2]
+        energy_p = probs_full[3]
+
+        # ---- 3) full-image instance segmentation
+        seg_out = {
+            "probs": {
+                "cell": cell_p,
+                "bound": bound_p,
+                "center": center_p,
+                "energy": energy_p,
+            },
+            "instance_labels": None,
+            "meta": {},
+        }
+        seg_out = segmenter.inst_seg(seg_out, update_cell_mask=True)
+
+        full_instances = seg_out["instance_labels"].astype(np.int32)
+        full_cell_mask = seg_out["cell_mask"].astype(np.uint8)
+
+        # ---- 4) crop chosen tile region from full-image result
+        y0, y1, x0, x1 = _extract_tile_box(tile_metas[tile_idx], imgs_tiles.shape[-2:])
+        y0 = max(0, y0)
+        x0 = max(0, x0)
+        y1 = min(full_hw[0], y1)
+        x1 = min(full_hw[1], x1)
+
+        pred_inst_crop = full_instances[y0:y1, x0:x1]
+        cell_p_crop = cell_p[y0:y1, x0:x1]
+        bound_p_crop = bound_p[y0:y1, x0:x1]
+        cell_mask_crop = full_cell_mask[y0:y1, x0:x1]
+
+        # raw tile image from H5
+        img_tile = imgs_tiles[tile_idx]  # [3,h,w]
+        img_rgb = np.transpose(img_tile, (1, 2, 0)).astype(np.float32)
+        if img_rgb.max() > 1.0:
+            img_rgb = img_rgb / 255.0
+        img_rgb = np.clip(img_rgb, 0.0, 1.0)
+
+        # in case stored tile is padded, match crop size
+        h_crop, w_crop = pred_inst_crop.shape
+        img_rgb = img_rgb[:h_crop, :w_crop]
+        ref_inst_tile = ref_inst_tile[:h_crop, :w_crop]
+
+        # overlays
+        ref_overlay = label2rgb(ref_inst_tile, image=img_rgb, bg_label=0, alpha=0.45)
+        pred_overlay = label2rgb(pred_inst_crop, image=img_rgb, bg_label=0, alpha=0.45)
+
+        ref_bnd = find_boundaries(ref_inst_tile, mode="outer")
+        pred_bnd = find_boundaries(pred_inst_crop, mode="outer")
+
+        cmp = img_rgb.copy()
+        cmp[ref_bnd] = [1.0, 0.0, 0.0]   # red = reference
+        cmp[pred_bnd] = [0.0, 1.0, 0.0]  # green = UNet
+        both = ref_bnd & pred_bnd
+        cmp[both] = [1.0, 1.0, 0.0]      # yellow = overlap
+
+        folder, image_name = _extract_image_identity(meta)
+
+        # ---- 5) plotting
+        fig, axes = plt.subplots(2, 3, figsize=figsize)
+
+        axes[0, 0].imshow(img_rgb)
+        axes[0, 0].set_title(f"Raw tile\nimage={image_idx}, tile={tile_idx}")
+        axes[0, 0].axis("off")
+
+        axes[0, 1].imshow(ref_overlay)
+        axes[0, 1].set_title(f"ImageJ / reference instances\ncount={_count_positive_labels(ref_inst_tile)}")
+        axes[0, 1].axis("off")
+
+        im2 = axes[0, 2].imshow(cell_p_crop, vmin=0.0, vmax=1.0)
+        axes[0, 2].set_title("UNet cell probability\nstitched full-image result")
+        axes[0, 2].axis("off")
+        fig.colorbar(im2, ax=axes[0, 2], fraction=0.046, pad=0.04)
+
+        axes[1, 0].imshow(pred_overlay)
+        axes[1, 0].set_title(f"UNet instance labels\ncount={_count_positive_labels(pred_inst_crop)}")
+        axes[1, 0].axis("off")
+
+        im4 = axes[1, 1].imshow(cell_mask_crop, vmin=0, vmax=1)
+        axes[1, 1].set_title("InstanceSegmenter cell mask")
+        axes[1, 1].axis("off")
+        fig.colorbar(im4, ax=axes[1, 1], fraction=0.046, pad=0.04)
+
+        axes[1, 2].imshow(cmp)
+        axes[1, 2].set_title("Boundary comparison\nred=ImageJ, green=UNet, yellow=both")
+        axes[1, 2].axis("off")
+
+        fig.suptitle(f"{folder} / {image_name}", fontsize=14)
+        plt.tight_layout()
+        plt.show()
+
+        return {
+            "image_idx": image_idx,
+            "tile_idx": tile_idx,
+            "Folder": folder,
+            "image_name": image_name,
+            "tile_box": (y0, y1, x0, x1),
+            "img_tile": img_rgb,
+            "reference_instance_labels": ref_inst_tile,
+            "unet_cell_probability": cell_p_crop,
+            "unet_boundary_probability": bound_p_crop,
+            "unet_cell_mask": cell_mask_crop,
+            "unet_instance_labels": pred_inst_crop,
+        }
