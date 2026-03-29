@@ -125,24 +125,30 @@ def _extract_image_identity(meta: Dict[str, Any]) -> Tuple[str, str]:
 
 def _extract_full_hw(meta: Dict[str, Any], tile_metas: List[Dict[str, Any]], tile_hw: Tuple[int, int]) -> Tuple[int, int]:
     """
-    Tries to get full image size from 'full' metadata first.
-    Falls back to max tile extent if needed.
+    Tries to get full image size from:
+      1) meta["full"]
+      2) first tile's full_meta
+      3) fallback from tile extents
     """
     full = meta.get("full", {}) if isinstance(meta.get("full", {}), dict) else {}
 
-    # direct keys
+    # fallback: many datasets keep the real full meta inside each tile entry
+    if not full and len(tile_metas) > 0:
+        fm = tile_metas[0].get("full_meta", {})
+        if isinstance(fm, dict):
+            full = fm
+
     H = _first_present(full, ["height", "H", "img_h", "image_height"], default=None)
     W = _first_present(full, ["width", "W", "img_w", "image_width"], default=None)
     if H is not None and W is not None:
         return int(H), int(W)
 
-    # shape-style keys
     shape = _first_present(full, ["shape", "image_shape", "full_shape", "hw"], default=None)
     hw = _as_int_pair(shape)
     if hw is not None:
         return int(hw[0]), int(hw[1])
 
-    # fallback from tiles
+    # fallback from tile boxes
     max_y = 0
     max_x = 0
     for tm in tile_metas:
@@ -152,21 +158,37 @@ def _extract_full_hw(meta: Dict[str, Any], tile_metas: List[Dict[str, Any]], til
 
     if max_y <= 0 or max_x <= 0:
         raise ValueError("Could not infer full image size from H5 metadata.")
-    return max_y, max_x
 
+    return max_y, max_x
 
 def _extract_tile_box(tile_meta: Dict[str, Any], tile_hw: Tuple[int, int]) -> Tuple[int, int, int, int]:
     """
     Returns (y0, y1, x0, x1) for one tile.
-
-    Accepted formats include:
-      - y0, y1, x0, x1
-      - top, bottom, left, right
-      - row0, row1, col0, col1
-      - y, x plus h/w or height/width
-      - origin=[y,x], shape=[h,w]
+    Supports the actual metadata format with:
+      - tile_xy
+      - tile_hw
     """
-    # direct form
+
+    # --- your actual format ---
+    if "tile_xy" in tile_meta:
+        xy = tile_meta["tile_xy"]
+        if not isinstance(xy, (list, tuple)) or len(xy) < 2:
+            raise ValueError(f"tile_xy has invalid format: {xy}")
+
+        # assuming tile_xy = [x0, y0]
+        x0 = int(xy[0])
+        y0 = int(xy[1])
+
+        hw = tile_meta.get("tile_hw", tile_hw)
+        if not isinstance(hw, (list, tuple)) or len(hw) < 2:
+            raise ValueError(f"tile_hw has invalid format: {hw}")
+
+        th = int(hw[0])
+        tw = int(hw[1])
+
+        return y0, y0 + th, x0, x0 + tw
+
+    # --- old generic fallbacks ---
     y0 = _first_present(tile_meta, ["y0", "top", "row0", "r0"], default=None)
     y1 = _first_present(tile_meta, ["y1", "bottom", "row1", "r1"], default=None)
     x0 = _first_present(tile_meta, ["x0", "left", "col0", "c0"], default=None)
@@ -175,7 +197,6 @@ def _extract_tile_box(tile_meta: Dict[str, Any], tile_hw: Tuple[int, int]) -> Tu
     if None not in (y0, y1, x0, x1):
         return int(y0), int(y1), int(x0), int(x1)
 
-    # origin + size
     origin = _first_present(tile_meta, ["origin", "xy0", "yx0", "start"], default=None)
     shape = _first_present(tile_meta, ["shape", "hw", "tile_shape", "size"], default=None)
 
@@ -201,7 +222,6 @@ def _extract_tile_box(tile_meta: Dict[str, Any], tile_hw: Tuple[int, int]) -> Tu
         "Could not extract tile box from tile metadata. "
         f"Available tile keys: {list(tile_meta.keys())}"
     )
-
 
 # ----------------------------
 # stitching
