@@ -780,7 +780,7 @@ def figure_S2_generation(validation_results_dir: str,
         ds = ds,
         style_cache_path = style_cache_path,
         figure_output_dir = figure_output_dir,
-        figure_name = "Figure S2"
+        figure_name = "Figure_S2"
     )
 
 
