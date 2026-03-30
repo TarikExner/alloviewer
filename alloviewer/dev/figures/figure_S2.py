@@ -319,8 +319,8 @@ def _get_simulated_image():
 
         # crowd cells near the *outer* wall, but keep a filled center
         rim_bias=0.85,
-        rim_band=0.12,
-        edge_clamp=0.65,
+        rim_band=0.3,
+        edge_clamp=0.5,
 
         # --- collision / packing control ---
         min_cell_sep_px=None,   # if None -> 0.9 * cell_diameter
@@ -344,7 +344,7 @@ def _get_simulated_image():
 
         # --- “ghost cells” OUTSIDE the well (big, elongated, not in masks) ---
         ghost_enable=True,
-        ghost_density=0.30,      # fraction relative to number of rim cells
+        ghost_density=0.10,      # fraction relative to number of rim cells
         ghost_offset_px=25.0,
         ghost_offset_jitter=6.0,
         ghost_sigma=(2.5, 6.0),  # base sigma (minor axis)
