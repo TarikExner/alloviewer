@@ -319,7 +319,7 @@ def _get_simulated_image():
 
         # crowd cells near the *outer* wall, but keep a filled center
         rim_bias=0.85,
-        rim_band=0.3,
+        rim_band=0.2,
         edge_clamp=0.5,
 
         # --- collision / packing control ---
