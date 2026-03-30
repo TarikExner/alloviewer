@@ -206,8 +206,7 @@ class SimulatorConfig:
     ghost_trail_decay: Union[float, Tuple[float, float]] = 0.6
 
     # --- debris (inside well) ---
-    # 01.01.2026: We disable dirt for now, it may confuse the UNet
-    dirt_density: Union[float, Tuple[float, float]] = (0.0, 0.0)
+    dirt_density: Union[float, Tuple[float, float]] = (0.0, 0.005)
     dirt_size: Union[Tuple[int, int], Tuple[int, int]] = (4, 12)  # pass-through (discrete range)
     dirt_sigma: Union[Tuple[float, float], Tuple[float, float]] = (0.0, 2.0)  # pass-through
     dirt_alpha: Union[Tuple[float, float], Tuple[float, float]] = (0.1, 1.0) # pass-through

@@ -282,7 +282,7 @@ def export_segmentation_comparison(
 
     cfg = TrainingValidationConfig(
         h5_path=h5_path,
-        cell_thr=0.1,
+        cell_thr=0.5,
     )
 
     seg_params: Dict[str, Any] = dict(
