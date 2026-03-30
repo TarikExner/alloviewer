@@ -309,7 +309,7 @@ def _get_simulated_image():
         cell_random_rotation=True,      # random rotation angle
         cell_intensity_range=(0.70, 1.05),  # per-cell brightness multiplier (was ~0.9..1.1)
 
-        frac_positive=0.5,
+        frac_positive=0.01,
         color_jitter=0.07,
         sigma_in=(0.5, 1.0),
         sigma_out=(1.6, 3.2),    # used if focus_frac_in<1
@@ -780,7 +780,7 @@ def figure_S2_generation(validation_results_dir: str,
         ds = ds,
         style_cache_path = style_cache_path,
         figure_output_dir = figure_output_dir,
-        figure_name = "Supplementary Figure S2"
+        figure_name = "Figure S2"
     )
 
 
