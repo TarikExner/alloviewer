@@ -653,8 +653,10 @@ class SegmenterUNetInference(SegmenterUNet):
         result: Dict[str, Any] = {
             "instance_labels": instances,   # np.int32 [H, W]
             "probs": {                     # only those needed for QC
-                "cell":  cell_p,
-                "bound": bound_p,
+                "cell":   cell_p,
+                "bound":  bound_p,
+                "center": center_p,
+                "energy": energy_p,
             },
             "meta": seg_out["meta"],
         }
