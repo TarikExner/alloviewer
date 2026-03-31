@@ -4,6 +4,7 @@ from .figure_S1 import figure_S1_generation
 from .figure_S2 import figure_S2_generation
 from .figure_S3 import figure_S3_generation
 from .figure_S4 import figure_S4_generation
+from .figure_S5 import figure_S5_generation
 from .figure_S6 import figure_S6_generation
 from .figure_S7 import figure_S7_generation
 from .figure_SIM import figure_SIM_generation
@@ -13,6 +14,7 @@ __all__ = [
     "figure_S2_generation",
     "figure_S3_generation",
     "figure_S4_generation",
+    "figure_S5_generation",
     "figure_S6_generation",
     "figure_S7_generation",
     "figure_SIM_generation",

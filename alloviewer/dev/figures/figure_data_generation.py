@@ -337,7 +337,7 @@ def _yield_rows_from_log(log_path: str) -> Iterable[dict]:
 def get_loss_data(model_output_dir: str, recursive: bool = True,
                   extra_globs: Optional[list[str]] = None,
                   output_dir: str = "",
-                  output_filename: str = "loss_values_training.csv") -> pd.DataFrame:
+                  output_filename: str = "loss_values_training") -> pd.DataFrame:
     """
     Scan base_dir for log_*.jsonl files, read them, and return a tidy DataFrame.
     One row per (epoch, split). Columns include identifiers and all metrics.
