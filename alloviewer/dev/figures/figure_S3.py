@@ -5,9 +5,8 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
 from matplotlib.patches import Patch
-from mpl_toolkits.axes_grid1.inset_locator import zoomed_inset_axes
 
-from .figure_data_generation import fetch_image_with_targets
+from .figure_data_generation import get_dataset_statistics
 
 from . import figure_config as cfg
 
@@ -15,8 +14,8 @@ def _generate_main_figure(
     figure_output_dir: str = "",
     figure_name: str = "",
     *,
-    img: np.ndarray,
-    tgts: np.ndarray,
+    data: pd.DataFrame,
+    cols_to_plot: list[str]
 ):
     """
     Build a 6x3 grid (18 tiles). First 17 tiles show histograms of cols_to_plot
@@ -24,74 +23,101 @@ def _generate_main_figure(
     Saves PDF/PNG if figure_output_dir is given, and also returns (fig, axes).
     """
 
-    titles = ["image","cell mask","cell boundary","cell centers","energy"]
-    inset_centers=(260, 260)
-    inset_box_px=96
-    inset_zoom=3.0
+    fig = plt.figure(
+        layout="constrained", figsize=(cfg.FIGURE_WIDTH_FULL, cfg.FIGURE_HEIGHT_FULL)
+    )
+    gs = GridSpec(nrows=6, ncols=3, figure=fig)
 
-    fig = plt.figure(layout="constrained", figsize=(cfg.FIGURE_WIDTH_FULL, cfg.FIGURE_HEIGHT_FULL/4))
-    gs = GridSpec(nrows=1, ncols=5, figure=fig, wspace=0.04, hspace=0.0)
+    # palette and hue levels
+    levels = list(pd.Index(data["crop_method"].astype(str)).unique())
+    palette = sns.color_palette(cfg.HIST_CMAP, n_colors=len(levels))
 
-    # titles
-    if titles is None:
-        titles = ["image", "tgt0", "tgt1", "tgt2", "tgt3"]
-    if len(titles) != 5:
-        titles = titles[:5] + [""] * max(0, 5 - len(titles))
+    total_tiles = 5 * 3
+    last_idx = total_tiles - 1  # legend tile index = 17
+    axes = []
 
-    # inset centers
-    H, W = img.shape[:2]
-    default_center = (H // 2, W // 2)
-    if inset_centers is None:
-        centers = [default_center] * 5
-    elif isinstance(inset_centers, tuple) and len(inset_centers) == 2:
-        centers = [tuple(map(int, inset_centers))] * 5
-    else:
-        assert isinstance(inset_centers, list) and len(inset_centers) == 5, \
-            "inset_centers must be None, a single (y,x) tuple, or a list of 5 (y,x) tuples."
-        centers = [tuple(map(int, c)) for c in inset_centers]
+    def _process_title(title: str):
+        title = title.replace("_", " ")
+        if title == "H":
+            title = "image height"
+        if title == "W":
+            title = "image width"
+        return title
 
-    def _add_inset_top_right(ax, arr, center, is_target: bool):
-        cy, cx = center
-        half = inset_box_px // 2
-        y0 = int(np.clip(cy - half, 0, arr.shape[0] - 1))
-        x0 = int(np.clip(cx - half, 0, arr.shape[1] - 1))
-        y1 = int(np.clip(y0 + inset_box_px, 1, arr.shape[0]))
-        x1 = int(np.clip(x0 + inset_box_px, 1, arr.shape[1]))
 
-        # top-right inset (no rectangle, no connectors)
-        axins = zoomed_inset_axes(ax, zoom=inset_zoom, loc="upper right", borderpad=0.2)
-        if is_target:
-            axins.imshow(arr, cmap="jet", interpolation="nearest")
-        else:
-            axins.imshow(arr, interpolation="nearest")
-        axins.set_xlim(x0, x1)
-        axins.set_ylim(y1, y0)  # flip y for image coords
-        axins.set_xticks([])
-        axins.set_yticks([])
-        for sp in axins.spines.values():
-            sp.set_linewidth(0.8)
-            sp.set_edgecolor("white")
+    def _make_hue_legend(ax, levels, palette, alpha=0.45, title=None, fontsize=9):
+        handles = [
+            Patch(facecolor=palette[i], edgecolor="none", alpha=alpha, label=str(lv))
+            for i, lv in enumerate(levels)
+        ]
+        return ax.legend(
+            handles=handles,
+            title=title,
+            frameon=False,
+            bbox_to_anchor = (0, 0.5),
+            loc="center left",
+            fontsize=fontsize
+        )
 
-    # panel 0: image
-    ax0 = fig.add_subplot(gs[0, 0])
-    ax0.imshow(img)
-    ax0.set_title(titles[0], fontsize=9)
-    ax0.set_xticks([])
-    ax0.set_yticks([])
-    for sp in ax0.spines.values():
-        sp.set_visible(False)
-    _add_inset_top_right(ax0, img, centers[0], is_target=False)
 
-    # panels 1..4: targets (jet)
-    for c in range(4):
-        ax = fig.add_subplot(gs[0, c + 1])
-        ax.imshow(tgts[..., c], cmap="jet", interpolation="nearest")
-        ax.set_title(titles[c + 1], fontsize=9)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        for sp in ax.spines.values():
-            sp.set_visible(False)
-        _add_inset_top_right(ax, tgts[..., c], centers[c + 1], is_target=True)
+    for i in range(total_tiles):
+        r, c = divmod(i, 3)
+        ax = fig.add_subplot(gs[r, c])
+        axes.append(ax)
+
+        if i == last_idx:
+            ax.axis("off")
+            continue
+
+        # out of columns? hide axis (except last)
+        if i >= len(cols_to_plot):
+            continue
+
+        col = cols_to_plot[i]
+        # common bin range (numeric coercion for safety)
+        x = pd.to_numeric(data[col], errors="coerce").dropna().to_numpy()
+        if x.size == 0 or not np.isfinite(x).any():
+            ax.axis("off")
+            continue
+
+        lo = float(np.nanmin(x))
+        hi = float(np.nanmax(x))
+        if not np.isfinite(lo) or not np.isfinite(hi) or lo == hi:
+            lo, hi = lo - 0.5, hi + 0.5
+
+        sns.histplot(
+            data=data,
+            x=col,
+            hue="crop_method",
+            bins=30,
+            binrange=(lo, hi),
+            stat="count",
+            multiple="stack",
+            alpha=0.45,
+            element="poly",
+            edgecolor=None,
+            ax=ax,
+            palette=palette,
+            kde=False,
+        )
+
+        leg = ax.get_legend()
+        if leg is not None:
+            leg.remove()
+
+        ax.set_title(_process_title(col), fontsize=9)
+        ax.set_xlabel("")
+        ax.set_ylabel("count")
+
+    # draw legend in the last tile
+    ax_leg = axes[last_idx]
+    _make_hue_legend(
+        ax_leg,
+        levels=levels,
+        palette=[palette[i] for i in range(len(levels))],
+        title="crop method",
+        fontsize=9,
+    )
 
     os.makedirs(figure_output_dir, exist_ok=True)
 
@@ -107,24 +133,44 @@ def _generate_main_figure(
 def figure_S3_generation(
     h5_path: str,
     figure_output_dir: str,
+    figure_data_dir: str,
     **kwargs
 ):
-    h5_path = os.path.join(h5_path, "tiles_val.h5")
-
-    index = 2
-    rgb, tgts = fetch_image_with_targets(
-        h5_path=h5_path,
-        index=index,
-        image_key="imgs",
-        target_key="tgts",
-        resize_to=(512,512),
-        target_resize_to=None,
-        return_channel_last=True,   # -> (H, W, C)
+    crop_well_stats = get_dataset_statistics(
+        h5_path = os.path.join(h5_path, "crop_well_resize_train.h5"),
+        output_dir = figure_data_dir
     )
+    pad_stats = get_dataset_statistics(
+        h5_path = os.path.join(h5_path, "pad_resize_train.h5"),
+        output_dir = figure_data_dir
+    )
+    tile_stats = get_dataset_statistics(
+        h5_path = os.path.join(h5_path, "tiles_train.h5"),
+        output_dir = figure_data_dir
+    )
+
+    data = pd.concat([crop_well_stats, pad_stats, tile_stats], axis = 0)
+
+    cols_to_plot = [
+        "n_cells",
+        "frac_positive",
+        "photon_level",
+        "read_noise",
+        "H",
+        "W",
+        "background_level",
+        "color_jitter",
+        "rim_bias",
+        "rim_band",
+        "edge_clamp",
+        "pack_strength",
+        "ghost_density",
+        "dirt_density",
+    ]
 
     _generate_main_figure(
         figure_output_dir=figure_output_dir,
-        figure_name="Figure_S3",
-        img=rgb,
-        tgts=tgts
+        figure_name="Figure_S2",
+        data = data,
+        cols_to_plot = cols_to_plot
     )
