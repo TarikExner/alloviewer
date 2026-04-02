@@ -284,12 +284,7 @@ def figure_2_generation(
     figure_data_dir: str,
     **kwargs,
 ) -> None:
-    """
-    Load calibration data from pickle and generate Figure 2.
-    Expects figure_data_dir / 'calibration_data.dict' with keys:
-      - 'plate': Plate instance
-      - 'res_df': pandas DataFrame with per-ROI results
-    """
+
     data_path = os.path.join(figure_data_dir, "calibration_data.dict")
     with open(data_path, "rb") as f:
         data = pickle.load(f)

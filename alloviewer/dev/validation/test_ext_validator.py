@@ -9,8 +9,8 @@ import pandas as pd
 from torch.utils.data import DataLoader
 from skimage.measure import label as sklabel
 
-from ..segmentation.utils import collate_no_meta
-from ..segmenter import SegmenterUNet, SegmenterConfig, InstanceSegmenterConfig
+from alloviewer.dev.segmentation.utils import collate_no_meta
+from alloviewer.image_analysis.segmenter import SegmenterUNet, SegmenterConfig, InstanceSegmenterConfig
 
 import torch
 
@@ -32,7 +32,7 @@ import gc
 def validate_unet_on_tiled_h5(
     segmenter: SegmenterUNet,
     gt_segmenter: SegmenterUNet,
-    cfg: TrainingValidationConfig,                    # your validation cfg (has cell_thr, boundary_thr, etc.)
+    cfg: TrainingValidationConfig,
     indices: Optional[Sequence[int]] = None,
     segmentation_method: str = "conventional",        # "conventional" | "inst_seg"
     stop: Optional[int] = None,

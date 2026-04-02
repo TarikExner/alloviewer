@@ -10,9 +10,9 @@ import torch
 from torch.utils.data import DataLoader
 from skimage.measure import label as sklabel
 
-from ..segmentation.dataset_io import DiskSimCellsDataset
-from ..segmentation.utils import collate_no_meta
-from ..segmenter import SegmenterUNet, SegmenterConfig
+from alloviewer.dev.segmentation.dataset_io import DiskSimCellsDataset
+from alloviewer.dev.segmentation.utils import collate_no_meta
+from alloviewer.image_analysis.segmenter import SegmenterUNet, SegmenterConfig
 import gc
 
 from tqdm import tqdm

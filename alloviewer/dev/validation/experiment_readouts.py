@@ -1,9 +1,48 @@
+import re
 import os
 import numpy as np
 import pandas as pd
-from ..main import run_job
-from ..utils import PRA_GENERIC_LAYOUT, PRA_GENERIC_IMAGE_ORDER, convert_frac_pos_to_score
+from alloviewer.main import run_image_analysis
+from ...image_analysis.utils import (
+    PRA_GENERIC_LAYOUT,
+    PRA_GENERIC_IMAGE_ORDER,
+    convert_frac_pos_to_score
+)
 from typing import Any
+
+
+def reshape_scores(csv_path_or_df, sep=";") -> pd.DataFrame:
+    """
+    Convert a wide scoring sheet to long format with:
+    folder | well | annotator | score
+    while keeping all non-well columns.
+    """
+    if isinstance(csv_path_or_df, pd.DataFrame):
+        df = csv_path_or_df.copy()
+    else:
+        df = pd.read_csv(csv_path_or_df, sep=sep)
+
+    well_pattern = re.compile(r"^[A-Z]\d+$")
+    well_cols = [c for c in df.columns if well_pattern.match(str(c))]
+
+    id_cols = [c for c in df.columns if c not in well_cols]
+
+    out = df.melt(
+        id_vars=id_cols,
+        value_vars=well_cols,
+        var_name="well",
+        value_name="score"
+    )
+
+    # Optional: reorder columns so the main ones come first
+    preferred = ["Folder", "well", "Annotator", "score"]
+    existing_preferred = [c for c in preferred if c in out.columns]
+    remaining = [c for c in out.columns if c not in existing_preferred]
+    out = out[existing_preferred + remaining]
+
+    assert isinstance(out, pd.DataFrame)
+
+    return out
 
 
 def run_external_experiments(score_sheet_file_path: str,
@@ -12,7 +51,7 @@ def run_external_experiments(score_sheet_file_path: str,
                              unet_config: Any
                              ):
 
-    score_sheet = pd.read_csv(score_sheet_file_path, index_col = False)
+    score_sheet = reshape_scores(score_sheet_file_path)
     image_folders = score_sheet["Folder"].unique()
     score_sheet["AI_score_raw"] = [np.nan for _ in range(score_sheet.shape[0])]
     score_sheet["AI_score_corr"] = [np.nan for _ in range(score_sheet.shape[0])]
@@ -25,7 +64,7 @@ def run_external_experiments(score_sheet_file_path: str,
         image_names.sort()
         if len(image_names) != 60:
             raise ValueError("Invalid length of images")
-        res = run_job(
+        res = run_image_analysis(
             layout=PRA_GENERIC_LAYOUT,
             image_order=PRA_GENERIC_IMAGE_ORDER,
             image_filenames=image_names,

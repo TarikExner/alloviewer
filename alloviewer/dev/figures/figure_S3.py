@@ -170,7 +170,7 @@ def figure_S3_generation(
 
     _generate_main_figure(
         figure_output_dir=figure_output_dir,
-        figure_name="Figure_S2",
+        figure_name="Figure_S3",
         data = data,
         cols_to_plot = cols_to_plot
     )
