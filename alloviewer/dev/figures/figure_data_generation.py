@@ -465,7 +465,7 @@ def get_validation_data(results_dir,
     data = pd.read_csv(in_file, index_col = None)
 
     if mode == "training":
-        n_cells_key = "n_cells_per_image"
+        n_cells_key = "n_cells_per_img"
         data["count_error_pct"] = (data["count_error_components"] / data[n_cells_key]) * 100
 
     return data
