@@ -14,6 +14,11 @@ from skimage import measure, morphology, segmentation, feature
 
 from typing import Any
 
+import copy
+
+from alloviewer.image_analysis.config import UNET_CONFIG, INSTANCE_CONFIG
+from alloviewer.image_analysis.segmenter import SegmenterUNet
+
 from .figure_data_generation import get_validation_data, generate_unet_comparison
 
 from . import figure_config as cfg
@@ -412,11 +417,13 @@ def figure_S7_generation(
     figure_data_dir: str,
     validation_results_dir: str,
     h5_path: str,
-    unet_base_config: Any,
-    instance_seg_config: Any,
-    segmenter_class: Any,
     **kwargs
 ):
+
+    unet_base_config = copy.deepcopy(UNET_CONFIG)
+    instance_seg_config = INSTANCE_CONFIG
+
+    segmenter_class = SegmenterUNet
     
     seg_out = {}
     seg_out["probs"] = {}
