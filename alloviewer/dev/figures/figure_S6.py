@@ -8,9 +8,14 @@ from matplotlib.axes import Axes
 
 import seaborn as sns
 
+import copy
+
 from typing import Any
 
 from .figure_data_generation import get_validation_data, generate_unet_comparison
+
+from alloviewer.image_analysis.config import UNET_CONFIG
+from alloviewer.image_analysis.segmenter import SegmenterUNet
 
 from . import figure_config as cfg
 from . import figure_utils as utils
@@ -173,10 +178,12 @@ def figure_S6_generation(
     validation_results_dir: str,
     figure_data_dir: str,
     h5_path: str,
-    unet_base_config: Any,
-    segmenter_class: Any,
     **kwargs
 ):
+
+    unet_base_config = copy.deepcopy(UNET_CONFIG)
+
+    segmenter_class = SegmenterUNet
 
     data = get_validation_data(validation_results_dir,
                                mode = "training")

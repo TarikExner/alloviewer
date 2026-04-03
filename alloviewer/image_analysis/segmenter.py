@@ -595,7 +595,6 @@ class SegmenterUNetInference(SegmenterUNet):
         return out.astype(np.float32)  # [C, H, W]
 
     # ---- main call ----
-
     @torch.no_grad()
     def __call__(self, img: np.ndarray) -> Dict[str, Any]:
         """

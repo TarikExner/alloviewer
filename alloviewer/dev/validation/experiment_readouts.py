@@ -625,10 +625,6 @@ def concat_annotator_frames(
     return out
 
 
-# ---------------------------------------------------------------------
-# full pipeline
-# ---------------------------------------------------------------------
-
 def build_total_result_dataframe(
     *,
     score_sheet_file_path: str,
@@ -682,6 +678,7 @@ def build_total_result_dataframe(
         classifier_kwargs=imagej_classifier_kwargs,
         verbose=verbose,
     )
+
     imagej_df = imagej_scores_to_annotator_rows(
         imagej_scored,
         annotator_name=imagej_annotator_name,
