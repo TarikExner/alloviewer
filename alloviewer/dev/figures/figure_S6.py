@@ -192,7 +192,7 @@ def figure_S6_generation(
                                    unet_base_config = unet_base_config,
                                    segmenter_class = segmenter_class,
                                    output_dir = figure_data_dir)
-    tile_idx = 5
+    tile_idx = 0
     _generate_main_figure(
         figure_output_dir=figure_output_dir,
         figure_name="Figure_S6",
