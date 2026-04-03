@@ -636,8 +636,8 @@ def build_total_result_dataframe(
     experiment_image_root: str | Path = "./experiment_readout_images",
     layout: Any = PRA_GENERIC_LAYOUT,
     image_order: Sequence[str] = PRA_GENERIC_IMAGE_ORDER,
-    imagej_calibrator_cls: Type = PCNCMedianCalibrator,
-    imagej_classifier_cls: Type = ROIClassifierMedianRG,
+    imagej_calibrator_cls: Type = PCNCGaussianRGCalibrator,
+    imagej_classifier_cls: Type = ROIClassifierGaussian3Way,
     imagej_classifier_kwargs: Optional[Dict[str, Any]] = None,
     imagej_annotator_name: str = "imageJ",
     unet_annotator_name: str = "unet",
@@ -704,10 +704,6 @@ def build_total_result_dataframe(
 
     return total_df
 
-
-# ---------------------------------------------------------------------
-# optional convenience wrapper
-# ---------------------------------------------------------------------
 
 def run_external_experiments(
     score_sheet_file_path: str,
