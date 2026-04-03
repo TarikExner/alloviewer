@@ -26,8 +26,6 @@ def _generate_main_figure(
     res: dict,
     figure_output_dir: str = "",
     figure_name: str = "",
-    tile_idx: int = 5
-    
 ):
 
     plot_params = {
@@ -123,7 +121,7 @@ def _generate_main_figure(
         for i, unet_mode in enumerate(["small", "med", "large"]):
             for j, img_type in enumerate(["cell", "bound", "center", "energy"]):
                 ax_img = sub_axes[i, j]
-                ax_img.imshow(res[unet_mode][img_type][tile_idx])
+                ax_img.imshow(res[unet_mode][img_type][0])
                 ax_img.set_xticks([])
                 ax_img.set_yticks([])
                 for spine in ax_img.spines.values():
@@ -192,11 +190,9 @@ def figure_S6_generation(
                                    unet_base_config = unet_base_config,
                                    segmenter_class = segmenter_class,
                                    output_dir = figure_data_dir)
-    tile_idx = 0
     _generate_main_figure(
         figure_output_dir=figure_output_dir,
         figure_name="Figure_S6",
         data = data,
         res = res,
-        tile_idx = tile_idx
     )

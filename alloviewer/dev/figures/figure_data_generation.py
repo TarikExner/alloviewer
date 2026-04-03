@@ -502,7 +502,7 @@ def generate_unet_comparison(models_dir: str,
     med_seg = segmenter_class.from_config(med_cfg)
     small_seg = segmenter_class.from_config(small_cfg)
 
-    img_idx = 24
+    img_idx = 47
 
     h5file = os.path.join(h5_path, "tiles_train.h5")
     with h5py.File(h5file, "r") as f:
