@@ -89,7 +89,7 @@ def run_image_analysis(
 
     if not unet_config:
         unet_config = copy.deepcopy(UNET_CONFIG)
-        unet_config["instance_cfg"] = INSTANCE_CONFIG
+        unet_config["instance_cfg"] = INSTANCE_CONFIG.to_dict()
 
     # use the (possibly updated) config
     segmenter = SegmenterUNetInference.from_config(unet_config)

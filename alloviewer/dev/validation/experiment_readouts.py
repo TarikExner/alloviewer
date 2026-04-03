@@ -13,23 +13,6 @@ import shutil
 from pathlib import Path
 
 
-import re
-import os
-import shutil
-from pathlib import Path
-from typing import Any, Iterable
-
-import numpy as np
-import pandas as pd
-
-from alloviewer.main import run_image_analysis
-from ...image_analysis.utils import (
-    PRA_GENERIC_LAYOUT,
-    PRA_GENERIC_IMAGE_ORDER,
-    convert_frac_pos_to_score,
-)
-
-
 def _natural_image_sort_key(name: str):
     """
     Sort filenames by embedded numbers, so:
