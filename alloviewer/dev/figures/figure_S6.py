@@ -67,7 +67,7 @@ def _generate_main_figure(
 
         p_params = plot_params.copy()
         p_params.pop("whis")
-        sns.violinplot(**p_params, y = "boundary_f1", ax = accuracy_plot, inside = None)
+        sns.violinplot(**p_params, y = "boundary_f1", ax = accuracy_plot, inner = None)
 
         accuracy_plot.legend(bbox_to_anchor = (0.5, -0.25), loc = "upper center",
                              title = "UNET size", fontsize = cfg.AXIS_LABEL_SIZE,
