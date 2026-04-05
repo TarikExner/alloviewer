@@ -664,11 +664,11 @@ def build_total_result_dataframe(
         verbose=verbose,
     )
 
-    if output_csv_path is not None:
-        manual_df.to_csv(manual_df_path, index = False)
-
     # we skip this folder as we do not know if thats a real folder
     manual_df = manual_df.loc[~((manual_df["Folder"] == "20251021_25720338") & (manual_df["PRA"] == 3.0))]
+
+    if output_csv_path is not None:
+        manual_df.to_csv(manual_df_path, index = False)
 
     imagej_scored = score_imagej_rois(
         imagej_csv_path,
