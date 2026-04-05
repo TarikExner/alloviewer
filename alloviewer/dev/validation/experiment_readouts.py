@@ -461,14 +461,24 @@ def imagej_scores_to_annotator_rows(
 
     df["Annotator"] = annotator_name
 
-    preferred = ["Folder", "well", "image_name", "role", "Annotator", "score", "adjusted_score"]
+    preferred = [
+        "Folder",
+        "well",
+        "image_name",
+        "role",
+        "Annotator",
+        "score",
+        "adjusted_score",
+        "frac_pos",
+        "corrected_frac_pos",
+        "n_rois",
+    ]
     existing = [c for c in preferred if c in df.columns]
     remaining = [c for c in df.columns if c not in existing]
     df = df[existing + remaining]
 
     df = df.astype(object).replace({pd.NA: np.nan})
     return df.reset_index(drop=True)
-
 
 def score_unet_folders(
     mapping_df: pd.DataFrame,
@@ -481,10 +491,8 @@ def score_unet_folders(
 ) -> pd.DataFrame:
     """
     Run UNET folder by folder and return rows in the shared long schema:
-        Folder | well | image_name | role | Annotator | score | adjusted_score
-
-    mapping_df must contain unique:
-        Folder | well | image_name | role
+        Folder | well | image_name | role | Annotator |
+        score | adjusted_score | frac_pos | corrected_frac_pos | n_rois
     """
     required = ["Folder", "well", "image_name", "role"]
     missing = [c for c in required if c not in mapping_df.columns]
@@ -539,14 +547,18 @@ def score_unet_folders(
         unet_rows = []
         for well, well_info in well_res.items():
             frac_pos = well_info["frac_pos"]
-            frac_pos_adj = well_info["frac_pos_corrected"]
+            corrected_frac_pos = well_info["frac_pos_corrected"]
+            n_rois = well_info["n_rois"]
 
             unet_rows.append(
                 {
                     "Folder": folder,
                     "well": well,
                     "score": convert_frac_pos_to_score(frac_pos),
-                    "adjusted_score": convert_frac_pos_to_score(frac_pos_adj),
+                    "adjusted_score": convert_frac_pos_to_score(corrected_frac_pos),
+                    "frac_pos": frac_pos,
+                    "corrected_frac_pos": corrected_frac_pos,
+                    "n_rois": n_rois,
                 }
             )
 
@@ -560,15 +572,25 @@ def score_unet_folders(
         out_rows.append(unet_df)
 
     out = pd.concat(out_rows, ignore_index=True)
-    preferred = ["Folder", "well", "image_name", "role", "Annotator", "score", "adjusted_score"]
+
+    preferred = [
+        "Folder",
+        "well",
+        "image_name",
+        "role",
+        "Annotator",
+        "score",
+        "adjusted_score",
+        "frac_pos",
+        "corrected_frac_pos",
+        "n_rois",
+    ]
     existing = [c for c in preferred if c in out.columns]
     remaining = [c for c in out.columns if c not in existing]
     out = out[existing + remaining]
 
     out = out.astype(object).replace({pd.NA: np.nan})
     return out.reset_index(drop=True)
-
-
 # ---------------------------------------------------------------------
 # merging
 # ---------------------------------------------------------------------
@@ -584,6 +606,9 @@ def concat_annotator_frames(
         "Annotator",
         "score",
         "adjusted_score",
+        "frac_pos",
+        "corrected_frac_pos",
+        "n_rois",
     ),
 ) -> pd.DataFrame:
     """

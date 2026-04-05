@@ -86,9 +86,9 @@ class WellResult:
         n_rois = len(self.rois)
 
         if n_rois == 0:
-            frac_pos = 0
+            frac_pos = 0.0
         else:
-            frac_pos = int((n_pos / n_rois) * 100)
+            frac_pos = 100.0 * (n_pos / n_rois)
 
         return {
             "well_id": self.well_id,
