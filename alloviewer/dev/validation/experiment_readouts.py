@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from pathlib import Path
@@ -23,10 +24,6 @@ from ...image_analysis.utils import (
     convert_frac_pos_to_score,
 )
 
-
-# ---------------------------------------------------------------------
-# basic helpers
-# ---------------------------------------------------------------------
 
 def _layout_dict(layout: Any) -> Dict[str, str]:
     if hasattr(layout, "wells"):
@@ -82,7 +79,7 @@ def frac_pos_raw_from_labels(labels: Iterable[str]) -> float:
     if denom == 0:
         return np.nan
 
-    return 100.0 * n_pos / denom
+    return 100.0 * (n_pos / denom)
 
 
 # ---------------------------------------------------------------------
@@ -473,10 +470,6 @@ def imagej_scores_to_annotator_rows(
     return df.reset_index(drop=True)
 
 
-# ---------------------------------------------------------------------
-# UNET scoring
-# ---------------------------------------------------------------------
-
 def score_unet_folders(
     mapping_df: pd.DataFrame,
     *,
@@ -700,6 +693,15 @@ def build_total_result_dataframe(
     total_df = concat_annotator_frames([manual_df, imagej_df, unet_df])
 
     if output_csv_path is not None:
+        save_path = os.path.dirname(output_csv_path)
+        manual_df_path = os.path.join(save_path, "manual_df.csv")
+        imagej_df_path = os.path.join(save_path, "imagej_df.csv")
+        unet_df_path = os.path.join(save_path, "unet_df.csv")
+
+        manual_df.to_csv(manual_df_path, index = False)
+        imagej_df.to_csv(imagej_df_path, index = False)
+        unet_df.to_csv(unet_df_path, index = False)
+
         total_df.to_csv(output_csv_path, index=False)
 
     return total_df
