@@ -645,6 +645,12 @@ def build_total_result_dataframe(
     Final schema:
         Folder | well | image_name | role | Annotator | score | adjusted_score
     """
+    if output_csv_path is not None:
+        save_path = os.path.dirname(output_csv_path)
+        manual_df_path = os.path.join(save_path, "manual_df.csv")
+        imagej_df_path = os.path.join(save_path, "imagej_df.csv")
+        unet_df_path = os.path.join(save_path, "unet_df.csv")
+
     imagej_classifier_kwargs = imagej_classifier_kwargs or {}
 
     manual_df = reshape_scores_with_images(
@@ -657,6 +663,9 @@ def build_total_result_dataframe(
         drop_missing_scores=drop_missing_manual_scores,
         verbose=verbose,
     )
+
+    if output_csv_path is not None:
+        manual_df.to_csv(manual_df_path, index = False)
 
     # we skip this folder as we do not know if thats a real folder
     manual_df = manual_df.loc[~((manual_df["Folder"] == "20251021_25720338") & (manual_df["PRA"] == 3.0))]
@@ -677,6 +686,9 @@ def build_total_result_dataframe(
         annotator_name=imagej_annotator_name,
     )
 
+    if output_csv_path is not None:
+        imagej_df.to_csv(imagej_df_path, index = False)
+
     mapping_df = concat_annotator_frames([manual_df, imagej_df])[
         ["Folder", "well", "image_name", "role"]
     ].drop_duplicates()
@@ -690,18 +702,12 @@ def build_total_result_dataframe(
         annotator_name=unet_annotator_name,
     )
 
+    if output_csv_path is not None:
+        unet_df.to_csv(unet_df_path, index = False)
+
     total_df = concat_annotator_frames([manual_df, imagej_df, unet_df])
 
     if output_csv_path is not None:
-        save_path = os.path.dirname(output_csv_path)
-        manual_df_path = os.path.join(save_path, "manual_df.csv")
-        imagej_df_path = os.path.join(save_path, "imagej_df.csv")
-        unet_df_path = os.path.join(save_path, "unet_df.csv")
-
-        manual_df.to_csv(manual_df_path, index = False)
-        imagej_df.to_csv(imagej_df_path, index = False)
-        unet_df.to_csv(unet_df_path, index = False)
-
         total_df.to_csv(output_csv_path, index=False)
 
     return total_df
