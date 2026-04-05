@@ -201,7 +201,7 @@ class SimulatorConfig:
     ghost_intensity: Union[float, Tuple[float, float]] = (0.02, 0.3)            # pass-through OR scalar
 
     # outward elongation / trail
-    ghost_stretch: Union[float, Tuple[float, float]] = (1.0, 3.0)
+    ghost_stretch: Union[float, Tuple[float, float]] = (0.2, 3.0)
     ghost_trail: Union[int, Tuple[int, int]] = (1,3)
     ghost_trail_decay: Union[float, Tuple[float, float]] = 0.6
 
