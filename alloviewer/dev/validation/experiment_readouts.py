@@ -11,12 +11,14 @@ import pandas as pd
 
 from alloviewer.main import run_image_analysis
 from alloviewer.image_analysis.calibrators import (
-    PCNCGaussianRGCalibrator,
     PCNCMedianCalibrator,
+    PCNCGaussianRGCalibrator,
+    PCNCGaussian2DCalibrator
 )
 from alloviewer.image_analysis.classifiers import (
+    ROIClassifier,
     ROIClassifierGaussian3Way,
-    ROIClassifierMedianRG,
+    ROIClassifierGaussian2D3Way
 )
 from ...image_analysis.utils import (
     PRA_GENERIC_LAYOUT,
@@ -513,8 +515,9 @@ def score_unet_folders(
         )
 
     out_rows = []
-
-    for folder, df_folder in mapping_df.groupby("Folder", sort=False):
+    total_folders = mapping_df["Folder"].nunique()
+    for i, (folder, df_folder) in enumerate(mapping_df.groupby("Folder", sort=False)):
+        print(f"Calculating Folder {i}/{total_folders}...")
         image_storage_dir = Path(image_base_path) / str(folder)
         if not image_storage_dir.exists():
             raise FileNotFoundError(f"Image folder not found: {image_storage_dir}")
@@ -654,8 +657,8 @@ def build_total_result_dataframe(
     experiment_image_root: str | Path = "./experiment_readout_images",
     layout: Any = PRA_GENERIC_LAYOUT,
     image_order: Sequence[str] = PRA_GENERIC_IMAGE_ORDER,
-    imagej_calibrator_cls: Type = PCNCGaussianRGCalibrator,
-    imagej_classifier_cls: Type = ROIClassifierGaussian3Way,
+    imagej_calibrator_cls: Type = PCNCGaussian2DCalibrator,
+    imagej_classifier_cls: Type = ROIClassifierGaussian2D3Way,
     imagej_classifier_kwargs: Optional[Dict[str, Any]] = None,
     imagej_annotator_name: str = "imageJ",
     unet_annotator_name: str = "unet",

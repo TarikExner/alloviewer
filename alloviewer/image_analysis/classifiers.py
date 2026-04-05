@@ -1,5 +1,6 @@
 import math
 from typing import List, Dict, Any, Optional
+import numpy as np
 
 from .config import DEFAULT_CALIB_RG_GAUSS
 
@@ -175,4 +176,46 @@ class ROIClassifierGaussian3Way:
             out.append(rr)
         return out
 
+class ROIClassifierGaussian2D3Way:
+    def __init__(self, calib: Dict[str, Any], margin: float = 1.0):
+        self.mu_pc = np.asarray(calib["mu_pc"], dtype=float)
+        self.cov_pc = np.asarray(calib["cov_pc"], dtype=float)
+        self.mu_nc = np.asarray(calib["mu_nc"], dtype=float)
+        self.cov_nc = np.asarray(calib["cov_nc"], dtype=float)
+        self.margin = float(margin)
+        self.method = calib.get("method", "pc_nc_gaussian_2d") + f"_3way_margin{self.margin:g}"
 
+        self.inv_pc = np.linalg.inv(self.cov_pc)
+        self.inv_nc = np.linalg.inv(self.cov_nc)
+        self.logdet_pc = np.linalg.slogdet(self.cov_pc)[1]
+        self.logdet_nc = np.linalg.slogdet(self.cov_nc)[1]
+
+    def _logpdf(self, x: np.ndarray, mu: np.ndarray, inv: np.ndarray, logdet: float) -> float:
+        d = x - mu
+        return -0.5 * (d @ inv @ d + logdet)
+
+    def __call__(self, rois: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        out = []
+        for r in rois:
+            x = np.array([float(r["mean_r"]), float(r["mean_g"])], dtype=float)
+
+            logp_pc = self._logpdf(x, self.mu_pc, self.inv_pc, self.logdet_pc)
+            logp_nc = self._logpdf(x, self.mu_nc, self.inv_nc, self.logdet_nc)
+            delta = logp_pc - logp_nc
+
+            if delta > self.margin:
+                label = "pos"
+            elif delta < -self.margin:
+                label = "neg"
+            else:
+                label = "uncertain"
+
+            rr = dict(r)
+            rr["logp_pc"] = float(logp_pc)
+            rr["logp_nc"] = float(logp_nc)
+            rr["score"] = float(delta)
+            rr["label"] = label
+            rr["method"] = self.method
+            out.append(rr)
+
+        return out

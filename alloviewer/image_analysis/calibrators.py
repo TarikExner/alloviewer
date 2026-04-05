@@ -82,4 +82,33 @@ class PCNCGaussianRGCalibrator:
             "mu_nc": mu_nc, "sd_nc": sd_nc,
         }
 
+def _xy_array(wells: List[List[Dict[str, Any]]]) -> np.ndarray:
+    rows = []
+    for well in wells:
+        for r in well:
+            rows.append([float(r["mean_r"]), float(r["mean_g"])])
+    return np.asarray(rows, dtype=float)
 
+class PCNCGaussian2DCalibrator:
+    def fit(
+        self,
+        pc_wells: List[List[Dict[str, Any]]],
+        nc_wells: List[List[Dict[str, Any]]],
+        eps: float = 1e-6,
+    ) -> Dict[str, Any]:
+        pc = _xy_array(pc_wells)
+        nc = _xy_array(nc_wells)
+
+        mu_pc = pc.mean(axis=0)
+        mu_nc = nc.mean(axis=0)
+
+        cov_pc = np.cov(pc.T) + eps * np.eye(2)
+        cov_nc = np.cov(nc.T) + eps * np.eye(2)
+
+        return {
+            "method": "pc_nc_gaussian_2d",
+            "mu_pc": mu_pc,
+            "cov_pc": cov_pc,
+            "mu_nc": mu_nc,
+            "cov_nc": cov_nc,
+        }

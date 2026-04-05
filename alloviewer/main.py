@@ -26,8 +26,16 @@ from .image_analysis.structs import (
 )
 from .image_analysis.segmenter import SegmenterUNetInference
 from .image_analysis.extractor import RGBExtractor
-from .image_analysis.calibrators import PCNCMedianCalibrator, PCNCGaussianRGCalibrator
-from .image_analysis.classifiers import ROIClassifier, ROIClassifierGaussian3Way
+from .image_analysis.calibrators import (
+    PCNCMedianCalibrator,
+    PCNCGaussianRGCalibrator,
+    PCNCGaussian2DCalibrator
+)
+from .image_analysis.classifiers import (
+    ROIClassifier,
+    ROIClassifierGaussian3Way,
+    ROIClassifierGaussian2D3Way
+)
 
 from .image_analysis.qc import QCMonitor
 
@@ -95,8 +103,8 @@ def run_image_analysis(
     segmenter = SegmenterUNetInference.from_config(unet_config)
     qc_monitor = QCMonitor()
     extractor = RGBExtractor()
-    calibrator = PCNCGaussianRGCalibrator()
-    classifier_ctor = ROIClassifierGaussian3Way
+    calibrator = PCNCGaussian2DCalibrator()
+    classifier_ctor = ROIClassifierGaussian2D3Way
     per_well: dict[str, WellResult] = {}
 
     # 1) load images and build plate

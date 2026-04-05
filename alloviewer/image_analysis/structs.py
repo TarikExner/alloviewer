@@ -57,20 +57,27 @@ class ROIResult:
     mean_b: float
     area: int
 
-    label: Optional[str] = None            # "pos" | "neg" | "uncertain"
-    score: Optional[float] = None          # primary score (e.g., R/G threshold score)
+    label: Optional[str] = None
+    score: Optional[float] = None          # main classifier score
 
-    # optional diagnostics for Gaussian/median variants
-    score_rg: Optional[float] = None       # R/G used by classifiers
-    z_nc: Optional[float] = None           # z vs NC (upper-tail test)
-    z_pc: Optional[float] = None           # z vs PC (lower-tail test)
-    p_nc_upper: Optional[float] = None     # 1 - CDF(z_nc)
-    p_pc_lower: Optional[float] = None     # CDF(z_pc)
-    method: Optional[str] = None           # classifier/calibrator tag
+    # old 1D R/G diagnostics
+    score_rg: Optional[float] = None
+    z_nc: Optional[float] = None
+    z_pc: Optional[float] = None
+    p_nc_upper: Optional[float] = None
+    p_pc_lower: Optional[float] = None
 
-    # future-proof bucket
+    # new 2D Gaussian / QDA diagnostics
+    logp_pc: Optional[float] = None
+    logp_nc: Optional[float] = None
+    mahal_pc: Optional[float] = None
+    mahal_nc: Optional[float] = None
+    delta_logp: Optional[float] = None     # logp_pc - logp_nc
+
+    method: Optional[str] = None
+
     extras: Dict[str, Any] = field(default_factory=dict)
-
+    
 @dataclass
 class WellResult:
     well_id: str
