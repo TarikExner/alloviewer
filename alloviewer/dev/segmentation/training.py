@@ -135,6 +135,34 @@ def reduce_mean_dict(d: dict, device):
         return d
     return {k: reduce_mean_scalar(float(v), device) for k, v in d.items()}
 
+def _concat_extras(ex_a: dict, ex_b: dict) -> dict:
+    out = {}
+
+    if "instance_labels" in ex_a and "instance_labels" in ex_b:
+        out["instance_labels"] = torch.cat(
+            [ex_a["instance_labels"], ex_b["instance_labels"]],
+            dim=0,
+        )
+
+    if "meta" in ex_a and "meta" in ex_b:
+        # collate_no_meta usually gives a list of dicts
+        meta_a = ex_a["meta"]
+        meta_b = ex_b["meta"]
+        if isinstance(meta_a, list) and isinstance(meta_b, list):
+            out["meta"] = meta_a + meta_b
+        else:
+            out["meta"] = meta_a
+
+    return out
+
+def _next_bg_batch(bg_iter, bg_loader):
+    try:
+        batch = next(bg_iter)
+    except StopIteration:
+        bg_iter = iter(bg_loader)
+        batch = next(bg_iter)
+    return batch, bg_iter
+
 # --------------------- classic dice helpers ---------------------
 
 def dice_loss_from_probs(probs, target, eps=1e-6):
@@ -579,26 +607,31 @@ def _build_aux_targets(extras: dict,
         center_allow = make_outside_mask_centers_batch(metas, H, W, radius=center_outside_radius, device=device)  # [B,1,H,W]
     return bound_soft, cell_mask, center_allow
 
-def train_epoch(model,
-                loader,
-                opt, scaler, device, use_amp, weights, w_bce, w_dice, show_bar, max_steps=None,
-                grad_clip_norm: Optional[float] = None,
-                center_pos_weight: float = 10.0,
-                center_w_bce: float = 0.6,
-                center_w_mse: float = 0.4,
-                center_sparsity_weight: float = 0.0,
-                energy_w_l1: float = 0.5,
-                energy_w_mse: float = 0.5,
-                excl_weight: float = 0.2,
-                # --- anti-halo knobs ---
-                halo_ring_px: int = 3,
-                halo_far_px: int = 12,
-                halo_w_cell: float = 0.05,
-                halo_w_energy_ring: float = 0.05,
-                halo_w_energy_far: float = 0.10,
-                halo_w_center_ring: float = 0.05,
-                halo_w_center_far: float = 0.10,
-                ):
+def train_epoch(
+    model,
+    loader,
+    opt, scaler, device, use_amp, weights, w_bce, w_dice, show_bar, max_steps=None,
+    grad_clip_norm: Optional[float] = None,
+    center_pos_weight: float = 10.0,
+    center_w_bce: float = 0.6,
+    center_w_mse: float = 0.4,
+    center_sparsity_weight: float = 0.0,
+    energy_w_l1: float = 0.5,
+    energy_w_mse: float = 0.5,
+    excl_weight: float = 0.2,
+    halo_ring_px: int = 3,
+    halo_far_px: int = 12,
+    halo_w_cell: float = 0.05,
+    halo_w_energy_ring: float = 0.05,
+    halo_w_energy_far: float = 0.10,
+    halo_w_center_ring: float = 0.05,
+    halo_w_center_far: float = 0.10,
+    bg_loader=None,
+    bg_mix_frac: float = 0.0,
+):
+
+        
+    bg_iter = iter(bg_loader) if (bg_loader is not None and bg_mix_frac > 0.0) else None
     model.train()
     # running sums
     steps = 0
@@ -624,8 +657,54 @@ def train_epoch(model,
 
     for step_idx, (img, tgt, extras) in enumerate(pbar, start=1):
         img, tgt, extras = flatten_tiles(img, tgt, extras)
-        img = img.to(device, non_blocking=True)            # [B,3,H,W]
-        tgt = tgt.to(device, non_blocking=True)            # [B,C,H,W]
+
+        # ---- optional background mixing ----
+        if bg_iter is not None and bg_mix_frac > 0.0:
+            B_main = img.shape[0]
+            n_bg = np.random.binomial(B_main, bg_mix_frac)
+
+            if n_bg > 0:
+                bg_img, bg_tgt, bg_extras = None, None, None
+                collected = 0
+                bg_img_parts, bg_tgt_parts, bg_inst_parts, bg_meta_parts = [], [], [], []
+
+                while collected < n_bg:
+                    (b_img, b_tgt, b_extras), bg_iter = _next_bg_batch(bg_iter, bg_loader)
+                    b_img, b_tgt, b_extras = flatten_tiles(b_img, b_tgt, b_extras)
+
+                    take = min(n_bg - collected, b_img.shape[0])
+
+                    bg_img_parts.append(b_img[:take])
+                    bg_tgt_parts.append(b_tgt[:take])
+
+                    if "instance_labels" in b_extras:
+                        bg_inst_parts.append(b_extras["instance_labels"][:take])
+
+                    if "meta" in b_extras and isinstance(b_extras["meta"], list):
+                        bg_meta_parts.extend(b_extras["meta"][:take])
+
+                    collected += take
+
+                bg_img = torch.cat(bg_img_parts, dim=0)
+                bg_tgt = torch.cat(bg_tgt_parts, dim=0)
+                bg_extras = {
+                    "instance_labels": torch.cat(bg_inst_parts, dim=0) if bg_inst_parts else None,
+                    "meta": bg_meta_parts,
+                }
+
+                n_keep = B_main - n_bg
+
+                img = torch.cat([img[:n_keep], bg_img], dim=0)
+                tgt = torch.cat([tgt[:n_keep], bg_tgt], dim=0)
+
+                main_extras = {
+                    "instance_labels": extras["instance_labels"][:n_keep],
+                    "meta": extras["meta"][:n_keep] if isinstance(extras.get("meta", None), list) else extras.get("meta", None),
+                }
+                extras = _concat_extras(main_extras, bg_extras)
+
+        img = img.to(device, non_blocking=True)
+        tgt = tgt.to(device, non_blocking=True)
         B, C, H, W = tgt.shape
 
         bound_soft, cell_mask, center_allow = _build_aux_targets(
@@ -999,6 +1078,34 @@ def _probe_total_len(h5_paths: list[str]) -> int:
             tot += int(f["imgs"].shape[0])
     return tot
 
+def build_background_loader(
+    h5_path: str,
+    batch_size: int,
+    workers: int,
+    distributed: bool,
+    device: torch.device,
+):
+    bg_ds = DiskSimCellsDataset(h5_path)
+
+    bg_sampler = DistributedSampler(
+        bg_ds, shuffle=True, drop_last=True
+    ) if distributed else None
+
+    pin_mem = (device.type == "cuda")
+    bg_dl = DataLoader(
+        bg_ds,
+        batch_size=batch_size,
+        shuffle=(bg_sampler is None),
+        sampler=bg_sampler,
+        num_workers=workers,
+        pin_memory=pin_mem,
+        persistent_workers=(workers > 0),
+        prefetch_factor=2,
+        drop_last=True,
+        collate_fn=collate_no_meta,
+    )
+    return bg_ds, bg_dl, bg_sampler
+
 def build_h5_loaders(
     h5_path: str,
     batch_size: int,
@@ -1082,6 +1189,7 @@ def train(
     seed=187,
     amp=True,
     unet_mode: Literal["small", "medium", "large"] = "small",
+    bg_mix_frac: float = 0.075,
     w_bce=0.3,
     w_dice=0.7,
     max_steps_per_epoch: int | None = 250,
@@ -1093,6 +1201,9 @@ def train(
     grad_clip_norm: float | None = 1.0,
 ):
     os.makedirs(out_dir, exist_ok=True)
+
+    background_h5_path = os.path.dirname(h5_path)
+    background_h5_path = os.path.join(background_h5_path, "background_dataset.h5")
 
     # DDP bootstrap
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
@@ -1127,6 +1238,19 @@ def train(
         distributed=distributed,
         device=device,
     )
+
+    bg_dl = None
+    bg_sampler = None
+
+    if background_h5_path is not None and bg_mix_frac > 0.0:
+        _, bg_dl, bg_sampler = build_background_loader(
+            h5_path=background_h5_path,
+            batch_size=batch_size,
+            workers=workers,
+            distributed=distributed,
+            device=device,
+        )
+
     train_sampler = DistributedSampler(train_ds, num_replicas=world_size, rank=local_rank, shuffle=True,  drop_last=True)  if distributed else None
     val_sampler = DistributedSampler(val_ds, num_replicas=world_size, rank=local_rank, shuffle=False, drop_last=False) if distributed else None
 
@@ -1199,11 +1323,16 @@ def train(
         # per-epoch channel weights
         weights = make_weight_schedule(C=n_out, epoch=ep, warmup_epochs=warmup_epochs)
 
+        if bg_sampler is not None:
+            bg_sampler.set_epoch(ep)
+
         tr_local = train_epoch(
             model, train_dl, opt, scaler, device, use_amp,
             weights=weights, w_bce=w_bce, w_dice=w_dice,
             show_bar=is_rank0, max_steps=max_steps_per_epoch,
-            grad_clip_norm=grad_clip_norm
+            grad_clip_norm=grad_clip_norm,
+            bg_loader=bg_dl,
+            bg_mix_frac=bg_mix_frac,
         )
         va_local = eval_epoch(
             model, val_dl, device, use_amp,

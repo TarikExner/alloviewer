@@ -1034,8 +1034,9 @@ def create_background_dataset_h5(
     root_dir: str,
     out_path: str,
     target: int = 512,
-    compression: Optional[str] = "lzf",
-    flush_every: int = 64,
+    compression: Optional[str] = None,
+    flush_every: int = 5000,
+    write_batch_size: int = 256,
     glob_pattern: str = "**/*.npy",
 ):
     """
@@ -1055,7 +1056,11 @@ def create_background_dataset_h5(
       /inst: int32   [N_total_tiles, 1, target, target]      all zeros
       /meta: vlen JSON [N_total_tiles]
 
-    This is compatible with the single-tile layout used when n_tiles=1.
+    Notes
+    -----
+    - writes in batches, not tile-by-tile
+    - uses full-tile chunks to match access pattern
+    - avoids frequent flushes
     """
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
 
@@ -1092,21 +1097,48 @@ def create_background_dataset_h5(
         if not np.isfinite(arr).all():
             raise ValueError(f"{path}: contains non-finite values")
 
-        arr = np.clip(arr, 0.0, 1.0)
-        return arr
+        return np.clip(arr, 0.0, 1.0)
 
-    # count total number of tiles
-    total_tiles = 0
-    file_tile_counts: List[int] = []
-
-    for path in tqdm(npy_files, desc="count tiles", dynamic_ncols=True):
-        arr = np.load(path, allow_pickle=False)
+    def _count_tiles(path: str) -> int:
+        arr = np.load(path, mmap_mode="r", allow_pickle=False)
         if arr.ndim == 3:
-            t = 1
+            if arr.shape[0] != 3:
+                raise ValueError(f"{path}: expected [3,H,W] or [T,3,H,W], got {arr.shape}")
+            return 1
         elif arr.ndim == 4:
-            t = int(arr.shape[0])
+            if arr.shape[1] != 3:
+                raise ValueError(f"{path}: expected shape [T,3,H,W], got {arr.shape}")
+            return int(arr.shape[0])
         else:
             raise ValueError(f"{path}: expected 3D or 4D array, got {arr.shape}")
+
+    def _make_meta(path: str, tile_index_in_file: int) -> Dict[str, Any]:
+        full_meta = {
+            "src_path": os.path.abspath(path),
+            "kind": "background_tile",
+            "target": int(target),
+        }
+
+        tile_meta = {
+            "mode": "background",
+            "tile_index_in_file": int(tile_index_in_file),
+            "tile_xy": (0, 0),
+            "tile_hw": (int(target), int(target)),
+            "sim_meta": None,
+            "full_meta": full_meta,
+        }
+
+        return {
+            "full": full_meta,
+            "tiles": [tile_meta],   # length 1 on purpose
+            "sim_kwargs": None,
+        }
+
+    # count total number of tiles quickly
+    total_tiles = 0
+    file_tile_counts: List[int] = []
+    for path in tqdm(npy_files, desc="count tiles", dynamic_ncols=True):
+        t = _count_tiles(path)
         file_tile_counts.append(t)
         total_tiles += t
 
@@ -1122,7 +1154,7 @@ def create_background_dataset_h5(
             if compression:
                 dargs["compression"] = compression
 
-            chunk_N = max(1, min(64, total_tiles))
+            chunk_N = max(1, min(int(write_batch_size), total_tiles))
 
             f.attrs.update(
                 {
@@ -1140,25 +1172,26 @@ def create_background_dataset_h5(
                 }
             )
 
+            # full-tile chunking, matched to write pattern
             d_imgs = f.create_dataset(
                 "imgs",
                 shape=(total_tiles, 1, 3, target, target),
                 dtype="float32",
-                chunks=(chunk_N, 1, 3, min(target, 256), min(target, 256)),
+                chunks=(chunk_N, 1, 3, target, target),
                 **dargs,
             )
             d_tgts = f.create_dataset(
                 "tgts",
                 shape=(total_tiles, 1, 4, target, target),
                 dtype="float32",
-                chunks=(chunk_N, 1, 4, min(target, 256), min(target, 256)),
+                chunks=(chunk_N, 1, 4, target, target),
                 **dargs,
             )
             d_inst = f.create_dataset(
                 "inst",
                 shape=(total_tiles, 1, target, target),
                 dtype="int32",
-                chunks=(chunk_N, 1, min(target, 256), min(target, 256)),
+                chunks=(chunk_N, 1, target, target),
                 **dargs,
             )
             d_meta = f.create_dataset(
@@ -1175,7 +1208,6 @@ def create_background_dataset_h5(
             d_meta = f["meta"]
             written = int(f.attrs.get("written", 0))
 
-            # sanity
             if int(f.attrs["length"]) != int(total_tiles):
                 raise ValueError(
                     f"Existing H5 length={int(f.attrs['length'])}, "
@@ -1186,35 +1218,45 @@ def create_background_dataset_h5(
             if int(f.attrs["H"]) != int(target) or int(f.attrs["W"]) != int(target):
                 raise ValueError("target mismatch with existing H5")
 
-        def _make_meta(path: str, tile_index_in_file: int) -> Dict[str, Any]:
-            full_meta = {
-                "src_path": os.path.abspath(path),
-                "kind": "background_tile",
-                "target": int(target),
-            }
-
-            tile_meta = {
-                "mode": "background",
-                "tile_index_in_file": int(tile_index_in_file),
-                "tile_xy": (0, 0),
-                "tile_hw": (int(target), int(target)),
-                "sim_meta": None,
-                "full_meta": full_meta,
-            }
-
-            return {
-                "full": full_meta,
-                "tiles": [tile_meta],   # length 1 on purpose
-                "sim_kwargs": None,
-            }
-
         out_idx = written
-        pbar = tqdm(total=total_tiles, initial=written, desc="export background h5", dynamic_ncols=True)
+        skipped_tiles = written
         since_flush = 0
 
-        skipped_tiles = 0
-        if written > 0:
-            skipped_tiles = written
+        # prebuilt zero buffers reused for all writes
+        zeros_tgts_template = np.zeros((write_batch_size, 1, 4, target, target), dtype=np.float32)
+        zeros_inst_template = np.zeros((write_batch_size, 1, target, target), dtype=np.int32)
+
+        # write buffers
+        buf_imgs = []
+        buf_meta = []
+
+        def _flush_buffers():
+            nonlocal out_idx, since_flush, buf_imgs, buf_meta
+            if len(buf_imgs) == 0:
+                return
+
+            B = len(buf_imgs)
+            imgs_np = np.stack(buf_imgs, axis=0).astype(np.float32)[:, None, ...]  # [B,1,3,H,W]
+            tgts_np = zeros_tgts_template[:B]
+            inst_np = zeros_inst_template[:B]
+
+            d_imgs[out_idx:out_idx+B] = imgs_np
+            d_tgts[out_idx:out_idx+B] = tgts_np
+            d_inst[out_idx:out_idx+B] = inst_np
+            d_meta[out_idx:out_idx+B] = buf_meta
+
+            out_idx += B
+            f.attrs.modify("written", int(out_idx))
+
+            since_flush += B
+            if since_flush >= max(1, flush_every):
+                flush_safe_file(f)
+                since_flush = 0
+
+            buf_imgs = []
+            buf_meta = []
+
+        pbar = tqdm(total=total_tiles, initial=written, desc="export background h5", dynamic_ncols=True)
 
         for path, n_tiles in zip(npy_files, file_tile_counts):
             if stop["flag"]:
@@ -1225,27 +1267,23 @@ def create_background_dataset_h5(
             for t in range(n_tiles):
                 if skipped_tiles > 0:
                     skipped_tiles -= 1
+                    pbar.update(1)
                     continue
 
                 tile = tiles[t]  # [3,512,512]
-
-                d_imgs[out_idx, 0] = tile.astype(np.float32)
-                d_tgts[out_idx, 0] = np.zeros((4, target, target), dtype=np.float32)
-                d_inst[out_idx, 0] = np.zeros((target, target), dtype=np.int32)
-                d_meta[out_idx] = json.dumps(
+                meta_str = json.dumps(
                     jsonify(_make_meta(path, t)),
                     separators=(",", ":"),
                 )
 
-                out_idx += 1
-                f.attrs.modify("written", int(out_idx))
+                buf_imgs.append(tile)
+                buf_meta.append(meta_str)
                 pbar.update(1)
 
-                since_flush += 1
-                if (since_flush % max(1, flush_every)) == 0:
-                    flush_safe_file(f)
-                    since_flush = 0
+                if len(buf_imgs) >= int(write_batch_size):
+                    _flush_buffers()
 
+        _flush_buffers()
         flush_safe_file(f)
         pbar.close()
 
