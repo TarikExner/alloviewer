@@ -353,11 +353,22 @@ def review_dataset_and_save(
 
     return results
 
-def collect_ext_image_subfolders(
+def collect_ext_image_files(
     ext_root="./ext_images",
     exclude_roots=("./human_annotations", "./experiment_readout_images"),
+    suffixes=(".tif", ".tiff", ".png", ".jpg", ".jpeg"),
 ):
+    """
+    Collect all image files from subfolders in ext_root, excluding any subfolder
+    whose name also exists in one of the exclude_roots.
+
+    Returns
+    -------
+    list[Path]
+        Sorted list of image file paths.
+    """
     ext_root = Path(ext_root)
+    suffixes = tuple(s.lower() for s in suffixes)
 
     excluded_names = {
         p.name
@@ -366,11 +377,14 @@ def collect_ext_image_subfolders(
         if p.is_dir()
     }
 
-    subfolders = [
-        p for p in ext_root.iterdir()
-        if p.is_dir() and p.name not in excluded_names
+    files = [
+        f
+        for subfolder in ext_root.iterdir()
+        if subfolder.is_dir() and subfolder.name not in excluded_names
+        for f in subfolder.iterdir()
+        if f.is_file() and f.suffix.lower() in suffixes
     ]
 
-    return sorted(subfolders)
+    return sorted(files)
 
 
