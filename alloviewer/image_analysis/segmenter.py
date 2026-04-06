@@ -665,7 +665,7 @@ class SegmenterUNetInference(SegmenterUNet):
 def filter_instances_by_shape(
     instances: np.ndarray,
     min_area: int = 20,
-    max_area: int | None = 100,
+    max_area: int | None = 200,
     min_solidity: float | None = 0.65,
     min_circularity: float | None = 0.4,
     min_extent: float | None = None,
@@ -900,6 +900,8 @@ class InstanceSegmenter:
                 min_size=int(self.cfg.min_instance_area)
             ).astype(np.int32)
 
+        print("before filtering": np.unique(instances, return_counts = True))
+
         # --- 7) quick fix for crude background instances ---
         instances = filter_instances_by_shape(
             instances,
@@ -910,6 +912,7 @@ class InstanceSegmenter:
             min_extent=getattr(self.cfg, "min_instance_extent", None),
             remove_border=bool(getattr(self.cfg, "remove_border_instances", True)),
         )
+        print("after filtering": np.unique(instances, return_counts = True))
 
         # push updated fields back
         if update_cell_mask:
