@@ -661,6 +661,62 @@ class SegmenterUNetInference(SegmenterUNet):
         }
         return result
 
+# 06.04.2026: QUICK FIX FOR EFI-POSTER!!!
+def filter_instances_by_shape(
+    instances: np.ndarray,
+    min_area: int = 20,
+    max_area: int | None = 100,
+    min_solidity: float | None = 0.65,
+    min_circularity: float | None = 0.4,
+    min_extent: float | None = None,
+    remove_border: bool = True,
+) -> np.ndarray:
+    lab = instances.copy()
+
+    if remove_border:
+        lab = segmentation.clear_border(lab)
+
+    props = measure.regionprops(lab)
+    keep = np.zeros(lab.max() + 1, dtype=bool)
+
+    for p in props:
+        area = p.area
+
+        if area < min_area:
+            continue
+        if max_area is not None and area > max_area:
+            continue
+
+        if min_solidity is not None:
+            # solidity = area / convex_area
+            if p.solidity < min_solidity:
+                continue
+
+        if min_extent is not None:
+            if p.extent < min_extent:
+                continue
+
+        if min_circularity is not None:
+            perim = p.perimeter
+            if perim <= 0:
+                continue
+            circularity = 4.0 * np.pi * area / (perim * perim)
+            if circularity < min_circularity:
+                continue
+
+        keep[p.label] = True
+
+    out = np.zeros_like(lab, dtype=np.int32)
+    kept_labels = np.nonzero(keep)[0]
+    kept_labels = kept_labels[kept_labels != 0]
+
+    new_id = 1
+    for old_id in kept_labels:
+        out[lab == old_id] = new_id
+        new_id += 1
+
+    return out
+
 class InstanceSegmenter:
     def __init__(self, cfg: InstanceSegmenterConfig):
         self.cfg = cfg
@@ -839,8 +895,21 @@ class InstanceSegmenter:
 
         # --- 6) post-process: drop tiny shards and relabel compactly ---
         if self.cfg.min_instance_area > 0:
-            # this removes small pixel objects. This is mainly to keep the count consistent
-            instances = morphology.remove_small_objects(instances, min_size=int(self.cfg.min_instance_area)).astype(np.int32)
+            instances = morphology.remove_small_objects(
+                instances,
+                min_size=int(self.cfg.min_instance_area)
+            ).astype(np.int32)
+
+        # --- 7) quick fix for crude background instances ---
+        instances = filter_instances_by_shape(
+            instances,
+            min_area=int(self.cfg.min_instance_area),
+            max_area=getattr(self.cfg, "max_instance_area", None),
+            min_solidity=getattr(self.cfg, "min_instance_solidity", None),
+            min_circularity=getattr(self.cfg, "min_instance_circularity", None),
+            min_extent=getattr(self.cfg, "min_instance_extent", None),
+            remove_border=bool(getattr(self.cfg, "remove_border_instances", True)),
+        )
 
         # push updated fields back
         if update_cell_mask:

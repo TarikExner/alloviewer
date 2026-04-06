@@ -44,7 +44,13 @@ CD19_GATE_CSV = "root/edge_exclusion/singlets/lymphocytes/CD19+"
 CD3_IGG_GATE_CSV = "root/edge_exclusion/singlets/lymphocytes/CD3+/IgG+"
 CD19_IGG_GATE_CSV = "root/edge_exclusion/singlets/lymphocytes/CD19+/IgG+"
 
-EXPERIMENTS = Literal["exp1", "exp2", "exp3", "exp4"]
+EXPERIMENTS = Literal[
+    "exp1", "exp2", "exp3", "exp4",
+    "val_exp_1", "val_exp_2", "val_exp_3", "val_exp_4", "val_exp_5",
+    "val_exp_6", "val_exp_7", "val_exp_8", "val_exp_9", "val_exp_10",
+    "val_exp_11", "val_exp_12", "val_exp_13", "val_exp_14", "val_exp_15",
+    "val_exp_16", "val_exp_17",
+]
 
 PANEL = Panel(
     fsc_a="FSC-A",
@@ -546,7 +552,14 @@ def run_flow_validation(
     base_config: Optional[GatingConfig] = None,
     experiments_to_run: Optional[list[EXPERIMENTS]] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    experiments = experiments_to_run or ["exp1", "exp2", "exp3", "exp4"]
+
+    experiments = experiments_to_run or [
+        "exp1", "exp2", "exp3", "exp4",
+        "val_exp_1", "val_exp_2", "val_exp_3", "val_exp_4", "val_exp_5",
+        "val_exp_6", "val_exp_7", "val_exp_8", "val_exp_9", "val_exp_10",
+        "val_exp_11", "val_exp_12", "val_exp_13", "val_exp_14", "val_exp_15",
+        "val_exp_16", "val_exp_17",
+    ]
 
     all_metric_dfs: list[pd.DataFrame] = []
     run_infos: list[dict[str, Any]] = []
