@@ -3,11 +3,12 @@ import numpy as np
 import torch
 import signal
 from torch.utils.data import Dataset, DataLoader
+import glob
 import json
 import h5py
 from tqdm import tqdm
 
-from typing import Optional, Sequence, List, Tuple, Any
+from typing import Optional, Sequence, List, Tuple, Any, Dict
 
 from .image_dataset import SimCellsDataset, ExternalCellsTilesDataset
 
@@ -1028,3 +1029,225 @@ def create_tiled_from_fullres(
         )
         return N, T_tiles, target
 
+
+def create_background_dataset_h5(
+    root_dir: str,
+    out_path: str,
+    target: int = 512,
+    compression: Optional[str] = "lzf",
+    flush_every: int = 64,
+    glob_pattern: str = "**/*.npy",
+):
+    """
+    Export background-only tiles from .npy files into an HDF5 file
+    with ONE tile per sample, i.e. T_max == 1.
+
+    Input
+    -----
+    Each .npy file contains either:
+      - [T, 3, 512, 512]
+      - [3, 512, 512]   -> treated as one tile
+
+    Output
+    ------
+      /imgs: float32 [N_total_tiles, 1, 3, target, target]
+      /tgts: float32 [N_total_tiles, 1, 4, target, target]   all zeros
+      /inst: int32   [N_total_tiles, 1, target, target]      all zeros
+      /meta: vlen JSON [N_total_tiles]
+
+    This is compatible with the single-tile layout used when n_tiles=1.
+    """
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+
+    npy_files = sorted(glob.glob(os.path.join(root_dir, glob_pattern), recursive=True))
+    if len(npy_files) == 0:
+        raise RuntimeError(f"No .npy files found under: {root_dir}")
+
+    stop = setup_stop_flag()
+
+    def _load_tiles(path: str) -> np.ndarray:
+        arr = np.load(path, allow_pickle=False)
+
+        if arr.ndim == 3:
+            # [3,H,W] -> [1,3,H,W]
+            if arr.shape[0] != 3:
+                raise ValueError(f"{path}: expected [3,H,W] or [T,3,H,W], got {arr.shape}")
+            arr = arr[None, ...]
+        elif arr.ndim == 4:
+            # [T,3,H,W]
+            if arr.shape[1] != 3:
+                raise ValueError(f"{path}: expected shape [T,3,H,W], got {arr.shape}")
+        else:
+            raise ValueError(f"{path}: expected 3D or 4D array, got {arr.shape}")
+
+        T, C, H, W = arr.shape
+        if C != 3:
+            raise ValueError(f"{path}: expected 3 channels, got {C}")
+        if H != target or W != target:
+            raise ValueError(
+                f"{path}: expected spatial size ({target},{target}), got ({H},{W})"
+            )
+
+        arr = np.asarray(arr, dtype=np.float32)
+        if not np.isfinite(arr).all():
+            raise ValueError(f"{path}: contains non-finite values")
+
+        arr = np.clip(arr, 0.0, 1.0)
+        return arr
+
+    # count total number of tiles
+    total_tiles = 0
+    file_tile_counts: List[int] = []
+
+    for path in tqdm(npy_files, desc="count tiles", dynamic_ncols=True):
+        arr = np.load(path, allow_pickle=False)
+        if arr.ndim == 3:
+            t = 1
+        elif arr.ndim == 4:
+            t = int(arr.shape[0])
+        else:
+            raise ValueError(f"{path}: expected 3D or 4D array, got {arr.shape}")
+        file_tile_counts.append(t)
+        total_tiles += t
+
+    if total_tiles == 0:
+        raise RuntimeError("No tiles found in npy files")
+
+    vlen_str = h5py.string_dtype(encoding="utf-8")
+    new_file = not os.path.exists(out_path)
+
+    with h5py.File(out_path, "a", libver="latest") as f:
+        if new_file:
+            dargs = {}
+            if compression:
+                dargs["compression"] = compression
+
+            chunk_N = max(1, min(64, total_tiles))
+
+            f.attrs.update(
+                {
+                    "version": 1,
+                    "length": int(total_tiles),
+                    "H": int(target),
+                    "W": int(target),
+                    "T": 1,
+                    "C_img": 3,
+                    "C_tgt": 4,
+                    "written": 0,
+                    "source": os.path.abspath(root_dir),
+                    "dataset_kind": "background_tiles_single",
+                    "target": int(target),
+                }
+            )
+
+            d_imgs = f.create_dataset(
+                "imgs",
+                shape=(total_tiles, 1, 3, target, target),
+                dtype="float32",
+                chunks=(chunk_N, 1, 3, min(target, 256), min(target, 256)),
+                **dargs,
+            )
+            d_tgts = f.create_dataset(
+                "tgts",
+                shape=(total_tiles, 1, 4, target, target),
+                dtype="float32",
+                chunks=(chunk_N, 1, 4, min(target, 256), min(target, 256)),
+                **dargs,
+            )
+            d_inst = f.create_dataset(
+                "inst",
+                shape=(total_tiles, 1, target, target),
+                dtype="int32",
+                chunks=(chunk_N, 1, min(target, 256), min(target, 256)),
+                **dargs,
+            )
+            d_meta = f.create_dataset(
+                "meta",
+                shape=(total_tiles,),
+                dtype=vlen_str,
+                chunks=(min(1024, total_tiles),),
+            )
+            written = 0
+        else:
+            d_imgs = f["imgs"]
+            d_tgts = f["tgts"]
+            d_inst = f["inst"]
+            d_meta = f["meta"]
+            written = int(f.attrs.get("written", 0))
+
+            # sanity
+            if int(f.attrs["length"]) != int(total_tiles):
+                raise ValueError(
+                    f"Existing H5 length={int(f.attrs['length'])}, "
+                    f"but current data has total_tiles={total_tiles}"
+                )
+            if int(f.attrs["T"]) != 1:
+                raise ValueError(f"Expected T=1, found T={int(f.attrs['T'])}")
+            if int(f.attrs["H"]) != int(target) or int(f.attrs["W"]) != int(target):
+                raise ValueError("target mismatch with existing H5")
+
+        def _make_meta(path: str, tile_index_in_file: int) -> Dict[str, Any]:
+            full_meta = {
+                "src_path": os.path.abspath(path),
+                "kind": "background_tile",
+                "target": int(target),
+            }
+
+            tile_meta = {
+                "mode": "background",
+                "tile_index_in_file": int(tile_index_in_file),
+                "tile_xy": (0, 0),
+                "tile_hw": (int(target), int(target)),
+                "sim_meta": None,
+                "full_meta": full_meta,
+            }
+
+            return {
+                "full": full_meta,
+                "tiles": [tile_meta],   # length 1 on purpose
+                "sim_kwargs": None,
+            }
+
+        out_idx = written
+        pbar = tqdm(total=total_tiles, initial=written, desc="export background h5", dynamic_ncols=True)
+        since_flush = 0
+
+        skipped_tiles = 0
+        if written > 0:
+            skipped_tiles = written
+
+        for path, n_tiles in zip(npy_files, file_tile_counts):
+            if stop["flag"]:
+                break
+
+            tiles = _load_tiles(path)  # [T,3,512,512]
+
+            for t in range(n_tiles):
+                if skipped_tiles > 0:
+                    skipped_tiles -= 1
+                    continue
+
+                tile = tiles[t]  # [3,512,512]
+
+                d_imgs[out_idx, 0] = tile.astype(np.float32)
+                d_tgts[out_idx, 0] = np.zeros((4, target, target), dtype=np.float32)
+                d_inst[out_idx, 0] = np.zeros((target, target), dtype=np.int32)
+                d_meta[out_idx] = json.dumps(
+                    jsonify(_make_meta(path, t)),
+                    separators=(",", ":"),
+                )
+
+                out_idx += 1
+                f.attrs.modify("written", int(out_idx))
+                pbar.update(1)
+
+                since_flush += 1
+                if (since_flush % max(1, flush_every)) == 0:
+                    flush_safe_file(f)
+                    since_flush = 0
+
+        flush_safe_file(f)
+        pbar.close()
+
+        print(f"[export background] done: tiles={out_idx}/{total_tiles} → {out_path}")
+        return out_path
