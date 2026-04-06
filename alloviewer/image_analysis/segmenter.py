@@ -665,7 +665,7 @@ class SegmenterUNetInference(SegmenterUNet):
 def filter_instances_by_shape(
     instances: np.ndarray,
     min_area: int = 20,
-    max_area: int | None = 200,
+    max_area: int | None = 250,
     min_solidity: float | None = 0.65,
     min_circularity: float | None = 0.4,
     min_extent: float | None = None,
@@ -900,19 +900,19 @@ class InstanceSegmenter:
                 min_size=int(self.cfg.min_instance_area)
             ).astype(np.int32)
 
-        print("before filtering: ", np.unique(instances, return_counts = True))
+        # print("before filtering: ", np.unique(instances, return_counts = True))
 
-        # --- 7) quick fix for crude background instances ---
-        instances = filter_instances_by_shape(
-            instances,
-            min_area=int(self.cfg.min_instance_area),
-            max_area=getattr(self.cfg, "max_instance_area", None),
-            min_solidity=getattr(self.cfg, "min_instance_solidity", None),
-            min_circularity=getattr(self.cfg, "min_instance_circularity", None),
-            min_extent=getattr(self.cfg, "min_instance_extent", None),
-            remove_border=bool(getattr(self.cfg, "remove_border_instances", True)),
-        )
-        print("after filtering: ", np.unique(instances, return_counts = True))
+        # # --- 7) quick fix for crude background instances ---
+        # instances = filter_instances_by_shape(
+        #     instances,
+        #     min_area=int(self.cfg.min_instance_area),
+        #     max_area=getattr(self.cfg, "max_instance_area", None),
+        #     min_solidity=getattr(self.cfg, "min_instance_solidity", None),
+        #     min_circularity=getattr(self.cfg, "min_instance_circularity", None),
+        #     min_extent=getattr(self.cfg, "min_instance_extent", None),
+        #     remove_border=bool(getattr(self.cfg, "remove_border_instances", True)),
+        # )
+        # print("after filtering: ", np.unique(instances, return_counts = True))
 
         # push updated fields back
         if update_cell_mask:
