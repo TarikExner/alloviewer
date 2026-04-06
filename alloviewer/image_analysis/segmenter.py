@@ -900,7 +900,7 @@ class InstanceSegmenter:
                 min_size=int(self.cfg.min_instance_area)
             ).astype(np.int32)
 
-        print("before filtering": np.unique(instances, return_counts = True))
+        print("before filtering: ", np.unique(instances, return_counts = True))
 
         # --- 7) quick fix for crude background instances ---
         instances = filter_instances_by_shape(
@@ -912,7 +912,7 @@ class InstanceSegmenter:
             min_extent=getattr(self.cfg, "min_instance_extent", None),
             remove_border=bool(getattr(self.cfg, "remove_border_instances", True)),
         )
-        print("after filtering": np.unique(instances, return_counts = True))
+        print("after filtering: ", np.unique(instances, return_counts = True))
 
         # push updated fields back
         if update_cell_mask:
