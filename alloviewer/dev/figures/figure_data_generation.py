@@ -30,7 +30,7 @@ def _postprocess_to_rgb(img: np.ndarray,
     arr = np.asarray(img)
 
     if arr.ndim == 4:
-        if arr.shape[0] == 12:
+        if arr.shape[0] == 20:
             assert tile_idx is not None, "Tile IDX has to be provided"
             arr = arr[tile_idx]
         else:
@@ -117,7 +117,7 @@ def fetch_item(
             raise IndexError(f"Index {index} out of range for dataset length {n}.")
 
         # image
-        img_raw = imgs[idx]
+        img_raw = np.asarray(imgs[idx])
         rgb = _postprocess_to_rgb(img_raw, tile_idx)
         if resize_to is not None:
             rgb = _cv2_resize_rgb(rgb, resize_to)

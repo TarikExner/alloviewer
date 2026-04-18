@@ -223,7 +223,7 @@ def figure_S8_generation(
     rgb, tgts = fetch_image_with_targets(
         h5_path=h5_path,
         index=6,
-        tile_idx=1,
+        tile_idx=5,
         image_key="imgs",
         target_key="tgts",
         resize_to=(512,512),
