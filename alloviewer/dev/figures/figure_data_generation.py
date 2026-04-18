@@ -133,7 +133,7 @@ def fetch_item(
 
             # squeeze leading batch dim
             if tgt_arr.ndim == 4:
-                if tgt_arr.shape[0] == 12:
+                if tgt_arr.shape[0] == 20:
                     assert tile_idx is not None, "Tile IDX has to be provided"
                     tgt_arr = tgt_arr[tile_idx]
                 else:
