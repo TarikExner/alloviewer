@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from skimage.measure import label as sklabel
 
 from ..segmentation.utils import collate_no_meta
-from ..segmenter import SegmenterUNet, SegmenterConfig, InstanceSegmenterConfig
+from alloviewer.image_analysis.segmenter import SegmenterUNet, SegmenterConfig, InstanceSegmenterConfig
 
 import torch
 
@@ -23,7 +23,6 @@ from .utils import (
     nms_peaks_np,           
     center_metrics_hungarian,
     energy_metrics_extended_full,
-    get_dataset_mode
 )
 from .config import TrainingValidationConfig
 

@@ -11,6 +11,8 @@ from matplotlib.axes import Axes
 from scipy import ndimage as ndi
 from skimage import measure, morphology, segmentation, feature
 
+import seaborn as sns
+
 from typing import Any
 
 import cv2
@@ -38,7 +40,7 @@ def adjust_fontsize_ticklabels(ax: Axes, fontsize: int):
         label.set_fontsize(fontsize)
 
 def _generate_main_figure(
-    unet_on_ext: pd.DataFrame,
+    unet_on_human: pd.DataFrame,
     unet_on_sim: pd.DataFrame,
     imageJ_on_sim: pd.DataFrame,
     sketch_dir: str = "./sketches/",
@@ -110,13 +112,6 @@ def _generate_main_figure(
         unify_axis_limits(unet_on_ext_plot)
         adjust_fontsize_ticklabels(unet_on_ext_plot, cfg.AXIS_LABEL_SIZE)
         
-
-    
-    
-
-    # --------------------------------------------------------
-    # Layout with GridSpec: A on top, B on bottom
-    # --------------------------------------------------------
     fig = plt.figure(
         layout="constrained",
         figsize=(cfg.FIGURE_WIDTH_FULL, cfg.FIGURE_HEIGHT_FULL *0.65),
@@ -140,24 +135,33 @@ def _generate_main_figure(
 
     plt.show(fig)
 
-def figure_S7_generation(
+def figure_1_generation(
     figure_output_dir: str,
     model_output_dir: str,
     figure_data_dir: str,
     h5_path: str,
-    unet_base_config: Any,
-    instance_seg_config: Any,
-    segmenter_class: Any,
+    validation_results_dir: str,
     **kwargs
 ):
-    unet_on_sim = pd.read_csv("../scripts/results/testing_val_small_tiles_inst_seg.csv")
-    
-    unet_on_ext = pd.read_csv("../scripts/results/testing_val_small_external_images_inst_seg.csv")
-    
-    imageJ_on_sim = pd.read_csv("../scripts/results/testing_val_imageJ_small_inst_seg.csv")
+
+    unet_on_sim = get_validation_data(results_dir = validation_results_dir,
+                                      mode = "testing",
+                                      unet_size = "small",
+                                      comparison_images = "tiles",
+                                      seg_method = "inst_seg")
+    unet_on_human = get_validation_data(results_dir = validation_results_dir,
+                                        mode = "human")
+    imageJ_on_sim = get_validation_data(results_dir = validation_results_dir,
+                                        mode = "imageJ")
+
+    # unet_on_sim = pd.read_csv("../scripts/results/testing_val_small_tiles_inst_seg.csv")
+    # 
+    # unet_on_ext = pd.read_csv("../scripts/results/testing_val_small_external_images_inst_seg.csv")
+    # 
+    # imageJ_on_sim = pd.read_csv("../scripts/results/testing_val_imageJ_small_inst_seg.csv")
     
     _generate_main_figure(
-        unet_on_ext = unet_on_ext,
+        unet_on_human = unet_on_human,
         unet_on_sim = unet_on_sim,
         imageJ_on_sim = imageJ_on_sim
     )

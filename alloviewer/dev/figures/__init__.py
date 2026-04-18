@@ -37,12 +37,15 @@ def generate_all_figures(
     sim_config: Any,
     camera: Any
 ):
-    figure_S1_generation(**DIRECTORIES) #works
-    figure_S2_generation(**DIRECTORIES) #works
+    figure_S1_generation(**DIRECTORIES)
+    figure_S2_generation(**DIRECTORIES)
     figure_S3_generation(**DIRECTORIES)
     figure_S4_generation(**DIRECTORIES)
-    # figure_S6_generation(**DIRECTORIES)
-    # figure_S7_generation(**DIRECTORIES)
+    figure_S5_generation(**DIRECTORIES)
+    figure_S6_generation(**DIRECTORIES)
+    figure_S7_generation(**DIRECTORIES)
+    figure_S8_generation(**DIRECTORIES)
+
     figure_SIM_generation(
         simulate_image_fn = simulate_image_fn,
         camera = camera,

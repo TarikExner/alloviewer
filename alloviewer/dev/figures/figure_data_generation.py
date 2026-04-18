@@ -445,7 +445,7 @@ def generate_param_showcase(
     }
 
 def get_validation_data(results_dir,
-                        mode: Literal["training", "testing"],
+                        mode: Literal["training", "testing", "human", "imageJ"],
                         seg_method: Literal["inst_seg", "conventional"] = "inst_seg",
                         unet_size: Literal["small", "medium", "large"] = "small",
                         crop_method: Literal["pad_resize", "crop_well_resize", "tiles", "combined"] = "combined",
@@ -459,8 +459,12 @@ def get_validation_data(results_dir,
             in_file = os.path.join(results_dir, f"{mode}_val_{unet_size}_{crop_method}.csv")
     elif mode == "testing":
         in_file = os.path.join(results_dir, f"{mode}_val_{unet_size}_{comparison_images}_{seg_method}.csv")
+    elif mode == "human":
+        in_file = os.path.join(results_dir, "human_annotated_comparison.csv")
+    elif mode == "imageJ":
+        in_file = os.path.join(results_dir, "testing_val_imageJ_small_inst_seg.csv")
     else:
-        raise ValueError("Unknown mode")
+        raise ValueError(f"Unknown mode {mode}")
 
     data = pd.read_csv(in_file, index_col = None)
 
