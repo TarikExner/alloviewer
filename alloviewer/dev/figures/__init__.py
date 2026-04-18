@@ -7,6 +7,7 @@ from .figure_S4 import figure_S4_generation
 from .figure_S5 import figure_S5_generation
 from .figure_S6 import figure_S6_generation
 from .figure_S7 import figure_S7_generation
+from .figure_S8 import figure_S8_generation
 from .figure_SIM import figure_SIM_generation
 
 __all__ = [
@@ -17,6 +18,7 @@ __all__ = [
     "figure_S5_generation",
     "figure_S6_generation",
     "figure_S7_generation",
+    "figure_S8_generation",
     "figure_SIM_generation",
 ]
 

@@ -393,15 +393,15 @@ def compare_human_annotations(
 
 def run_human_annotation_comparison():
     cfg = SegmenterConfig(
-        unet_mode="small",          # change as needed
+        unet_mode="small",
         model_dir="./models",
-        model_file="best_small_tiles_S512_seed187.pth",            # uses best_small.pth / best_medium.pth / best_large.pth
+        model_file="best_small_tiles_S512_seed187.pth",
         device="cuda",
         use_amp=True,
         compute_instances=True,
         input_is_tiles=True,
         normalize=True,
-        instance_cfg={},            # fill if you want custom instance settings
+        instance_cfg={},
         thr_cell=0.1,
         thr_bound=0.1
     )

@@ -533,7 +533,6 @@ def segment_image_unet(models_dir: str,
     cfg = _prep_config_for_unet_comparison(unet_base_config, models_dir, "small")
     seg = segmenter_class.from_config(cfg)
     pred = seg(img)["probs"]
-
     return pred
 
 def segment_well_plates(output_dir: str,
