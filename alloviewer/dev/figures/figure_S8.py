@@ -19,6 +19,9 @@ from .figure_data_generation import (
 
 from mpl_toolkits.axes_grid1.inset_locator import zoomed_inset_axes
 
+from alloviewer.image_analysis.segmenter import SegmenterUNet
+from alloviewer.image_analysis.config import UNET_CONFIG
+
 from . import figure_config as cfg
 from . import figure_utils as utils
 
@@ -205,10 +208,7 @@ def figure_S8_generation(
     figure_output_dir: str,
     model_output_dir: str,
     validation_results_dir: str,
-    figure_data_dir: str,
     h5_path: str,
-    unet_base_config: Any,
-    segmenter_class: Any,
     **kwargs
 ):
 
@@ -230,6 +230,9 @@ def figure_S8_generation(
         target_resize_to=None,
         return_channel_last=True,   # -> (H, W, C)
     )
+
+    unet_base_config = UNET_CONFIG
+    segmenter_class = SegmenterUNet
     
     unet_base_config = unet_base_config.copy()
     unet_base_config["normalize"] = True
