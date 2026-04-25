@@ -29,7 +29,8 @@ DIRECTORIES = {
     "figure_output_dir": "./figures",
     "figure_data_dir": "./figure_data",
     "validation_results_dir": "../scripts/results",
-    "ext_images_dir": "../scripts/ext_images"
+    "ext_images_dir": "../scripts/ext_images",
+    "sketch_dir": "./sketches/"
 }
 
 def generate_all_figures(

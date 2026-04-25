@@ -549,10 +549,192 @@ def segment_well_plates(output_dir: str,
 
 
 
-def create_calibration_data(output_dir: str,
-                            output_filename: str = "well_results.csv") -> pd.DataFrame:
+def instance_labels_to_rgb(
+    label_img: np.ndarray,
+    background_label: int = 0,
+    seed: int = 42,
+) -> np.ndarray:
+    if label_img.ndim != 2:
+        raise ValueError("label_img must be a 2D array")
 
-    
-    per_well = segment_well_plates()
+    rng = np.random.default_rng(seed)
+    labels = np.unique(label_img)
+
+    rgb_img = np.zeros((*label_img.shape, 3), dtype=np.uint8)
+
+    for label in labels:
+        if label == background_label:
+            color = np.array([0, 0, 0], dtype=np.uint8)
+        else:
+            color = rng.integers(0, 256, size=3, dtype=np.uint8)
+        rgb_img[label_img == label] = color
+
+    return rgb_img
+
+from alloviewer.image_analysis.segmenter import SegmenterUNetInference
+from alloviewer.image_analysis.config import UNET_CONFIG, INSTANCE_CONFIG_DICT
+from alloviewer.image_analysis.io import load_image
+import copy
+
+TARGET_IMAGE_SIZE = (1024, 1024)
+
+def resize_square_image(
+    image: np.ndarray,
+    target_size: tuple[int, int] = TARGET_IMAGE_SIZE,
+    interpolation: int = cv2.INTER_LINEAR,
+) -> np.ndarray:
+    if image.ndim not in (2, 3):
+        raise ValueError("image must have shape (H, W) or (H, W, C)")
+
+    h, w = image.shape[:2]
+    if h != w:
+        raise ValueError("image must already be square")
+
+    return cv2.resize(image, target_size, interpolation=interpolation)
+
+
+def _prepare_image(image: np.ndarray, is_segmentation: bool = False) -> np.ndarray:
+    interpolation = cv2.INTER_NEAREST if is_segmentation else cv2.INTER_LINEAR
+    return resize_square_image(image, interpolation=interpolation)
+
+def crop_square(image: np.ndarray, x: int, y: int, length: int) -> np.ndarray:
+    if length <= 0:
+        raise ValueError("length must be > 0")
+
+    h, w = image.shape[:2]
+
+    if x < 0 or y < 0 or x + length > w or y + length > h:
+        raise ValueError("Crop square is outside image bounds")
+
+    return image[y:y + length, x:x + length]
+
+def _load_crop_resize_image(
+    file_name: str,
+    base_dir: str,
+    crop_params: tuple[int, int, int],
+    scale: bool = True,
+) -> np.ndarray:
+    image, _ = load_image(file_name, base_dir=base_dir, scale=scale, as_chw=False)
+    x, y, length = crop_params
+    image = crop_square(image, x=x, y=y, length=length)
+    image = _prepare_image(image, is_segmentation=False)
+    return image
+
+def load_or_create_figure_1_image_cache(
+    cache_path: str = "./figure_data/figure_1_image_cache.npz",
+    model_dir: str = "../scripts/models",
+    model_file: str = "best_small_tiles_S512_seed187.pth",
+    force_recompute: bool = False,
+) -> dict[str, np.ndarray]:
+
+    if os.path.exists(cache_path) and not force_recompute:
+        cached = np.load(cache_path)
+        return {key: cached[key] for key in cached.files}
+
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+
+    # -------------------------
+    # Build segmenter
+    # -------------------------
+    unet_config = copy.deepcopy(UNET_CONFIG)
+    unet_config["model_dir"] = model_dir
+    unet_config["model_file"] = model_file
+    unet_config["instance_cfg"] = INSTANCE_CONFIG_DICT
+    unet_config["thr_cell"] = 0.1
+    unet_config["thr_bound"] = 0.1
+
+    seg = SegmenterUNetInference.from_config(unet_config)
+
+    # -------------------------
+    # Hardcoded image loading
+    # -------------------------
+    sim_img = _load_crop_resize_image(
+        file_name="000006.tif",
+        base_dir="./image_datasets/imgs",
+        crop_params=(500, 200, 1200),
+        scale=True,
+    )
+
+    mic_img = _load_crop_resize_image(
+        file_name="Bild_696.tif",
+        base_dir="experiment_readout_images/20251021_25720330",
+        crop_params=(600, 150, 1450),
+        scale=True,
+    )
+
+    gp_img = _load_crop_resize_image(
+        file_name="PXL_20251107_130141300.jpg",
+        base_dir="./ext_images/20251107_25065521_GooglePixel/",
+        crop_params=(300, 1100, 2700),
+        scale=True,
+    )
+
+    iphone_img = _load_crop_resize_image(
+        file_name="IMG_3859.jpeg",
+        base_dir="./ext_images/20251106_25065441_iPhone_XR_JPEG/",
+        crop_params=(1200, 50, 2500),
+        scale=True,
+    )
+
+    # -------------------------
+    # Expensive part: inference
+    # -------------------------
+    sim_seg_labels = seg(sim_img)["instance_labels"]
+    mic_seg_labels = seg(mic_img)["instance_labels"]
+    gp_seg_labels = seg(gp_img)["instance_labels"]
+    iphone_seg_labels = seg(iphone_img)["instance_labels"]
+
+    # -------------------------
+    # Convert labels to display RGB
+    # -------------------------
+    sim_seg_rgb = instance_labels_to_rgb(sim_seg_labels)
+    mic_seg_rgb = instance_labels_to_rgb(mic_seg_labels)
+    gp_seg_rgb = instance_labels_to_rgb(gp_seg_labels)
+    iphone_seg_rgb = instance_labels_to_rgb(iphone_seg_labels)
+
+    data = {
+        "simulated_image": sim_img,
+        "simulated_segmentation": sim_seg_rgb,
+        "microscopy_image": mic_img,
+        "microscopy_segmentation": mic_seg_rgb,
+        "googlepixel_image": gp_img,
+        "googlepixel_segmentation": gp_seg_rgb,
+        "iphone_image": iphone_img,
+        "iphone_segmentation": iphone_seg_rgb,
+    }
+
+    np.savez_compressed(cache_path, **data)
+
+    return data
+
+def _prepare_segmentation_for_display(segmentation: np.ndarray) -> np.ndarray:
+    seg = _prepare_image(segmentation, is_segmentation=True)
+
+    if seg.ndim == 3 and seg.shape[2] == 3:
+        if seg.dtype != np.uint8:
+            seg = np.clip(seg, 0, 255).astype(np.uint8)
+        return seg
+
+    if seg.ndim == 2:
+        return instance_labels_to_rgb(seg)
+
+    raise ValueError("Unsupported segmentation shape")
+
+
+def _read_rgb_image(image_path: str) -> np.ndarray:
+    img = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+    if img is None:
+        raise FileNotFoundError(f"Could not read image: {image_path}")
+
+    if img.ndim == 2:
+        return img
+
+    if img.shape[2] == 3:
+        return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    if img.shape[2] == 4:
+        return cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
+
+    raise ValueError(f"Unsupported image shape: {img.shape}")
 
 
