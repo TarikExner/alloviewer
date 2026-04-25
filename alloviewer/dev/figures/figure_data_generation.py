@@ -20,6 +20,11 @@ from .figure_data_utils import (
     merge_kwargs_image_sim
 )
 
+from alloviewer.image_analysis.segmenter import SegmenterUNetInference
+from alloviewer.image_analysis.config import UNET_CONFIG, INSTANCE_CONFIG_DICT
+from alloviewer.image_analysis.io import load_image
+import copy
+
 _LOG_RE = re.compile(
     r"log_(?P<unet_mode>small|medium|large)_(?P<tag>(pad_resize|crop_well_resize|tiles)_S(?P<target>\d+)_seed(?P<seed>\d+))\.jsonl$"
 )
@@ -571,10 +576,6 @@ def instance_labels_to_rgb(
 
     return rgb_img
 
-from alloviewer.image_analysis.segmenter import SegmenterUNetInference
-from alloviewer.image_analysis.config import UNET_CONFIG, INSTANCE_CONFIG_DICT
-from alloviewer.image_analysis.io import load_image
-import copy
 
 TARGET_IMAGE_SIZE = (1024, 1024)
 
@@ -650,28 +651,28 @@ def load_or_create_figure_1_image_cache(
     # -------------------------
     sim_img = _load_crop_resize_image(
         file_name="000006.tif",
-        base_dir="./image_datasets/imgs",
+        base_dir="../scripts/image_datasets/imgs",
         crop_params=(500, 200, 1200),
         scale=True,
     )
 
     mic_img = _load_crop_resize_image(
         file_name="Bild_696.tif",
-        base_dir="experiment_readout_images/20251021_25720330",
+        base_dir="../scripts/experiment_readout_images/20251021_25720330",
         crop_params=(600, 150, 1450),
         scale=True,
     )
 
     gp_img = _load_crop_resize_image(
         file_name="PXL_20251107_130141300.jpg",
-        base_dir="./ext_images/20251107_25065521_GooglePixel/",
+        base_dir="../scripts/ext_images/20251107_25065521_GooglePixel/",
         crop_params=(300, 1100, 2700),
         scale=True,
     )
 
     iphone_img = _load_crop_resize_image(
         file_name="IMG_3859.jpeg",
-        base_dir="./ext_images/20251106_25065441_iPhone_XR_JPEG/",
+        base_dir="../scripts/ext_images/20251106_25065441_iPhone_XR_JPEG/",
         crop_params=(1200, 50, 2500),
         scale=True,
     )

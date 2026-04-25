@@ -420,19 +420,15 @@ def _generate_main_figure(
 def figure_1_generation(validation_results_dir: str,
                         sketch_dir: str,
                         figure_output_dir: str,
+                        model_output_dir: str,
+                        figure_data_dir,
 
                         **kwargs) -> None:
 
     unet_size = kwargs.get("unet_size", "small")
     comparison_images = kwargs.get("comparison_images", "tiles")
 
-    image_cache_path = kwargs.get(
-        "image_cache_path",
-        os.path.join(figure_output_dir, "figure_1_image_cache.npz"),
-    )
-    force_recompute_image_cache = kwargs.get("force_recompute_image_cache", False)
-
-    model_dir = kwargs.get("model_dir", "./models")
+    image_cache_path = figure_data_dir
     model_file = kwargs.get("model_file", "best_small_tiles_S512_seed187.pth")
 
     unet_on_sim = get_validation_data(
@@ -455,7 +451,7 @@ def figure_1_generation(validation_results_dir: str,
 
     image_data = load_or_create_figure_1_image_cache(
         cache_path=image_cache_path,
-        model_dir=model_dir,
+        model_dir=model_output_dir,
         model_file=model_file,
         force_recompute=force_recompute_image_cache,
     )
