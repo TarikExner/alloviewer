@@ -1,4 +1,4 @@
-from .structs import PlateLayout
+from .image_analysis.structs import PlateLayout
 layout = PlateLayout(
     wells={
         'A1': 'negative', 'A2': 'sample',  'A3': 'sample',  'A4': 'sample',  'A5': 'sample',
