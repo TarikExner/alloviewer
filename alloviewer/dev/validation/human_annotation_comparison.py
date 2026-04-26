@@ -70,7 +70,7 @@ def load_human_roi_counts(csv_dir: str) -> pd.DataFrame:
 def load_imageJ_roi_counts(csv_dir: str) -> pd.DataFrame:
     df = pd.read_csv(os.path.join(csv_dir, "results.csv"))
 
-    needed = {"Folder", "image_name"}
+    needed = {"Folder", "file_name"}
     missing = needed - set(df.columns)
     if missing:
         raise ValueError(f"CSV is missing required columns: {sorted(missing)}")
