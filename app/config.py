@@ -1,3 +1,4 @@
+
 MAX_THUMB_SIZE = 512  # max width/height in pixels
 
 ALLOWED_MIME = {
@@ -8,4 +9,3 @@ ALLOWED_MIME = {
 }
 ALLOWED_EXT = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".fcs"}
 MAX_FILE_SIZE_MB = 100  # per file, adjust
-

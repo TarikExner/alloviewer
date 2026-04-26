@@ -263,9 +263,8 @@ def _generate_main_figure(
     sketch_dir: str,
     figure_output_dir: str,
     figure_name: str,
-    save: bool = True,
-    show: bool = True,
 ) -> None:
+
     def generate_subfigure_a(
         fig: Figure,
         ax: Axes,
@@ -305,28 +304,8 @@ def _generate_main_figure(
             ylabel="n_cells predicted",
         )
 
-    def generate_subfigure_c(
-        fig: Figure,
-        ax: Axes,
-        gs: SubplotSpec,
-        subfigure_label: str,
-    ) -> None:
-        _generate_subfigure_image_grid(
-            fig=fig,
-            ax=ax,
-            gs=gs,
-            subfigure_label=subfigure_label,
-            simulated_image=simulated_image,
-            simulated_segmentation=simulated_segmentation,
-            microscopy_image=microscopy_image,
-            microscopy_segmentation=microscopy_segmentation,
-            googlepixel_image=googlepixel_image,
-            googlepixel_segmentation=googlepixel_segmentation,
-            iphone_image=iphone_image,
-            iphone_segmentation=iphone_segmentation,
-        )
 
-    def generate_subfigure_d(
+    def generate_subfigure_c(
         fig: Figure,
         ax: Axes,
         gs: SubplotSpec,
@@ -348,7 +327,7 @@ def _generate_main_figure(
             ylabel="n_cells predicted",
         )
 
-    def generate_subfigure_e(
+    def generate_subfigure_d(
         fig: Figure,
         ax: Axes,
         gs: SubplotSpec,
@@ -378,6 +357,27 @@ def _generate_main_figure(
             legend_fontsize=cfg.TITLE_SIZE,
         )
 
+    def generate_subfigure_e(
+        fig: Figure,
+        ax: Axes,
+        gs: SubplotSpec,
+        subfigure_label: str,
+    ) -> None:
+        _generate_subfigure_image_grid(
+            fig=fig,
+            ax=ax,
+            gs=gs,
+            subfigure_label=subfigure_label,
+            simulated_image=simulated_image,
+            simulated_segmentation=simulated_segmentation,
+            microscopy_image=microscopy_image,
+            microscopy_segmentation=microscopy_segmentation,
+            googlepixel_image=googlepixel_image,
+            googlepixel_segmentation=googlepixel_segmentation,
+            iphone_image=iphone_image,
+            iphone_segmentation=iphone_segmentation,
+        )
+
     fig = plt.figure(
         layout="constrained",
         figsize=(cfg.FIGURE_WIDTH_FULL, cfg.FIGURE_HEIGHT_FULL),
@@ -392,9 +392,9 @@ def _generate_main_figure(
 
     a_coords = gs[0, :]
     b_coords = gs[1, 0]
-    d_coords = gs[1, 1]
-    e_coords = gs[1, 2]
-    c_coords = gs[2, :]
+    c_coords = gs[1, 1]
+    d_coords = gs[1, 2]
+    e_coords = gs[2, :]
 
     fig_a = fig.add_subplot(a_coords)
     fig_b = fig.add_subplot(b_coords)
@@ -428,7 +428,7 @@ def figure_1_generation(validation_results_dir: str,
     unet_size = kwargs.get("unet_size", "small")
     comparison_images = kwargs.get("comparison_images", "tiles")
 
-    image_cache_path = figure_data_dir
+    image_cache_path = os.path.join(figure_data_dir, "figure_1_image_cache.npz")
     model_file = kwargs.get("model_file", "best_small_tiles_S512_seed187.pth")
 
     unet_on_sim = get_validation_data(
@@ -453,7 +453,7 @@ def figure_1_generation(validation_results_dir: str,
         cache_path=image_cache_path,
         model_dir=model_output_dir,
         model_file=model_file,
-        force_recompute=force_recompute_image_cache,
+        force_recompute=False,
     )
 
     _generate_main_figure(
@@ -474,5 +474,4 @@ def figure_1_generation(validation_results_dir: str,
         figure_output_dir=figure_output_dir,
         figure_name="Figure_1",
     )
-
 

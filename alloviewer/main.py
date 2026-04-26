@@ -41,7 +41,7 @@ from .image_analysis.qc import QCMonitor
 
 from .image_analysis.config import UNET_CONFIG, INSTANCE_CONFIG
 
-from .image_analysis.utils import create_plate, frac_pos_raw
+from .image_analysis.utils import create_plate, frac_pos_raw, to_jsonable
 
 from app.models import IMAGE_JOB_PROGRESS, IMAGE_JOB_RESULTS
 
@@ -194,7 +194,7 @@ def run_image_analysis(
         "wells": {wid: wr.summary() for wid, wr in per_well.items()},
     }
 
-    IMAGE_JOB_RESULTS[job_id] = result
+    IMAGE_JOB_RESULTS[job_id] = to_jsonable(result)
     IMAGE_JOB_PROGRESS[job_id]["status"] = "done"
     IMAGE_JOB_PROGRESS[job_id]["done"] = total
     IMAGE_JOB_PROGRESS[job_id]["current_well"] = None

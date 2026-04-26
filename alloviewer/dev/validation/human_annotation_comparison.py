@@ -51,11 +51,6 @@ def _count_positive_labels(lbl: np.ndarray) -> int:
     vals = vals[vals > 0]
     return int(vals.size)
 
-
-# ----------------------------
-# human csv loading
-# ----------------------------
-
 def load_human_roi_counts(csv_dir: str) -> pd.DataFrame:
     df = pd.read_csv(os.path.join(csv_dir, "human_annotations.csv"))
 
@@ -72,10 +67,21 @@ def load_human_roi_counts(csv_dir: str) -> pd.DataFrame:
         .rename(columns={"roi_id": "human_roi_count"})
     )
 
+def load_imageJ_roi_counts(csv_dir: str) -> pd.DataFrame:
+    df = pd.read_csv(os.path.join(csv_dir, "results.csv"))
 
-# ----------------------------
-# meta parsing
-# ----------------------------
+    needed = {"Folder", "image_name"}
+    missing = needed - set(df.columns)
+    if missing:
+        raise ValueError(f"CSV is missing required columns: {sorted(missing)}")
+
+    return (
+        df.loc[:, ["Folder", "file_name"]]
+        .dropna(subset=["Folder", "file_name"])
+        .groupby(["Folder", "file_name"], as_index=False)
+        .size()
+        .rename(columns={"size": "imageJ_roi_count", "file_name": "image_name"})
+    )
 
 def _extract_image_identity(meta: Dict[str, Any]) -> Tuple[str, str]:
     """
@@ -319,10 +325,6 @@ def segment_one_h5_entry(
     }
 
 
-# ----------------------------
-# main entry
-# ----------------------------
-
 def compare_human_annotations(
     h5_path: str = "./image_datasets/human_annotated_images.h5",
     human_csv_dir: str = "./human_annotations",
@@ -340,6 +342,8 @@ def compare_human_annotations(
 
     # load human counts
     human_df = load_human_roi_counts(human_csv_dir)
+    # load imageJ_counts
+    imagej_df = load_imageJ_roi_counts(human_csv_dir)
 
     # build segmenter
     if segmenter_cfg is None:
@@ -381,15 +385,17 @@ def compare_human_annotations(
         how="outer",
         validate="one_to_one",
     )
+    out_df = out_df.merge(
+        imagej_df,
+        on=["Folder", "image_name"],
+        how="outer",
+        validate="one_to_one",
+    )
 
     out_df = out_df.sort_values(["Folder", "image_name"]).reset_index(drop=True)
     out_df.to_csv(output_csv, index=False)
 
     return out_df
-
-# ----------------------------
-# simple script use
-# ----------------------------
 
 def run_human_annotation_comparison():
     cfg = SegmenterConfig(

@@ -74,3 +74,16 @@ def create_plate(layout: PlateLayout,
         )
 
     return plate
+
+def to_jsonable(obj):
+    if isinstance(obj, dict):
+        return {k: to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [to_jsonable(v) for v in obj]
+    if isinstance(obj, tuple):
+        return [to_jsonable(v) for v in obj]
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.generic):
+        return obj.item()
+    return obj
