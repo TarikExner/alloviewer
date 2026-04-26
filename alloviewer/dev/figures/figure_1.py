@@ -317,14 +317,33 @@ def _generate_main_figure(
         fig_sgs = gs.subgridspec(1, 1)
         plot_ax = fig.add_subplot(fig_sgs[0])
 
+        plot_df = unet_on_human.copy()
+
+        plot_df = plot_df.melt(
+            id_vars=["Folder", "image_name", "human_roi_count"],
+            value_vars=["unet_roi_count", "imageJ_roi_count"],
+            var_name="method",
+            value_name="predicted_roi_count",
+        )
+
+        plot_df["method"] = plot_df["method"].map(
+            {
+                "unet_roi_count": "UNet",
+                "imageJ_roi_count": "ImageJ",
+            }
+        )
+
         _plot_identity_scatter(
             ax=plot_ax,
-            data=unet_on_human,
+            data=plot_df,
             x_col="human_roi_count",
-            y_col="unet_roi_count",
-            title="UNet performance on\nhuman annotated images",
-            xlabel="n_cells ground truth",
-            ylabel="n_cells predicted",
+            y_col="predicted_roi_count",
+            title="UNet and ImageJ performance on\nhuman annotated images",
+            xlabel="Human ROI count",
+            ylabel="Predicted ROI count",
+            hue_col="method",
+            legend=True,
+            legend_fontsize=cfg.TITLE_SIZE,
         )
 
     def generate_subfigure_d(

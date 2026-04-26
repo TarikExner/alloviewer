@@ -1,7 +1,4 @@
-# human_annotation_comparison.py
-
 import os
-import glob
 import json
 import copy
 from typing import Any, Dict, List, Tuple, Optional
@@ -13,11 +10,6 @@ import pandas as pd
 from tqdm import tqdm
 
 from alloviewer.image_analysis.segmenter import SegmenterConfig, SegmenterUNet
-
-
-# ----------------------------
-# small helpers
-# ----------------------------
 
 def _decode_json_maybe(x: Any) -> Dict[str, Any]:
     if isinstance(x, bytes):
