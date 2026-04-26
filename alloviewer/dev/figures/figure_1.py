@@ -329,10 +329,9 @@ def _generate_main_figure(
         plot_df["method"] = plot_df["method"].map(
             {
                 "unet_roi_count": "UNet",
-                "imageJ_roi_count": "ImageJ",
+                "imageJ_roi_count": "NCISP",
             }
         )
-        plot_df = plot_df.sample(frac = 1)
 
         _plot_identity_scatter(
             ax=plot_ax,
@@ -361,7 +360,7 @@ def _generate_main_figure(
 
         plot_df = imageJ_on_sim.copy()
         plot_df["dataset_mode"] = plot_df["dataset_mode"].map(
-            {"UNet": "UNet", "imageJ": "ImageJ"}
+            {"UNet": "UNet", "imageJ": "NCISP"}
         )
 
         _plot_identity_scatter(
