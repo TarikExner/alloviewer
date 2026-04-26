@@ -72,7 +72,7 @@ def compute_confusion_matrix_between_annotators(
     fallback_method_score_col: str = "score",
     human_annotators=("1", "2"),
     method_annotators=("unet", "imageJ"),
-    allowed_scores: Sequence[int] = (1, 2, 4, 6, 8),
+    allowed_scores: Sequence[int] = (1, 2, 4, 6, 8, 0, 11),
 ) -> pd.DataFrame:
     """
     Compute confusion matrix between two annotators/methods.
@@ -220,7 +220,7 @@ def compare_reference_and_human_consensus_estimate(
     method_score_col="adjusted_score",
     fallback_method_score_col="score",
     experiment_col="Folder",
-    allowed_scores=(1, 2, 4, 6, 8),
+    allowed_scores=(1, 2, 4, 6, 8, 0, 11),
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Paper-style comparison.
@@ -607,8 +607,8 @@ def _generate_main_figure(
             raise ValueError(f"No ROI results for well '{well_id_c4}' in results_df.")
 
         calibrators = [
+            "PCNCGaussian2DCalibrator",
             "PCNCGaussianRGCalibrator",
-            "PCNCMeanCalibrator",
             "PCNCMedianCalibrator",
         ]
 
@@ -631,11 +631,19 @@ def _generate_main_figure(
                 ax_sc.axis("off")
                 continue
 
+            label_palette = {
+                "neg": "green",
+                "pos": "orange",
+                "uncertain": "blue",
+            }
+
             sns.scatterplot(
                 data=df_calib,
                 x="mean_r",
                 y="mean_g",
                 hue="label",
+                hue_order=["neg", "pos", "uncertain"],
+                palette=label_palette,
                 ax=ax_sc,
                 **cfg.SCATTER_KWARGS,
             )
