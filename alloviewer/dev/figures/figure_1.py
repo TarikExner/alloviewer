@@ -332,6 +332,7 @@ def _generate_main_figure(
                 "imageJ_roi_count": "ImageJ",
             }
         )
+        plot_df = plot_df.sample(frac = 1)
 
         _plot_identity_scatter(
             ax=plot_ax,
