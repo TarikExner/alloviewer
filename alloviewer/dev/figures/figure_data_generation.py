@@ -738,4 +738,281 @@ def _read_rgb_image(image_path: str) -> np.ndarray:
 
     raise ValueError(f"Unsupported image shape: {img.shape}")
 
+import numpy as np
+import pandas as pd
+
+
+def fill_and_recalculate_frac_pos_from_scores_random(
+    df: pd.DataFrame,
+    *,
+    human_annotators=("1", "2"),
+    method_annotators=("unet", "imageJ"),
+    score_col="score",
+    adjusted_score_col="adjusted_score",
+    annotator_col="Annotator",
+    experiment_col="Folder",
+    role_col="role",
+    frac_pos_col="frac_pos",
+    corrected_frac_pos_col="corrected_frac_pos",
+    score_source_for_adjusted="corrected_frac_pos",
+    pc_ref_col="pc_ref_raw",
+    nc_ref_col="nc_ref_raw",
+    score_to_range=None,
+    positive_role="positive",
+    negative_role="negative",
+    overwrite_human_frac_pos=True,
+    overwrite_corrected_frac_pos=True,
+    overwrite_adjusted_score=True,
+    random_seed=0,
+):
+    """
+    1. Simulate raw frac_pos for human annotators from their categorical scores.
+    2. Keep existing raw frac_pos for method annotators such as unet/imageJ.
+    3. Recalculate corrected_frac_pos for humans and methods.
+    4. Recalculate adjusted_score from corrected_frac_pos by default.
+
+    Correction is done separately per:
+        Folder + Annotator
+
+    Formula:
+        corrected_frac_pos = (frac_pos - nc_ref) / (pc_ref - nc_ref) * 100
+
+    where:
+        nc_ref = mean raw frac_pos of negative controls
+        pc_ref = mean raw frac_pos of positive controls
+
+    Score conversion:
+        <= 10  -> 1
+        <= 20  -> 2
+        <= 50  -> 4
+        <= 80  -> 6
+        > 80   -> 8
+
+    Parameters
+    ----------
+    score_source_for_adjusted : {"corrected_frac_pos", "frac_pos"}
+        Which fraction column to use for recalculating adjusted_score.
+
+        Usually use:
+            "corrected_frac_pos"
+
+        Use "frac_pos" only if you want raw, uncorrected scores.
+    """
+
+    df_out = df.copy()
+    rng = np.random.default_rng(random_seed)
+
+    if score_to_range is None:
+        score_to_range = {
+            1: (0.0, 10.0),
+            2: (10.0, 20.0),
+            4: (20.0, 40.0),
+            6: (40.0, 60.0),
+            8: (80.0, 100.0),
+            0: (0.0, 2.0),
+            11: (0.0, 10.0),
+        }
+
+    if score_source_for_adjusted not in {"corrected_frac_pos", "frac_pos"}:
+        raise ValueError(
+            "score_source_for_adjusted must be 'corrected_frac_pos' or 'frac_pos'"
+        )
+
+    human_annotators = [str(a) for a in human_annotators]
+    method_annotators = [str(a) for a in method_annotators]
+    all_annotators = human_annotators + method_annotators
+
+    required_cols = {
+        annotator_col,
+        experiment_col,
+        role_col,
+        frac_pos_col,
+        score_col,
+    }
+
+    missing_cols = required_cols - set(df_out.columns)
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {sorted(missing_cols)}")
+
+    if corrected_frac_pos_col not in df_out.columns:
+        df_out[corrected_frac_pos_col] = np.nan
+
+    if adjusted_score_col not in df_out.columns:
+        df_out[adjusted_score_col] = np.nan
+
+    if pc_ref_col not in df_out.columns:
+        df_out[pc_ref_col] = np.nan
+
+    if nc_ref_col not in df_out.columns:
+        df_out[nc_ref_col] = np.nan
+
+    df_out["_annotator_str"] = df_out[annotator_col].astype(str)
+
+    human_mask = df_out["_annotator_str"].isin(human_annotators)
+    all_eval_mask = df_out["_annotator_str"].isin(all_annotators)
+
+    # ------------------------------------------------------------
+    # 1) Simulate raw frac_pos for human annotators from score bins
+    # ------------------------------------------------------------
+    simulated = pd.Series(np.nan, index=df_out.index, dtype=float)
+
+    for score, (low, high) in score_to_range.items():
+        score_mask = human_mask & df_out[score_col].eq(score)
+        n = int(score_mask.sum())
+
+        if n > 0:
+            simulated.loc[score_mask] = rng.uniform(low, high, size=n)
+
+    missing_sim = human_mask & simulated.isna()
+    if missing_sim.any():
+        bad_scores = sorted(df_out.loc[missing_sim, score_col].dropna().unique())
+        raise ValueError(
+            "Some human scores could not be mapped to ranges. "
+            f"Unmapped scores: {bad_scores}"
+        )
+
+    if overwrite_human_frac_pos:
+        df_out.loc[human_mask, frac_pos_col] = simulated.loc[human_mask]
+    else:
+        missing_frac = human_mask & df_out[frac_pos_col].isna()
+        df_out.loc[missing_frac, frac_pos_col] = simulated.loc[missing_frac]
+
+    # ------------------------------------------------------------
+    # 2) Recalculate corrected_frac_pos for humans and methods
+    # ------------------------------------------------------------
+    refs = []
+
+    for (folder, annotator), group in df_out.loc[all_eval_mask].groupby(
+        [experiment_col, "_annotator_str"],
+        dropna=False,
+    ):
+        pc_values = group.loc[
+            group[role_col].eq(positive_role),
+            frac_pos_col,
+        ].astype(float)
+
+        nc_values = group.loc[
+            group[role_col].eq(negative_role),
+            frac_pos_col,
+        ].astype(float)
+
+        pc_ref = pc_values.mean()
+        nc_ref = nc_values.mean()
+
+        refs.append(
+            {
+                experiment_col: folder,
+                annotator_col: annotator,
+                "pc_ref": pc_ref,
+                "nc_ref": nc_ref,
+                "n_positive_controls": int(pc_values.notna().sum()),
+                "n_negative_controls": int(nc_values.notna().sum()),
+            }
+        )
+
+        row_mask = (
+            all_eval_mask
+            & df_out[experiment_col].eq(folder)
+            & df_out["_annotator_str"].eq(annotator)
+        )
+
+        df_out.loc[row_mask, pc_ref_col] = pc_ref
+        df_out.loc[row_mask, nc_ref_col] = nc_ref
+
+        raw = df_out.loc[row_mask, frac_pos_col].astype(float)
+
+        if pd.isna(pc_ref) or pd.isna(nc_ref) or pc_ref == nc_ref:
+            corrected = pd.Series(np.nan, index=df_out.index[row_mask])
+        else:
+            corrected = (raw - nc_ref) / (pc_ref - nc_ref) * 100.0
+            corrected = corrected.clip(0.0, 100.0)
+
+        if overwrite_corrected_frac_pos:
+            df_out.loc[row_mask, corrected_frac_pos_col] = corrected
+        else:
+            missing_corr = row_mask & df_out[corrected_frac_pos_col].isna()
+            df_out.loc[missing_corr, corrected_frac_pos_col] = corrected.loc[
+                df_out.index[missing_corr]
+            ]
+
+    refs = pd.DataFrame(refs)
+
+    # ------------------------------------------------------------
+    # 3) Recalculate adjusted_score
+    # ------------------------------------------------------------
+    if score_source_for_adjusted == "corrected_frac_pos":
+        score_input_col = corrected_frac_pos_col
+    else:
+        score_input_col = frac_pos_col
+
+    def convert_frac_pos_to_score(frac_pos):
+        if pd.isna(frac_pos):
+            return np.nan
+        if frac_pos <= 10:
+            return 1
+        elif frac_pos <= 20:
+            return 2
+        elif frac_pos <= 50:
+            return 4
+        elif frac_pos <= 80:
+            return 6
+        else:
+            return 8
+
+    recalculated_scores = df_out.loc[all_eval_mask, score_input_col].apply(
+        convert_frac_pos_to_score
+    )
+
+    if overwrite_adjusted_score:
+        df_out.loc[all_eval_mask, adjusted_score_col] = recalculated_scores
+    else:
+        missing_adj = all_eval_mask & df_out[adjusted_score_col].isna()
+        df_out.loc[missing_adj, adjusted_score_col] = recalculated_scores.loc[
+            df_out.index[missing_adj]
+        ]
+
+    df_out = df_out.drop(columns=["_annotator_str"])
+
+    return df_out, refs
+
+
+
+def get_score_frame():
+
+    from ..validation.experiment_readouts import concat_annotator_frames
+
+    """\
+    NOTE: intermediate function. The validation function that computes
+    that is actually outputting the full frame.
+    Until the bug for the calculation is fixed and the function is rerun,
+    this is the workaround, where the adjusted_score gets recomputed
+    based on the raw-readouts from the pos/neg ctrl.
+    TE 26.04.2026
+    """
+
+    manual = pd.read_csv("../scripts/manual_df.csv", index_col = None)
+    imagej = pd.read_csv("../scripts/imagej_df.csv", index_col = None)
+    unet = pd.  read_csv("../scripts/unet_df.csv", index_col = None)
+    df = concat_annotator_frames([manual, imagej, unet])
+    df = df[~(df["Folder"] == "20251028_25720349_+DTT")]
+    df["Annotator"] = df["Annotator"].astype(str)
+
+    df_filled, refs = fill_and_recalculate_frac_pos_from_scores_random(
+        df,
+        human_annotators=("1", "2"),
+        method_annotators=("unet", "imageJ"),
+        score_col="score",
+        adjusted_score_col="adjusted_score",
+        annotator_col="Annotator",
+        experiment_col="Folder",
+        role_col="role",
+        frac_pos_col="frac_pos",
+        corrected_frac_pos_col="corrected_frac_pos",
+        score_source_for_adjusted="corrected_frac_pos",
+        random_seed=42,
+    )
+
+    return df_filled
+
+
 

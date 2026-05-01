@@ -1,9 +1,7 @@
-# alloviewer/flow_cytometry/pipeline.py
 from __future__ import annotations
 
 from typing import Any, Dict
 
-# These should point to your real modules where you put them
 from alloviewer.flow_cytometry.sample import Dataset, Sample
 from alloviewer.flow_cytometry.panel_utils import build_panel_from_rows
 from alloviewer.flow_cytometry.gating import Gater, GatingConfig

@@ -7,11 +7,8 @@ import re
 
 from ..structs import ParsedPlateLayout, WellLayout, LociMap
 
-# -------------------------------------------------------------------
-# Config
-# -------------------------------------------------------------------
 
-DEFAULT_PLATE_FORMAT = "6x10"  # used only as fallback
+DEFAULT_PLATE_FORMAT = "6x10"
 
 # known non-locus columns we never treat as loci
 RESERVED_COLS = {
@@ -111,10 +108,6 @@ def _infer_plate_format_from_wells(well_ids: List[str]) -> str:
     n_rows = ord(max_letter) - ord("A") + 1
     fmt = f"{n_rows}x{max_col}"
     return fmt
-
-# -------------------------------------------------------------------
-# Parser
-# -------------------------------------------------------------------
 
 def parse_excel_layout(fileobj: BinaryIO) -> Tuple[str, ParsedPlateLayout]:
     """
@@ -333,4 +326,3 @@ def parse_excel_layout(fileobj: BinaryIO) -> Tuple[str, ParsedPlateLayout]:
         valid=True,
     )
     return sha256, layout
-

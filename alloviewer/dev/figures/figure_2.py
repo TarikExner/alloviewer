@@ -13,8 +13,12 @@ from matplotlib.gridspec import GridSpec, SubplotSpec
 import seaborn as sns
 from scipy.stats import wilcoxon
 
+from matplotlib.ticker import FuncFormatter
+
 from figures import figure_config as cfg
 from figures import figure_utils as utils
+
+from .figure_data_generation import get_score_frame
 
 
 def _get_eval_score(
@@ -72,7 +76,7 @@ def compute_confusion_matrix_between_annotators(
     fallback_method_score_col: str = "score",
     human_annotators=("1", "2"),
     method_annotators=("unet", "imageJ"),
-    allowed_scores: Sequence[int] = (1, 2, 4, 6, 8, 0, 11),
+    allowed_scores: Sequence[int] = (1, 2, 4, 6, 8),
 ) -> pd.DataFrame:
     """
     Compute confusion matrix between two annotators/methods.
@@ -201,12 +205,16 @@ def plot_confusion_matrix_on_ax(
             )
 
     if show_colorbar and fig is not None:
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        if normalize:
+            ticks = np.linspace(0, 1, 6)
+            cbar.set_ticks(ticks)
+            cbar.set_ticklabels([f"{t:.1f}" for t in ticks])
+        else:
+            cbar.ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:.0f}"))
 
+        cbar.ax.tick_params(labelsize=cfg.AXIS_LABEL_SIZE)
 
-# =============================================================================
-# Paper-style scoring comparison
-# =============================================================================
 
 def compare_reference_and_human_consensus_estimate(
     df: pd.DataFrame,
@@ -220,7 +228,7 @@ def compare_reference_and_human_consensus_estimate(
     method_score_col="adjusted_score",
     fallback_method_score_col="score",
     experiment_col="Folder",
-    allowed_scores=(1, 2, 4, 6, 8, 0, 11),
+    allowed_scores=(1, 2, 4, 6, 8),
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Paper-style comparison.
@@ -368,12 +376,27 @@ def plot_unet_reference_boxplot_on_ax(
     include_overall=False,
     ylim=(0, 1),
     show_significance=True,
+    comparisons=("annot2_vs_unet", "consensus_vs_unet", "annot2_vs_consensus"),
 ) -> pd.DataFrame:
     """
     Plot:
         Annotator 2 vs Annotator 1
         estimated human-consensus error
         UNET vs Annotator 1
+
+    Optional statistical brackets:
+        annot2_vs_unet:
+            human_human_error_rate vs UNET error
+
+        consensus_vs_unet:
+            estimated human-consensus error vs UNET error
+
+        annot2_vs_consensus:
+            human_human_error_rate vs estimated human-consensus error
+
+    Note:
+        The human-consensus estimate is derived as half the human-human error.
+        Therefore, annot2_vs_consensus is not an independent comparison.
     """
 
     method = str(method)
@@ -430,12 +453,46 @@ def plot_unet_reference_boxplot_on_ax(
     )
 
     if show_significance:
-        left_col = "human_human_error_rate"
-        right_col = f"{method}_error_rate_to_reference"
+        comparison_map = {
+            "annot2_vs_unet": (
+                "human_human_error_rate",
+                f"{method}_error_rate_to_reference",
+                "Annotator 2 vs\nAnnotator 1",
+                f"{method} vs\nAnnotator 1",
+            ),
+            "consensus_vs_unet": (
+                "estimated_human_consensus_error_rate",
+                f"{method}_error_rate_to_reference",
+                "Estimated human\nconsensus error",
+                f"{method} vs\nAnnotator 1",
+            ),
+            "annot2_vs_consensus": (
+                "human_human_error_rate",
+                "estimated_human_consensus_error_rate",
+                "Annotator 2 vs\nAnnotator 1",
+                "Estimated human\nconsensus error",
+            ),
+        }
 
-        paired = data[[left_col, right_col]].dropna()
+        y_range = ylim[1] - ylim[0]
+        y = ylim[1] - 0.16 * y_range
+        y_step = 0.07 * y_range
+        h = 0.02 * y_range
 
-        if len(paired) >= 3:
+        for comp in comparisons:
+            if comp not in comparison_map:
+                raise ValueError(
+                    f"Unknown comparison '{comp}'. Valid options are: "
+                    f"{list(comparison_map.keys())}"
+                )
+
+            left_col, right_col, left_label, right_label = comparison_map[comp]
+
+            paired = data[[left_col, right_col]].dropna()
+
+            if len(paired) < 3:
+                continue
+
             try:
                 _, p = wilcoxon(
                     paired[right_col],
@@ -457,12 +514,8 @@ def plot_unet_reference_boxplot_on_ax(
             else:
                 label = "n.s."
 
-            x1 = order.index("Annotator 2 vs\nAnnotator 1")
-            x2 = order.index(f"{method} vs\nAnnotator 1")
-
-            y_range = ylim[1] - ylim[0]
-            y = ylim[1] - 0.10 * y_range
-            h = 0.02 * y_range
+            x1 = order.index(left_label)
+            x2 = order.index(right_label)
 
             ax.plot(
                 [x1, x1, x2, x2],
@@ -480,9 +533,12 @@ def plot_unet_reference_boxplot_on_ax(
                 fontsize=cfg.AXIS_LABEL_SIZE,
             )
 
+            y += y_step
+
     ax.set_xlabel("")
     ax.set_ylabel("Error rate", fontsize=cfg.AXIS_LABEL_SIZE)
     ax.set_ylim(*ylim)
+
     ax.set_title(
         f"UNET scoring fidelity\nn = {data[experiment_col].nunique()} experiments",
         fontsize=cfg.TITLE_SIZE,
@@ -496,10 +552,6 @@ def plot_unet_reference_boxplot_on_ax(
 
     return plot_df
 
-
-# =============================================================================
-# Main figure
-# =============================================================================
 
 def _generate_main_figure(
     results_df: pd.DataFrame,
@@ -721,48 +773,16 @@ def _generate_main_figure(
             cm,
             cm_ax,
             fig=fig,
-            title="UNET vs ImageJ",
-            xlabel="ImageJ",
+            title="UNET vs NCISP",
+            xlabel="NCISP",
             ylabel="UNET",
             normalize=True,
             cmap="Reds",
             show_colorbar=True,
         )
+
 
     def generate_subfigure_e(
-        fig: Figure,
-        ax: Axes,
-        gs: SubplotSpec,
-        subfigure_label: str,
-    ) -> None:
-        ax.axis("off")
-        utils.figure_label(ax, subfigure_label, x=0)
-
-        inner_gs = gs.subgridspec(1, 1)
-        cm_ax = fig.add_subplot(inner_gs[0])
-
-        cm = compute_confusion_matrix_between_annotators(
-            scoring,
-            x_annotator="1",
-            y_annotator="unet",
-            human_score_col="score",
-            method_score_col="adjusted_score",
-            fallback_method_score_col="score",
-        )
-
-        plot_confusion_matrix_on_ax(
-            cm,
-            cm_ax,
-            fig=fig,
-            title="UNET vs Annotator 1",
-            xlabel="Annotator 1",
-            ylabel="UNET",
-            normalize=True,
-            cmap="Reds",
-            show_colorbar=True,
-        )
-
-    def generate_subfigure_f(
         fig: Figure,
         ax: Axes,
         gs: SubplotSpec,
@@ -795,7 +815,7 @@ def _generate_main_figure(
             show_colorbar=True,
         )
 
-    def generate_subfigure_g(
+    def generate_subfigure_f(
         fig: Figure,
         ax: Axes,
         gs: SubplotSpec,
@@ -823,7 +843,7 @@ def _generate_main_figure(
             plot_ax,
             method="unet",
             experiment_col="Folder",
-            ylim=(0, 1),
+            ylim=(0, 0.8),
             show_significance=True,
         )
 
@@ -836,7 +856,7 @@ def _generate_main_figure(
         ncols=6,
         nrows=3,
         figure=fig,
-        height_ratios=[1, 1, 1],
+        height_ratios=[1, 0.8, 0.8],
     )
 
     a_coords = gs[0, 0:3]
@@ -845,9 +865,8 @@ def _generate_main_figure(
     c_coords = gs[1, 0:3]
     d_coords = gs[1, 3:6]
 
-    e_coords = gs[2, 0:2]
-    f_coords = gs[2, 2:4]
-    g_coords = gs[2, 4:6]
+    e_coords = gs[2, 0:3]
+    f_coords = gs[2, 3:6]
 
     fig_a = fig.add_subplot(a_coords)
     fig_b = fig.add_subplot(b_coords)
@@ -855,7 +874,6 @@ def _generate_main_figure(
     fig_d = fig.add_subplot(d_coords)
     fig_e = fig.add_subplot(e_coords)
     fig_f = fig.add_subplot(f_coords)
-    fig_g = fig.add_subplot(g_coords)
 
     generate_subfigure_a(fig, fig_a, a_coords, "A")
     generate_subfigure_b(fig, fig_b, b_coords, "B")
@@ -863,7 +881,6 @@ def _generate_main_figure(
     generate_subfigure_d(fig, fig_d, d_coords, "D")
     generate_subfigure_e(fig, fig_e, e_coords, "E")
     generate_subfigure_f(fig, fig_f, f_coords, "F")
-    generate_subfigure_g(fig, fig_g, g_coords, "G")
 
     os.makedirs(figure_output_dir, exist_ok=True)
 
@@ -872,7 +889,6 @@ def _generate_main_figure(
 
     plt.savefig(pdf_path, dpi=300, bbox_inches="tight")
     plt.savefig(png_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
 
     return
 
@@ -910,7 +926,7 @@ def figure_2_generation(
     plate = data["plate"]
     results_df = data["res_df"]
 
-    scoring_df = kwargs.get("scoring_df", None)
+    scoring_df = kwargs.get("scoring_df", get_score_frame())
 
     _generate_main_figure(
         results_df=results_df,
