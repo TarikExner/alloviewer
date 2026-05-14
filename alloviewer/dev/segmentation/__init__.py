@@ -1,4 +1,3 @@
-import numpy as np
 from .unet import (
     UNetOptimized,
     build_unet_cpu_small,

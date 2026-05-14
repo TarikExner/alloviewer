@@ -7,7 +7,6 @@ from alloviewer.image_analysis.io import load_image
 from IPython.display import clear_output
 import os
 
-
 def show_rectangle(
     img: np.ndarray,
     x: int,

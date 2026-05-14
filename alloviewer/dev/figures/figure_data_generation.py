@@ -738,10 +738,6 @@ def _read_rgb_image(image_path: str) -> np.ndarray:
 
     raise ValueError(f"Unsupported image shape: {img.shape}")
 
-import numpy as np
-import pandas as pd
-
-
 def fill_and_recalculate_frac_pos_from_scores_random(
     df: pd.DataFrame,
     *,

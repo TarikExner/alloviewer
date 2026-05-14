@@ -1,186 +1,67 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
-from typing import Any, Dict, List, Tuple
-
-from .gating.gater import FittedGater
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from pathlib import Path
 
-# -------------------------
-# utilities
-# -------------------------
-
-def _norm_path(p: str) -> str:
-    try:
-        return os.path.normcase(os.path.normpath(str(Path(p).resolve())))
-    except Exception:
-        return os.path.normcase(os.path.normpath(str(p)))
-
-
-def _sanitize(a: np.ndarray) -> np.ndarray:
-    return np.nan_to_num(a.astype(np.float32, copy=False), nan=0.0, posinf=0.0, neginf=0.0)
-
-
-def _as_list_finite(a: np.ndarray) -> List[float]:
-    return _sanitize(a).tolist()
-
-
-def _downsample_idx(n: int, max_points: int, rng: np.random.Generator) -> np.ndarray:
-    if n <= max_points:
-        return np.arange(n, dtype=int)
-    return rng.choice(n, size=max_points, replace=False).astype(int)
+from .gating.gater import FittedGater
+from .utils import (
+    CORE_GATES,
+    as_list_finite,
+    build_cutoff_by_gate,
+    build_gate_options,
+    build_label_maps,
+    build_metrics_maps,
+    collect_plot_series,
+    downsample_idx,
+    make_display_label_fn,
+    norm_path,
+    population_result_to_dict,
+    population_x_label,
+    simpoints,
+)
 
 
-def _simpoints(x: np.ndarray, y: np.ndarray, ing: np.ndarray) -> List[Dict[str, Any]]:
-    x2 = _sanitize(x)
-    y2 = _sanitize(y)
-    g2 = ing.astype(bool, copy=False)
-    return [{"x": float(xx), "y": float(yy), "inGate": bool(gg)} for xx, yy, gg in zip(x2, y2, g2)]
+ProgressEvent = Dict[str, Any]
+ProgressCallback = Callable[[ProgressEvent], None]
 
 
-def _population_result_to_dict(p, display_label_fn) -> Dict[str, Any]:
-    return {
-        "label": display_label_fn(p.label),
-        "n_events": int(p.n_events),
-        "igg_pos_fraction": float(p.igg_pos_fraction),
-        "igg_median_raw": float(p.igg_median_raw),
-        "igg_median_t": float(p.igg_median_t),
-        "igg_median_shift": float(p.igg_median_shift),
-        "igg_median_ratio": float(p.igg_median_ratio),
-        "igg_fluorescence_index": float(p.igg_fluorescence_index),
-        "igg_cutoff_t": float(p.igg_cutoff_t),
-        "igg_nc_median_raw": float(p.igg_nc_median_raw),
-        "igg_pc_median_raw": (
-            None if p.igg_pc_median_raw is None else float(p.igg_pc_median_raw)
-        ),
-    }
-
-
-def _gate_mask_ds(entry: Dict[str, Any], gate: str) -> np.ndarray:
-    """
-    Downsampled stepwise mask for the selected end-gate.
-    gate options include: All Cells, Singlets, Lymphocytes, and each population label.
-
-    Semantics:
-      - mask_all       = edge-only
-      - mask_sing      = edge+singlets (if available)
-      - mask_lymph_raw = pure lymph gate BEFORE cluster cleanup (used for gating plot)
-      - mask_lymph     = lymphocytes AFTER cluster cleanup (outliers + debris clusters removed)
-    """
-    n = len(entry["igg"])
-    all_true = np.ones(n, dtype=bool)
-
-    gate = (gate or "").strip() or "All Cells"
-
-    mask_all = np.asarray(entry.get("mask_all", all_true.tolist()), dtype=bool)
-    mask_sing = entry.get("mask_sing")
-    mask_lymph = np.asarray(entry.get("mask_lymph", all_true.tolist()), dtype=bool)
-
-    if gate == "All Cells":
-        return mask_all
-
-    if gate == "Singlets":
-        if mask_sing is None:
-            return mask_all
-        return np.asarray(mask_sing, dtype=bool)
-
-    if gate == "Lymphocytes":
-        return mask_lymph
-
-    mp = entry.get("marker_pos", {}).get(gate)
-    if mp is None:
-        mtp = entry.get("marker_to_pop", {}) or {}
-        g2 = (mtp.get(gate) or "").strip()
-        if g2:
-            mp = entry.get("marker_pos", {}).get(g2)
-
-    if mp is None:
-        return mask_lymph
-
-    return np.asarray(mp, dtype=bool)
-
-
-# -------------------------
-# PUBLIC API (keep names / args stable)
-# -------------------------
-
-def make_results_payload(
-    ds,
-    gater,
+def _build_payload(
+    *,
     fitted: FittedGater,
     results,
     marker_to_population: Dict[str, str],
-    max_points: int = 20_000,
-    seed: int = 0,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """
-    This module only:
-      - builds JSON payloads for the frontend
-      - downsamples arrays into plot_cache
-
-    IMPORTANT PERFORMANCE RULE:
-      - Do NOT run clustering prediction here.
-      - Use gater.analyze_file_cached(fcs, fitted) to reuse per-file results
-        (QC + lymph + clustering prediction).
-    """
-
-    rng = np.random.default_rng(seed)
-
-    # --- build frontend labels ---
-    marker_names = list((fitted.panel.markers or {}).keys())
-    label_to_marker: Dict[str, str] = {}
-    pop_labels: List[str] = []
-    seen = set()
-    for m in marker_names:
-        lbl = (marker_to_population.get(m) or "").strip() or m
-        if lbl in seen:
-            lbl = f"{lbl} ({m})"
-        seen.add(lbl)
-        pop_labels.append(lbl)
-        label_to_marker[lbl] = m
-
-    can_singlets = bool(fitted.panel.fsc_a and fitted.panel.fsc_h)
-
-    gate_options: List[str] = ["All Cells"]
-    if can_singlets:
-        gate_options.append("Singlets")
-    gate_options.append("Lymphocytes")
-    gate_options.extend(pop_labels)
-
-    # --- remap summary results labels (marker name -> population label) ---
-    marker_to_label: Dict[str, str] = {v: k for k, v in label_to_marker.items()}
-
-    def _display_label(lbl: str) -> str:
-        if lbl in ("All Cells", "Singlets", "Lymphocytes"):
-            return lbl
-        return marker_to_label.get(lbl, lbl)
+    gate_options: List[str],
+    label_to_marker: Dict[str, str],
+    marker_to_label: Dict[str, str],
+) -> Dict[str, Any]:
+    display_label = make_display_label_fn(marker_to_label)
 
     payload: Dict[str, Any] = {
         "ok": True,
         "results": [
             {
-                "sample_name": r.sample_name,
-                "role": r.role,
-                "n_files": r.n_files,
+                "sample_name": result.sample_name,
+                "role": result.role,
+                "n_files": result.n_files,
                 "combined": [
-                    _population_result_to_dict(p, _display_label)
-                    for p in r.combined
+                    population_result_to_dict(pop, display_label)
+                    for pop in result.combined
                 ],
                 "per_file": [
                     {
-                        "file_name": fr.file_name,
+                        "file_name": file_result.file_name,
                         "populations": [
-                            _population_result_to_dict(p, _display_label)
-                            for p in fr.populations
+                            population_result_to_dict(pop, display_label)
+                            for pop in file_result.populations
                         ],
                     }
-                    for fr in r.per_file
+                    for file_result in result.per_file
                 ],
             }
-            for r in results
+            for result in results
         ],
         "panel_used": {
             "fsc_a": fitted.panel.fsc_a,
@@ -192,153 +73,443 @@ def make_results_payload(
         },
     }
 
-    # --- build cutoff_by_gate in frontend label space ---
-    cutoff_by_gate: Dict[str, float] = {}
-    for g in gate_options:
-        if g in ("All Cells", "Singlets", "Lymphocytes"):
-            cutoff_by_gate[g] = float(fitted.igg_cutoff_by_gate.get(g, 0.0))
-        else:
-            m = label_to_marker.get(g)
-            cutoff_by_gate[g] = float(fitted.igg_cutoff_by_gate.get(m or "", 0.0))
+    payload["panel_used"]["cutoff_by_gate"] = build_cutoff_by_gate(
+        fitted=fitted,
+        gate_options=gate_options,
+        label_to_marker=label_to_marker,
+    )
 
-    payload["panel_used"]["cutoff_by_gate"] = dict(cutoff_by_gate)
+    return payload
 
-    # --- metrics lookup maps for plot_cache ---
-    sample_combined_metrics_by_name: Dict[str, Dict[str, Dict[str, Any]]] = {}
-    file_metrics_by_key: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
-    for ds_sample, sample_result in zip(ds.samples, results):
-        sample_combined_metrics_by_name[ds_sample.name] = {
-            _display_label(p.label): _population_result_to_dict(p, _display_label)
-            for p in sample_result.combined
-        }
+def build_plot_cache_entry_for_file(
+    *,
+    sample,
+    fp: str,
+    fcs,
+    gater,
+    fitted: FittedGater,
+    marker_names: List[str],
+    label_to_marker: Dict[str, str],
+    marker_to_pop: Dict[str, str],
+    gate_options: List[str],
+    cutoff_by_gate: Dict[str, float],
+    file_metrics_by_key: Dict[str, Dict[str, Dict[str, Any]]],
+    sample_combined_metrics_by_name: Dict[str, Dict[str, Dict[str, Any]]],
+    max_points: int,
+    rng: np.random.Generator,
+) -> tuple[str, Dict[str, Any]]:
+    """
+    Build plot-cache data for one FCS file.
 
-        for fp, file_result in zip(ds_sample.file_paths, sample_result.per_file):
-            file_metrics_by_key[_norm_path(fp)] = {
-                _display_label(p.label): _population_result_to_dict(p, _display_label)
-                for p in file_result.populations
-            }
+    This is the file-level unit used for progress tracking.
+    It uses gater.analyze_file_cached(fcs, fitted).
+    """
+    fa = gater.analyze_file_cached(fcs, fitted)
 
-    # --- plot_cache per file ---
+    events = fa.events
+    if events is None:
+        raise ValueError(f"{fp}: file analysis has no events.")
+
+    n = int(events.shape[0])
+    idx = downsample_idx(n, max_points=max_points, rng=rng)
+    n_ds = int(idx.size)
+
+    fsc_a = None
+    fsc_h = None
+    ssc_a = None
+
+    if fitted.panel.fsc_a:
+        ia = fcs.get_channel_index(fitted.panel.fsc_a)
+        fsc_a = events[:, ia].astype(np.float32, copy=False)
+
+    if fitted.panel.fsc_h:
+        ih = fcs.get_channel_index(fitted.panel.fsc_h)
+        fsc_h = events[:, ih].astype(np.float32, copy=False)
+
+    if fitted.panel.ssc_a:
+        issc = fcs.get_channel_index(fitted.panel.ssc_a)
+        ssc_a = events[:, issc].astype(np.float32, copy=False)
+
+    jigg = fcs.get_channel_index(fitted.panel.igg)
+    igg_raw = events[:, jigg].astype(np.float32, copy=False)
+    igg = gater.transform_channel(igg_raw)
+    igg_ds = igg[idx]
+    igg_raw_ds = igg_raw[idx]
+
+    mask_all_ds = np.asarray(fa.mask_edge, dtype=bool)[idx].copy()
+
+    if fa.mask_sing is not None:
+        mask_sing_ds = np.asarray(fa.mask_sing, dtype=bool)[idx].copy().tolist()
+    else:
+        mask_sing_ds = None
+
+    mask_lymph_ds_raw = np.asarray(fa.mask_lymph_raw, dtype=bool)[idx].copy()
+    mask_lymph_ds_clean = np.asarray(fa.mask_lymph, dtype=bool)[idx].copy()
+
+    m_by_marker_full = fa.m_by_marker or {}
+
+    m_by_marker_ds: Dict[str, np.ndarray] = {
+        marker_name: np.asarray(
+            m_by_marker_full.get(marker_name, np.zeros(n, dtype=bool)),
+            dtype=bool,
+        )[idx].copy()
+        for marker_name in marker_names
+    }
+
+    marker_pos_by_label_ds: Dict[str, np.ndarray] = {}
+
+    for pop_label, marker_name in label_to_marker.items():
+        marker_pos_by_label_ds[pop_label] = m_by_marker_ds.get(
+            marker_name,
+            np.zeros(n_ds, dtype=bool),
+        )
+
+    marker_vals_ds: Dict[str, List[float]] = {}
+
+    for pop_label, marker_name in label_to_marker.items():
+        channel = fitted.panel.markers[marker_name]
+        j = fcs.get_channel_index(channel)
+
+        cofactor = float(
+            getattr(fitted, "marker_cofactors", {}).get(
+                marker_name,
+                fitted.config.transform.igg_cofactor,
+            )
+        )
+
+        values = gater.transform_channel(
+            events[:, j].astype(np.float32, copy=False),
+            cofactor=cofactor,
+        )
+
+        marker_vals_ds[pop_label] = as_list_finite(values[idx])
+
+    igg_pos_by_gate: Dict[str, List[bool]] = {}
+
+    for gate in gate_options:
+        cutoff = float(cutoff_by_gate.get(gate, 0.0))
+        igg_pos_by_gate[gate] = (igg_ds > cutoff).tolist()
+
+    for marker_name in marker_names:
+        marker_mask = np.asarray(
+            fa.m_by_marker.get(marker_name, np.zeros(n, dtype=bool)),
+            dtype=bool,
+        )
+        if np.any(marker_mask & ~np.asarray(fa.mask_lymph, dtype=bool)):
+            raise RuntimeError(
+                f"{fp}: marker mask {marker_name} leaks outside cleaned lymph"
+            )
+
+    key = norm_path(fp)
+
+    entry = {
+        "file_key": key,
+        "file_key_raw": fp,
+        "sample_name": sample.name,
+        "role": sample.role,
+        "gate_options": gate_options,
+        "cutoff_by_gate": dict(cutoff_by_gate),
+
+        # Downsampled scatter and IgG.
+        "fsc_a": as_list_finite(fsc_a[idx]) if fsc_a is not None else None,
+        "fsc_h": as_list_finite(fsc_h[idx]) if fsc_h is not None else None,
+        "ssc_a": as_list_finite(ssc_a[idx]) if ssc_a is not None else None,
+        "igg": as_list_finite(igg_ds),
+        "igg_raw": as_list_finite(igg_raw_ds),
+
+        # Downsampled masks.
+        "mask_all": mask_all_ds.tolist(),
+        "mask_sing": mask_sing_ds,
+        "mask_lymph_raw": mask_lymph_ds_raw.tolist(),
+        "mask_lymph": mask_lymph_ds_clean.tolist(),
+
+        # Populations.
+        "marker_pos": {
+            key_: marker_pos_by_label_ds[key_].tolist()
+            for key_ in marker_pos_by_label_ds
+        },
+        "marker_vals": marker_vals_ds,
+
+        "pop_to_marker": dict(label_to_marker),
+        "marker_to_pop": dict(marker_to_pop),
+
+        # IgG positivity.
+        "igg_pos_by_gate": dict(igg_pos_by_gate),
+
+        # Metrics for selected gate display.
+        "selected_file_metrics_by_gate": file_metrics_by_key.get(key, {}),
+        "sample_combined_metrics_by_gate": sample_combined_metrics_by_name.get(
+            sample.name,
+            {},
+        ),
+    }
+
+    return key, entry
+
+
+def make_results_payload(
+    ds,
+    gater,
+    fitted: FittedGater,
+    results,
+    marker_to_population: Dict[str, str],
+    max_points: int = 20_000,
+    seed: int = 0,
+    progress_cb: Optional[ProgressCallback] = None,
+    **kwargs,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    Build:
+      - JSON payload for the frontend
+      - plot_cache with one entry per file
+
+    File-level work is handled by build_plot_cache_entry_for_file().
+    This allows the pipeline to report progress per file.
+    """
+    rng = np.random.default_rng(seed)
+
+    marker_names = list((fitted.panel.markers or {}).keys())
+
+    (
+        pop_labels,
+        label_to_marker,
+        marker_to_label,
+        marker_to_pop,
+    ) = build_label_maps(
+        fitted=fitted,
+        marker_to_population=marker_to_population,
+    )
+
+    gate_options = build_gate_options(
+        fitted=fitted,
+        pop_labels=pop_labels,
+    )
+
+    payload = _build_payload(
+        fitted=fitted,
+        results=results,
+        marker_to_population=marker_to_population,
+        gate_options=gate_options,
+        label_to_marker=label_to_marker,
+        marker_to_label=marker_to_label,
+    )
+
+    cutoff_by_gate = dict(payload["panel_used"]["cutoff_by_gate"])
+
+    (
+        sample_combined_metrics_by_name,
+        file_metrics_by_key,
+    ) = build_metrics_maps(
+        ds=ds,
+        results=results,
+        marker_to_label=marker_to_label,
+    )
+
     plot_cache: Dict[str, Any] = {}
 
     if not hasattr(gater, "analyze_file_cached"):
-        raise AttributeError("Gater must implement analyze_file_cached(fcs, fitted) for plots caching.")
+        raise AttributeError(
+            "Gater must implement analyze_file_cached(fcs, fitted) for plot caching."
+        )
 
-    for s in ds.samples:
-        for fp, fcs in zip(s.file_paths, s.files):
-            fa = gater.analyze_file_cached(fcs, fitted)
+    for sample in ds.samples:
+        for fp, fcs in zip(sample.file_paths, sample.files):
+            key, entry = build_plot_cache_entry_for_file(
+                sample=sample,
+                fp=fp,
+                fcs=fcs,
+                gater=gater,
+                fitted=fitted,
+                marker_names=marker_names,
+                label_to_marker=label_to_marker,
+                marker_to_pop=marker_to_pop,
+                gate_options=gate_options,
+                cutoff_by_gate=cutoff_by_gate,
+                file_metrics_by_key=file_metrics_by_key,
+                sample_combined_metrics_by_name=sample_combined_metrics_by_name,
+                max_points=max_points,
+                rng=rng,
+            )
 
-            events = fa.events
-            if events is None:
-                continue
+            plot_cache[key] = entry
 
-            n = int(events.shape[0])
-            idx = _downsample_idx(n, max_points=max_points, rng=rng)
-            n_ds = int(idx.size)
-
-            # -------------------------
-            # 1) Scatter (RAW) and IgG (transformed) for plotting
-            # -------------------------
-            fsc_a = None
-            fsc_h = None
-            ssc_a = None
-            if fitted.panel.fsc_a:
-                ia = fcs.get_channel_index(fitted.panel.fsc_a)
-                fsc_a = events[:, ia].astype(np.float32, copy=False)
-            if fitted.panel.fsc_h:
-                ih = fcs.get_channel_index(fitted.panel.fsc_h)
-                fsc_h = events[:, ih].astype(np.float32, copy=False)
-            if fitted.panel.ssc_a:
-                issc = fcs.get_channel_index(fitted.panel.ssc_a)
-                ssc_a = events[:, issc].astype(np.float32, copy=False)
-
-            jigg = fcs.get_channel_index(fitted.panel.igg)
-            igg_raw = events[:, jigg].astype(np.float32, copy=False)
-            igg = gater.transform_channel(igg_raw)
-            igg_ds = igg[idx]
-
-            # -------------------------
-            # 2) Downsample masks (from cached analysis)
-            # -------------------------
-            mask_all_ds = np.asarray(fa.mask_edge, dtype=bool)[idx].copy()
-
-            if fa.mask_sing is not None:
-                mask_sing_ds = np.asarray(fa.mask_sing, dtype=bool)[idx].copy().tolist()
-            else:
-                mask_sing_ds = None
-
-            mask_lymph_ds_raw = np.asarray(fa.mask_lymph_raw, dtype=bool)[idx].copy()
-            mask_lymph_ds_clean = np.asarray(fa.mask_lymph, dtype=bool)[idx].copy()
-
-            m_by_marker_full = fa.m_by_marker or {}
-            m_by_marker_ds: Dict[str, np.ndarray] = {
-                mn: (np.asarray(m_by_marker_full.get(mn, np.zeros(n, dtype=bool)), dtype=bool)[idx].copy())
-                for mn in marker_names
-            }
-
-            marker_pos_by_label_ds: Dict[str, np.ndarray] = {}
-            for pop_label, marker_name in label_to_marker.items():
-                marker_pos_by_label_ds[pop_label] = m_by_marker_ds.get(marker_name, np.zeros(n_ds, dtype=bool))
-
-            marker_vals_ds: Dict[str, List[float]] = {}
-            for pop_label, marker_name in label_to_marker.items():
-                ch = fitted.panel.markers[marker_name]
-                j = fcs.get_channel_index(ch)
-                cof = float(getattr(fitted, "marker_cofactors", {}).get(marker_name, fitted.config.transform.igg_cofactor))
-                v = gater.transform_channel(events[:, j].astype(np.float32, copy=False), cofactor=cof)
-                marker_vals_ds[pop_label] = _as_list_finite(v[idx])
-
-            igg_pos_by_gate: Dict[str, List[bool]] = {}
-            for g in gate_options:
-                c = float(cutoff_by_gate.get(g, 0.0))
-                igg_pos_by_gate[g] = (igg_ds > c).tolist()
-
-            key = _norm_path(fp)
-            marker_to_pop = {marker: pop for pop, marker in label_to_marker.items()}
-
-            for mn in marker_names:
-                mm = np.asarray(fa.m_by_marker.get(mn, np.zeros(n, dtype=bool)), dtype=bool)
-                if np.any(mm & ~np.asarray(fa.mask_lymph, dtype=bool)):
-                    raise RuntimeError(f"{fp}: marker mask {mn} leaks outside cleaned lymph")
-
-            plot_cache[key] = {
-                "file_key": key,
-                "file_key_raw": fp,
-                "sample_name": s.name,
-                "role": s.role,
-                "gate_options": gate_options,
-                "cutoff_by_gate": dict(cutoff_by_gate),
-
-                # downsampled scatter and IgG
-                "fsc_a": _as_list_finite(fsc_a[idx]) if fsc_a is not None else None,
-                "fsc_h": _as_list_finite(fsc_h[idx]) if fsc_h is not None else None,
-                "ssc_a": _as_list_finite(ssc_a[idx]) if ssc_a is not None else None,
-                "igg": _as_list_finite(igg_ds),
-
-                # downsampled masks
-                "mask_all": mask_all_ds.tolist(),
-                "mask_sing": mask_sing_ds,
-                "mask_lymph_raw": mask_lymph_ds_raw.tolist(),
-                "mask_lymph": mask_lymph_ds_clean.tolist(),
-
-                # populations
-                "marker_pos": {k: marker_pos_by_label_ds[k].tolist() for k in marker_pos_by_label_ds},
-                "marker_vals": marker_vals_ds,
-
-                "pop_to_marker": dict(label_to_marker),
-                "marker_to_pop": dict(marker_to_pop),
-
-                # IgG positivity
-                "igg_pos_by_gate": dict(igg_pos_by_gate),
-
-                # metrics for selected gate display
-                "selected_file_metrics_by_gate": file_metrics_by_key.get(key, {}),
-                "sample_combined_metrics_by_gate": sample_combined_metrics_by_name.get(s.name, {}),
-            }
+            if progress_cb is not None:
+                progress_cb(
+                    {
+                        "stage": "plot_cache",
+                        "sample_name": sample.name,
+                        "role": sample.role,
+                        "file_name": getattr(
+                            fcs,
+                            "original_filename",
+                            str(fp),
+                        ),
+                        "file_path": fp,
+                    }
+                )
 
     return payload, plot_cache
 
+def _as_bool_mask(values, fallback_len: int, fallback: bool = True) -> np.ndarray:
+    if values is None:
+        return np.full(fallback_len, fallback, dtype=bool)
+
+    arr = np.asarray(values, dtype=bool)
+
+    if arr.shape[0] != fallback_len:
+        return np.full(fallback_len, fallback, dtype=bool)
+
+    return arr
+
+
+def _mask_for_final_gate(entry: Dict[str, Any], gate: str, n: int) -> np.ndarray:
+    """
+    Return the event mask used for final IgG display for one cached file.
+
+    The plot cache stores downsampled values only, so this mask works on the
+    downsampled IgG vector.
+    """
+    gate = (gate or "").strip()
+
+    if gate in ("", "All Cells"):
+        return _as_bool_mask(entry.get("mask_all"), n, fallback=True)
+
+    if gate == "Singlets":
+        mask_sing = entry.get("mask_sing")
+        if mask_sing is not None:
+            return _as_bool_mask(mask_sing, n, fallback=True)
+        return _as_bool_mask(entry.get("mask_all"), n, fallback=True)
+
+    if gate == "Lymphocytes":
+        return _as_bool_mask(entry.get("mask_lymph"), n, fallback=True)
+
+    marker_pos = (entry.get("marker_pos", {}) or {}).get(gate)
+    if marker_pos is not None:
+        return _as_bool_mask(marker_pos, n, fallback=False)
+
+    return _as_bool_mask(entry.get("mask_lymph"), n, fallback=True)
+
+
+def _sample_line_values(values: np.ndarray, max_values: int) -> List[float]:
+    values = values[np.isfinite(values)]
+
+    if values.size <= max_values:
+        return values.astype(float).tolist()
+
+    idx = np.linspace(0, values.size - 1, max_values).astype(int)
+    return values[idx].astype(float).tolist()
+
+
+def _short_file_label(entry: Dict[str, Any]) -> str:
+    raw = entry.get("file_key_raw") or entry.get("file_key") or ""
+    name = Path(str(raw)).name
+    return name or "file"
+
+
+def _build_single_file_line_series(
+    *,
+    entry: Dict[str, Any],
+    gate: str,
+    label: str,
+    color: str,
+    cutoff: float,
+    max_line_values: int,
+) -> Dict[str, Any]:
+    # Use raw IgG for the displayed line curve.
+    igg_raw_values = entry.get("igg_raw")
+    if igg_raw_values is None:
+        # Backward fallback for old cache entries. New jobs should always have igg_raw.
+        igg_raw_values = entry.get("igg", [])
+
+    igg_raw = np.asarray(igg_raw_values, dtype=float)
+
+    # Use the same event gate as the final plot.
+    mask = _mask_for_final_gate(entry, gate, int(igg_raw.shape[0]))
+
+    if mask.shape[0] != igg_raw.shape[0]:
+        mask = np.full(int(igg_raw.shape[0]), True, dtype=bool)
+
+    selected_raw = igg_raw[mask]
+    selected_raw = selected_raw[np.isfinite(selected_raw)]
+
+    # Positivity should NOT be recomputed from raw IgG with the transformed cutoff.
+    # Use the precomputed transformed-space positivity mask for this gate.
+    igg_pos = (entry.get("igg_pos_by_gate", {}) or {}).get(gate)
+    if igg_pos is not None:
+      pos_mask = np.asarray(igg_pos, dtype=bool)
+      if pos_mask.shape[0] == mask.shape[0]:
+          gated_pos = pos_mask[mask]
+          n_pos = int(np.sum(gated_pos))
+      else:
+          n_pos = 0
+    else:
+      n_pos = 0
+
+    n_total = int(selected_raw.size)
+    pos_pct = float((n_pos / n_total) * 100.0) if n_total > 0 else 0.0
+
+    values = _sample_line_values(selected_raw, max_line_values)
+
+    return {
+        "label": label,
+        "color": color,
+        "values": values,
+        "n_total": n_total,
+        "n_pos": n_pos,
+        "pos_pct": pos_pct,
+
+        "filename": _short_file_label(entry),
+        "sample_name": str(entry.get("sample_name") or ""),
+        "role": str(entry.get("role") or ""),
+    }
+
+def _build_control_file_line_series(
+    *,
+    plot_cache: Dict[str, Any],
+    gate: str,
+    role: str,
+    role_label: str,
+    colors: List[str],
+    cutoff: float,
+    max_line_values: int,
+) -> List[Dict[str, Any]]:
+    """
+    Build one histogram curve per control file.
+
+    This is intentionally file-level. Do not combine controls here, because
+    combined NC/PC curves hide replicate-level shifts.
+    """
+    out: List[Dict[str, Any]] = []
+
+    entries = [
+        entry
+        for entry in plot_cache.values()
+        if str(entry.get("role", "")).upper() == role.upper()
+    ]
+
+    entries.sort(
+        key=lambda e: (
+            str(e.get("sample_name", "")),
+            _short_file_label(e),
+        )
+    )
+
+    for idx, entry in enumerate(entries):
+        file_label = _short_file_label(entry)
+
+        out.append(
+            _build_single_file_line_series(
+                entry=entry,
+                gate=gate,
+                label=f"{role_label} · {_short_file_label(entry)}",
+                color=colors[idx % len(colors)],
+                cutoff=cutoff,
+                max_line_values=max_line_values,
+            )
+        )
+
+    return out
 
 def build_results_response_from_cache(
     plot_cache: Dict[str, Any],
@@ -363,8 +534,12 @@ def build_results_response_from_cache(
     cutoff_by_gate = entry.get("cutoff_by_gate", {}) or {}
     cutoff = float(cutoff_by_gate.get(gate, 0.0))
 
-    selected_file_metrics_by_gate = entry.get("selected_file_metrics_by_gate", {}) or {}
-    sample_combined_metrics_by_gate = entry.get("sample_combined_metrics_by_gate", {}) or {}
+    selected_file_metrics_by_gate = (
+        entry.get("selected_file_metrics_by_gate", {}) or {}
+    )
+    sample_combined_metrics_by_gate = (
+        entry.get("sample_combined_metrics_by_gate", {}) or {}
+    )
 
     selected_file_metrics = selected_file_metrics_by_gate.get(gate)
     selected_sample_metrics = sample_combined_metrics_by_gate.get(gate)
@@ -375,22 +550,32 @@ def build_results_response_from_cache(
     fsc_h = entry.get("fsc_h")
     ssc_a = entry.get("ssc_a")
 
-    mask_all = np.asarray(entry.get("mask_all", [True] * len(entry.get("igg", []))), dtype=bool)
+    mask_all = np.asarray(
+        entry.get("mask_all", [True] * len(entry.get("igg", []))),
+        dtype=bool,
+    )
     mask_sing = entry.get("mask_sing")
 
-    mask_lymph = np.asarray(entry.get("mask_lymph", [True] * len(entry.get("igg", []))), dtype=bool)
-    mask_lymph_raw = np.asarray(entry.get("mask_lymph_raw", mask_lymph.tolist()), dtype=bool)
+    mask_lymph = np.asarray(
+        entry.get("mask_lymph", [True] * len(entry.get("igg", []))),
+        dtype=bool,
+    )
+    mask_lymph_raw = np.asarray(
+        entry.get("mask_lymph_raw", mask_lymph.tolist()),
+        dtype=bool,
+    )
 
     if fsc_a is not None and fsc_h is not None and mask_sing is not None:
         x = np.asarray(fsc_a, dtype=float)
         y = np.asarray(fsc_h, dtype=float)
         ms = np.asarray(mask_sing, dtype=bool)
+
         gating_plots.append(
             {
                 "title": "Singlets (/All Cells)",
                 "x_label": "FSC-A",
                 "y_label": "FSC-H",
-                "points": _simpoints(x[mask_all], y[mask_all], ms[mask_all]),
+                "points": simpoints(x[mask_all], y[mask_all], ms[mask_all]),
             }
         )
 
@@ -402,144 +587,141 @@ def build_results_response_from_cache(
         if mask_sing is not None:
             base = np.asarray(mask_sing, dtype=bool)
 
+        parent_gate = "Singlets" if mask_sing is not None else "All Cells"
+
         gating_plots.append(
             {
-                "title": "Lymphocytes (/" + ("Singlets" if mask_sing is not None else "All Cells") + ")",
+                "title": f"Lymphocytes (/{parent_gate})",
                 "x_label": "FSC-A",
                 "y_label": "SSC-A",
-                "points": _simpoints(x[base], y[base], mask_lymph_raw[base]),
+                "points": simpoints(
+                    x[base],
+                    y[base],
+                    mask_lymph_raw[base],
+                ),
             }
         )
 
     pop_to_marker = entry.get("pop_to_marker", {}) or {}
 
-    def _pop_xlabel(pop_label: str) -> str:
-        pop_label = (pop_label or "").strip()
-        marker = (pop_to_marker.get(pop_label) or "").strip()
-        if not marker:
-            return f"{pop_label} marker" if pop_label else "marker"
-        if not pop_label or pop_label == marker:
-            return marker
-        return f"{marker} ({pop_label})"
-
     for pop in gate_options:
-        if pop in ("All Cells", "Singlets", "Lymphocytes"):
-            continue
-        mv = entry.get("marker_vals", {}).get(pop)
-        mp = entry.get("marker_pos", {}).get(pop)
-        if mv is None or mp is None:
+        if pop in CORE_GATES:
             continue
 
-        mv = np.asarray(mv, dtype=float)
-        mp = np.asarray(mp, dtype=bool)
+        marker_values = entry.get("marker_vals", {}).get(pop)
+        marker_pos = entry.get("marker_pos", {}).get(pop)
 
-        y_base = np.asarray(ssc_a, dtype=float) if ssc_a is not None else np.zeros_like(mv)
+        if marker_values is None or marker_pos is None:
+            continue
+
+        marker_values = np.asarray(marker_values, dtype=float)
+        marker_pos = np.asarray(marker_pos, dtype=bool)
+
+        y_base = (
+            np.asarray(ssc_a, dtype=float)
+            if ssc_a is not None
+            else np.zeros_like(marker_values)
+        )
+
         gating_plots.append(
             {
                 "title": f"{pop} (/Lymphocytes)",
-                "x_label": _pop_xlabel(pop),
+                "x_label": population_x_label(pop, pop_to_marker),
                 "y_label": "SSC-A" if ssc_a is not None else "0",
-                "points": _simpoints(mv[mask_lymph], y_base[mask_lymph], mp[mask_lymph]),
+                "points": simpoints(
+                    marker_values[mask_lymph],
+                    y_base[mask_lymph],
+                    marker_pos[mask_lymph],
+                ),
             }
         )
 
-    def collect_series(
-        role: str,
-        label: str,
-        color: str,
-        only_selected: bool,
-    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        keys: List[str] = []
-        if only_selected:
-            keys = [selected_key]
-        else:
-            for k, e in plot_cache.items():
-                if e.get("role") == role:
-                    keys.append(k)
+    sc_nc, _ln_nc_combined = collect_plot_series(
+        plot_cache=plot_cache,
+        selected_key=selected_key,
+        gate=gate,
+        role="NC",
+        label="Negative control",
+        color="#22c55e",
+        only_selected=False,
+        max_points_final=max_points_final,
+        max_line_values=max_line_values,
+    )
 
-        xs: List[np.ndarray] = []
-        ys: List[np.ndarray] = []
-        pos: List[np.ndarray] = []
+    sc_pc, _ln_pc_combined = collect_plot_series(
+        plot_cache=plot_cache,
+        selected_key=selected_key,
+        gate=gate,
+        role="PC",
+        label="Positive control",
+        color="#ef4444",
+        only_selected=False,
+        max_points_final=max_points_final,
+        max_line_values=max_line_values,
+    )
 
-        for k in keys:
-            e = plot_cache[k]
-            m = _gate_mask_ds(e, gate)
+    sc_sel, ln_sel = collect_plot_series(
+        plot_cache=plot_cache,
+        selected_key=selected_key,
+        gate=gate,
+        role="__SEL__",
+        label="Selected file",
+        color="#3b82f6",
+        only_selected=True,
+        max_points_final=max_points_final,
+        max_line_values=max_line_values,
+    )
 
-            igg_k = np.asarray(e["igg"], dtype=float)
-            ssc_k = (
-                np.asarray(e["ssc_a"], dtype=float)
-                if e.get("ssc_a") is not None
-                else np.zeros_like(igg_k)
-            )
-            pos_k = np.asarray(
-                (e.get("igg_pos_by_gate", {}) or {}).get(gate, [False] * len(igg_k)),
-                dtype=bool,
-            )
+    negative_control_lines = _build_control_file_line_series(
+        plot_cache=plot_cache,
+        gate=gate,
+        role="NC",
+        role_label="Negative control",
+        colors=[
+            "#16a34a",
+            "#22c55e",
+            "#15803d",
+            "#86efac",
+            "#166534",
+        ],
+        cutoff=cutoff,
+        max_line_values=max_line_values,
+    )
 
-            xs.append(igg_k[m])
-            ys.append(ssc_k[m])
-            pos.append(pos_k[m])
+    positive_control_lines = _build_control_file_line_series(
+        plot_cache=plot_cache,
+        gate=gate,
+        role="PC",
+        role_label="Positive control",
+        colors=[
+            "#dc2626",
+            "#ef4444",
+            "#b91c1c",
+            "#fca5a5",
+            "#991b1b",
+        ],
+        cutoff=cutoff,
+        max_line_values=max_line_values,
+    )
 
-        if xs:
-            x = np.concatenate(xs)
-            y = np.concatenate(ys)
-            p = np.concatenate(pos)
-        else:
-            x = np.zeros(0, dtype=float)
-            y = np.zeros(0, dtype=float)
-            p = np.zeros(0, dtype=bool)
+    selected_entry = plot_cache[selected_key]
+    selected_role = str(selected_entry.get("role", "")).upper()
 
-        n_total = int(x.shape[0])
-        n_pos = int(p.sum())
-        pos_pct = (100.0 * n_pos / n_total) if n_total > 0 else 0.0
+    line_series = [
+        *negative_control_lines,
+        *positive_control_lines,
+    ]
 
-        if n_total > max_points_final:
-            rr = np.random.default_rng(0)
-            take = rr.choice(n_total, size=max_points_final, replace=False)
-            x = x[take]
-            y = y[take]
-            p = p[take]
-
-        line_vals = x
-        if line_vals.shape[0] > max_line_values:
-            rr = np.random.default_rng(1)
-            q = np.quantile(line_vals, 0.99)
-            tail = line_vals[line_vals >= q]
-            rest = line_vals[line_vals < q]
-            need = max(0, max_line_values - tail.shape[0])
-            if rest.shape[0] > need:
-                pick = rr.choice(rest.shape[0], size=need, replace=False)
-                rest = rest[pick]
-            line_vals = np.concatenate([rest, tail])
-
-        scatter = {
-            "label": label,
-            "color": color,
-            "points": _simpoints(x, y, p),
-            "n_total": n_total,
-            "n_pos": n_pos,
-            "pos_pct": float(pos_pct),
-        }
-        line = {
-            "label": label,
-            "color": color,
-            "values": _as_list_finite(line_vals),
-            "n_total": n_total,
-            "n_pos": n_pos,
-            "pos_pct": float(pos_pct),
-        }
-        return scatter, line
-
-    sc_nc, ln_nc = collect_series("NC", "Negative control", "#22c55e", only_selected=False)
-    sc_pc, ln_pc = collect_series("PC", "Positive control", "#ef4444", only_selected=False)
-    sc_sel, ln_sel = collect_series("__SEL__", "Selected file", "#3b82f6", only_selected=True)
+    # Avoid drawing the same control file twice when the selected file itself is NC or PC.
+    if selected_role not in {"NC", "PC"}:
+        line_series.append(ln_sel)
 
     return {
         "gate_options": gate_options,
         "selected_gate": gate,
         "gating_plots": gating_plots,
         "final_scatter_series": [sc_nc, sc_pc, sc_sel],
-        "line_series": [ln_nc, ln_pc, ln_sel],
+        "line_series": line_series,
         "cutoff": cutoff,
         "selected_file_metrics": selected_file_metrics,
         "selected_sample_metrics": selected_sample_metrics,

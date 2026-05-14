@@ -1,7 +1,10 @@
 import uuid
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from pathlib import Path
 
-from alloviewer.main import run_image_analysis
+from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi.responses import FileResponse
+
+from alloviewer.image_analysis.pipeline import run_image_analysis
 
 from ...models import (
     IMAGE_JOB_PROGRESS,
@@ -13,6 +16,7 @@ from ...models import (
 from ...core.settings import settings
 
 router = APIRouter(tags=["process"])
+
 
 @router.post("/api/process", response_model=ProcessStartResponse)
 async def process(req: ProcessRequest, background_tasks: BackgroundTasks):
@@ -34,9 +38,11 @@ async def process(req: ProcessRequest, background_tasks: BackgroundTasks):
         image_filenames=req.image_filenames,
         data_dir=str(settings.data_dir),
         template_filename=req.template_filename,
+        assay_type=req.assay_type,
     )
 
     return {"job_id": job_id}
+
 
 @router.get("/api/process/{job_id}", response_model=ProgressResponse)
 async def get_process(job_id: str):
@@ -48,3 +54,12 @@ async def get_process(job_id: str):
 
     return {**progress, "result": result}
 
+
+@router.get("/api/process/{job_id}/segmented/{well_id}.png")
+async def get_segmented_image(job_id: str, well_id: str):
+    path = Path(settings.data_dir) / "segmented" / job_id / f"{well_id}.png"
+
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Segmented image not found")
+
+    return FileResponse(path, media_type="image/png")

@@ -12,7 +12,8 @@ from typing import Optional, Sequence, List, Tuple, Any, Dict
 
 from .image_dataset import SimCellsDataset, ExternalCellsTilesDataset
 
-from .config import default_scene, default_camera, UNET_MEAN, UNET_STD
+from .image_simulation import default_scene, default_camera
+from .config import UNET_MEAN, UNET_STD
 
 from .io_utils import (
     imwrite_tiff_tifffile,

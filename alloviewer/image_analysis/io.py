@@ -9,7 +9,6 @@ from typing import Optional, Tuple, Union, BinaryIO, Any, List
 import numpy as np
 import cv2
 
-# default data root (same as FastAPI DATA_DIR). You can override via env.
 DATA_ROOT = Path(os.environ.get("DATA_DIR", "/tmp/lcteller")).resolve()
 
 SourceType = Union[str, Path, bytes, bytearray, BinaryIO]

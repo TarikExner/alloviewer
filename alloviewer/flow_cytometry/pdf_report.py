@@ -391,10 +391,6 @@ def _compute_mfi_triplet(line_series: List[Dict[str, Any]]) -> Tuple[float, floa
     return mfi_nc, mfi_pc, mfi_sel
 
 
-# -------------------------
-# Main
-# -------------------------
-
 def build_fcxm_summary_pdf(
     payload: Dict[str, Any],
     plot_cache: Dict[str, Any],

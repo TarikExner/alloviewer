@@ -1,63 +1,8 @@
 import numpy as np
 from skimage import segmentation, morphology
 from scipy import ndimage as ndi
-import inspect
-from typing import Mapping, Sequence, Optional, Any
 
-import cv2
-
-from .camera_styles import (
-    CameraStyleConfig,
-    CameraStyleParams,
-    apply_device_quantile_band_match
-)
-from typing import Dict
-
-RNG = np.random.Generator
-
-def _to_jsonable(x):
-    """Convert common numeric / numpy types to plain Python so JSON dump works."""
-    # simple numbers
-    if isinstance(x, (int, float, bool, str)) or x is None:
-        return x
-
-    # numpy scalars
-    if isinstance(x, (np.integer,)):
-        return int(x)
-    if isinstance(x, (np.floating,)):
-        return float(x)
-
-    # sequences (tuples/lists) of jsonable items
-    if isinstance(x, Sequence) and not isinstance(x, (str, bytes)):
-        return type(x)(_to_jsonable(v) for v in x)
-
-    # small numpy arrays (avoid dumping huge arrays by mistake)
-    if isinstance(x, np.ndarray):
-        # keep tiny shapes, otherwise store shape + dtype
-        if x.size <= 64:
-            return x.tolist()
-        return {"__ndarray__": True, "shape": tuple(x.shape), "dtype": str(x.dtype)}
-
-    # mappings
-    if isinstance(x, Mapping):
-        return {k: _to_jsonable(v) for k, v in x.items()}
-
-    # fallback to string
-    return str(x)
-
-
-def capture_params(func, locals_dict):
-    """
-    Return a dict of just the function's declared parameters
-    with their current values, made JSON-safe.
-    """
-    sig = inspect.signature(func)
-    out = {}
-    for name in sig.parameters:
-        if name in locals_dict:
-            out[name] = _to_jsonable(locals_dict[name])
-    return out
-
+from .utils import capture_params
 
 def simulate_image(
     # --- size / geometry ---
@@ -70,9 +15,6 @@ def simulate_image(
     edge_boost=0.25,
     radial_gamma=1.2,
     vignette_strength=0.20,
-
-    # --- color mix ---
-    bg_hue=0.25,             # 0=orange, 1=green
 
     # --- cells (sharp ones inside the well) ---
     n_cells=150,
@@ -140,11 +82,6 @@ def simulate_image(
     dirt_sigma=(1.2, 2.0),
     dirt_alpha=(0.01, 0.04),
 
-    # --- noise / camera ---
-    blur_sigma_global=0.0,
-    photon_level=2500,
-    read_noise=0.003,
-
     # --- radial reflections on the wall (outside the well) ---
     reflect_enable=True,
     reflect_n=6,                 # number of streak groups
@@ -192,7 +129,7 @@ def simulate_image(
 
     base_orange = np.array([1.00, 0.62, 0.08], dtype=np.float32)
     base_green  = np.array([0.05, 0.95, 0.35], dtype=np.float32)
-    bg_color = ((1.0 - bg_hue) * base_orange + bg_hue * base_green).astype(np.float32)
+    bg_color = (0.75 * base_orange + 0.25 * base_green).astype(np.float32)
 
     # ---------- grids / well ----------
     yy, xx = np.mgrid[0:H, 0:W]
@@ -629,17 +566,7 @@ def simulate_image(
             sl = (slice(y0c, y1c), slice(x0c, x1c))
             img[sl + (slice(None),)] += alpha_local[..., None] * col[None, None, :]
 
-    # optional global blur
-    if blur_sigma_global and blur_sigma_global > 0:
-        img = blur(img, float(blur_sigma_global))
-
-    img = np.clip(img, 0, 1).astype(np.float32)
-
-    # ---------- camera noise ----------
-    counts = (img * photon_level).astype(np.float32)
-    noised = rng.poisson(counts).astype(np.float32) / max(1.0, photon_level)
-    noised += rng.normal(0.0, read_noise, size=noised.shape).astype(np.float32)
-    noised = np.clip(noised, 0, 1).astype(np.float32)
+    img = np.clip(img, 0.0, 1.0).astype(np.float32)
 
     # ---------- targets ----------
     if in_focus_sigma_thresh is None:
@@ -679,307 +606,4 @@ def simulate_image(
         "params": all_params
     }
 
-    return noised, meta, targets
-
-def _apply_s_curve(img: np.ndarray, strength: float) -> np.ndarray:
-    """
-    strength in about [-0.25, 0.40]
-    positive => stronger midtone contrast
-    negative => flatter midtones
-    """
-    if abs(strength) < 1e-8:
-        return img
-
-    x = np.clip(img, 0.0, 1.0)
-    a = 1.0 + 8.0 * float(strength)
-
-    y = 1.0 / (1.0 + np.exp(-a * (x - 0.5)))
-    y0 = 1.0 / (1.0 + np.exp(-a * (0.0 - 0.5)))
-    y1 = 1.0 / (1.0 + np.exp(-a * (1.0 - 0.5)))
-    y = (y - y0) / (y1 - y0 + 1e-8)
-    return np.clip(y, 0.0, 1.0)
-
-
-def _lift_shadows(img: np.ndarray, amount: float) -> np.ndarray:
-    if amount <= 0:
-        return img
-    w = (1.0 - img) ** 2
-    out = img + amount * 0.35 * w
-    return np.clip(out, 0.0, 1.0)
-
-
-def _compress_highlights(img: np.ndarray, amount: float) -> np.ndarray:
-    if amount <= 0:
-        return img
-    thr = 0.72
-    out = img.copy()
-    mask = out > thr
-    if np.any(mask):
-        x = out[mask] - thr
-        out[mask] = thr + (1.0 - np.exp(-x / (amount + 1e-6))) * (1.0 - thr)
-    return np.clip(out, 0.0, 1.0)
-
-def _apply_channel_median_match(
-    img: np.ndarray,
-    target_device: str,
-    quantile_band_cache: Dict[str, Any],
-    strength: float = 0.5,
-    per_channel_strength: Optional[np.ndarray] = None,
-) -> np.ndarray:
-    """
-    Shift each channel toward the target device median.
-
-    Parameters
-    ----------
-    img : np.ndarray
-        RGB image, HWC, float32 in [0,1]
-    target_device : str
-        "microscope", "iphone", or "googlepixel"
-    quantile_band_cache : dict
-        Cache from build_target_quantile_band_cache(...)
-    strength : float
-        Global median-match strength in [0,1]
-    per_channel_strength : np.ndarray or None
-        Optional shape (3,) multiplier for R/G/B.
-        Example for microscope: np.array([0.3, 0.3, 1.0], dtype=np.float32)
-        to hit blue harder than red/green.
-    """
-    if target_device not in quantile_band_cache["devices"]:
-        return img
-
-    device_ref = quantile_band_cache["devices"][target_device]
-    q_center = device_ref["q_center"]   # [3, Q]
-
-    # median of the target distribution
-    q_probs = np.asarray(quantile_band_cache["q_probs"], dtype=np.float32)
-    mid_idx = int(np.argmin(np.abs(q_probs - 0.5)))
-    target_medians = q_center[:, mid_idx].astype(np.float32)
-
-    current_medians = np.median(img.reshape(-1, 3), axis=0).astype(np.float32)
-
-    delta = target_medians - current_medians
-
-    if per_channel_strength is None:
-        per_channel_strength = np.ones(3, dtype=np.float32)
-    else:
-        per_channel_strength = np.asarray(per_channel_strength, dtype=np.float32)
-
-    shift = float(strength) * per_channel_strength * delta
-    out = img + shift.reshape(1, 1, 3)
-
-    return np.clip(out, 0.0, 1.0).astype(np.float32)
-
-def apply_camera_style(
-    img: np.ndarray,
-    rng: RNG,
-    style_cfg: CameraStyleConfig,
-    style_registry: Dict[str, CameraStyleParams],
-    quantile_band_cache: Optional[Dict[str, Any]] = None,
-) -> np.ndarray:
-    """
-    Apply a sampled camera style, then softly push the result into the
-    corresponding real-device histogram band.
-
-    Returns
-    -------
-    img_out : np.ndarray
-        RGB float32 image in [0,1]
-
-    """
-    assert img.ndim == 3 and img.shape[2] == 3
-
-    img = np.clip(img.astype(np.float32).copy(), 0.0, 1.0)
-
-    style_name = style_cfg.sample_style(rng)
-    if style_name not in style_registry:
-        raise KeyError(f"Style '{style_name}' not found in style_registry")
-
-    params = style_registry[style_name]
-
-    if style_name == "simulated_raw":
-        return img
-
-    H, W, _ = img.shape
-
-    # 1) exposure
-    exposure = rng.uniform(*params.exposure_range)
-    img = np.clip(img * exposure, 0.0, 1.0)
-
-    # 2) global contrast / brightness
-    c = rng.uniform(*params.c_range)
-    b = rng.uniform(*params.b_range)
-    img = np.clip(img * c + b, 0.0, 1.0)
-
-    # 3) white balance
-    wb = rng.uniform(params.wb_range[0], params.wb_range[1], size=3).astype(np.float32)
-    wb = wb / (wb.mean() + 1e-8)
-    img = np.clip(img * wb[None, None, :], 0.0, 1.0)
-
-    # 4) explicit color-axis shifts
-    gm = rng.uniform(*params.green_magenta_shift_range)
-    by = rng.uniform(*params.blue_yellow_shift_range)
-
-    color_shift = np.array(
-        [
-            1.0 - 0.35 * gm - 0.50 * by,
-            1.0 + 1.00 * gm,
-            1.0 - 0.35 * gm + 0.50 * by,
-        ],
-        dtype=np.float32,
-    )
-    color_shift = color_shift / (color_shift.mean() + 1e-8)
-    img = np.clip(img * color_shift[None, None, :], 0.0, 1.0)
-
-    # 5) saturation
-    sat = rng.uniform(*params.saturation_range)
-    gray = img.mean(axis=2, keepdims=True)
-    img = np.clip(gray + sat * (img - gray), 0.0, 1.0)
-
-    # 6) R/G mixing
-    a = rng.uniform(*params.mix_range)
-    M = np.array([
-        [1.0 - a, a,       0.0],
-        [a,       1.0 - a, 0.0],
-        [0.0,     0.0,     1.0],
-    ], dtype=np.float32)
-    img = np.clip(img @ M.T, 0.0, 1.0)
-
-    # 7) uneven illumination
-    illum_amp = rng.uniform(*params.illum_amp_range)
-    if illum_amp > 0:
-        scale = 64
-        h_small = max(1, H // scale)
-        w_small = max(1, W // scale)
-        field_small = rng.normal(0.0, 1.0, size=(h_small, w_small)).astype(np.float32)
-
-        field = cv2.resize(field_small, (W, H), interpolation=cv2.INTER_CUBIC)
-        field = field - field.mean()
-        field = field / (field.std() + 1e-6)
-        field = 1.0 + illum_amp * field
-        field = np.clip(field, 1.0 - 2.0 * illum_amp, 1.0 + 2.0 * illum_amp)
-        img = np.clip(img * field[..., None], 0.0, 1.0)
-
-    # 8) vignette
-    vignette_amp = rng.uniform(*params.vignette_amp_range)
-    if vignette_amp > 0:
-        yy, xx = np.mgrid[0:H, 0:W]
-        cy, cx = H / 2.0, W / 2.0
-        rr = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2)
-        r_norm = rr / (0.72 * max(H, W))
-        vignette = 1.0 - vignette_amp * (r_norm ** 2)
-        vignette = np.clip(vignette, 1.0 - vignette_amp, 1.0)
-        img = np.clip(img * vignette[..., None], 0.0, 1.0)
-
-    # 9) S-curve / midtone contrast
-    s = rng.uniform(*params.midtone_contrast_range)
-    img = _apply_s_curve(img, s)
-
-    # 10) shadow lift
-    shadow_lift = rng.uniform(*params.shadow_lift_range)
-    img = _lift_shadows(img, shadow_lift)
-
-    # 11) highlight compression
-    highlight_rolloff = rng.uniform(*params.highlight_rolloff_range)
-    img = _compress_highlights(img, highlight_rolloff)
-
-    # 12) gamma
-    gamma = rng.uniform(*params.gamma_range)
-    img = np.clip(img, 1e-6, 1.0) ** gamma
-
-    # 13) clipping event
-    if rng.random() < params.clip_prob:
-        gain = rng.uniform(1.03, 1.25)
-        img = np.clip(img * gain, 0.0, 1.0)
-
-    # 14) resampling artifacts
-    if rng.random() < params.resize_prob:
-        resize_scale = rng.uniform(*params.resize_scale_range)
-        h2 = max(8, int(round(H * resize_scale)))
-        w2 = max(8, int(round(W * resize_scale)))
-        tmp = cv2.resize(img, (w2, h2), interpolation=cv2.INTER_AREA)
-        img = cv2.resize(tmp, (W, H), interpolation=cv2.INTER_LINEAR)
-        img = np.clip(img, 0.0, 1.0)
-
-    # 15) blur + sharpen
-    sigma = rng.uniform(*params.blur_sigma_range)
-    sharpen_strength = rng.uniform(*params.sharpen_strength_range)
-
-    if sigma > 0.0 or sharpen_strength > 0.0:
-        tmp = np.clip(img * 255.0, 0, 255).astype(np.uint8)
-        tmp_bgr = cv2.cvtColor(tmp, cv2.COLOR_RGB2BGR)
-
-        if sigma > 0.0:
-            ksize = max(3, int(2 * round(sigma) + 1))
-            blur_bgr = cv2.GaussianBlur(tmp_bgr, (ksize, ksize), sigmaX=sigma, sigmaY=sigma)
-        else:
-            blur_bgr = tmp_bgr
-
-        sharp_bgr = cv2.addWeighted(
-            tmp_bgr, 1.0 + sharpen_strength,
-            blur_bgr, -sharpen_strength,
-            0
-        )
-        sharp_rgb = cv2.cvtColor(sharp_bgr, cv2.COLOR_BGR2RGB)
-        img = np.clip(sharp_rgb.astype(np.float32) / 255.0, 0.0, 1.0)
-
-    # 16) per-channel noise
-    noise_std_base = rng.uniform(*params.noise_std_base_range)
-    if noise_std_base > 0:
-        noise_std = np.array([
-            noise_std_base * rng.uniform(0.8, 1.2),
-            noise_std_base * rng.uniform(0.8, 1.2),
-            noise_std_base * rng.uniform(1.0, 1.4),
-        ], dtype=np.float32)
-        noise = rng.normal(0.0, 1.0, size=img.shape).astype(np.float32)
-        img = np.clip(img + noise * noise_std[None, None, :], 0.0, 1.0)
-
-    # 17) JPEG
-    if rng.random() < params.jpeg_prob:
-        tmp = np.clip(img * 255.0, 0, 255).astype(np.uint8)
-        tmp_bgr = cv2.cvtColor(tmp, cv2.COLOR_RGB2BGR)
-        quality = int(rng.integers(params.jpeg_quality_range[0], params.jpeg_quality_range[1] + 1))
-        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-        ok, enc = cv2.imencode(".jpg", tmp_bgr, encode_param)
-        if ok:
-            dec_bgr = cv2.imdecode(enc, cv2.IMREAD_COLOR)
-            img = cv2.cvtColor(dec_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-            img = np.clip(img, 0.0, 1.0)
-
-    # 18) soft histogram band match
-    if (
-        params.use_histogram_match
-        and quantile_band_cache is not None
-        and style_name in quantile_band_cache.get("devices", {})
-    ):
-        hist_strength = rng.uniform(*params.histogram_match_strength_range)
-        if hist_strength > 0:
-            img = apply_device_quantile_band_match(
-                img=img,
-                target_device=style_name,
-                quantile_band_cache=quantile_band_cache,
-                strength=float(hist_strength),
-                preserve_input_layout=True,
-            )
-
-    # 19) optional per-channel median correction
-    if (
-        params.use_histogram_match
-        and quantile_band_cache is not None
-        and style_name in quantile_band_cache.get("devices", {})
-    ):
-        median_strength = rng.uniform(*params.median_match_strength)
-        if median_strength > 0:
-            if style_name == "microscope":
-                channel_strength = np.array([0.35, 0.35, 1.00], dtype=np.float32)
-            else:
-                channel_strength = np.array([1.0, 1.0, 1.0], dtype=np.float32)
-
-            img = _apply_channel_median_match(
-                img=img,
-                target_device=style_name,
-                quantile_band_cache=quantile_band_cache,
-                strength=float(median_strength),
-                per_channel_strength=channel_strength,
-            )
-
-    return img.astype(np.float32)
+    return img, meta, targets

@@ -10,7 +10,8 @@ from skimage.measure import label as sklabel
 
 from typing import Optional, List, Tuple
 
-from .image_simulation import simulate_image, apply_camera_style
+from .image_simulation.image_simulation import simulate_image
+from .image_simulation.camera_style_application import apply_camera_style
 from .utils import (
     crop_sim_meta_to_tile,
     make_energy_from_instances,
@@ -27,17 +28,14 @@ from .utils import (
     load_com_labels_csv,
     crop_external_meta_to_tile,
 )
-from .config import (
-    CameraSetup,
+from .image_simulation import (
+    CameraDimension,
     SimulatorConfig,
-)
-from .camera_styles import (
     CameraStyleConfig,
-    load_or_build_quantile_band_cache,
     STYLE_PARAMS_REGISTRY,
-    diverse_cameras
+    diverse_cameras,
+    load_or_build_quantile_band_cache
 )
-
 
 class BaseCellsTilesDataset(Dataset):
     """
@@ -270,9 +268,9 @@ class SimCellsDataset(BaseCellsTilesDataset):
         transforms=None,              # optional Albumentations-style joint transforms
 
         # required
-        scene_cfg: Optional[SimulatorConfig]=None,               # SimulatorConfig
-        camera_cfg: Optional[CameraSetup]=None,              # CameraSetup
-        camera_style_cfg: Optional[CameraStyleConfig]=None,              # CameraSetup
+        scene_cfg: Optional[SimulatorConfig]=None,
+        camera_cfg: Optional[CameraDimension]=None,
+        camera_style_cfg: Optional[CameraStyleConfig]=None,
     ):
         assert scene_cfg is not None, "scene_cfg (SimulatorConfig) is required"
         assert camera_cfg is not None, "camera_cfg (CameraSetup) is required"
@@ -540,7 +538,6 @@ class SimCellsDataset(BaseCellsTilesDataset):
         return tiles
 
     def __getitem__(self, idx):
-        # per-scene RNG
         rng = np.random.default_rng(
             int(self.base_rng.integers(0, 2**31 - 1)) ^ int(idx)
         )
@@ -551,15 +548,16 @@ class SimCellsDataset(BaseCellsTilesDataset):
 
         # simulate
         img, meta, targets = simulate_image(**sim_kwargs)
+        cell = targets["cell_mask"].astype(np.float32)
+        inst = targets["instance_labels"].astype(np.int32)
         img = apply_camera_style(
             img,
             rng,
             self.camera_style_cfg,
             self.camera_style_registry,
-            quantile_band_cache=self.quantile_band_cache
+            quantile_band_cache=self.quantile_band_cache,
+            cell_mask=cell
         )
-        cell = targets["cell_mask"].astype(np.float32)
-        inst = targets["instance_labels"].astype(np.int32)
 
         tiles = []
         full_meta = meta

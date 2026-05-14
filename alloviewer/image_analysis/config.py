@@ -28,4 +28,17 @@ UNET_CONFIG = SegmenterConfig.from_dict({
     "model_dir": MODELS_DIR,
     "model_file": None,
 }).to_dict()
+
+CDC_SUMMARY_CONFIG = {
+    "positive_cutoff": 20.0,
+    "borderline_low": 15.0,
+    "borderline_high": 25.0,
+    "min_rois": 50,
+    "max_uncertain_fraction": 0.25,
+    "min_dynamic_range": 30.0,
+    "max_replicate_range": 20.0,
+    "weak_positive": 20.0,
+    "moderate_positive": 40.0,
+    "strong_positive": 70.0,
+}
     

@@ -3,6 +3,14 @@ from sklearn.mixture import GaussianMixture
 
 from typing import Optional, Tuple, Any
 from .config import GatingConfig
+from ..sample import FCSFile
+
+def fcs_display_name(fcs: FCSFile) -> str:
+    return str(
+        getattr(fcs, "original_filename", None)
+        or getattr(fcs, "path", None)
+        or "unknown.fcs"
+    )
 
 def freeze_mapping(x: Any) -> Any:
     if isinstance(x, dict):

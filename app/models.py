@@ -74,6 +74,7 @@ class ProcessRequest(BaseModel):
     image_order: List[WellID]
     template_filename: Optional[str] = None
     image_filenames: List[str] = []
+    assay_type: Literal["pra", "crossmatch"] = "pra"
 
 class ProcessStartResponse(BaseModel):
     job_id: str
@@ -112,16 +113,19 @@ class PlotSeries(BaseModel):
     color: str
     points: List[SimPoint]
     n_total: int
-    n_pos: int
+    n_pos: int 
     pos_pct: float  # 0..100
 
 class LineSeries(BaseModel):
     label: str
     color: str
-    values: List[float]
+    values: list[float]
     n_total: int
     n_pos: int
     pos_pct: float
+    filename: str | None = None
+    sample_name: str | None = None
+    role: str | None = None
 
 class FCXMResultsRequest(BaseModel):
     job_id: str
@@ -173,6 +177,17 @@ class FCXMRunStartResponse(BaseModel):
 class FCXMRunProgressResponse(BaseModel):
     status: Literal["queued", "running", "done", "error"]
     message: Optional[str] = None
+    stage: Optional[str] = None
     result: Optional[Any] = None
+    total_files: int | None = None
+    done_files: int | None = None
+    current_file: str | None = None
+    done_filenames: list[str] = []
+
+class FcsDisplayNamesRequest(BaseModel):
+    filenames: list[str]
+    mode: Literal["filename", "tube_name"] = "filename"
 
 
+class FcsDisplayNamesResponse(BaseModel):
+    names: dict[str, str]
