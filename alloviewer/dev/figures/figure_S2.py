@@ -626,7 +626,7 @@ def figure_S2_generation(
 
     mono, _ = load_image(
         "xm1_+dtt_2d.tif",
-        base_dir=os.path.join(ext_images_dir, "20260507_XM1_+DTT_mono_rgb/"),
+        base_dir=os.path.join(ext_images_dir, "20260504_Auto1_mono_rgb"),
         as_chw=False,
     )
 
