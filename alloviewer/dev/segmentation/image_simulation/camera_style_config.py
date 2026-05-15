@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional, Sequence, Dict, Tuple
 
 import numpy as np
@@ -98,6 +98,61 @@ class CameraStyleConfig:
         idx = int(rng.choice(len(self.styles), p=p))
         return self.styles[idx]
 
+def with_histogram_adherence(
+    registry: Dict[str, CameraStyleParams],
+    mode: str = "default",
+) -> Dict[str, CameraStyleParams]:
+    """
+    Return a modified style registry with stronger or weaker histogram adherence.
+
+    mode:
+      - "strict": for PCA/showoff datasets; strongly follows real histogram cache
+      - "default": unchanged
+      - "lenient": for training; keeps more synthetic variation
+      - "off": disables histogram and median matching
+    """
+    mode = str(mode).lower()
+
+    if mode == "default":
+        return dict(registry)
+
+    if mode == "strict":
+        hist_range = (0.99, 1.00)
+        median_range = (0.70, 0.70)
+        use_hist = True
+        use_median = True
+
+    elif mode == "lenient":
+        hist_range = (0.15, 0.55)
+        median_range = (0.00, 0.25)
+        use_hist = True
+        use_median = True
+
+    elif mode == "off":
+        hist_range = (0.0, 0.0)
+        median_range = (0.0, 0.0)
+        use_hist = False
+        use_median = False
+
+    else:
+        raise ValueError("mode must be one of: 'strict', 'default', 'lenient', 'off'")
+
+    out: Dict[str, CameraStyleParams] = {}
+
+    for name, params in registry.items():
+        if name == "simulated_raw":
+            out[name] = params
+            continue
+
+        out[name] = replace(
+            params,
+            histogram_match_strength_range=hist_range,
+            median_match_strength=median_range,
+            use_histogram_match=use_hist,
+            use_median_match=use_median,
+        )
+
+    return out
 
 IPHONE_STYLE = CameraStyleParams(
     name="iphone",
