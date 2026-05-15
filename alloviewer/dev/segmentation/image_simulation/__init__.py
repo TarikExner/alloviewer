@@ -3,10 +3,12 @@ from .simulation_config import default_scene, SimulatorConfig
 from .camera_style_config import (
     diverse_cameras,
     STYLE_PARAMS_REGISTRY,
-    CameraStyleConfig
+    CameraStyleConfig,
+    CameraStyleParams
 )
 from .histogram_capture import load_or_build_quantile_band_cache
 from .image_simulation import simulate_image
+from .camera_style_application import apply_camera_style
 
 __all__ = [
     "simulate_image",
@@ -17,5 +19,7 @@ __all__ = [
     "SimulatorConfig",
     "CameraDimension",
     "default_camera",
-    "default_scene"
+    "default_scene",
+    "apply_camera_style",
+    "CameraStyleParams"
 ]

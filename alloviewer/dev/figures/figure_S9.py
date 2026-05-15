@@ -14,7 +14,6 @@ from typing import Any
 from .figure_data_generation import (
     fetch_image_with_targets,
     segment_image_unet,
-    get_validation_data
 )
 
 from mpl_toolkits.axes_grid1.inset_locator import zoomed_inset_axes

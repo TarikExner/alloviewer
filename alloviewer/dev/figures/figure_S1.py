@@ -1,5 +1,4 @@
 import os
-import pandas as pd
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec, SubplotSpec

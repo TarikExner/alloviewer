@@ -1,10 +1,7 @@
 import os
-import pandas as pd
 import numpy as np
-import seaborn as sns
 from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
-from matplotlib.patches import Patch
 from mpl_toolkits.axes_grid1.inset_locator import zoomed_inset_axes
 
 from .figure_data_generation import fetch_image_with_targets

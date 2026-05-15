@@ -1,16 +1,11 @@
 
 import os
 import numpy as np
-import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec, SubplotSpec
 
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
-import seaborn as sns
-
-from scipy import ndimage as ndi
-from skimage import measure, morphology, segmentation, feature
 
 import pickle
 
@@ -20,21 +15,23 @@ from sklearn.decomposition import PCA
 from . import figure_config as cfg
 from . import figure_utils as utils
 
-from ..segmentation.dataset_io import DiskSimCellsDataset
 
 from pathlib import Path
-from typing import Optional, Sequence, Tuple, Dict, Any
+from typing import Optional, Sequence, Tuple, Dict
 
 from alloviewer.image_analysis.io import load_image
 from alloviewer.dev.segmentation.image_simulation import simulate_image
-from alloviewer.dev.segmentation.config import SimulatorConfig, CameraSetup
-from alloviewer.dev.segmentation.camera_style_utils import get_feature_cache_path, collect_synthetic_feature_rows_from_dataset
+from .camera_style_utils import get_feature_cache_path, collect_synthetic_feature_rows_from_dataset
 
-from alloviewer.dev.segmentation.image_simulation import apply_camera_style
-from alloviewer.dev.segmentation.camera_styles import CameraStyleParams, CameraStyleConfig
-from alloviewer.dev.segmentation.camera_styles import load_or_build_quantile_band_cache
+from alloviewer.dev.segmentation.image_simulation import (
+    apply_camera_style,
+    CameraStyleParams,
+    CameraStyleConfig,
+    load_or_build_quantile_band_cache
+)
 
-from alloviewer.dev.segmentation.dataset_io import DiskSimCellsDataset
+from ..segmentation.dataset_io import DiskSimCellsDataset
+
 
 def crop_image(image, x, y, width, height):
     """
@@ -293,9 +290,6 @@ def _get_simulated_image():
         radial_gamma=1.2,
         vignette_strength=0.20,
 
-        # --- color mix ---
-        bg_hue=0.25,             # 0=orange, 1=green
-
         # --- cells (sharp ones inside the well) ---
         n_cells=2000,
         cell_diameter=10,
@@ -362,11 +356,6 @@ def _get_simulated_image():
         dirt_sigma=(1.2, 2.0),
         dirt_alpha=(0.01, 0.04),
 
-        # --- noise / camera ---
-        blur_sigma_global=0.0,
-        photon_level=2500,
-        read_noise=0.003,
-
         # --- radial reflections on the wall (outside the well) ---
         reflect_enable=True,
         reflect_n=6,                 # number of streak groups
@@ -402,7 +391,6 @@ IPHONE_STYLE = CameraStyleParams(
 
     blur_sigma_range=(0.18, 0.45),
     sharpen_strength_range=(0.02, 0.08),
-    noise_std_base_range=(0.002, 0.005),
 
     vignette_amp_range=(0.00, 0.02),
     illum_amp_range=(0.00, 0.015),
@@ -440,7 +428,6 @@ GOOGLEPIXEL_STYLE = CameraStyleParams(
 
     blur_sigma_range=(0.35, 1.00),
     sharpen_strength_range=(0.12, 0.40),
-    noise_std_base_range=(0.004, 0.012),
 
     vignette_amp_range=(0.02, 0.08),
     illum_amp_range=(0.02, 0.06),
@@ -514,7 +501,6 @@ SIMULATED_RAW_STYLE = CameraStyleParams(
 
     blur_sigma_range=(0.0, 0.0),
     sharpen_strength_range=(0.0, 0.0),
-    noise_std_base_range=(0.0, 0.0),
 
     vignette_amp_range=(0.0, 0.0),
     illum_amp_range=(0.0, 0.0),

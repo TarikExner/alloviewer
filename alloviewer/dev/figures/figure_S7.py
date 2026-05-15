@@ -12,8 +12,6 @@ import seaborn as sns
 from scipy import ndimage as ndi
 from skimage import measure, morphology, segmentation, feature
 
-from typing import Any
-
 import copy
 
 from alloviewer.image_analysis.config import UNET_CONFIG, INSTANCE_CONFIG
