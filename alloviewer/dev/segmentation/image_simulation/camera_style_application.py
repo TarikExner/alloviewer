@@ -264,30 +264,34 @@ def apply_camera_style(
     sharpen_strength = rng.uniform(*params.sharpen_strength_range)
 
     if sigma > 0.0 or sharpen_strength > 0.0:
-        tmp = np.clip(img * 255.0, 0, 255).astype(np.uint8)
-        tmp_bgr = cv2.cvtColor(tmp, cv2.COLOR_RGB2BGR)
+        img_float = np.clip(img.astype(np.float32, copy=False), 0.0, 1.0)
 
         if sigma > 0.0:
             ksize = max(3, int(2 * round(sigma) + 1))
-            blur_bgr = cv2.GaussianBlur(
-                tmp_bgr,
+            if ksize % 2 == 0:
+                ksize += 1
+
+            blurred = cv2.GaussianBlur(
+                img_float,
                 (ksize, ksize),
-                sigmaX=sigma,
-                sigmaY=sigma,
+                sigmaX=float(sigma),
+                sigmaY=float(sigma),
             )
         else:
-            blur_bgr = tmp_bgr
+            blurred = img_float
 
-        sharp_bgr = cv2.addWeighted(
-            tmp_bgr,
-            1.0 + sharpen_strength,
-            blur_bgr,
-            -sharpen_strength,
-            0,
-        )
+        if sharpen_strength > 0.0:
+            img = cv2.addWeighted(
+                img_float,
+                1.0 + float(sharpen_strength),
+                blurred,
+                -float(sharpen_strength),
+                0.0,
+            )
+        else:
+            img = blurred
 
-        sharp_rgb = cv2.cvtColor(sharp_bgr, cv2.COLOR_BGR2RGB)
-        img = np.clip(sharp_rgb.astype(np.float32) / 255.0, 0.0, 1.0)
+        img = np.clip(img, 0.0, 1.0).astype(np.float32)
 
     # 19) JPEG
     if rng.random() < params.jpeg_prob:
