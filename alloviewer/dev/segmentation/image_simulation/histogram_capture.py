@@ -40,7 +40,7 @@ MONOCHROME_IMAGES_FOLDERS_OUTPUT = [
     "./ext_images/20260507_XM1_mono_rgb"
 ]
 
-STYLE_CACHE_PATH = Path("./style_cache.cache")
+STYLE_CACHE_PATH = Path("./results/style_cache.cache")
 STYLE_QUANTILE_CACHE_PATH = STYLE_CACHE_PATH.with_name("camera_quantile_band_cache.pkl")
 
 REGION_NAMES = ("all", "foreground", "background")
