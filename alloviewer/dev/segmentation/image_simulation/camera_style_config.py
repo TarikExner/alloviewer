@@ -311,7 +311,7 @@ MICROSCOPE_STYLE = CameraStyleParams(
     resize_prob=0.0,
     resize_scale_range=(1.0, 1.0),
 
-    histogram_match_strength_range=(0.95, 1.00),
+    histogram_match_strength_range=(0.35, 1.00),
     use_histogram_match=True,
     histogram_region_mode="foreground_background",
     histogram_match_mode="sample_real_curve",
@@ -370,7 +370,7 @@ MONOCHROME_GENERIC_STYLE = CameraStyleParams(
     resize_prob=0.0,
     resize_scale_range=(1.0, 1.0),
 
-    histogram_match_strength_range=(0.70, 1.00),
+    histogram_match_strength_range=(0.35, 1.00),
     use_histogram_match=True,
     histogram_region_mode="foreground_background",
     histogram_match_mode="project_to_band",
@@ -430,13 +430,13 @@ MONOCHROME_REAL_STYLE = CameraStyleParams(
     resize_prob=0.0,
     resize_scale_range=(1.0, 1.0),
 
-    histogram_match_strength_range=(0.80, 1.00),
+    histogram_match_strength_range=(0.35, 1.00),
     use_histogram_match=True,
     histogram_region_mode="foreground_background",
     histogram_match_mode="sample_real_curve",
     histogram_mask_blur_sigma=1.0,
 
-    median_match_strength=(0.0, 0.25),
+    median_match_strength=(0.0, 0.7),
     use_median_match=True,
 )
 
