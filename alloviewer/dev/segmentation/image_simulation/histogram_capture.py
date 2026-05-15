@@ -18,17 +18,15 @@ EXT_IMAGES_FOLDERS = [
     "./ext_images/20251014_25720084",
     "./ext_images/20251107_25065521",
     "./ext_images/20251107_25722332",
+    "./ext_images/20260504_AM1_mono_rgb",
+    "./ext_images/20260504_Auto1_mono_rgb",
+    "./ext_images/20260507_XM1_+DTT_mono_rgb",
+    "./ext_images/20260507_XM1_mono_rgb"
 ]
 
 MONOCHROME_IMAGES_FOLDERS_INPUT = [
     "./ext_images/20260504_AM1_mono",
     "./ext_images/20260504_Auto1_mono",
-    "./ext_images/20260505_CDC1_mono",
-    "./ext_images/20260505_CDC2_mono",
-    "./ext_images/20260506_CDC3_mono",
-    "./ext_images/20260506_CDC4_mono",
-    "./ext_images/20260506_CDC5_mono",
-    "./ext_images/20260507_CDC6_mono",
     "./ext_images/20260507_XM1_+DTT_mono",
     "./ext_images/20260507_XM1_mono"
 ]
@@ -36,12 +34,6 @@ MONOCHROME_IMAGES_FOLDERS_INPUT = [
 MONOCHROME_IMAGES_FOLDERS_OUTPUT = [
     "./ext_images/20260504_AM1_mono_rgb",
     "./ext_images/20260504_Auto1_mono_rgb",
-    "./ext_images/20260505_CDC1_mono_rgb",
-    "./ext_images/20260505_CDC2_mono_rgb",
-    "./ext_images/20260506_CDC3_mono_rgb",
-    "./ext_images/20260506_CDC4_mono_rgb",
-    "./ext_images/20260506_CDC5_mono_rgb",
-    "./ext_images/20260507_CDC6_mono_rgb",
     "./ext_images/20260507_XM1_+DTT_mono_rgb",
     "./ext_images/20260507_XM1_mono_rgb"
 ]
