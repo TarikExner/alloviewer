@@ -123,8 +123,8 @@ def with_histogram_adherence(
         use_median = True
 
     elif mode == "lenient":
-        hist_range = (0.15, 0.55)
-        median_range = (0.00, 0.25)
+        hist_range = (0.5, 0.55)
+        median_range = (0.7, 0.7)
         use_hist = True
         use_median = True
 
@@ -202,7 +202,7 @@ IPHONE_STYLE = CameraStyleParams(
     histogram_match_strength_range=(0.35, 1.00),
     use_histogram_match=True,
     histogram_region_mode="foreground_background",
-    histogram_match_mode="project_to_band",
+    histogram_match_mode="sample_real_curve",
     histogram_mask_blur_sigma=1.5,
 
     median_match_strength=(0.0, 0.7),
@@ -258,7 +258,7 @@ GOOGLEPIXEL_STYLE = CameraStyleParams(
     histogram_match_strength_range=(0.35, 1.00),
     use_histogram_match=True,
     histogram_region_mode="foreground_background",
-    histogram_match_mode="project_to_band",
+    histogram_match_mode="sample_real_curve",
     histogram_mask_blur_sigma=1.5,
 
     median_match_strength=(0.0, 0.7),
@@ -314,7 +314,7 @@ MICROSCOPE_STYLE = CameraStyleParams(
     histogram_match_strength_range=(0.95, 1.00),
     use_histogram_match=True,
     histogram_region_mode="foreground_background",
-    histogram_match_mode="project_to_band",
+    histogram_match_mode="sample_real_curve",
     histogram_mask_blur_sigma=1.0,
 
     median_match_strength=(0.0, 0.7),
@@ -433,7 +433,7 @@ MONOCHROME_REAL_STYLE = CameraStyleParams(
     histogram_match_strength_range=(0.80, 1.00),
     use_histogram_match=True,
     histogram_region_mode="foreground_background",
-    histogram_match_mode="project_to_band",
+    histogram_match_mode="sample_real_curve",
     histogram_mask_blur_sigma=1.0,
 
     median_match_strength=(0.0, 0.25),

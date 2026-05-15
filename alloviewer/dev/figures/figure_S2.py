@@ -642,7 +642,7 @@ def figure_S2_generation(
 
     style_registry_strict = with_histogram_adherence(
         STYLE_PARAMS_REGISTRY,
-        mode="strict",
+        mode="lenient",
     )
 
     iphone_adj = apply_camera_style(
