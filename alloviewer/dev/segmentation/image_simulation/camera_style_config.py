@@ -333,9 +333,9 @@ MONOCHROME_GENERIC_STYLE = CameraStyleParams(
     gamma_range=(0.95, 1.12),
 
     channel_gain_range=(
-        (0.35, 1.05),
-        (0.35, 1.05),
-        (0.35, 1.05),
+        (0.0, 1.10),
+        (0.0, 1.10),
+        (0.0, 1.10),
     ),
     channel_shift_range=(
         (-0.015, 0.005),
@@ -347,7 +347,6 @@ MONOCHROME_GENERIC_STYLE = CameraStyleParams(
     highlight_rolloff_range=(0.00, 0.025),
     midtone_contrast_range=(-0.04, 0.025),
 
-    # Keep color processing almost neutral. These are channels, not phone colors.
     mix_range=(0.00, 0.005),
     wb_range=(0.995, 1.005),
     saturation_range=(0.85, 1.00),
@@ -374,10 +373,10 @@ MONOCHROME_GENERIC_STYLE = CameraStyleParams(
     histogram_match_strength_range=(0.70, 1.00),
     use_histogram_match=True,
     histogram_region_mode="foreground_background",
-    histogram_match_mode="sample_real_curve",
+    histogram_match_mode="project_to_band",
     histogram_mask_blur_sigma=1.0,
 
-    median_match_strength=(0.0, 0.4),
+    median_match_strength=(0.0, 0.15),
     use_median_match=True,
 )
 
@@ -519,7 +518,6 @@ def diverse_cameras() -> CameraStyleConfig:
             "iphone",
             "googlepixel",
             "monochrome_generic",
-            "monochrome_real",
             "simulated_raw",
         ),
         probs=None,
