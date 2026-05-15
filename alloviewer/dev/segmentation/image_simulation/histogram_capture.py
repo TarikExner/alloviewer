@@ -20,6 +20,19 @@ EXT_IMAGES_FOLDERS = [
     "./ext_images/20251107_25722332",
 ]
 
+MONOCHROME_IMAGES_FOLDERS = [
+    "./ext_images/20260504_AM1_mono",
+    "./ext_images/20260504_Auto1_mono",
+    "./ext_images/20260505_CDC1_mono",
+    "./ext_images/20260505_CDC2_mono",
+    "./ext_images/20260506_CDC3_mono",
+    "./ext_images/20260506_CDC4_mono",
+    "./ext_images/20260506_CDC5_mono",
+    "./ext_images/20260507_CDC6_mono",
+    "./ext_images/20260507_XM1_+DTT_mono",
+    "./ext_images/20260507_XM1_mono"
+]
+
 STYLE_CACHE_PATH = Path("./style_cache.cache")
 STYLE_QUANTILE_CACHE_PATH = STYLE_CACHE_PATH.with_name("camera_quantile_band_cache.pkl")
 
