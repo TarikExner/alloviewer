@@ -643,20 +643,22 @@ def _sample_real_curve(
 def _get_region_ref(
     device_ref: Dict[str, Any],
     region: str,
+    fallback_to_all: bool = False,
 ) -> Dict[str, Any]:
-    if "regions" in device_ref and region in device_ref["regions"]:
-        return device_ref["regions"][region]
+    if "regions" not in device_ref:
+        raise KeyError("device_ref is missing 'regions'.")
 
-    # Backward support for old cache.
-    if region == "all":
-        return device_ref
+    regions = device_ref["regions"]
 
-    # If foreground/background is missing, fall back to all.
-    if "regions" in device_ref and "all" in device_ref["regions"]:
-        return device_ref["regions"]["all"]
+    if region in regions:
+        return regions[region]
 
-    return device_ref
+    if fallback_to_all and "all" in regions:
+        return regions["all"]
 
+    raise KeyError(
+        f"Region '{region}' is missing. Available regions: {tuple(regions.keys())}"
+    )
 
 def _make_soft_cell_weight(
     cell_mask: np.ndarray,
@@ -754,88 +756,58 @@ def apply_device_quantile_band_match(
     region_mode: str = "all",
     match_mode: str = "project_to_band",
     mask_blur_sigma: float = 1.5,
-    fallback_to_all: bool = True,
+    fallback_to_all: bool = False,
 ) -> np.ndarray:
     """
     Move an RGB image toward the real-image intensity distribution of one device.
 
-    Supports:
-      - old global all-pixel matching
-      - foreground/background matching if a cell mask is supplied
-      - band projection
-      - sampling complete real-image quantile curves
-
-    Parameters
-    ----------
-    img:
-        RGB image, HWC or CHW, float-like in [0, 1].
-
-    target_device:
-        Device/style key in the cache.
-        Special no-op values:
-          - "simulated_raw"
-          - "raw_simulated"
-
-    quantile_band_cache:
-        Cache from build_target_quantile_band_cache(...).
-
-    strength:
-        0 leaves image unchanged. 1 applies full target quantile move.
-
-    rng:
-        Required for match_mode="sample_real_curve" if deterministic external
-        control is desired. If None, a local generator is created.
-
-    cell_mask:
-        Simulated cell mask. Required for clean foreground/background matching.
+    Assumes a fresh region-aware cache:
+        cache["devices"][device]["regions"][region]
 
     region_mode:
         "all":
-            one global histogram operation
+            Global all-pixel histogram matching.
+
         "foreground_background":
-            background pixels are moved to background reference;
-            cell pixels are moved to foreground reference;
-            result is softly blended by cell_mask.
-
-    match_mode:
-        "project_to_band":
-            old behavior, conservative
-        "sample_real_curve":
-            sample one full real-image quantile curve
-        "center":
-            move toward median reference curve
-
-    mask_blur_sigma:
-        Blur applied to cell_mask for soft foreground/background blending.
-
-    fallback_to_all:
-        If foreground/background references are missing, fall back to all-region.
-
-    Returns
-    -------
-    np.ndarray:
-        Transformed image as float32 in [0, 1].
+            Requires cell_mask unless fallback_to_all=True.
+            Foreground and background references are applied separately and
+            softly blended with a blurred cell mask.
     """
     if target_device in {"simulated_raw", "raw_simulated"}:
-        return np.asarray(img, dtype=np.float32).copy()
+        out = np.asarray(img, dtype=np.float32).copy()
+        return np.clip(out, 0.0, 1.0)
+
+    if "devices" not in quantile_band_cache:
+        raise KeyError("quantile_band_cache is missing 'devices'.")
+
+    if "q_probs" not in quantile_band_cache:
+        raise KeyError("quantile_band_cache is missing 'q_probs'.")
 
     if target_device not in quantile_band_cache["devices"]:
-        raise KeyError(f"Target device '{target_device}' not in quantile_band_cache")
+        raise KeyError(f"Target device '{target_device}' not in quantile_band_cache.")
 
     strength = float(np.clip(strength, 0.0, 1.0))
-    if strength <= 0:
-        return np.asarray(img, dtype=np.float32).copy()
+    arr, input_chw = _as_hwc_rgb_float01(img, preserve_copy=True)
+
+    if strength <= 0.0:
+        out = arr
+        if preserve_input_layout and input_chw:
+            out = np.moveaxis(out, -1, 0)
+        return np.clip(out, 0.0, 1.0).astype(np.float32)
 
     if rng is None:
         rng = np.random.default_rng()
-
-    arr, input_chw = _as_hwc_rgb_float01(img, preserve_copy=True)
 
     q_probs = np.asarray(quantile_band_cache["q_probs"], dtype=np.float32)
     device_ref = quantile_band_cache["devices"][target_device]
 
     if region_mode == "all":
-        region_ref = _get_region_ref(device_ref, "all")
+        region_ref = _get_region_ref(
+            device_ref,
+            "all",
+            fallback_to_all=False,
+        )
+
         out = _adjust_image_to_region_reference(
             arr_hwc=arr,
             q_probs=q_probs,
@@ -849,8 +821,16 @@ def apply_device_quantile_band_match(
     elif region_mode == "foreground_background":
         if cell_mask is None:
             if not fallback_to_all:
-                raise ValueError("cell_mask is required for region_mode='foreground_background'")
-            region_ref = _get_region_ref(device_ref, "all")
+                raise ValueError(
+                    "cell_mask is required for region_mode='foreground_background'."
+                )
+
+            region_ref = _get_region_ref(
+                device_ref,
+                "all",
+                fallback_to_all=False,
+            )
+
             out = _adjust_image_to_region_reference(
                 arr_hwc=arr,
                 q_probs=q_probs,
@@ -860,8 +840,10 @@ def apply_device_quantile_band_match(
                 match_mode=match_mode,
                 source_mask=None,
             )
+
         else:
             w_fg = _make_soft_cell_weight(cell_mask, sigma=mask_blur_sigma)
+
             if w_fg.shape != arr.shape[:2]:
                 raise ValueError(
                     f"cell_mask shape {w_fg.shape} does not match image shape {arr.shape[:2]}"
@@ -870,8 +852,28 @@ def apply_device_quantile_band_match(
             hard_fg = w_fg > 0.5
             hard_bg = ~hard_fg
 
-            fg_ref = _get_region_ref(device_ref, "foreground")
-            bg_ref = _get_region_ref(device_ref, "background")
+            if not hard_fg.any():
+                raise ValueError(
+                    "cell_mask contains no foreground pixels; "
+                    "cannot use foreground_background histogram matching."
+                )
+
+            if not hard_bg.any():
+                raise ValueError(
+                    "cell_mask contains no background pixels; "
+                    "cannot use foreground_background histogram matching."
+                )
+
+            fg_ref = _get_region_ref(
+                device_ref,
+                "foreground",
+                fallback_to_all=fallback_to_all,
+            )
+            bg_ref = _get_region_ref(
+                device_ref,
+                "background",
+                fallback_to_all=fallback_to_all,
+            )
 
             out_fg = _adjust_image_to_region_reference(
                 arr_hwc=arr,
@@ -880,7 +882,7 @@ def apply_device_quantile_band_match(
                 strength=strength,
                 rng=rng,
                 match_mode=match_mode,
-                source_mask=hard_fg if hard_fg.any() else None,
+                source_mask=hard_fg,
             )
 
             out_bg = _adjust_image_to_region_reference(
@@ -890,7 +892,7 @@ def apply_device_quantile_band_match(
                 strength=strength,
                 rng=rng,
                 match_mode=match_mode,
-                source_mask=hard_bg if hard_bg.any() else None,
+                source_mask=hard_bg,
             )
 
             w = w_fg[..., None].astype(np.float32)
@@ -898,7 +900,7 @@ def apply_device_quantile_band_match(
             out = np.clip(out, 0.0, 1.0).astype(np.float32)
 
     else:
-        raise ValueError("region_mode must be one of: 'all', 'foreground_background'")
+        raise ValueError("region_mode must be one of: 'all', 'foreground_background'.")
 
     if preserve_input_layout and input_chw:
         out = np.moveaxis(out, -1, 0)
