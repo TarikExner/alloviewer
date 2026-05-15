@@ -625,7 +625,7 @@ def figure_S2_generation(
     gp = crop_image(gp, 1100, 300, 2900, 2700)
 
     mono, _ = load_image(
-        "xm1_+dtt_2d.tif",
+        "auto1_4b.tif",
         base_dir=os.path.join(ext_images_dir, "20260504_Auto1_mono_rgb"),
         as_chw=False,
     )
