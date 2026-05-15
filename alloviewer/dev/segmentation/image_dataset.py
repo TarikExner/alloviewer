@@ -283,8 +283,9 @@ class SimCellsDataset(BaseCellsTilesDataset):
 
 
         self.quantile_band_cache = load_or_build_quantile_band_cache(
-            folders=None,
-            force_recompute=False,
+            force_recompute=True,
+            foreground_quantile=None,
+            background_quantile=0.80,
         )
 
         self.camera_style_registry = STYLE_PARAMS_REGISTRY

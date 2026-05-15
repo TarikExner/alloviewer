@@ -1,7 +1,7 @@
 import os
 import pickle
 from pathlib import Path
-from typing import Optional, Sequence, Dict, Any, Tuple
+from typing import Optional, Sequence, Dict, Any, Tuple, Union
 
 import cv2
 import numpy as np
@@ -25,14 +25,33 @@ STYLE_QUANTILE_CACHE_PATH = STYLE_CACHE_PATH.with_name("camera_quantile_band_cac
 
 REGION_NAMES = ("all", "foreground", "background")
 
+FOREGROUND_QUANTILES = {
+    "iphone": 0.92,
+    "googlepixel": 0.92,
+    "microscope": 0.96,
+    "monochrome_generic": 0.96,
+    "monochrome_real": 0.96,
+    "default": 0.92,
+}
+
+BACKGROUND_QUANTILES = {
+    "iphone": 0.80,
+    "googlepixel": 0.80,
+    "microscope": 0.80,
+    "monochrome_generic": 0.80,
+    "monochrome_real": 0.80,
+    "default": 0.80,
+}
+
+def _resolve_device_value(value, device: str, default):
+    if value is None:
+        return default
+    if isinstance(value, dict):
+        return value.get(device, value.get("default", default))
+    return value
+
 def _find_device_label(file_path: str | Path) -> str:
     s = str(file_path).lower()
-
-    if "iphone" in s:
-        return "iphone"
-
-    if "googlepixel" in s or "pixel" in s:
-        return "googlepixel"
 
     if "monochrome_real" in s or "mono_real" in s:
         return "monochrome_real"
@@ -40,8 +59,13 @@ def _find_device_label(file_path: str | Path) -> str:
     if "monochrome_generic" in s or "mono_generic" in s:
         return "monochrome_generic"
 
-    return "microscope"
+    if "iphone" in s:
+        return "iphone"
 
+    if "googlepixel" in s or "pixel" in s:
+        return "googlepixel"
+
+    return "microscope"
 
 def _collect_image_paths(
     folders: Optional[Sequence[str | Path]] = None,
@@ -100,7 +124,7 @@ def _as_hwc_rgb_float01(
 
 def make_foreground_background_masks(
     img_hwc: np.ndarray,
-    foreground_quantile: float = 0.985,
+    foreground_quantile: float = 0.92,
     background_quantile: float = 0.80,
     min_region_pixels: int = 2048,
     signal_mode: str = "max",
@@ -159,6 +183,19 @@ def make_foreground_background_masks(
         }
     """
     img = np.clip(np.asarray(img_hwc, dtype=np.float32), 0.0, 1.0)
+
+    if not (0.0 <= foreground_quantile <= 1.0):
+        raise ValueError(f"foreground_quantile must be in [0, 1], got {foreground_quantile}")
+
+    if not (0.0 <= background_quantile <= 1.0):
+        raise ValueError(f"background_quantile must be in [0, 1], got {background_quantile}")
+
+    if background_quantile >= foreground_quantile:
+        raise ValueError(
+            "background_quantile should be smaller than foreground_quantile, "
+            f"got background_quantile={background_quantile}, "
+            f"foreground_quantile={foreground_quantile}"
+        )
 
     if img.ndim != 3 or img.shape[2] != 3:
         raise ValueError(f"Expected HWC RGB image, got shape {img.shape}")
@@ -325,8 +362,8 @@ def build_target_quantile_band_cache(
     cache_path: Optional[str | Path] = STYLE_QUANTILE_CACHE_PATH,
     force_recompute: bool = False,
     use_regions: bool = True,
-    foreground_quantile: float = 0.985,
-    background_quantile: float = 0.80,
+    foreground_quantile: Union[float, Dict[str, float], None] = None,
+    background_quantile: Union[float, Dict[str, float], None] = None,
     min_region_pixels: int = 2048,
     foreground_signal_mode: str = "max",
     store_q_images: bool = True,
@@ -354,6 +391,12 @@ def build_target_quantile_band_cache(
         if cache_path.exists() and not force_recompute:
             with open(cache_path, "rb") as f:
                 return pickle.load(f)
+
+    if foreground_quantile is None:
+        foreground_quantile = FOREGROUND_QUANTILES
+
+    if background_quantile is None:
+        background_quantile = BACKGROUND_QUANTILES
 
     rng = np.random.default_rng(rng_seed)
     image_paths = _collect_image_paths(folders=folders, exts=exts, recursive=recursive)
@@ -393,10 +436,25 @@ def build_target_quantile_band_cache(
         img = np.clip(img.astype(np.float32, copy=False), 0.0, 1.0)
 
         if use_regions:
+            fg_q = float(
+                _resolve_device_value(
+                    foreground_quantile,
+                    device=device,
+                    default=0.92,
+                )
+            )
+            bg_q = float(
+                _resolve_device_value(
+                    background_quantile,
+                    device=device,
+                    default=0.80,
+                )
+            )
+
             masks = make_foreground_background_masks(
                 img_hwc=img,
-                foreground_quantile=foreground_quantile,
-                background_quantile=background_quantile,
+                foreground_quantile=fg_q,
+                background_quantile=bg_q,
                 min_region_pixels=min_region_pixels,
                 signal_mode=foreground_signal_mode,
             )
@@ -471,8 +529,8 @@ def build_target_quantile_band_cache(
         "q_band_lo": float(q_band_lo),
         "q_band_hi": float(q_band_hi),
         "use_regions": bool(use_regions),
-        "foreground_quantile": float(foreground_quantile),
-        "background_quantile": float(background_quantile),
+        "foreground_quantile": foreground_quantile,
+        "background_quantile": background_quantile,
         "min_region_pixels": int(min_region_pixels),
         "foreground_signal_mode": str(foreground_signal_mode),
         "store_q_images": bool(store_q_images),
@@ -496,8 +554,8 @@ def load_or_build_quantile_band_cache(
     q_band_lo: float = 0.025,
     q_band_hi: float = 0.975,
     use_regions: bool = True,
-    foreground_quantile: float = 0.985,
-    background_quantile: float = 0.80,
+    foreground_quantile: Union[float, Dict[str, float], None] = None,
+    background_quantile: Union[float, Dict[str, float], None] = None,
     min_region_pixels: int = 2048,
     foreground_signal_mode: str = "max",
     store_q_images: bool = True,
