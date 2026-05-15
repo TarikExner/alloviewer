@@ -103,18 +103,39 @@ def with_histogram_adherence(
     mode: str = "default",
 ) -> Dict[str, CameraStyleParams]:
     """
-    Return a modified style registry.
+    Return a modified style registry with stronger or weaker histogram adherence.
 
     mode:
+      - "strict": for PCA/showoff datasets; strongly follows real histogram cache
       - "default": unchanged
-      - "figure": close to real domains, for PCA/showoff figure
-      - "training": moderate adherence, keeps in-between variation
+      - "lenient": for training; keeps more synthetic variation
       - "off": disables histogram and median matching
     """
     mode = str(mode).lower()
 
     if mode == "default":
         return dict(registry)
+
+    if mode == "strict":
+        hist_range = (0.99, 1.00)
+        median_range = (0.70, 0.70)
+        use_hist = True
+        use_median = True
+
+    elif mode == "lenient":
+        hist_range = (0.15, 0.55)
+        median_range = (0.00, 0.25)
+        use_hist = True
+        use_median = True
+
+    elif mode == "off":
+        hist_range = (0.0, 0.0)
+        median_range = (0.0, 0.0)
+        use_hist = False
+        use_median = False
+
+    else:
+        raise ValueError("mode must be one of: 'strict', 'default', 'lenient', 'off'")
 
     out: Dict[str, CameraStyleParams] = {}
 
@@ -123,102 +144,13 @@ def with_histogram_adherence(
             out[name] = params
             continue
 
-        if mode == "figure":
-            # Close visual agreement, but avoid over-crushing / spiky artifacts.
-            if name in {"iphone", "googlepixel"}:
-                out[name] = replace(
-                    params,
-                    histogram_match_strength_range=(0.85, 0.98),
-                    histogram_match_mode="project_to_band",
-                    median_match_strength=(0.15, 0.35),
-                    use_histogram_match=True,
-                    use_median_match=True,
-                )
-            elif name == "microscope":
-                out[name] = replace(
-                    params,
-                    histogram_match_strength_range=(0.85, 0.98),
-                    histogram_match_mode="project_to_band",
-                    median_match_strength=(0.05, 0.25),
-                    use_histogram_match=True,
-                    use_median_match=True,
-                )
-            elif name == "monochrome_real":
-                out[name] = replace(
-                    params,
-                    histogram_match_strength_range=(0.90, 1.00),
-                    histogram_match_mode="sample_real_curve",
-                    median_match_strength=(0.05, 0.20),
-                    use_histogram_match=True,
-                    use_median_match=True,
-                )
-            elif name == "monochrome_generic":
-                # Keep generic broad even in figure mode.
-                out[name] = replace(
-                    params,
-                    histogram_match_strength_range=(0.20, 0.50),
-                    histogram_match_mode="project_to_band",
-                    median_match_strength=(0.0, 0.15),
-                    use_histogram_match=True,
-                    use_median_match=True,
-                )
-            else:
-                out[name] = params
-
-        elif mode == "training":
-            # Keep synthetic data broad. This is for robust training, not PCA cosmetics.
-            if name in {"iphone", "googlepixel"}:
-                out[name] = replace(
-                    params,
-                    histogram_match_strength_range=(0.25, 0.65),
-                    histogram_match_mode="sample_real_curve",
-                    median_match_strength=(0.0, 0.25),
-                    use_histogram_match=True,
-                    use_median_match=True,
-                )
-            elif name == "microscope":
-                out[name] = replace(
-                    params,
-                    histogram_match_strength_range=(0.40, 0.80),
-                    histogram_match_mode="sample_real_curve",
-                    median_match_strength=(0.0, 0.25),
-                    use_histogram_match=True,
-                    use_median_match=True,
-                )
-            elif name == "monochrome_real":
-                out[name] = replace(
-                    params,
-                    histogram_match_strength_range=(0.50, 0.85),
-                    histogram_match_mode="sample_real_curve",
-                    median_match_strength=(0.0, 0.15),
-                    use_histogram_match=True,
-                    use_median_match=True,
-                )
-            elif name == "monochrome_generic":
-                out[name] = replace(
-                    params,
-                    histogram_match_strength_range=(0.15, 0.45),
-                    histogram_match_mode="project_to_band",
-                    median_match_strength=(0.0, 0.10),
-                    use_histogram_match=True,
-                    use_median_match=True,
-                )
-            else:
-                out[name] = params
-
-        elif mode == "off":
-            out[name] = replace(
-                params,
-                histogram_match_strength_range=(0.0, 0.0),
-                median_match_strength=(0.0, 0.0),
-                use_histogram_match=False,
-                use_median_match=False,
-            )
-
-        else:
-            raise ValueError(
-                "mode must be one of: 'default', 'figure', 'training', 'off'"
-            )
+        out[name] = replace(
+            params,
+            histogram_match_strength_range=hist_range,
+            median_match_strength=median_range,
+            use_histogram_match=use_hist,
+            use_median_match=use_median,
+        )
 
     return out
 
