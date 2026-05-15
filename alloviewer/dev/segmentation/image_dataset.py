@@ -8,7 +8,7 @@ import cv2
 from skimage.segmentation import relabel_sequential
 from skimage.measure import label as sklabel
 
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 
 from .image_simulation.image_simulation import simulate_image
 from .image_simulation.camera_style_application import apply_camera_style
@@ -271,6 +271,7 @@ class SimCellsDataset(BaseCellsTilesDataset):
         scene_cfg: Optional[SimulatorConfig]=None,
         camera_cfg: Optional[CameraDimension]=None,
         camera_style_cfg: Optional[CameraStyleConfig]=None,
+        camera_style_registry: Optional[Dict]=None,
     ):
         assert scene_cfg is not None, "scene_cfg (SimulatorConfig) is required"
         assert camera_cfg is not None, "camera_cfg (CameraSetup) is required"
@@ -287,8 +288,11 @@ class SimCellsDataset(BaseCellsTilesDataset):
             foreground_quantile=None,
             background_quantile=0.80,
         )
+        if camera_style_registry is None:
+            self.camera_style_registry = STYLE_PARAMS_REGISTRY
+        else:
+            self.camera_style_registry = camera_style_registry
 
-        self.camera_style_registry = STYLE_PARAMS_REGISTRY
 
         super().__init__(
             target=target,
