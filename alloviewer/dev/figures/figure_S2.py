@@ -597,7 +597,7 @@ def figure_S2_generation(
     **kwargs,
 ):
     ds = DiskSimCellsDataset(
-        os.path.join(validation_results_dir, "test_ds_phonemix.ds")
+        os.path.join(validation_results_dir, "test_ds_diverse_mc.ds")
     )
 
     style_cache_path = os.path.join(validation_results_dir, "style_cache.cache")
