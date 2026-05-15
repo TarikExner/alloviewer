@@ -14,48 +14,24 @@ from sklearn.preprocessing import StandardScaler
 import torch
 
 from alloviewer.image_analysis.io import load_image
-from .config import STYLE_CACHE_PATH, UNET_MEAN, UNET_STD
-from .histogram_capture import EXT_IMAGES_FOLDERS
+from alloviewer.dev.segmentation import UNET_MEAN, UNET_STD
+from alloviewer.dev.segmentation.image_simulation.histogram_capture import (
+    STYLE_CACHE_PATH,
+    EXT_IMAGES_FOLDERS,
+    _find_device_label,
+    _collect_image_paths,
+)
 
 
-# -----------------------------------------------------------------------------
-# labels / paths
-# -----------------------------------------------------------------------------
-
-def _find_device_label(file_path: str | Path) -> str:
-    s = str(file_path).lower()
-    if "iphone" in s:
-        return "iphone"
-    if "googlepixel" in s or "pixel" in s:
-        return "googlepixel"
-    return "microscope"
-
-
-def _collect_image_paths(
-    folders: Optional[Sequence[str | Path]] = None,
-    exts: Sequence[str] = (".png", ".jpg", ".jpeg", ".tif", ".tiff"),
-    recursive: bool = True,
-) -> list[Path]:
-    if folders is None:
-        folders = EXT_IMAGES_FOLDERS
-
-    exts = tuple(e.lower() for e in exts)
-    image_paths: list[Path] = []
-
-    for folder in folders:
-        folder = Path(folder)
-        if not folder.exists():
-            continue
-
-        walker = folder.rglob("*") if recursive else folder.glob("*")
-        for path in walker:
-            if path.is_file() and path.suffix.lower() in exts:
-                image_paths.append(path)
-
-    if not image_paths:
-        raise RuntimeError("No image files found.")
-
-    return sorted(image_paths)
+DEFAULT_DEVICE_ORDER = (
+    "iphone",
+    "googlepixel",
+    "microscope",
+    "monochrome_generic",
+    "monochrome_real",
+    "simulated_raw",
+    "synthetic",
+)
 
 
 # -----------------------------------------------------------------------------
@@ -96,12 +72,53 @@ def denormalize_rgb_image_with_unet(img_hwc: np.ndarray) -> np.ndarray:
 
 def denormalize_dataset_imgs(imgs_norm: torch.Tensor) -> torch.Tensor:
     """
-    imgs_norm: [T,3,H,W], already normalized with UNET_MEAN/UNET_STD
-    returns : [T,3,H,W] in image space
+    imgs_norm: [T,3,H,W] or [3,H,W], already normalized with UNET_MEAN/UNET_STD
+    returns : same rank in image space
     """
-    mean = torch.as_tensor(UNET_MEAN, dtype=imgs_norm.dtype, device=imgs_norm.device).view(1, 3, 1, 1)
-    std = torch.as_tensor(UNET_STD, dtype=imgs_norm.dtype, device=imgs_norm.device).view(1, 3, 1, 1)
-    return imgs_norm * std + mean
+    if imgs_norm.ndim == 3:
+        mean = torch.as_tensor(
+            UNET_MEAN,
+            dtype=imgs_norm.dtype,
+            device=imgs_norm.device,
+        ).view(3, 1, 1)
+        std = torch.as_tensor(
+            UNET_STD,
+            dtype=imgs_norm.dtype,
+            device=imgs_norm.device,
+        ).view(3, 1, 1)
+        return imgs_norm * std + mean
+
+    if imgs_norm.ndim == 4:
+        mean = torch.as_tensor(
+            UNET_MEAN,
+            dtype=imgs_norm.dtype,
+            device=imgs_norm.device,
+        ).view(1, 3, 1, 1)
+        std = torch.as_tensor(
+            UNET_STD,
+            dtype=imgs_norm.dtype,
+            device=imgs_norm.device,
+        ).view(1, 3, 1, 1)
+        return imgs_norm * std + mean
+
+    raise ValueError(f"Expected [3,H,W] or [T,3,H,W], got shape {tuple(imgs_norm.shape)}")
+
+
+def _ensure_tile_tensor(imgs_t: torch.Tensor) -> torch.Tensor:
+    """
+    Ensure tensor shape is [T,3,H,W].
+    """
+    if imgs_t.ndim == 3:
+        if imgs_t.shape[0] != 3:
+            raise ValueError(f"Expected [3,H,W], got {tuple(imgs_t.shape)}")
+        return imgs_t.unsqueeze(0)
+
+    if imgs_t.ndim == 4:
+        if imgs_t.shape[1] != 3:
+            raise ValueError(f"Expected [T,3,H,W], got {tuple(imgs_t.shape)}")
+        return imgs_t
+
+    raise ValueError(f"Expected [3,H,W] or [T,3,H,W], got {tuple(imgs_t.shape)}")
 
 
 # -----------------------------------------------------------------------------
@@ -109,10 +126,15 @@ def denormalize_dataset_imgs(imgs_norm: torch.Tensor) -> torch.Tensor:
 # -----------------------------------------------------------------------------
 
 def _safe_skew(x: np.ndarray) -> float:
+    x = np.asarray(x, dtype=np.float32)
+    if x.size == 0:
+        return 0.0
+
     m = float(x.mean())
     s = float(x.std())
     if s < 1e-12:
         return 0.0
+
     z = (x - m) / s
     return float(np.mean(z ** 3))
 
@@ -179,19 +201,6 @@ def extract_feature_row_from_rgb_image(
     Supports:
       - HWC [H,W,3]
       - CHW [3,H,W]
-
-    Parameters
-    ----------
-    hist_range
-        Histogram range for channel histograms.
-        Use (0,1) for image-space features.
-        Use something like (-3,3) for normalized-image features.
-        Use None to adapt range to each image/channel.
-    dark_threshold, bright_threshold
-        Thresholds for gray-level fractions.
-        Set to None to disable in normalized space.
-    clip_input
-        If True and hist_range is not None, clip the image to hist_range first.
     """
     if rng is None:
         rng = np.random.default_rng(0)
@@ -223,7 +232,7 @@ def extract_feature_row_from_rgb_image(
     n_total = pixels.shape[0]
 
     if sample_pixels is not None and n_total > sample_pixels:
-        idx = rng.choice(n_total, size=sample_pixels, replace=False)
+        idx = rng.choice(n_total, size=int(sample_pixels), replace=False)
         pixels_use = pixels[idx]
     else:
         pixels_use = pixels
@@ -244,8 +253,8 @@ def extract_feature_row_from_rgb_image(
 
     row = {
         "path": path_label,
-        "filename": path_label,
-        "phone": phone_label,
+        "filename": Path(path_label).name if not str(path_label).startswith("<") else path_label,
+        "phone": str(phone_label).lower(),
         "height": int(H),
         "width": int(W),
         "aspect_ratio": float(W / max(H, 1)),
@@ -287,8 +296,16 @@ def extract_feature_row_from_rgb_image(
     row["sat_std"] = float(np.std(sat))
     row["sat_skew"] = float(_safe_skew(sat))
 
-    row["dark_frac"] = float(np.mean(gray <= dark_threshold)) if dark_threshold is not None else np.nan
-    row["bright_frac"] = float(np.mean(gray >= bright_threshold)) if bright_threshold is not None else np.nan
+    row["dark_frac"] = (
+        float(np.mean(gray <= dark_threshold))
+        if dark_threshold is not None
+        else np.nan
+    )
+    row["bright_frac"] = (
+        float(np.mean(gray >= bright_threshold))
+        if bright_threshold is not None
+        else np.nan
+    )
 
     return row
 
@@ -332,7 +349,10 @@ def extract_real_image_feature_table(
       - normalize_imgs=False : image-space features
       - normalize_imgs=True  : normalized-space features
     """
-    final_cache_path = get_feature_cache_path(cache_path=cache_path, normalized=normalize_imgs)
+    final_cache_path = get_feature_cache_path(
+        cache_path=cache_path,
+        normalized=normalize_imgs,
+    )
 
     if final_cache_path.exists() and not force_recompute:
         with open(final_cache_path, "rb") as f:
@@ -341,10 +361,18 @@ def extract_real_image_feature_table(
 
     rng = np.random.default_rng(rng_seed)
     percentiles = tuple(float(p) for p in percentiles)
-    image_paths = _collect_image_paths(folders=folders, exts=exts, recursive=recursive)
-    feature_names = _build_feature_names(hist_bins=hist_bins, percentiles=percentiles)
+    image_paths = _collect_image_paths(
+        folders=folders,
+        exts=exts,
+        recursive=recursive,
+    )
+    feature_names = _build_feature_names(
+        hist_bins=hist_bins,
+        percentiles=percentiles,
+    )
 
     rows = []
+    skipped: list[dict] = []
 
     for path in tqdm(image_paths, desc="Extracting real-image features"):
         try:
@@ -358,25 +386,30 @@ def extract_real_image_feature_table(
                 scale=True,
                 fast_scale=True,
             )
-        except Exception:
+        except Exception as e:
             if ignore_failures:
+                skipped.append({"path": str(path), "reason": repr(e)})
                 continue
             raise
 
         if img.ndim != 3 or img.shape[2] != 3:
+            msg = f"Bad image shape: {path} -> {img.shape}"
             if ignore_failures:
+                skipped.append({"path": str(path), "reason": msg})
                 continue
-            raise RuntimeError(f"Bad image shape: {path} -> {img.shape}")
+            raise RuntimeError(msg)
+
+        device_label = _find_device_label(path)
 
         if normalize_imgs:
-            img = normalize_rgb_image_with_unet(img)
+            img_work = normalize_rgb_image_with_unet(img)
             row = extract_feature_row_from_rgb_image(
-                img=img,
+                img=img_work,
                 hist_bins=hist_bins,
                 percentiles=percentiles,
                 sample_pixels=sample_pixels,
                 rng=rng,
-                phone_label=_find_device_label(path),
+                phone_label=device_label,
                 path_label=str(path),
                 hist_range=normalized_hist_range,
                 dark_threshold=None,
@@ -384,13 +417,14 @@ def extract_real_image_feature_table(
                 clip_input=True,
             )
         else:
+            img_work = np.clip(img.astype(np.float32, copy=False), 0.0, 1.0)
             row = extract_feature_row_from_rgb_image(
-                img=img,
+                img=img_work,
                 hist_bins=hist_bins,
                 percentiles=percentiles,
                 sample_pixels=sample_pixels,
                 rng=rng,
-                phone_label=_find_device_label(path),
+                phone_label=device_label,
                 path_label=str(path),
                 hist_range=(0.0, 1.0),
                 dark_threshold=0.02,
@@ -404,7 +438,10 @@ def extract_real_image_feature_table(
     if not rows:
         raise RuntimeError("No usable images were processed.")
 
-    X = np.array([[row[name] for name in feature_names] for row in rows], dtype=np.float32)
+    X = np.array(
+        [[row[name] for name in feature_names] for row in rows],
+        dtype=np.float32,
+    )
 
     final_cache_path.parent.mkdir(parents=True, exist_ok=True)
     with open(final_cache_path, "wb") as f:
@@ -413,12 +450,16 @@ def extract_real_image_feature_table(
                 "rows": rows,
                 "feature_names": feature_names,
                 "X": X,
-                "folders": [str(f) for f in (folders if folders is not None else EXT_IMAGES_FOLDERS)],
+                "folders": [
+                    str(f)
+                    for f in (folders if folders is not None else EXT_IMAGES_FOLDERS)
+                ],
                 "hist_bins": hist_bins,
                 "percentiles": percentiles,
                 "sample_pixels": sample_pixels,
                 "normalize_imgs": normalize_imgs,
                 "normalized_hist_range": normalized_hist_range,
+                "skipped": skipped,
             },
             f,
         )
@@ -459,7 +500,7 @@ def rebuild_style_feature_cache(
 def summarize_features_by_phone(
     rows: list[dict],
     feature_names: Sequence[str],
-    phones: Sequence[str] = ("iphone", "googlepixel", "microscope"),
+    phones: Sequence[str] = DEFAULT_DEVICE_ORDER,
     q_lo: float = 0.10,
     q_hi: float = 0.90,
 ):
@@ -475,11 +516,14 @@ def summarize_features_by_phone(
     total_n = len(rows)
 
     for phone in phones:
-        subset = [row for row in rows if row.get("phone") == phone]
+        subset = [row for row in rows if str(row.get("phone", "")).lower() == phone]
         if len(subset) == 0:
             continue
 
-        X = np.array([[row[f] for f in feature_names] for row in subset], dtype=np.float64)
+        X = np.array(
+            [[row[f] for f in feature_names] for row in subset],
+            dtype=np.float64,
+        )
 
         means = X.mean(axis=0)
         stds = X.std(axis=0)
@@ -505,21 +549,33 @@ def compare_real_and_synthetic_feature_tables(
     real_rows: Sequence[dict],
     synthetic_rows: Sequence[dict],
     feature_names: Sequence[str],
-    group_names: Sequence[str] = ("iphone", "googlepixel", "microscope"),
+    group_names: Sequence[str] = DEFAULT_DEVICE_ORDER,
     q_lo: float = 0.10,
     q_hi: float = 0.90,
 ) -> list[dict]:
     out = []
 
     for group in group_names:
-        real_sub = [r for r in real_rows if str(r.get("phone", "")).lower() == group]
-        syn_sub = [r for r in synthetic_rows if str(r.get("phone", "")).lower() == group]
+        real_sub = [
+            r for r in real_rows
+            if str(r.get("phone", "")).lower() == group
+        ]
+        syn_sub = [
+            r for r in synthetic_rows
+            if str(r.get("phone", "")).lower() == group
+        ]
 
         if len(real_sub) == 0 or len(syn_sub) == 0:
             continue
 
-        XR = np.array([[r[f] for f in feature_names] for r in real_sub], dtype=np.float64)
-        XS = np.array([[r[f] for f in feature_names] for r in syn_sub], dtype=np.float64)
+        XR = np.array(
+            [[r[f] for f in feature_names] for r in real_sub],
+            dtype=np.float64,
+        )
+        XS = np.array(
+            [[r[f] for f in feature_names] for r in syn_sub],
+            dtype=np.float64,
+        )
 
         real_med = np.median(XR, axis=0)
         syn_med = np.median(XS, axis=0)
@@ -542,9 +598,11 @@ def compare_real_and_synthetic_feature_tables(
         overlap_lo = np.maximum(real_lo, syn_lo)
         overlap_hi = np.minimum(real_hi, syn_hi)
         overlap = np.maximum(0.0, overlap_hi - overlap_lo)
+
         union_lo = np.minimum(real_lo, syn_lo)
         union_hi = np.maximum(real_hi, syn_hi)
         union = np.maximum(1e-8, union_hi - union_lo)
+
         overlap_frac = overlap / union
 
         mismatch_score = (
@@ -598,6 +656,7 @@ def _extract_style_name_from_extras(extras: Dict[str, Any]) -> str:
         for t in tiles_meta:
             if not isinstance(t, dict):
                 continue
+
             cam_meta = t.get("camera_style", {})
             if isinstance(cam_meta, dict):
                 style_name = cam_meta.get("style_name", None)
@@ -630,14 +689,26 @@ def collect_synthetic_feature_rows_from_dataset(
     rng = np.random.default_rng(rng_seed)
     rows = []
 
-    for i in range(int(n_synthetic)):
-        imgs_t, _, extras = dataset[i]
+    n_items = min(int(n_synthetic), len(dataset))
+
+    for i in range(n_items):
+        item = dataset[i]
+
+        if not isinstance(item, tuple) or len(item) < 3:
+            raise ValueError(
+                "Expected dataset[i] to return at least "
+                "(imgs_t, target, extras)"
+            )
+
+        imgs_t, _, extras = item[:3]
         style_name = _extract_style_name_from_extras(extras)
 
+        imgs_t = _ensure_tile_tensor(imgs_t.detach())
+
         if normalized_features:
-            imgs_work = imgs_t.detach()
+            imgs_work = imgs_t
         else:
-            imgs_work = denormalize_dataset_imgs(imgs_t.detach())
+            imgs_work = denormalize_dataset_imgs(imgs_t)
 
         if use_first_tile_only:
             tile_indices = [0]
@@ -645,7 +716,13 @@ def collect_synthetic_feature_rows_from_dataset(
             tile_indices = list(range(imgs_work.shape[0]))
 
         for t_idx in tile_indices:
-            img = imgs_work[t_idx].permute(1, 2, 0).cpu().numpy().astype(np.float32)
+            img = (
+                imgs_work[t_idx]
+                .permute(1, 2, 0)
+                .cpu()
+                .numpy()
+                .astype(np.float32)
+            )
 
             if normalized_features:
                 row = extract_feature_row_from_rgb_image(
@@ -686,8 +763,39 @@ def collect_synthetic_feature_rows_from_dataset(
 # PCA plotting
 # -----------------------------------------------------------------------------
 
+def _ordered_labels_present(labels: Sequence[str]) -> list[str]:
+    labels_set = {str(x).lower() for x in labels}
+
+    ordered = [x for x in DEFAULT_DEVICE_ORDER if x in labels_set]
+    extras = sorted(labels_set.difference(ordered))
+
+    return ordered + extras
+
+
+def _select_pca_features(
+    feature_names: Sequence[str],
+    normalized: bool,
+    feature_subset: Optional[Sequence[str]] = None,
+    drop_size_features: bool = True,
+) -> list[str]:
+    if feature_subset is not None:
+        return list(feature_subset)
+
+    if drop_size_features:
+        drop = {"height", "width", "aspect_ratio", "n_pixels_used"}
+    else:
+        drop = set()
+
+    if normalized:
+        drop = set(drop)
+        drop.update({"dark_frac", "bright_frac", "sat_mean", "sat_std", "sat_skew"})
+
+    return [f for f in feature_names if f not in drop]
+
+
 def plot_real_and_synthetic_pca(
     dataset,
+    folders: Optional[Sequence[str | Path]] = None,
     cache_path: str | Path = STYLE_CACHE_PATH,
     n_synthetic: int = 100,
     normalized: bool = False,
@@ -704,48 +812,37 @@ def plot_real_and_synthetic_pca(
     use_first_tile_only: bool = True,
     normalized_hist_range: Tuple[float, float] = (-3.0, 3.0),
     title: Optional[str] = None,
+    force_recompute_real_cache: bool = False,
 ):
     """
     PCA comparison between real images and dataset images.
 
-    Parameters
-    ----------
-    normalized
-        False:
-            real cache is image-space cache
-            dataset images are denormalized before feature extraction
+    normalized=False:
+        real cache is image-space cache.
+        dataset images are denormalized before feature extraction.
 
-        True:
-            real cache is normalized-image cache
-            dataset images are used as stored
+    normalized=True:
+        real cache is normalized-image cache.
+        dataset images are used as stored.
     """
-    final_cache_path = get_feature_cache_path(cache_path=cache_path, normalized=normalized)
+    real_rows, feature_names, _ = extract_real_image_feature_table(
+        folders=folders,
+        hist_bins=hist_bins,
+        percentiles=percentiles,
+        sample_pixels=sample_pixels,
+        cache_path=cache_path,
+        force_recompute=force_recompute_real_cache,
+        normalize_imgs=normalized,
+        normalized_hist_range=normalized_hist_range,
+        rng_seed=rng_seed,
+    )
 
-    if not final_cache_path.exists():
-        raise FileNotFoundError(f"Cache file not found: {final_cache_path}")
-
-    with open(final_cache_path, "rb") as f:
-        payload = pickle.load(f)
-
-    real_rows = payload["rows"]
-    feature_names = payload["feature_names"]
-
-    if feature_subset is None:
-        if drop_size_features:
-            if normalized:
-                drop = {"height", "width", "aspect_ratio", "n_pixels_used", "sat_mean", "sat_std", "sat_skew"}
-            else:
-                drop = {"height", "width", "aspect_ratio", "n_pixels_used"}
-
-            feature_names_used = [f for f in feature_names if f not in drop]
-        else:
-            feature_names_used = list(feature_names)
-
-        if normalized:
-            drop_norm_only = {"dark_frac", "bright_frac"}
-            feature_names_used = [f for f in feature_names_used if f not in drop_norm_only]
-    else:
-        feature_names_used = list(feature_subset)
+    feature_names_used = _select_pca_features(
+        feature_names=feature_names,
+        normalized=normalized,
+        feature_subset=feature_subset,
+        drop_size_features=drop_size_features,
+    )
 
     if not feature_names_used:
         raise ValueError("No features selected for PCA")
@@ -762,8 +859,29 @@ def plot_real_and_synthetic_pca(
         normalized_hist_range=normalized_hist_range,
     )
 
+    if len(synthetic_rows) == 0:
+        raise RuntimeError("No synthetic rows were collected from the dataset.")
+
     all_rows = list(real_rows) + list(synthetic_rows)
-    X = np.array([[row[f] for f in feature_names_used] for row in all_rows], dtype=np.float64)
+
+    X = np.array(
+        [[row[f] for f in feature_names_used] for row in all_rows],
+        dtype=np.float64,
+    )
+
+    finite_cols = np.all(np.isfinite(X), axis=0)
+    if not finite_cols.all():
+        feature_names_used = [
+            f for f, keep in zip(feature_names_used, finite_cols)
+            if keep
+        ]
+        X = X[:, finite_cols]
+
+    if X.shape[0] < 2:
+        raise ValueError("Need at least two images for PCA.")
+
+    if X.shape[1] < 2:
+        raise ValueError("Need at least two finite features for PCA.")
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
@@ -772,28 +890,45 @@ def plot_real_and_synthetic_pca(
     X_pca = pca.fit_transform(X_scaled)
 
     labels = [str(row["phone"]).lower() for row in all_rows]
-    is_real = np.array([not str(row["path"]).startswith("<synthetic_") for row in all_rows])
+    is_real = np.array(
+        [not str(row["path"]).startswith("<synthetic_") for row in all_rows],
+        dtype=bool,
+    )
 
     fig, ax = plt.subplots(figsize=(10, 8))
 
-    real_devices = ["iphone", "googlepixel", "microscope"]
-    syn_devices = ["iphone", "googlepixel", "microscope", "synthetic"]
-
-    for dev in real_devices:
-        idx = [i for i, lab in enumerate(labels) if lab == dev and is_real[i]]
-        if idx:
-            pts = X_pca[idx]
-            ax.scatter(pts[:, 0], pts[:, 1], alpha=alpha_real, s=s_real, label=f"real {dev}")
+    present_labels = _ordered_labels_present(labels)
 
     syn_markers = {
         "iphone": "x",
         "googlepixel": "^",
         "microscope": "s",
+        "monochrome_generic": "P",
+        "monochrome_real": "v",
+        "simulated_raw": "D",
         "synthetic": "D",
     }
 
-    for dev in syn_devices:
-        idx = [i for i, lab in enumerate(labels) if lab == dev and not is_real[i]]
+    for dev in present_labels:
+        idx = [
+            i for i, lab in enumerate(labels)
+            if lab == dev and is_real[i]
+        ]
+        if idx:
+            pts = X_pca[idx]
+            ax.scatter(
+                pts[:, 0],
+                pts[:, 1],
+                alpha=alpha_real,
+                s=s_real,
+                label=f"real {dev}",
+            )
+
+    for dev in present_labels:
+        idx = [
+            i for i, lab in enumerate(labels)
+            if lab == dev and not is_real[i]
+        ]
         if idx:
             pts = X_pca[idx]
             ax.scatter(
@@ -810,8 +945,11 @@ def plot_real_and_synthetic_pca(
     ax.set_ylabel(f"PC2 ({100.0 * evr[1]:.1f}% var)")
 
     if title is None:
-        title = "PCA of normalized real vs normalized synthetic image features" if normalized \
+        title = (
+            "PCA of normalized real vs normalized synthetic image features"
+            if normalized
             else "PCA of real vs denormalized synthetic image features"
+        )
 
     ax.set_title(title)
     ax.grid(True, alpha=0.25)
@@ -821,7 +959,7 @@ def plot_real_and_synthetic_pca(
     plt.show()
 
     return {
-        "cache_path_used": str(final_cache_path),
+        "cache_path_used": str(get_feature_cache_path(cache_path, normalized=normalized)),
         "normalized": normalized,
         "real_rows": real_rows,
         "synthetic_rows": synthetic_rows,
@@ -830,6 +968,119 @@ def plot_real_and_synthetic_pca(
         "X_pca": X_pca.astype(np.float32),
         "labels": labels,
         "is_real": is_real,
+        "scaler": scaler,
+        "pca": pca,
+    }
+
+def plot_real_image_pca(
+    folders: Optional[Sequence[str | Path]] = None,
+    cache_path: str | Path = STYLE_CACHE_PATH,
+    normalized: bool = False,
+    feature_subset: Optional[Sequence[str]] = None,
+    drop_size_features: bool = True,
+    hist_bins: int = 16,
+    percentiles: Sequence[float] = (1, 5, 25, 50, 75, 95, 99),
+    sample_pixels: Optional[int] = 300_000,
+    rng_seed: int = 0,
+    normalized_hist_range: Tuple[float, float] = (-3.0, 3.0),
+    force_recompute_real_cache: bool = False,
+    title: Optional[str] = None,
+    point_size: float = 28,
+    alpha: float = 0.75,
+):
+    """
+    Plot PCA for external/real images only.
+    """
+    real_rows, feature_names, _ = extract_real_image_feature_table(
+        folders=folders,
+        hist_bins=hist_bins,
+        percentiles=percentiles,
+        sample_pixels=sample_pixels,
+        cache_path=cache_path,
+        force_recompute=force_recompute_real_cache,
+        normalize_imgs=normalized,
+        normalized_hist_range=normalized_hist_range,
+        rng_seed=rng_seed,
+    )
+
+    feature_names_used = _select_pca_features(
+        feature_names=feature_names,
+        normalized=normalized,
+        feature_subset=feature_subset,
+        drop_size_features=drop_size_features,
+    )
+
+    if not feature_names_used:
+        raise ValueError("No features selected for PCA")
+
+    X = np.array(
+        [[row[f] for f in feature_names_used] for row in real_rows],
+        dtype=np.float64,
+    )
+
+    finite_cols = np.all(np.isfinite(X), axis=0)
+    if not finite_cols.all():
+        feature_names_used = [
+            f for f, keep in zip(feature_names_used, finite_cols)
+            if keep
+        ]
+        X = X[:, finite_cols]
+
+    if X.shape[0] < 2:
+        raise ValueError("Need at least two real images for PCA.")
+
+    if X.shape[1] < 2:
+        raise ValueError("Need at least two finite features for PCA.")
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    pca = PCA(n_components=2, random_state=rng_seed)
+    X_pca = pca.fit_transform(X_scaled)
+
+    labels = [str(row["phone"]).lower() for row in real_rows]
+    present_labels = _ordered_labels_present(labels)
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+
+    for dev in present_labels:
+        idx = [i for i, lab in enumerate(labels) if lab == dev]
+        if idx:
+            pts = X_pca[idx]
+            ax.scatter(
+                pts[:, 0],
+                pts[:, 1],
+                s=point_size,
+                alpha=alpha,
+                label=dev,
+            )
+
+    evr = pca.explained_variance_ratio_
+    ax.set_xlabel(f"PC1 ({100.0 * evr[0]:.1f}% var)")
+    ax.set_ylabel(f"PC2 ({100.0 * evr[1]:.1f}% var)")
+
+    if title is None:
+        title = (
+            "PCA of normalized external image features"
+            if normalized
+            else "PCA of external image features"
+        )
+
+    ax.set_title(title)
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+    return {
+        "cache_path_used": str(get_feature_cache_path(cache_path, normalized=normalized)),
+        "normalized": normalized,
+        "real_rows": real_rows,
+        "feature_names_used": feature_names_used,
+        "X_scaled": X_scaled.astype(np.float32),
+        "X_pca": X_pca.astype(np.float32),
+        "labels": labels,
         "scaler": scaler,
         "pca": pca,
     }
