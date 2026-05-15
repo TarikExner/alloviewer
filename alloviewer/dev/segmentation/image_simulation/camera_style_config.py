@@ -463,6 +463,20 @@ def diverse_cameras() -> CameraStyleConfig:
             "microscope",
             "iphone",
             "googlepixel",
+            "monochrome_generic",
+            "simulated_raw",
+        ),
+        probs=None,
+    )
+
+def diverse_cameras_showoff() -> CameraStyleConfig:
+    """without generic monochrome, just for fig S2"""
+    return CameraStyleConfig(
+        styles=(
+            "microscope",
+            "iphone",
+            "googlepixel",
+            "monochrome_real",
             "simulated_raw",
         ),
         probs=None,
