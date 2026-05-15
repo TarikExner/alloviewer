@@ -13,6 +13,8 @@ import cv2
 
 from .types import RNG
 
+import numbers
+
 def to_jsonable(x):
     """Convert common numeric / numpy types to plain Python so JSON dump works."""
     # simple numbers
