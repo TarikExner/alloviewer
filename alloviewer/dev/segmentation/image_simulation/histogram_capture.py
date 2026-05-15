@@ -390,16 +390,6 @@ def build_target_quantile_band_cache(
 
     The cache supports both old global matching and newer region-aware matching.
 
-    New structure:
-        cache["devices"][device]["regions"]["all"]
-        cache["devices"][device]["regions"]["foreground"]
-        cache["devices"][device]["regions"]["background"]
-
-    For backward support, q_center/q_lo/q_hi are also exposed at:
-        cache["devices"][device]["q_center"]
-        cache["devices"][device]["q_lo"]
-        cache["devices"][device]["q_hi"]
-
     Foreground/background masks are estimated from image brightness. Foreground
     means bright cell-like pixels.
     """
