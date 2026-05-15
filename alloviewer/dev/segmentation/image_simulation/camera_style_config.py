@@ -464,6 +464,7 @@ def diverse_cameras() -> CameraStyleConfig:
             "iphone",
             "googlepixel",
             "monochrome_generic",
+            "monochrome_real",
             "simulated_raw",
         ),
         probs=None,

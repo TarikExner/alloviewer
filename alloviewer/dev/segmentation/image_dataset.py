@@ -283,7 +283,7 @@ class SimCellsDataset(BaseCellsTilesDataset):
 
 
         self.quantile_band_cache = load_or_build_quantile_band_cache(
-            force_recompute=True,
+            force_recompute=False,
             foreground_quantile=None,
             background_quantile=0.80,
         )

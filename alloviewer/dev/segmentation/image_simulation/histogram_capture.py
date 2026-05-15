@@ -6,6 +6,8 @@ from typing import Optional, Sequence, Dict, Any, Tuple, Union
 import cv2
 import numpy as np
 
+from tqdm import tqdm
+
 from alloviewer.image_analysis.io import load_image
 
 EXT_IMAGES_FOLDERS = [
@@ -369,7 +371,7 @@ def build_target_quantile_band_cache(
         "monochrome_real",
     ),
     recursive: bool = True,
-    sample_pixels_per_image: Optional[int] = 300_000,
+    sample_pixels_per_image: Optional[int] = 100_000,
     n_quantiles: int = 256,
     q_band_lo: float = 0.025,
     q_band_hi: float = 0.975,
@@ -424,7 +426,7 @@ def build_target_quantile_band_cache(
     counts = {d: 0 for d in devices}
     skipped: list[Dict[str, str]] = []
 
-    for path in image_paths:
+    for path in tqdm(image_paths, desc="Building quantile-band cache", unit="image"):
         device = _find_device_label(path)
         if device not in devices:
             continue
