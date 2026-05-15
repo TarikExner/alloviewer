@@ -71,11 +71,8 @@ def _resolve_device_value(value, device: str, default):
 def _find_device_label(file_path: str | Path) -> str:
     s = str(file_path).lower()
 
-    if "monochrome_real" in s or "mono_real" in s:
+    if "mono_rgb" in s or "mono_real" in s:
         return "monochrome_real"
-
-    if "monochrome_generic" in s or "mono_generic" in s:
-        return "monochrome_generic"
 
     if "iphone" in s:
         return "iphone"
