@@ -566,7 +566,7 @@ def load_or_build_quantile_band_cache(
     folders: Optional[Sequence[str | Path]] = None,
     cache_path: str | Path = STYLE_QUANTILE_CACHE_PATH,
     force_recompute: bool = False,
-    sample_pixels_per_image: Optional[int] = 300_000,
+    sample_pixels_per_image: Optional[int] = 100_000,
     n_quantiles: int = 1024,
     q_band_lo: float = 0.025,
     q_band_hi: float = 0.975,
