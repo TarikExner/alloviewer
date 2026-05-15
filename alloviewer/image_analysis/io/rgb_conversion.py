@@ -13,7 +13,6 @@ from .utils import (
     ChannelCombineReport,
     IMAGE_EXTS,
     SourceType,
-    as_single_channel_raw,
     common_output_dtype,
     detect_channel_from_name,
     infer_group_bit_depth,
@@ -55,6 +54,129 @@ class CombinedRGBImage:
     array: np.ndarray
     output_name: str
     report: ChannelCombineReport
+
+
+def extract_declared_mono_channel(
+    arr: np.ndarray,
+    *,
+    declared_channel: str,
+    image_name: str,
+    warnings: list[str],
+) -> np.ndarray:
+    """
+    Extract one monochrome channel from an image based on the filename-declared
+    channel.
+
+    This function is intentionally used in the RGB-combination workflow, where
+    the user is asking to build one RGB image from separate channel files.
+
+    Supported inputs:
+      - HxW:
+          Already monochrome. Returned unchanged.
+
+      - HxWx1:
+          Single-channel image. The only channel is returned.
+
+      - HxWx3:
+          Fallback case. The image is treated as RGB information stored in one
+          uploaded file, but the filename still declares which single channel
+          should be extracted.
+
+          Filename declares r -> use RGB channel 0
+          Filename declares g -> use RGB channel 1
+          Filename declares b -> use RGB channel 2
+
+      - HxWx4:
+          Same as HxWx3, but alpha is ignored.
+
+    Important:
+      open_image() returns OpenCV-native channel order for color images.
+      Therefore HxWx3/HxWx4 images are interpreted as BGR/BGRA and converted
+      to RGB before the declared channel is extracted.
+
+    No scaling, clipping, shifting, or normalization is done.
+    """
+    declared_channel = declared_channel.lower()
+
+    if declared_channel not in {"r", "g", "b"}:
+        raise ValueError(
+            f"Invalid declared_channel {declared_channel!r}; expected 'r', 'g', or 'b'."
+        )
+
+    if arr.ndim == 2:
+        return arr
+
+    if arr.ndim != 3:
+        raise ValueError(
+            f"Unsupported image shape {arr.shape} for {image_name!r}; "
+            "expected HxW, HxWx1, HxWx3, or HxWx4."
+        )
+
+    n_channels = arr.shape[2]
+
+    if n_channels == 1:
+        return arr[..., 0]
+
+    if n_channels not in (3, 4):
+        raise ValueError(
+            f"Unsupported {n_channels}-channel image for {image_name!r}; "
+            "expected HxW, HxWx1, HxWx3, or HxWx4."
+        )
+
+    # Fallback case:
+    # The user called the mono-to-RGB combiner, so a 3-channel input is treated
+    # as a source from which one declared channel should be extracted.
+    bgr = arr[..., :3]
+    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+    channel_index = {
+        "r": 0,
+        "g": 1,
+        "b": 2,
+    }[declared_channel]
+
+    selected = rgb[..., channel_index]
+
+    nonzero_counts = {
+        "r": int(np.count_nonzero(rgb[..., 0])),
+        "g": int(np.count_nonzero(rgb[..., 1])),
+        "b": int(np.count_nonzero(rgb[..., 2])),
+    }
+
+    warnings.append(
+        f"Image {image_name!r} has shape {arr.shape}. "
+        f"Expected a monochrome image, but got {n_channels} channels. "
+        f"Using fallback extraction because this RGB-combination function expects "
+        f"single-channel information. Filename declares channel {declared_channel!r}; "
+        f"using RGB channel index {channel_index} after BGR->RGB interpretation. "
+        f"Non-zero pixel counts: {nonzero_counts}."
+    )
+
+    if n_channels == 4:
+        warnings.append(
+            f"Image {image_name!r} has an alpha channel. Alpha was ignored."
+        )
+
+    if nonzero_counts[declared_channel] == 0:
+        warnings.append(
+            f"Declared channel {declared_channel!r} in {image_name!r} contains only "
+            "zero pixels after BGR->RGB interpretation."
+        )
+
+    ignored_nonzero_channels = [
+        ch
+        for ch in ("r", "g", "b")
+        if ch != declared_channel and nonzero_counts[ch] > 0
+    ]
+
+    if ignored_nonzero_channels:
+        warnings.append(
+            f"Image {image_name!r} contains non-zero pixels in non-declared channel(s) "
+            f"{ignored_nonzero_channels}. These channels were ignored."
+        )
+
+    return selected
+
 
 def group_named_sources_by_rgb_channel(
     sources: Sequence[NamedImageSource],
@@ -116,6 +238,23 @@ def combine_mono_rgb_sources(
       - FastAPI UploadFile.file via:
         NamedImageSource(name=file.filename, source=file.file)
 
+    Channel assignment is based on the filename. The filename must contain a
+    standalone r/g/b token separated by the configured channel separators.
+
+    Input image handling:
+      - HxW:
+          used directly as the declared channel
+
+      - HxWx1:
+          the only channel is used as the declared channel
+
+      - HxWx3:
+          fallback extraction is used. The declared filename channel decides
+          which RGB channel is extracted.
+
+      - HxWx4:
+          same as HxWx3, alpha ignored.
+
     No scaling is done.
     No right-shifting is done.
     No intensity normalization is done.
@@ -161,7 +300,12 @@ def combine_mono_rgb_sources(
                 max_mp=max_mp,
             )
 
-            mono = as_single_channel_raw(arr, item.name)
+            mono = extract_declared_mono_channel(
+                arr,
+                declared_channel=ch,
+                image_name=item.name,
+                warnings=warnings,
+            )
 
             if reference_shape is None:
                 reference_shape = mono.shape
@@ -285,6 +429,7 @@ def encode_rgb_image(
         raise RuntimeError(f"Failed to encode RGB image as {ext!r}.")
 
     return encoded.tobytes()
+
 
 def combine_mono_rgb_folder(
     folder: Union[str, Path],
