@@ -464,7 +464,6 @@ MICROSCOPE_STYLE = CameraStyleParams(
 
     blur_sigma_range=(0.08, 0.28),
     sharpen_strength_range=(0.00, 0.035),
-    noise_std_base_range=(0.0002, 0.0012),
 
     vignette_amp_range=(0.00, 0.008),
     illum_amp_range=(0.00, 0.01),
