@@ -31,6 +31,14 @@ TWO_COL_LEGEND = {
     "borderaxespad": 0.1,  # Reduce padding around the legend box
 }
 
+PHONE_DICT = {
+    "iPhone": "phone brand 1",
+    "GooglePixel": "phone brand 2",
+    "Microscope": "microscope camera rgb",
+    "Monochrome": "microscope camera monochrome",
+    "Generic": "generic"
+}
+
 STRIPPLOT_PARAMS = {"linewidth": 0.5, "dodge": True, "s": 2}
 
 BOXPLOT_PARAMS = {
