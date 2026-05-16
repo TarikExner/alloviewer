@@ -23,6 +23,7 @@ from .figure_data_utils import (
 from alloviewer.image_analysis.segmenter import SegmenterUNetInference
 from alloviewer.image_analysis.config import UNET_CONFIG, INSTANCE_CONFIG_DICT
 from alloviewer.image_analysis.io import load_image
+from alloviewer.dev.segmentation.image_simulation import simulate_image
 import copy
 
 _LOG_RE = re.compile(
@@ -384,7 +385,6 @@ def get_loss_data(model_output_dir: str, recursive: bool = True,
     return df
 
 def generate_param_showcase(
-    simulate_image_fn,
     sim_config: Any,
     camera: Optional[Any],
     sweep: Mapping[str, Sequence[Any]],
@@ -432,7 +432,7 @@ def generate_param_showcase(
             kwargs["seed"] = int(tile_seed)
             kwargs[p] = val
 
-            img, meta, tgt = simulate_image_fn(**kwargs)
+            img, meta, tgt = simulate_image(**kwargs)
 
             images[r][c] = img
             metas[r][c] = meta
@@ -970,8 +970,6 @@ def fill_and_recalculate_frac_pos_from_scores_random(
     df_out = df_out.drop(columns=["_annotator_str"])
 
     return df_out, refs
-
-
 
 def get_score_frame():
 

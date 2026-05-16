@@ -44,11 +44,8 @@ DIRECTORIES = {
     "sketch_dir": "./sketches/"
 }
 
-def generate_all_figures(
-    simulate_image_fn: Callable,
-    sim_config: Any,
-    camera: Any
-):
+def generate_all_figures():
+
     figure_1_generation(**DIRECTORIES)
 
     figure_S1_generation(**DIRECTORIES)
@@ -60,10 +57,5 @@ def generate_all_figures(
     figure_S7_generation(**DIRECTORIES)
     figure_S8_generation(**DIRECTORIES)
 
-    figure_SIM_generation(
-        simulate_image_fn = simulate_image_fn,
-        camera = camera,
-        sim_config = sim_config,
-        **DIRECTORIES
-    )
+    figure_SIM_generation(**DIRECTORIES)
 

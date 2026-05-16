@@ -9,6 +9,8 @@ from .figure_data_generation import generate_param_showcase
 
 from . import figure_config as cfg
 
+from alloviewer.dev.segmentation.image_simulation import CameraDimension, SimulatorConfig
+
 
 def _generate_main_figure(
     bundle: Dict[str, Any],
@@ -95,23 +97,25 @@ def _generate_main_figure(
 
 
 def figure_SIM_generation(
-    h5_path: str,
     figure_output_dir: str,
-    simulate_image_fn: Callable,
-    sim_config: Any,
-    camera: Any,
     **kwargs
 ):
+
+    sim_config = SimulatorConfig()
+    camera = CameraDimension(
+        name = "Extended_Data_Cam",
+        W = 1024,
+        H = 1024
+    )
     sweep = {
         "background_level": [0.00, 0.10, 0.18, 0.26],
-        "bg_hue": [0, 0.3, 0.6, 1],
+        "color_jitter": [0.00, 0.1, 0.2, 0.3],
         "edge_boost": [0, 0.3, 0.6, 1],
         "n_cells": [100, 400, 800, 1500],
         "frac_positive": [0.00, 0.25, 0.50, 0.75],
         "cell_diameter": [2, 4, 6, 8],
     }
     bundle = generate_param_showcase(
-        simulate_image_fn=simulate_image_fn,
         sim_config=sim_config,
         camera=camera,
         sweep=sweep,
@@ -126,15 +130,14 @@ def figure_SIM_generation(
     )
 
     sweep = {
-        "color_jitter": [0.00, 0.1, 0.2, 0.3],
         "sigma_in": [(0,0), (0.5,0.5), (1,1), (1.5,1.5)],
+        "sigma_out": [(0,0), (0.5,0.5), (1,1), (1.5,1.5)],
         "rim_bias": [0.2, 0.5, 0.8, 0.95],
         "rim_band": [0.05, 0.2, 0.5, 0.7],
         "edge_clamp": [0.2, 0.4, 0.6, 0.8],
         "rim_min_sep_px": [0, 20, 50, 100],
     }
     bundle = generate_param_showcase(
-        simulate_image_fn=simulate_image_fn,
         sim_config=sim_config,
         camera=camera,
         sweep=sweep,
@@ -157,7 +160,6 @@ def figure_SIM_generation(
         "ring_alpha_range": [(0,0), (0.03, 0.03), (0.12, 0.12), (0.5, 0.5)],
     }
     bundle = generate_param_showcase(
-        simulate_image_fn=simulate_image_fn,
         sim_config=sim_config,
         camera=camera,
         sweep=sweep,
@@ -188,7 +190,6 @@ def figure_SIM_generation(
         "ghost_intensity": [(0.01, 0.01), (0.05, 0.05), (0.1, 0.1), (0.3, 0.3)],
     }
     bundle = generate_param_showcase(
-        simulate_image_fn=simulate_image_fn,
         sim_config=sim_config,
         camera=camera,
         sweep=sweep,
@@ -207,11 +208,9 @@ def figure_SIM_generation(
         "dirt_size": [(4,4), (6,6), (8,8), (12,12)],
         "dirt_sigma": [(0,0), (0.5, 0.5), (1,1), (2,2)],
         "dirt_alpha": [(0.1,0.1), (0.3, 0.3), (0.6, 0.6), (1,1)],
-        "read_noise": [0, 0.05, 0.1, 0.3],
         "blur_sigma_global": [0, 0.5, 1.25, 2],
     }
     bundle = generate_param_showcase(
-        simulate_image_fn=simulate_image_fn,
         sim_config=sim_config,
         camera=camera,
         sweep=sweep,
@@ -235,7 +234,6 @@ def figure_SIM_generation(
         "reflect_harmonic_decay": [0, 0.2, 0.5, 1],
     }
     bundle = generate_param_showcase(
-        simulate_image_fn=simulate_image_fn,
         sim_config=sim_config,
         camera=camera,
         sweep=sweep,
