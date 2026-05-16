@@ -512,48 +512,48 @@ def _generate_main_figure(
 
         orig_sim = fig.add_subplot(fig_sgs[0, 0])
         orig_sim.imshow(sim_img)
-        orig_sim.set_title("Simulated", fontsize=cfg.TITLE_SIZE)
+        orig_sim.set_title(f"{cfg.PHONE_DICT['Simulated']}\n", fontsize=cfg.TITLE_SIZE)
         utils.prep_image_axis(orig_sim)
 
         mic_sim = fig.add_subplot(fig_sgs[0, 1])
         mic_sim.imshow(mic_adj)
-        mic_sim.set_title("Adjusted to\nMicroscope", fontsize=cfg.TITLE_SIZE)
+        mic_sim.set_title(f"Adjusted to\n{cfg.PHONE_DICT['Microscope']}", fontsize=cfg.TITLE_SIZE)
         utils.prep_image_axis(mic_sim)
 
         gp_sim = fig.add_subplot(fig_sgs[0, 2])
         gp_sim.imshow(gp_adj)
-        gp_sim.set_title("Adjusted to\nGooglePixel", fontsize=cfg.TITLE_SIZE)
+        gp_sim.set_title(f"Adjusted to\n{cfg.PHONE_DICT['GooglePixel']}", fontsize=cfg.TITLE_SIZE)
         utils.prep_image_axis(gp_sim)
 
         iphone_sim = fig.add_subplot(fig_sgs[0, 3])
         iphone_sim.imshow(iphone_adj)
-        iphone_sim.set_title("Adjusted to\niPhone", fontsize=cfg.TITLE_SIZE)
+        iphone_sim.set_title(f"Adjusted to\n{cfg.PHONE_DICT['iPhone']}", fontsize=cfg.TITLE_SIZE)
         utils.prep_image_axis(iphone_sim)
 
         mono_sim = fig.add_subplot(fig_sgs[0, 4])
         mono_sim.imshow(mono_adj)
-        mono_sim.set_title("Adjusted to\nMonochrome", fontsize=cfg.TITLE_SIZE)
+        mono_sim.set_title(f"Adjusted to\n{cfg.PHONE_DICT['Monochrome']}", fontsize=cfg.TITLE_SIZE)
         utils.prep_image_axis(mono_sim)
 
         orig_hist = fig.add_subplot(fig_sgs[1, 0])
         plot_rgb_histogram(orig_hist, sim_img)
-        orig_hist.set_title("Simulated histogram\n", fontsize=cfg.TITLE_SIZE)
+        orig_hist.set_title(f"{cfg.PHONE_DICT['Simulated']} histogram\n", fontsize=cfg.TITLE_SIZE)
 
         mic_hist = fig.add_subplot(fig_sgs[1, 1])
         plot_rgb_histogram(mic_hist, mic_adj)
-        mic_hist.set_title("Microscope histogram\n(simulated)", fontsize=cfg.TITLE_SIZE)
+        mic_hist.set_title(f"{cfg.PHONE_DICT['Microscope']} histogram\n(simulated)", fontsize=cfg.TITLE_SIZE)
 
         gp_hist = fig.add_subplot(fig_sgs[1, 2])
         plot_rgb_histogram(gp_hist, gp_adj)
-        gp_hist.set_title("GooglePixel histogram\n(simulated)", fontsize=cfg.TITLE_SIZE)
+        gp_hist.set_title(f"{cfg.PHONE_DICT['GooglePixel']} histogram\n(simulated)", fontsize=cfg.TITLE_SIZE)
 
         iphone_hist = fig.add_subplot(fig_sgs[1, 3])
         plot_rgb_histogram(iphone_hist, iphone_adj)
-        iphone_hist.set_title("iPhone histogram\n(simulated)", fontsize=cfg.TITLE_SIZE)
+        iphone_hist.set_title(f"{cfg.PHONE_DICT['iPhone']} histogram\n(simulated)", fontsize=cfg.TITLE_SIZE)
 
         mono_hist = fig.add_subplot(fig_sgs[1, 4])
         plot_rgb_histogram(mono_hist, mono_adj)
-        mono_hist.set_title("Monochrome histogram\n(simulated)", fontsize=cfg.TITLE_SIZE)
+        mono_hist.set_title(f"{cfg.PHONE_DICT['Monochrome']} histogram\n(simulated)", fontsize=cfg.TITLE_SIZE)
 
     fig = plt.figure(
         layout="constrained",
