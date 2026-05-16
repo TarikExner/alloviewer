@@ -108,7 +108,7 @@ def figure_S4_generation(
 ):
     h5_path = os.path.join(h5_path, "tiles_val.h5")
 
-    index = 12
+    index = 9
     rgb, tgts = fetch_image_with_targets(
         h5_path=h5_path,
         index=index,
@@ -116,7 +116,7 @@ def figure_S4_generation(
         target_key="tgts",
         resize_to=(512,512),
         target_resize_to=None,
-        return_channel_last=True,   # -> (H, W, C)
+        return_channel_last=True,
     )
 
     _generate_main_figure(
