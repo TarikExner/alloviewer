@@ -28,8 +28,8 @@ __all__ = [
 PHONE_DICT = {
     "iPhone": "phone brand 1",
     "GooglePixel": "phone brand 2",
-    "Microscope": "microscope camera RGB",
-    "Monochrome": "microscope camera Monochrome",
+    "Microscope": "microscope camera rgb",
+    "Monochrome": "microscope camera monochrome",
     "Generic": "generic"
 }
 
