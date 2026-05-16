@@ -1,6 +1,7 @@
 from typing import Any, Callable
 
 from .figure_1 import figure_1_generation
+
 from .figure_S1 import figure_S1_generation
 from .figure_S2 import figure_S2_generation
 from .figure_S3 import figure_S3_generation
@@ -41,6 +42,7 @@ def generate_all_figures(
     camera: Any
 ):
     figure_1_generation(**DIRECTORIES)
+
     figure_S1_generation(**DIRECTORIES)
     figure_S2_generation(**DIRECTORIES)
     figure_S3_generation(**DIRECTORIES)

@@ -112,6 +112,7 @@ def with_histogram_adherence(
       - "off": disables histogram and median matching
     """
     mode = str(mode).lower()
+    extra_kwargs = {}
 
     if mode == "default":
         return dict(registry)
@@ -121,6 +122,13 @@ def with_histogram_adherence(
         median_range = (0.70, 0.70)
         use_hist = True
         use_median = True
+
+    elif mode == "figure":
+        hist_range = (0.99, 1.00)
+        median_range = (0.70, 0.70)
+        use_hist = True
+        use_median = True
+        extra_kwargs["jpeg_prob"] = 0.0
 
     elif mode == "lenient":
         hist_range = (0.5, 0.55)
@@ -135,7 +143,7 @@ def with_histogram_adherence(
         use_median = False
 
     else:
-        raise ValueError("mode must be one of: 'strict', 'default', 'lenient', 'off'")
+        raise ValueError("mode must be one of: 'strict', 'figure', 'default', 'lenient', 'off'")
 
     out: Dict[str, CameraStyleParams] = {}
 
@@ -150,6 +158,7 @@ def with_histogram_adherence(
             median_match_strength=median_range,
             use_histogram_match=use_hist,
             use_median_match=use_median,
+            **extra_kwargs
         )
 
     return out
