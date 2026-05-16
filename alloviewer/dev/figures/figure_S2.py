@@ -16,6 +16,7 @@ from sklearn.decomposition import PCA
 
 from . import figure_config as cfg
 from . import figure_utils as utils
+from . import PHONE_DICT
 
 from alloviewer.image_analysis.io import load_image
 from alloviewer.dev.segmentation.image_simulation import simulate_image
@@ -270,9 +271,8 @@ def plot_real_and_synthetic_pca(
                 label=f"synthetic {dev}",
             )
 
-    evr = pca.explained_variance_ratio_
-    ax.set_xlabel(f"PC1 ({100.0 * evr[0]:.1f}%)", fontsize=cfg.AXIS_LABEL_SIZE)
-    ax.set_ylabel(f"PC2 ({100.0 * evr[1]:.1f}%)", fontsize=cfg.AXIS_LABEL_SIZE)
+    ax.set_xlabel("PC1", fontsize=cfg.AXIS_LABEL_SIZE)
+    ax.set_ylabel("PC2", fontsize=cfg.AXIS_LABEL_SIZE)
 
     if title is None:
         title = (
@@ -285,16 +285,16 @@ def plot_real_and_synthetic_pca(
 
     handles, legend_labels = ax.get_legend_handles_labels()
     label_map = {
-        "real iphone": "iPhone",
-        "real googlepixel": "GooglePixel",
-        "real microscope": "Microscope",
-        "real monochrome_real": "Monochrome",
+        "real iphone": PHONE_DICT['iPhone'],
+        "real googlepixel": PHONE_DICT['GooglePixel'],
+        "real microscope": PHONE_DICT['Microscope'],
+        "real monochrome_real": PHONE_DICT['Monochrome'],
         "real monochrome_generic": "Monochrome generic",
-        "synthetic iphone": "Simulated iPhone",
-        "synthetic googlepixel": "Simulated GooglePixel",
-        "synthetic microscope": "Simulated microscope",
-        "synthetic monochrome_real": "Simulated monochrome",
-        "synthetic monochrome_generic": "Simulated monochrome generic",
+        "synthetic iphone": f"Simulated {PHONE_DICT['iPhone']}",
+        "synthetic googlepixel": f"Simulated {PHONE_DICT['GooglePixel']}",
+        "synthetic microscope": f"Simulated {PHONE_DICT['Microscope']}",
+        "synthetic monochrome_real": f"Simulated {PHONE_DICT['Monochrome']}",
+        "synthetic monochrome_generic": f"Simulated {PHONE_DICT['Generic']}",
         "synthetic simulated_raw": "Simulated raw",
         "synthetic synthetic": "Simulated",
     }
@@ -446,19 +446,19 @@ def _generate_main_figure(
 
         mic = fig.add_subplot(fig_sgs[0, 1])
         mic.imshow(mic_img)
-        mic.set_title("Microscope", fontsize=cfg.TITLE_SIZE)
+        mic.set_title(PHONE_DICT["Microscope"], fontsize=cfg.TITLE_SIZE)
 
         gp = fig.add_subplot(fig_sgs[0, 2])
         gp.imshow(gp_img)
-        gp.set_title("GooglePixel", fontsize=cfg.TITLE_SIZE)
+        gp.set_title(PHONE_DICT["GooglePixel"], fontsize=cfg.TITLE_SIZE)
 
         iphone = fig.add_subplot(fig_sgs[0, 3])
         iphone.imshow(iphone_img)
-        iphone.set_title("iPhone", fontsize=cfg.TITLE_SIZE)
+        iphone.set_title(PHONE_DICT["iPhone"], fontsize=cfg.TITLE_SIZE)
 
         mono = fig.add_subplot(fig_sgs[0, 4])
         mono.imshow(mono_img)
-        mono.set_title("Monochrome", fontsize=cfg.TITLE_SIZE)
+        mono.set_title(PHONE_DICT["Monochrome"], fontsize=cfg.TITLE_SIZE)
 
         orig_hist = fig.add_subplot(fig_sgs[1, 0])
         plot_rgb_histogram(orig_hist, sim_img)
@@ -466,19 +466,19 @@ def _generate_main_figure(
 
         mic_hist = fig.add_subplot(fig_sgs[1, 1])
         plot_rgb_histogram(mic_hist, mic_img)
-        mic_hist.set_title("Microscope histogram", fontsize=cfg.TITLE_SIZE)
+        mic_hist.set_title(f"{PHONE_DICT['Microscope']} histogram", fontsize=cfg.TITLE_SIZE)
 
         gp_hist = fig.add_subplot(fig_sgs[1, 2])
         plot_rgb_histogram(gp_hist, gp_img)
-        gp_hist.set_title("GooglePixel histogram", fontsize=cfg.TITLE_SIZE)
+        gp_hist.set_title(f"{PHONE_DICT['GooglePixel']} histogram", fontsize=cfg.TITLE_SIZE)
 
         iphone_hist = fig.add_subplot(fig_sgs[1, 3])
         plot_rgb_histogram(iphone_hist, iphone_img)
-        iphone_hist.set_title("iPhone histogram", fontsize=cfg.TITLE_SIZE)
+        iphone_hist.set_title(f"{PHONE_DICT['iPhone']} histogram", fontsize=cfg.TITLE_SIZE)
 
         mono_hist = fig.add_subplot(fig_sgs[1, 4])
         plot_rgb_histogram(mono_hist, mono_img)
-        mono_hist.set_title("Monochrome histogram", fontsize=cfg.TITLE_SIZE)
+        mono_hist.set_title(f"{PHONE_DICT['Monochrome']} histogram", fontsize=cfg.TITLE_SIZE)
 
         for im_ax in (orig_sim, mic, gp, iphone, mono):
             utils.prep_image_axis(im_ax)

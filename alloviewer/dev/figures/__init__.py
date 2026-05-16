@@ -25,6 +25,14 @@ __all__ = [
     "figure_SIM_generation",
 ]
 
+PHONE_DICT = {
+    "iPhone": "phone brand 1",
+    "GooglePixel": "phone brand 2",
+    "Microscope": "microscope camera RGB",
+    "Monochrome": "microscope camera Monochrome",
+    "Generic": "generic"
+}
+
 DIRECTORIES = {
     "h5_path": "../scripts/image_datasets",
     "model_output_dir": "../scripts/models",
