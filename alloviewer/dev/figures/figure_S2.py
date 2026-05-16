@@ -390,7 +390,7 @@ def _get_simulated_image():
         reflect_harmonics=2,
         reflect_harmonic_decay=0.55,
 
-        seed=None,
+        seed=187,
         return_targets=True,
     )
 
