@@ -154,10 +154,10 @@ def figure_S3_generation(
     cols_to_plot = [
         "n_cells",
         "frac_positive",
-        "edge_boost",
+        "large_cell_frac",
+        "large_cell_diameter_factor",
         "edge_clamp",
         "background_level",
-        "vignette_strength",
         "H",
         "W",
         "color_jitter",
