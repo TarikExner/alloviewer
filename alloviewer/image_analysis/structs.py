@@ -10,7 +10,7 @@ class WellImage:
     well_id: str
     role: str = ""
     path: str = ""
-    image: np.ndarray = np.array([])
+    image: np.ndarray = field(default_factory=lambda: np.array([]))
     result_ids: List[str] = field(default_factory=list)
 
 @dataclass
@@ -46,7 +46,7 @@ class Plate:
 
 @dataclass
 class PlateLayout:
-  wells: Dict[WellID, WellType]
+    wells: Dict[WellID, WellType]
 
 
 @dataclass
