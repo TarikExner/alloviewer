@@ -57,7 +57,8 @@ dependencies = [
   "starlette>=0.37",
   "pydantic>=2.0",
 
-  "uvicorn[standard]>=0.29"
+  "uvicorn[standard]>=0.29",
+  "python-multipart"
 
 ]
 
