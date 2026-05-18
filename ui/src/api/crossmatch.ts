@@ -1,7 +1,5 @@
-import type { WellID, WellMap, ProcessResponse, ProcessStartResponse } from "../types";
+import type { WellID, WellMap, ProcessStartResponse } from "../types";
 import { API_BASE } from "../App";
-
-type CellMode = "T" | "B" | "T/B" | "empty";
 
 type BackendProgress = {
   status: "queued" | "running" | "done";
