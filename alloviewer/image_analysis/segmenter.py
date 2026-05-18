@@ -35,8 +35,8 @@ class SegmenterConfig:
     compute_instances: bool = True
 
     # convenience thresholds (not used for watershed internals)
-    thr_cell: float = 0.5
-    thr_bound: float = 0.5
+    thr_cell: float = 0.1
+    thr_bound: float = 0.1
 
     # tell the segmenter that the input to __call__ will be a batch of tiles
     # instead of a single image

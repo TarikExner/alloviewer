@@ -441,19 +441,19 @@ def _generate_main_figure(
 
         orig_sim = fig.add_subplot(fig_sgs[0, 0])
         orig_sim.imshow(sim_img)
-        orig_sim.set_title("Simulated", fontsize=cfg.TITLE_SIZE)
+        orig_sim.set_title(f"{cfg.PHONE_DICT['Simulated']}", fontsize=cfg.TITLE_SIZE)
 
         mic = fig.add_subplot(fig_sgs[0, 1])
         mic.imshow(mic_img)
         mic.set_title(cfg.PHONE_DICT["Microscope"], fontsize=cfg.TITLE_SIZE)
 
-        gp = fig.add_subplot(fig_sgs[0, 2])
-        gp.imshow(gp_img)
-        gp.set_title(cfg.PHONE_DICT["GooglePixel"], fontsize=cfg.TITLE_SIZE)
-
         iphone = fig.add_subplot(fig_sgs[0, 3])
         iphone.imshow(iphone_img)
         iphone.set_title(cfg.PHONE_DICT["iPhone"], fontsize=cfg.TITLE_SIZE)
+
+        gp = fig.add_subplot(fig_sgs[0, 2])
+        gp.imshow(gp_img)
+        gp.set_title(cfg.PHONE_DICT["GooglePixel"], fontsize=cfg.TITLE_SIZE)
 
         mono = fig.add_subplot(fig_sgs[0, 4])
         mono.imshow(mono_img)
@@ -461,19 +461,19 @@ def _generate_main_figure(
 
         orig_hist = fig.add_subplot(fig_sgs[1, 0])
         plot_rgb_histogram(orig_hist, sim_img)
-        orig_hist.set_title("Simulated histogram\n", fontsize=cfg.TITLE_SIZE)
+        orig_hist.set_title(f"{cfg.PHONE_DICT['Simulated']} histogram\n", fontsize=cfg.TITLE_SIZE)
 
         mic_hist = fig.add_subplot(fig_sgs[1, 1])
         plot_rgb_histogram(mic_hist, mic_img)
         mic_hist.set_title(f"{cfg.PHONE_DICT['Microscope']} histogram", fontsize=cfg.TITLE_SIZE)
 
-        gp_hist = fig.add_subplot(fig_sgs[1, 2])
-        plot_rgb_histogram(gp_hist, gp_img)
-        gp_hist.set_title(f"{cfg.PHONE_DICT['GooglePixel']} histogram", fontsize=cfg.TITLE_SIZE)
-
         iphone_hist = fig.add_subplot(fig_sgs[1, 3])
         plot_rgb_histogram(iphone_hist, iphone_img)
         iphone_hist.set_title(f"{cfg.PHONE_DICT['iPhone']} histogram", fontsize=cfg.TITLE_SIZE)
+
+        gp_hist = fig.add_subplot(fig_sgs[1, 2])
+        plot_rgb_histogram(gp_hist, gp_img)
+        gp_hist.set_title(f"{cfg.PHONE_DICT['GooglePixel']} histogram", fontsize=cfg.TITLE_SIZE)
 
         mono_hist = fig.add_subplot(fig_sgs[1, 4])
         plot_rgb_histogram(mono_hist, mono_img)
