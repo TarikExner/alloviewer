@@ -1,4 +1,3 @@
-#app/models.py
 import time
 import threading
 

@@ -55,7 +55,10 @@ dependencies = [
   # API
   "fastapi>=0.110",
   "starlette>=0.37",
-  "pydantic>=2.0"
+  "pydantic>=2.0",
+
+  "uvicorn[standard]>=0.29"
+
 ]
 
 
@@ -77,10 +80,6 @@ dev = [
   "ruff>=0.5",
   "mypy>=1.8",
   "pre-commit>=3.7"
-]
-
-api = [
-  "uvicorn[standard]>=0.29"
 ]
 
 
