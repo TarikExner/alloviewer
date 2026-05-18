@@ -1,0 +1,50 @@
+{
+  "toolbar": {
+    "about": "À propos",
+    "tutorial": "Tutoriel",
+    "docs": "Documentation",
+    "contact": "Contact"
+  },
+  "home": {
+    "title": "AlloViewer",
+    "cdc": "CDC-PRA",
+    "crossmatch": "CDC-XM"
+  },
+  "contact": {
+    "heading": "Contact",
+    "intro": "Pour toute question sur AlloViewer, écrivez-nous. Pour les parties liées au code, utilisez le lien GitHub ci-dessous.",
+    "developers": "Développeurs",
+    "disclaimer": "Veuillez ne pas envoyer de données permettant d’identifier un patient par e-mail.",
+    "email_label": "E-mail",
+    "role_label": "Rôle",
+    "github_text": "Voir le dépôt GitHub",
+    "github_note": "C’est surtout pour les personnes qui utilisent déjà React / TypeScript / analyse d’images. Sinon, envoyez-nous simplement un e-mail.",
+    "persons": [
+      {
+        "name": "Dr. med. Dr. rer. nat. Cassian Afting",
+        "role": "Responsable du projet",
+        "unit": "DRK Francfort"
+      },
+      {
+        "name": "Dr. med. Tarik Exner",
+        "role": "Analyse d’images / pipeline",
+        "unit": "Hôpital universitaire de Heidelberg"
+      }
+    ]
+  },
+  "about": {
+    "title": "À propos d’AlloViewer",
+    "purpose_heading": "But",
+    "purpose_text": "AlloViewer a été créé pour fournir une méthode uniforme et compréhensible d’analyse des tests de cytotoxicité dépendante du complément (CDC). Il mesure la lyse cellulaire à partir d’images de microscopie et présente les résultats sous forme de cytotoxicité spécifique au donneur et de valeurs de PRA.",
+    "why_heading": "Pourquoi c’est utile",
+    "why_text": "L’évaluation manuelle des tests CDC prend du temps et peut varier d’une personne à l’autre. AlloViewer automatise cette étape afin de rendre les résultats plus cohérents et de réduire le temps de travail au laboratoire.",
+    "how_heading": "Fonctionnement",
+    "how_text": "Les images envoyées sont traitées par une chaîne d’analyse fixe. Le logiciel distingue les cellules intactes des cellules lysées, calcule la cytotoxicité pour chaque puits, puis regroupe les valeurs pour le rapport. Chaque analyse utilise une version identifiée afin qu’elle puisse être reproduite.",
+    "dev_heading": "Développement",
+    "dev_text": "AlloViewer a été développé par {{cassian}} (DRK Francfort) et {{tarik}} (Hôpital universitaire de Heidelberg).",
+    "license_heading": "Licence et utilisation",
+    "license_text": "AlloViewer est destiné à la recherche. Pour un usage clinique ou commercial, ou pour l’intégrer dans d’autres systèmes, veuillez contacter les auteurs."
+  }
+
+}
+

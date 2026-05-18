@@ -27,7 +27,6 @@ from .utils import (
 ProgressEvent = Dict[str, Any]
 ProgressCallback = Callable[[ProgressEvent], None]
 
-
 def _build_payload(
     *,
     fitted: FittedGater,
@@ -416,21 +415,43 @@ def _build_single_file_line_series(
     cutoff: float,
     max_line_values: int,
 ) -> Dict[str, Any]:
-    # Use raw IgG for the displayed line curve.
-    igg_raw_values = entry.get("igg_raw")
-    if igg_raw_values is None:
-        # Backward fallback for old cache entries. New jobs should always have igg_raw.
-        igg_raw_values = entry.get("igg", [])
 
+    # Curves use transformed IgG; cards/report can still use raw IgG.
+    igg_values = entry.get("igg", [])
+    igg_raw_values = entry.get("igg_raw")
+
+    if igg_raw_values is None:
+        igg_raw_values = igg_values
+
+    igg = np.asarray(igg_values, dtype=float)
     igg_raw = np.asarray(igg_raw_values, dtype=float)
 
+    n = int(min(igg.shape[0], igg_raw.shape[0]))
+    igg = igg[:n]
+    igg_raw = igg_raw[:n]
+
     # Use the same event gate as the final plot.
-    mask = _mask_for_final_gate(entry, gate, int(igg_raw.shape[0]))
+    mask = _mask_for_final_gate(entry, gate, n)
 
-    if mask.shape[0] != igg_raw.shape[0]:
-        mask = np.full(int(igg_raw.shape[0]), True, dtype=bool)
+    if mask.shape[0] != n:
+        mask = np.full(n, True, dtype=bool)
 
+    selected = igg[mask]
     selected_raw = igg_raw[mask]
+
+    selected = selected[np.isfinite(selected)]
+    selected_raw = selected_raw[np.isfinite(selected_raw)]
+
+    # Use the same event gate as the final plot.
+    mask = _mask_for_final_gate(entry, gate, n)
+
+    if mask.shape[0] != n:
+        mask = np.full(n, True, dtype=bool)
+
+    selected = igg[mask]
+    selected_raw = igg_raw[mask]
+
+    selected = selected[np.isfinite(selected)]
     selected_raw = selected_raw[np.isfinite(selected_raw)]
 
     # Positivity should NOT be recomputed from raw IgG with the transformed cutoff.
@@ -446,15 +467,38 @@ def _build_single_file_line_series(
     else:
       n_pos = 0
 
-    n_total = int(selected_raw.size)
+    n_total = int(selected.size)
     pos_pct = float((n_pos / n_total) * 100.0) if n_total > 0 else 0.0
 
-    values = _sample_line_values(selected_raw, max_line_values)
+    values = _sample_line_values(selected, max_line_values)
+    values_raw = _sample_line_values(selected_raw, max_line_values)
+
+    raw_median = (
+        float(np.median(selected_raw))
+        if selected_raw.size > 0
+        else None
+    )
+
+    transformed_median = (
+        float(np.median(selected))
+        if selected.size > 0
+        else None
+    )
 
     return {
         "label": label,
         "color": color,
+
+        # Main curve values are transformed IgG.
         "values": values,
+        "value_scale": "asinh",
+        "x_label": "asinh IgG",
+
+        # Raw values for cards and report.
+        "values_raw": values_raw,
+        "raw_median": raw_median,
+        "transformed_median": transformed_median,
+
         "n_total": n_total,
         "n_pos": n_pos,
         "pos_pct": pos_pct,

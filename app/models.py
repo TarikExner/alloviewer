@@ -120,6 +120,13 @@ class LineSeries(BaseModel):
     label: str
     color: str
     values: list[float]
+
+    values_raw: list[float] | None = None
+    raw_median: float | None = None
+    transformed_median: float | None = None
+    value_scale: str | None = None
+    x_label: str | None = None
+
     n_total: int
     n_pos: int
     pos_pct: float

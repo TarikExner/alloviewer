@@ -1,0 +1,50 @@
+{
+  "toolbar": {
+    "about": "Acerca de",
+    "tutorial": "Tutorial",
+    "docs": "Documentación",
+    "contact": "Contacto"
+  },
+  "home": {
+    "title": "AlloViewer",
+    "cdc": "CDC-PRA",
+    "crossmatch": "CDC-XM"
+  },
+  "contact": {
+    "heading": "Contacto",
+    "intro": "Si tiene dudas sobre AlloViewer, escríbanos un correo. Para cambios en el código, use el enlace de GitHub de abajo.",
+    "developers": "Desarrolladores",
+    "disclaimer": "No envíe datos que identifiquen a pacientes por correo.",
+    "email_label": "Correo",
+    "role_label": "Función",
+    "github_text": "Ver repositorio en GitHub",
+    "github_note": "Esto es sobre todo para personas que ya trabajan con React / TypeScript / análisis de imágenes. Si no es su caso, mándenos un correo.",
+    "persons": [
+      {
+        "name": "Cassian Afting, MD, PhD",
+        "role": "Responsable del proyecto",
+        "unit": "DRK Frankfurt"
+      },
+      {
+        "name": "Tarik Exner, MD",
+        "role": "Análisis de imágenes / pipeline",
+        "unit": "Hospital Universitario de Heidelberg"
+      }
+    ]
+  },
+  "about": {
+    "title": "Acerca de AlloViewer",
+    "purpose_heading": "Finalidad",
+    "purpose_text": "AlloViewer se creó para ofrecer una forma clara y uniforme de analizar ensayos de citotoxicidad dependiente del complemento (CDC). Mide la lisis celular a partir de imágenes de microscopía y resume los resultados como citotoxicidad específica del donante y valores de PRA.",
+    "why_heading": "Por qué es importante",
+    "why_text": "La evaluación manual de los ensayos CDC lleva tiempo y puede variar entre personas. AlloViewer automatiza este paso para que los resultados sean más comparables y el trabajo en el laboratorio sea más rápido.",
+    "how_heading": "Cómo funciona",
+    "how_text": "Las imágenes subidas pasan por una tubería de análisis fija. El software diferencia células intactas de células lisadas, calcula la citotoxicidad por pocillo y luego agrupa los valores para el informe. Cada ejecución usa una versión concreta del flujo para que se pueda reproducir.",
+    "dev_heading": "Desarrollo",
+    "dev_text": "AlloViewer fue desarrollado por {{cassian}} (DRK Frankfurt) y {{tarik}} (Hospital Universitario de Heidelberg).",
+    "license_heading": "Licencia y uso",
+    "license_text": "AlloViewer está pensado para uso en investigación. Para uso clínico o comercial, o para integrarlo en otros sistemas, póngase en contacto con los autores."
+  }
+
+}
+

@@ -1,0 +1,50 @@
+{
+  "toolbar": {
+    "about": "Über uns",
+    "tutorial": "Anleitung",
+    "docs": "Dokumentation",
+    "contact": "Kontakt"
+  },
+  "home": {
+    "title": "AlloViewer",
+    "cdc": "CDC-PRA",
+    "crossmatch": "CDC-XM"
+  },
+  "contact": {
+    "heading": "Kontakt",
+    "intro": "Bei Fragen zu AlloViewer schreiben Sie uns bitte eine E-Mail. Für Code-Anpassungen siehe den GitHub-Link unten.",
+    "developers": "Entwickler",
+    "disclaimer": "Bitte keine patientenbezogenen Daten per E-Mail senden.",
+    "email_label": "E-Mail",
+    "role_label": "Rolle",
+    "github_text": "GitHub-Repository öffnen",
+    "github_note": "Das ist vor allem für Leute gedacht, die mit React / TypeScript / Bildauswertung arbeiten. Wenn nicht, einfach eine E-Mail schreiben.",
+    "persons": [
+      {
+        "name": "Dr. med. Dr. rer. nat. Cassian Afting",
+        "role": "Projektleitung",
+        "unit": "DRK-Blutspendedienst Baden-Württemberg-Hessen"
+      },
+      {
+        "name": "Dr. med. Tarik Exner",
+        "role": "Bildanalyse / Pipeline",
+        "unit": "Universitätsklinikum Heidelberg"
+      }
+    ]
+  },
+  "about": {
+    "title": "Über AlloViewer",
+    "purpose_heading": "Zweck",
+    "purpose_text": "AlloViewer wurde entwickelt, um CDC-Assays (komplementabhängige Zytotoxizität) einheitlich und nachvollziehbar auszuwerten. Es misst die Lyse aus Mikroskopiebildern und fasst die Ergebnisse als spenderbezogene Zytotoxizität und PRA-Werte zusammen.",
+    "why_heading": "Warum das wichtig ist",
+    "why_text": "Die manuelle Auswertung von CDC-Versuchen ist zeitaufwendig und je nach Person unterschiedlich. AlloViewer automatisiert diesen Schritt, damit Ergebnisse vergleichbarer werden und die Arbeit im Labor schneller geht.",
+    "how_heading": "Funktionsweise",
+    "how_text": "Hochgeladene Bilder werden durch eine feste Analyse-Pipeline geschickt. Die Software trennt intakte von lysierten Zellen, berechnet die Zytotoxizität pro Vertiefung und fasst die Werte anschließend zu einem Bericht zusammen. Jede Auswertung erfolgt mit einer versionierten Pipeline, damit sie später nachvollziehbar bleibt.",
+    "dev_heading": "Entwicklung",
+    "dev_text": "AlloViewer wurde von {{cassian}} (DRK Frankfurt) und {{tarik}} (Universitätsklinikum Heidelberg) entwickelt.",
+    "license_heading": "Lizenz und Nutzung",
+    "license_text": "AlloViewer ist für die Forschung gedacht. Für klinische oder kommerzielle Nutzung bzw. die Einbindung in andere Systeme wenden Sie sich bitte an die Autoren."
+  }
+
+}
+

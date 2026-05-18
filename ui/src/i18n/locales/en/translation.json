@@ -1,0 +1,48 @@
+{
+  "toolbar": {
+    "about": "About",
+    "tutorial": "Tutorial",
+    "docs": "Docs",
+    "contact": "Contact"
+  },
+  "home": {
+    "title": "AlloViewer",
+    "cdc": "CDC-PRA",
+    "crossmatch": "CDC-XM"
+  },
+  "contact": {
+    "heading": "Contact",
+    "intro": "For questions about AlloViewer, send us an email. For code changes, see the GitHub link below.",
+    "developers": "Developers",
+    "disclaimer": "Please do not send patient-identifying data by email.",
+    "github_text": "View GitHub repository",
+    "github_note": "This is mainly for people who are used to React / TypeScript / imaging. If that’s not you, just send us an email.",
+    "persons": [
+      {
+        "name": "Cassian Afting, MD, PhD",
+        "role": "Project lead",
+        "unit": "German Red Cross Blood Donation Service Baden-Württemberg-Hessen"
+      },
+      {
+        "name": "Tarik Exner, MD",
+        "role": "Image analysis / pipeline",
+        "unit": "University Hospital Heidelberg"
+      }
+    ]
+  },
+  "about": {
+    "title": "About AlloViewer",
+    "purpose_heading": "Purpose",
+    "purpose_text": "AlloViewer was built to offer a standardized and transparent way to analyze complement-dependent cytotoxicity (CDC) assays. It measures cell lysis from microscope images and summarizes the results as donor-specific cytotoxicity and panel-reactive antibody (PRA) values.",
+    "why_heading": "Why it matters",
+    "why_text": "Manual scoring of CDC runs is slow and can differ between people. AlloViewer automates this step, so results are more comparable between operators and runs, and the lab work becomes faster.",
+    "how_heading": "How it works",
+    "how_text": "Uploaded images are processed by a fixed analysis pipeline. The software separates intact from lysed cells, calculates cytotoxicity for each well, and then aggregates the values for reporting. Each run uses a versioned pipeline so results can be reproduced.",
+    "dev_heading": "Development",
+    "dev_text": "AlloViewer was developed by {{cassian}} (DRK Frankfurt) and {{tarik}} (University Hospital Heidelberg).",
+    "license_heading": "License and use",
+    "license_text": "AlloViewer is intended for research use. For clinical or commercial use, or for integration into larger systems, please contact the authors."
+  }
+
+}
+
