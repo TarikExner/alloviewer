@@ -8,7 +8,7 @@ name = "alloviewer"
 version = "0.1.0"
 description = "Analysis tools for flow cytometry, image analysis, gating, clustering, plotting, reports, and API access."
 readme = "README.md"
-requires-python = ">=3.10,<=3.12"
+requires-python = ">=3.10,<3.13"
 license = { text = "MIT" }
 
 authors = [
@@ -31,9 +31,6 @@ dependencies = [
   "scikit-image>=0.21",
   "tifffile>=2023.7.10",
 
-  # Deep learning
-  "torch>=2.0",
-
   # Data / file formats
   "h5py>=3.8",
 
@@ -41,15 +38,16 @@ dependencies = [
   "tqdm>=4.65",
 
   # Flow cytometry
-  "flowio<=1.3.0",
+  "flowio==1.3.0",
   "flowutils>=1.0",
-  "openpyxl",
+  "openpyxl>=3.1",
 
   # Clustering
   "hdbscan>=0.8.33",
-  "parc>=0.8",
+  "parc==0.40",
   "flowsom>=0.2",
-  "hnswlib",
+  "hnswlib==0.8.0",
+  "pybind11>=2.12",
 
   # PDF reports
   "reportlab>=4.0",
@@ -58,10 +56,8 @@ dependencies = [
   "fastapi>=0.110",
   "starlette>=0.37",
   "pydantic>=2.0",
-
   "uvicorn[standard]>=0.29",
-  "python-multipart"
-
+  "python-multipart>=0.0.9"
 ]
 
 
@@ -143,8 +139,9 @@ warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
 
+
 [tool.poetry.dependencies]
-python = ">=3.10,<3.12"
+python = ">=3.10,<3.13"
 torch = { version = ">=2.0", source = "pytorch-cpu" }
 
 
