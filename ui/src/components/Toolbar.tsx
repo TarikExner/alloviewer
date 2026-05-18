@@ -1,5 +1,3 @@
-// ui/src/components/Toolbar.tsx
-import React from "react";
 import { ThemeToggle } from "./ThemeToggle";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";

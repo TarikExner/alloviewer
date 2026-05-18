@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ALL_WELLS, type WellMap, type WellType, WELL_TYPES } from "../types";
+import { ALL_WELLS, type WellMap, type WellType } from "../types";
 import { ROWS, COLS } from "../plateConfig";
 import { ROLE_STYLES, ROLE_SWATCH } from "../roleStyles";
 import { ROLE_LABEL } from "../types";

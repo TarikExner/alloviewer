@@ -1,4 +1,4 @@
-import type { WellID } from "../../types";
+import type { WellID } from "../types";
 
 export function ImageMappingTable({
   imageOrder,

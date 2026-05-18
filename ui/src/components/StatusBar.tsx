@@ -1,5 +1,3 @@
-import React from "react";
-
 export function StatusBar({ label, percent }: { label: string; percent: number | null }) {
   if (percent === null) return null;
   return (

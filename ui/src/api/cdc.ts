@@ -33,7 +33,7 @@ export async function runProcess(
       image_order: order,
       template_filename: files.templateFilename,
       image_filenames: files.imageFilenames,
-      assay_type: files.assayType ?? "pra",
+      assay_type: "pra",
     }),
   });
 

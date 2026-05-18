@@ -8,7 +8,6 @@ import PlatePopupWindow from "./PlatePopupWindow";
 export function PlatePreview({
   imagesByWell,
   result,
-  summary,
   layout,
   flipVertical = false,
   wellStatus,
@@ -18,7 +17,6 @@ export function PlatePreview({
 }: {
   imagesByWell: Record<WellID, string | null>;
   result: ProcessResponse | null | any;
-  summary?: Record<string, number> | null;
   layout?:
     | {
         wells: Record<

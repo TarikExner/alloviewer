@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from "react";
 
 type ThemeMode = 'light' | 'dark';
 const STORAGE_KEY = 'lcteller-theme';

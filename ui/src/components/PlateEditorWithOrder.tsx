@@ -1,6 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ROWS, COLS, type WellID } from "../plateConfig";
-import { ALL_WELLS, type WellMap, type WellType, ROLE_LABEL } from "../types";
+import { ROWS, COLS } from "../plateConfig";
+import {
+  ALL_WELLS,
+  ROLE_LABEL,
+  type Row,
+  type WellID,
+  type WellMap,
+  type WellType,
+} from "../types";
 import { ROLE_STYLES, ROLE_SWATCH } from "../roleStyles";
 import { buildOrder, type SnakeOrientation, type StartCorner } from "../imageOrder";
 
@@ -81,7 +88,7 @@ export default function PlateEditorWithOrder({
     else setWells(Object.fromEntries(ALL_WELLS.map(w => [w, "sample"])) as WellMap);
   }
 
-  const rowIndex = (id: WellID) => ROWS.indexOf(id[0]);
+  const rowIndex = (id: WellID) => ROWS.indexOf(id[0] as Row);
   const colIndex = (id: WellID) => COLS.indexOf(Number(id.slice(1)) as any);
 
   function fillRange(a: WellID, b: WellID, t: WellType) {

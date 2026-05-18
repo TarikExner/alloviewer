@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { DragEvent } from "react";
 import { Toolbar } from "../components/Toolbar";
 import { UploadCard } from "../components/UploadCard";
 import { SampleCard, type SampleCardModel } from "../components/SampleCard";
@@ -255,31 +256,32 @@ export default function FCXMApp() {
       setResultsError(null);
       return;
     }
-
+  
     if (!runJobId || runStatus !== "done") {
       setResults(null);
       setResultsError(null);
       return;
     }
-
+  
+    const jobId = runJobId;
     let cancelled = false;
-
+  
     async function loadResults() {
       setResultsBusy(true);
       setResultsError(null);
-
+  
       try {
         const res = await fetchFCXMResults({
-          job_id: runJobId,
+          job_id: jobId,
           fcs_filename: selectedFile,
           gate: selectedGate,
           timeoutMs: 10_000,
         });
-
+  
         if (cancelled) return;
-
+  
         setResults(res);
-
+  
         const opts = res.gate_options || [];
         setGateOptions(opts);
         setSelectedGate((prev) =>
@@ -293,9 +295,9 @@ export default function FCXMApp() {
         if (!cancelled) setResultsBusy(false);
       }
     }
-
+  
     loadResults();
-
+  
     return () => {
       cancelled = true;
     };
@@ -533,7 +535,7 @@ export default function FCXMApp() {
     return selectedSeries?.key || null;
   }, [overviewLineSeries, selectedFile]);
 
-  function handleDropFcs(targetId: string, e: React.DragEvent) {
+  function handleDropFcs(targetId: string, e: DragEvent) {
     e.preventDefault();
     e.stopPropagation();
 
@@ -556,7 +558,7 @@ export default function FCXMApp() {
     });
   }
 
-  function allowDrop(e: React.DragEvent) {
+  function allowDrop(e: DragEvent) {
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = "copy";

@@ -1,6 +1,5 @@
-// src/pages/Home.tsx
-import React, { useMemo } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { Toolbar } from "../components/Toolbar";
 
 type HomeItem = {

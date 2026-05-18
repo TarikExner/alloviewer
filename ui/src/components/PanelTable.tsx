@@ -1,5 +1,3 @@
-import React from "react";
-
 export type ChannelRole = "Scatter" | "Population Marker" | "IgG Marker";
 
 export type PanelRow = {

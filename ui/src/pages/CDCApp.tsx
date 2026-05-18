@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Toolbar } from "../components/Toolbar";
 import { UploadCard } from "../components/UploadCard";
 import PlateEditorWithOrder from "../components/PlateEditorWithOrder";
@@ -653,7 +653,6 @@ export default function CDCApp() {
                   <PlatePreview
                     imagesByWell={imagesByWell}
                     result={proc}
-                    summary={summary}
                     layout={layout as any}
                     flipVertical={flip}
                     wellStatus={wellStatus}
@@ -687,7 +686,6 @@ export default function CDCApp() {
                   <PlatePreview
                     imagesByWell={imagesByWell}
                     result={proc}
-                    summary={summary}
                     layout={layout as any}
                     flipVertical={flip}
                     wellStatus={wellStatus}

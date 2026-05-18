@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Toolbar } from "../components/Toolbar";
 import { UploadCard } from "../components/UploadCard";
 import PlateEditorWithOrder from "../components/PlateEditorWithOrder";
@@ -243,7 +243,6 @@ export default function CrossmatchApp() {
       const { job_id } = await runProcess(wells, imageOrder, {
         templateFilename: null,
         imageFilenames: imageSavedNames,
-        assayType: "crossmatch",
       });
 
       const poll = async () => {
@@ -260,7 +259,7 @@ export default function CrossmatchApp() {
             const next = { ...prev };
 
             if (prog.done_wells) {
-              prog.done_wells.forEach((w) => {
+              prog.done_wells.forEach((w: WellID) => {
                 next[w as WellID] = "done";
               });
             }
@@ -655,7 +654,6 @@ export default function CrossmatchApp() {
                   <PlatePreview
                     imagesByWell={imagesByWell}
                     result={proc}
-                    summary={summary}
                     flipVertical={flip}
                     wellStatus={wellStatus}
                     progressPercent={progressPercent ?? undefined}
@@ -689,7 +687,6 @@ export default function CrossmatchApp() {
                   <PlatePreview
                     imagesByWell={imagesByWell}
                     result={proc}
-                    summary={summary}
                     flipVertical={flip}
                     wellStatus={wellStatus}
                     progressPercent={progressPercent ?? undefined}

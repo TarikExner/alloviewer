@@ -5,9 +5,6 @@ export type SnakeOrientation = "horizontal" | "vertical";
 export type StartCorner = "tl" | "tr" | "bl" | "br";
 
 export function buildOrder(orientation: SnakeOrientation, start: StartCorner): WellID[] {
-  // index helpers
-  const rowIdx = (r: string) => ROWS.indexOf(r as any);
-  const colIdx = (c: number) => COLS.indexOf(c as any);
 
   // sequences for rows / cols based on start corner
   const rows = start.startsWith("t") ? [...ROWS] : [...ROWS].reverse();

@@ -4,29 +4,29 @@ import { Toolbar } from "../components/Toolbar";
 import { useTranslation } from "react-i18next";
 
 
-const CONTACT_PERSONS = [
-  {
-    name: "Dr. med. Dr. rer. nat. Cassian Fucking Afting",
-    role: "Project lead",
-    unit: "DRK Frankfurt",
-    email: "c.afting@blutspende.de",
-    img: "/CA.jpg",
-  },
-  {
-    name: "Dr. med. Tarik Exner",
-    role: "Image analysis / pipeline",
-    unit: "University Hospital Heidelberg",
-    email: "Tarik.Exner@med.uni-heidelberg.de",
-    img: "/TE.jpg",
-  },
-];
-
-const GITHUB = {
-  url: "https://github.com/TarikExner/LCTeller",
-  text: "View GitHub repository",
-  note:
-    "This is mainly for people who are used to React / TypeScript / imaging. If that’s not you, just send us an email.",
-};
+// const CONTACT_PERSONS = [
+//   {
+//     name: "Dr. med. Dr. rer. nat. Cassian Fucking Afting",
+//     role: "Project lead",
+//     unit: "DRK Frankfurt",
+//     email: "c.afting@blutspende.de",
+//     img: "/CA.jpg",
+//   },
+//   {
+//     name: "Dr. med. Tarik Exner",
+//     role: "Image analysis / pipeline",
+//     unit: "University Hospital Heidelberg",
+//     email: "Tarik.Exner@med.uni-heidelberg.de",
+//     img: "/TE.jpg",
+//   },
+// ];
+// 
+// const GITHUB = {
+//   url: "https://github.com/TarikExner/LCTeller",
+//   text: "View GitHub repository",
+//   note:
+//     "This is mainly for people who are used to React / TypeScript / imaging. If that’s not you, just send us an email.",
+// };
 
 
 export default function Contact() {

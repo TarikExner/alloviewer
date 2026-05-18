@@ -1,12 +1,14 @@
 import type { WellID, WellMap, ProcessStartResponse } from "../types";
 import { API_BASE } from "../App";
 
-type BackendProgress = {
-  status: "queued" | "running" | "done";
+export type BackendProgress = {
+  status: "queued" | "running" | "done" | "error";
   done: number;
   total: number;
   current_well: WellID | null;
   done_wells: WellID[];
+  stage?: string | null;
+  message?: string | null;
   result?: any;
 };
 
@@ -23,7 +25,7 @@ export async function runProcess(
       image_order: order,
       template_filename: files.templateFilename,
       image_filenames: files.imageFilenames,
-      assay_type: files.assayType ?? "crossmatch",
+      assay_type: "crossmatch",
     }),
   });
 

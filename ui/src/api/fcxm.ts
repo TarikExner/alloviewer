@@ -92,12 +92,6 @@ export type FCXMRunStartResponse = {
 export type FCXMRunProgress = {
   status: "queued" | "running" | "done" | "error";
   message?: string | null;
-  result?: any;
-};
-
-export type FCXMRunProgressResponse = {
-  status: "queued" | "running" | "done" | "error";
-  message?: string | null;
   stage?: string | null;
   result?: any;
   total_files?: number | null;

@@ -25,11 +25,6 @@ export type WellResult = {
   status: "ok" | "warn" | "fail";
 };
 
-export type ProcessResponse = {
-  results: WellResult[];
-  summary: Record<string, number>;
-};
-
 export type ProcessStartResponse = {
   job_id: string;
 };
