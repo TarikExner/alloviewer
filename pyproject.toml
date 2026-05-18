@@ -49,6 +49,7 @@ dependencies = [
   "hdbscan>=0.8.33",
   "parc>=0.8",
   "flowsom>=0.2",
+  "hnswlib",
 
   # PDF reports
   "reportlab>=4.0",
