@@ -307,14 +307,13 @@ def _generate_main_figure(
 
 
 def figure_S5_generation(
-    h5_path: str,
     figure_output_dir: str,
     model_output_dir: str,
-    figure_data_dir: str,
+    validation_results_dir: str,
     **kwargs
 ):
     loss_data = get_loss_data(
-        model_output_dir=model_output_dir, output_dir=figure_data_dir
+        model_output_dir=model_output_dir, output_dir=validation_results_dir
     )
     _generate_main_figure(
         figure_output_dir=figure_output_dir,
