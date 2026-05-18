@@ -15,6 +15,7 @@ After author-send:
     - tutorial/About/whatever section
     - youtube videos
     - test suite
+    - ruff final check
 
 08.03.2026:
     - Create Figures

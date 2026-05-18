@@ -43,6 +43,7 @@ dependencies = [
   # Flow cytometry
   "flowio<=1.0.3",
   "flowutils>=1.0",
+  "openpyxl",
 
   # Clustering
   "hdbscan>=0.8.33",
