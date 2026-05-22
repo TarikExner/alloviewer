@@ -16,15 +16,29 @@ export default function About() {
 
         {/* --- Purpose --- */}
         <section>
-          <h2 className="text-lg font-medium mb-2">{t("about.purpose_heading")}</h2>
+          <h2 className="text-lg font-medium mb-2">
+            {t("about.purpose_heading")}
+          </h2>
           <p className="text-sm text-neutral-600 dark:text-neutral-400 max-w-3xl">
             {t("about.purpose_text")}
           </p>
         </section>
 
+        {/* --- Supported workflows --- */}
+        <section>
+          <h2 className="text-lg font-medium mb-2">
+            {t("about.workflows_heading")}
+          </h2>
+          <p className="text-sm text-neutral-600 dark:text-neutral-400 max-w-3xl">
+            {t("about.workflows_text")}
+          </p>
+        </section>
+
         {/* --- Why it matters --- */}
         <section>
-          <h2 className="text-lg font-medium mb-2">{t("about.why_heading")}</h2>
+          <h2 className="text-lg font-medium mb-2">
+            {t("about.why_heading")}
+          </h2>
           <p className="text-sm text-neutral-600 dark:text-neutral-400 max-w-3xl">
             {t("about.why_text")}
           </p>
@@ -32,7 +46,9 @@ export default function About() {
 
         {/* --- How it works --- */}
         <section>
-          <h2 className="text-lg font-medium mb-2">{t("about.how_heading")}</h2>
+          <h2 className="text-lg font-medium mb-2">
+            {t("about.how_heading")}
+          </h2>
           <p className="text-sm text-neutral-600 dark:text-neutral-400 max-w-3xl">
             {t("about.how_text")}
           </p>
@@ -40,7 +56,9 @@ export default function About() {
 
         {/* --- Development --- */}
         <section>
-          <h2 className="text-lg font-medium mb-2">{t("about.dev_heading")}</h2>
+          <h2 className="text-lg font-medium mb-2">
+            {t("about.dev_heading")}
+          </h2>
           <p className="text-sm text-neutral-600 dark:text-neutral-400 max-w-3xl">
             {t("about.dev_text", {
               cassian: "Dr. med. Dr. rer. nat. Cassian Afting",
@@ -51,7 +69,9 @@ export default function About() {
 
         {/* --- License / Use --- */}
         <section>
-          <h2 className="text-lg font-medium mb-2">{t("about.license_heading")}</h2>
+          <h2 className="text-lg font-medium mb-2">
+            {t("about.license_heading")}
+          </h2>
           <p className="text-sm text-neutral-600 dark:text-neutral-400 max-w-3xl">
             {t("about.license_text")}
           </p>
@@ -60,4 +80,3 @@ export default function About() {
     </div>
   );
 }
-

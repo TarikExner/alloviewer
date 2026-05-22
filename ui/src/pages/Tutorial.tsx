@@ -1,162 +1,231 @@
 // ui/src/pages/Tutorial.tsx
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Toolbar } from "../components/Toolbar";
 
+type TutorialTab = "cdcPra" | "cdcXm" | "fcxm";
+
+type StepSectionProps = {
+  title: string;
+  body: string;
+  children?: React.ReactNode;
+};
+
+function StepSection({ title, body, children }: StepSectionProps) {
+  return (
+    <section>
+      <h3 className="text-base font-medium mb-2">{title}</h3>
+
+      <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4 max-w-3xl">
+        {body}
+      </p>
+
+      {children ? <div>{children}</div> : null}
+    </section>
+  );
+}
+
+function TutorialButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-6 py-2 text-sm font-medium transition ${
+        active
+          ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
+          : "bg-white dark:bg-neutral-900 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 export default function Tutorial() {
-  const [tab, setTab] = useState<"cdc" | "xm">("cdc");
+  const { t } = useTranslation();
+  const [tab, setTab] = useState<TutorialTab>("cdcPra");
 
   return (
     <div className="min-h-screen bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 flex flex-col">
       <Toolbar />
 
       <main className="flex-1 w-full max-w-5xl mx-auto px-4 py-10">
-        <h1 className="text-2xl font-semibold mb-6 text-center">Tutorial</h1>
+        <h1 className="text-2xl font-semibold mb-6 text-center">
+          {t("tutorial.title")}
+        </h1>
 
-        {/* Tab buttons */}
-        <div className="flex justify-center mb-8">
+        <div className="flex justify-center mb-6">
           <div className="inline-flex border rounded-xl overflow-hidden dark:border-neutral-700">
-            <button
-              onClick={() => setTab("cdc")}
-              className={`px-6 py-2 text-sm font-medium transition ${
-                tab === "cdc"
-                  ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-                  : "bg-white dark:bg-neutral-900 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-              }`}
+            <TutorialButton
+              active={tab === "cdcPra"}
+              onClick={() => setTab("cdcPra")}
             >
-              CDC-PRA
-            </button>
-            <button
-              onClick={() => setTab("xm")}
-              className={`px-6 py-2 text-sm font-medium transition ${
-                tab === "xm"
-                  ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-                  : "bg-white dark:bg-neutral-900 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-              }`}
+              {t("tutorial.tabs.cdc_pra")}
+            </TutorialButton>
+
+            <TutorialButton
+              active={tab === "cdcXm"}
+              onClick={() => setTab("cdcXm")}
             >
-              Crossmatch
-            </button>
+              {t("tutorial.tabs.cdc_xm")}
+            </TutorialButton>
+
+            <TutorialButton
+              active={tab === "fcxm"}
+              onClick={() => setTab("fcxm")}
+            >
+              {t("tutorial.tabs.fcxm")}
+            </TutorialButton>
           </div>
         </div>
 
-        {tab === "cdc" ? <CDCTutorial /> : <CrossmatchTutorial />}
+        <div className="max-w-3xl mx-auto mb-10 rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 px-4 py-3 text-sm text-neutral-600 dark:text-neutral-400">
+          {t("tutorial.video.text")}{" "}
+          <a
+            href={t("tutorial.video.href")}
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-neutral-900 underline underline-offset-4 hover:text-neutral-700 dark:text-neutral-100 dark:hover:text-neutral-300"
+          >
+            {t("tutorial.video.link")}
+          </a>
+          .
+        </div>
+
+        {tab === "cdcPra" ? <CDCPRATutorial /> : null}
+        {tab === "cdcXm" ? <CDCXMTutorial /> : null}
+        {tab === "fcxm" ? <FCXMTutorial /> : null}
       </main>
     </div>
   );
 }
 
 /* ============ CDC-PRA tutorial ============ */
-function CDCTutorial() {
+function CDCPRATutorial() {
+  const { t } = useTranslation();
+
   return (
     <div className="space-y-10">
-      <h2 className="text-xl font-semibold mb-2 text-center">CDC-PRA Analysis</h2>
-
-      {/* Step 1 */}
-      <section>
-        <h3 className="text-base font-medium mb-2">1. Upload plate layout</h3>
-        <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4 max-w-3xl">
-          Start by uploading your <code>.xlsx</code> layout file. Each well should
-          define whether it is a sample, positive, or negative control. The default
-          layout can be generated automatically if no template is available.
+      <header className="text-center">
+        <h2 className="text-xl font-semibold mb-2">
+          {t("tutorial.cdc_pra.title")}
+        </h2>
+        <p className="text-sm text-neutral-600 dark:text-neutral-400 max-w-3xl mx-auto">
+          {t("tutorial.cdc_pra.intro")}
         </p>
-        <div className="rounded-xl overflow-hidden border dark:border-neutral-800">
-          <img
-            src="/tutorial-placeholder1.jpg"
-            alt="Upload layout step"
-            className="w-full object-cover max-h-[300px] dark:opacity-90"
-          />
-        </div>
-      </section>
+      </header>
 
-      {/* Step 2 */}
-      <section>
-        <h3 className="text-base font-medium mb-2">2. Upload images</h3>
-        <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4 max-w-3xl">
-          Upload the entire folder containing your well images. Image order will be
-          detected automatically, but you can review and reorder them if needed.
-        </p>
-        <div className="rounded-xl overflow-hidden border dark:border-neutral-800">
-          <img
-            src="/tutorial-placeholder2.jpg"
-            alt="Upload images step"
-            className="w-full object-cover max-h-[300px] dark:opacity-90"
-          />
-        </div>
-      </section>
+      <StepSection
+        title={t("tutorial.cdc_pra.step1_title")}
+        body={t("tutorial.cdc_pra.step1_body")}
+      >
+        <a
+          href="/examples/cdc-pra-layout-example.xlsx"
+          download
+          className="inline-flex items-center rounded-xl border px-3 py-2 text-sm bg-white hover:bg-neutral-50 dark:bg-neutral-900 dark:hover:bg-neutral-800 dark:border-neutral-700"
+        >
+          {t("tutorial.cdc_pra.download_example")}
+        </a>
+      </StepSection>
 
-      {/* Step 3 */}
-      <section>
-        <h3 className="text-base font-medium mb-2">3. Review and run analysis</h3>
-        <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4 max-w-3xl">
-          Verify that each well is assigned correctly. Adjust any wells if needed
-          and press <strong>Run Analysis</strong>. Once processing completes, the
-          summary and cytotoxicity maps will appear on the right.
-        </p>
-        <div className="rounded-xl overflow-hidden border dark:border-neutral-800">
-          <img
-            src="/tutorial-placeholder3.jpg"
-            alt="Results step"
-            className="w-full object-cover max-h-[300px] dark:opacity-90"
-          />
-        </div>
-      </section>
+      <StepSection
+        title={t("tutorial.cdc_pra.step2_title")}
+        body={t("tutorial.cdc_pra.step2_body")}
+      />
+
+      <StepSection
+        title={t("tutorial.cdc_pra.step3_title")}
+        body={t("tutorial.cdc_pra.step3_body")}
+      />
+
+      <StepSection
+        title={t("tutorial.cdc_pra.step4_title")}
+        body={t("tutorial.cdc_pra.step4_body")}
+      />
     </div>
   );
 }
 
-/* ============ Crossmatch tutorial ============ */
-function CrossmatchTutorial() {
+/* ============ CDC-XM tutorial ============ */
+function CDCXMTutorial() {
+  const { t } = useTranslation();
+
   return (
     <div className="space-y-10">
-      <h2 className="text-xl font-semibold mb-2 text-center">Crossmatch Analysis</h2>
-
-      {/* Step 1 */}
-      <section>
-        <h3 className="text-base font-medium mb-2">1. Upload images</h3>
-        <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4 max-w-3xl">
-          Select and upload your image folder. Wells are automatically labeled as
-          positive, negative, IgM, or sample based on their position in the plate.
+      <header className="text-center">
+        <h2 className="text-xl font-semibold mb-2">
+          {t("tutorial.cdc_xm.title")}
+        </h2>
+        <p className="text-sm text-neutral-600 dark:text-neutral-400 max-w-3xl mx-auto">
+          {t("tutorial.cdc_xm.intro")}
         </p>
-        <div className="rounded-xl overflow-hidden border dark:border-neutral-800">
-          <img
-            src="/tutorial-placeholder4.jpg"
-            alt="Upload images crossmatch"
-            className="w-full object-cover max-h-[300px] dark:opacity-90"
-          />
-        </div>
-      </section>
+      </header>
 
-      {/* Step 2 */}
-      <section>
-        <h3 className="text-base font-medium mb-2">2. Adjust layout and column modes</h3>
-        <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4 max-w-3xl">
-          Use the editor to adjust well roles or column modes (T, B, or T/B). The
-          default layout sets rows A–C as controls and columns 1–9 as test samples.
-        </p>
-        <div className="rounded-xl overflow-hidden border dark:border-neutral-800">
-          <img
-            src="/tutorial-placeholder5.jpg"
-            alt="Layout step crossmatch"
-            className="w-full object-cover max-h-[300px] dark:opacity-90"
-          />
-        </div>
-      </section>
+      <StepSection
+        title={t("tutorial.cdc_xm.step1_title")}
+        body={t("tutorial.cdc_xm.step1_body")}
+      />
 
-      {/* Step 3 */}
-      <section>
-        <h3 className="text-base font-medium mb-2">3. Run analysis</h3>
-        <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4 max-w-3xl">
-          When all wells and modes are set, click <strong>Run Analysis</strong>. The
-          cytotoxicity results and summarized statistics will appear automatically.
-        </p>
-        <div className="rounded-xl overflow-hidden border dark:border-neutral-800">
-          <img
-            src="/tutorial-placeholder6.jpg"
-            alt="Run analysis crossmatch"
-            className="w-full object-cover max-h-[300px] dark:opacity-90"
-          />
-        </div>
-      </section>
+      <StepSection
+        title={t("tutorial.cdc_xm.step2_title")}
+        body={t("tutorial.cdc_xm.step2_body")}
+      />
+
+      <StepSection
+        title={t("tutorial.cdc_xm.step3_title")}
+        body={t("tutorial.cdc_xm.step3_body")}
+      />
+
+      <StepSection
+        title={t("tutorial.cdc_xm.step4_title")}
+        body={t("tutorial.cdc_xm.step4_body")}
+      />
     </div>
   );
 }
 
+/* ============ FC-XM tutorial ============ */
+function FCXMTutorial() {
+  const { t } = useTranslation();
+
+  return (
+    <div className="space-y-10">
+      <header className="text-center">
+        <h2 className="text-xl font-semibold mb-2">
+          {t("tutorial.fcxm.title")}
+        </h2>
+        <p className="text-sm text-neutral-600 dark:text-neutral-400 max-w-3xl mx-auto">
+          {t("tutorial.fcxm.intro")}
+        </p>
+      </header>
+
+      <StepSection
+        title={t("tutorial.fcxm.step1_title")}
+        body={t("tutorial.fcxm.step1_body")}
+      />
+
+      <StepSection
+        title={t("tutorial.fcxm.step2_title")}
+        body={t("tutorial.fcxm.step2_body")}
+      />
+
+      <StepSection
+        title={t("tutorial.fcxm.step3_title")}
+        body={t("tutorial.fcxm.step3_body")}
+      />
+
+      <StepSection
+        title={t("tutorial.fcxm.step4_title")}
+        body={t("tutorial.fcxm.step4_body")}
+      />
+    </div>
+  );
+}

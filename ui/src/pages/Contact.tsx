@@ -1,4 +1,3 @@
-// ui/src/pages/Contact.tsx
 import { useState, useEffect } from "react";
 import { Toolbar } from "../components/Toolbar";
 import { useTranslation } from "react-i18next";
@@ -22,7 +21,7 @@ import { useTranslation } from "react-i18next";
 // ];
 // 
 // const GITHUB = {
-//   url: "https://github.com/TarikExner/LCTeller",
+//   url: "https://github.com/TarikExner/alloviewer",
 //   text: "View GitHub repository",
 //   note:
 //     "This is mainly for people who are used to React / TypeScript / imaging. If that’s not you, just send us an email.",
@@ -42,7 +41,7 @@ export default function Contact() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // 🧩 Get translated persons from JSON
+  //  Get translated persons from JSON
   const persons = t("contact.persons", { returnObjects: true }) as {
     name: string;
     role: string;
@@ -50,7 +49,7 @@ export default function Contact() {
   }[];
 
   const GITHUB = {
-    url: "https://github.com/TarikExner/LCTeller",
+    url: "https://github.com/TarikExner/alloviewer",
     text: t("contact.github_text"),
     note: t("contact.github_note"),
   };

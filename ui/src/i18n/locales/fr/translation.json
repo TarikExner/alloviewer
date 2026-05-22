@@ -2,49 +2,156 @@
   "toolbar": {
     "about": "À propos",
     "tutorial": "Tutoriel",
-    "docs": "Documentation",
+    "use_policy": "Politique d’utilisation",
     "contact": "Contact"
   },
+
   "home": {
-    "title": "AlloViewer",
-    "cdc": "CDC-PRA",
-    "crossmatch": "CDC-XM"
+    "get_started": "Commencer",
+    "disclaimer_strong": "Réservé à la recherche.",
+    "disclaimer_text": "AlloViewer est un outil logiciel expérimental et n’est pas approuvé pour le diagnostic clinique, les décisions thérapeutiques, l’attribution de greffons ou la prise en charge des patients.",
+    "disclaimer_link": "Lire la politique d’utilisation."
+  },
+
+  "use_policy": {
+    "title": "Politique d’utilisation",
+    "banner_strong": "Réservé à la recherche.",
+    "banner_text": "AlloViewer est un outil logiciel expérimental. Il n’est ni certifié ni approuvé pour le diagnostic clinique, les décisions thérapeutiques, l’attribution de greffons ou la prise en charge des patients.",
+
+    "research_heading": "Recherche et évaluation des flux de travail uniquement",
+    "research_text": "AlloViewer est fourni pour un usage de recherche, le développement de méthodes, l’enseignement et l’évaluation des flux de travail. Le logiciel n’est pas destiné à remplacer les procédures de laboratoire établies, l’examen par des experts ou les parcours validés de décision clinique.",
+
+    "no_clinical_heading": "Aucune utilisation clinique autonome",
+    "no_clinical_text": "Les résultats générés par AlloViewer ne doivent pas être utilisés comme seule base pour le diagnostic clinique, l’évaluation de la compatibilité donneur-receveur, l’éligibilité à la transplantation, l’attribution d’organes, les décisions thérapeutiques ou la prise en charge des patients.",
+
+    "review_heading": "Examen par des experts requis",
+    "review_text": "Tous les résultats nécessitent un examen indépendant par des experts qualifiés de laboratoire ou des cliniciens. Les utilisateurs sont responsables de la vérification des données d’entrée, de la qualité de l’essai, de la performance des contrôles, des résultats du logiciel et de toute interprétation ultérieure.",
+
+    "validation_heading": "Validation locale et responsabilité réglementaire",
+    "validation_text": "Les utilisateurs sont responsables de la validation d’AlloViewer dans leur propre environnement de laboratoire avant toute utilisation opérationnelle. Les utilisateurs sont également responsables du respect des règles institutionnelles applicables, des systèmes de gestion de la qualité, des exigences de protection des données et des exigences réglementaires.",
+
+    "liability_heading": "Responsabilité",
+    "liability_text": "Les auteurs et développeurs n’acceptent aucune responsabilité pour les décisions cliniques, réglementaires, opérationnelles ou financières prises sur la base de résultats logiciels non validés. L’utilisation du logiciel se fait aux risques de l’utilisateur.",
+
+    "data_heading": "Gestion des données",
+    "data_text": "Les utilisateurs ne doivent pas téléverser de données identifiables de patients à moins de disposer de la base légale, institutionnelle et éthique requise pour le faire. Les fichiers téléversés doivent être vérifiés et dépersonnalisés si nécessaire avant utilisation."
   },
   "contact": {
     "heading": "Contact",
-    "intro": "Pour toute question sur AlloViewer, écrivez-nous. Pour les parties liées au code, utilisez le lien GitHub ci-dessous.",
+    "intro": "Pour toute question concernant AlloViewer, envoyez-nous un e-mail. Pour les modifications du code, consultez le lien GitHub ci-dessous.",
     "developers": "Développeurs",
-    "disclaimer": "Veuillez ne pas envoyer de données permettant d’identifier un patient par e-mail.",
-    "email_label": "E-mail",
-    "role_label": "Rôle",
+    "disclaimer": "Veuillez ne pas envoyer de données permettant d’identifier des patients par e-mail.",
     "github_text": "Voir le dépôt GitHub",
-    "github_note": "C’est surtout pour les personnes qui utilisent déjà React / TypeScript / analyse d’images. Sinon, envoyez-nous simplement un e-mail.",
+    "github_note": "Cela s’adresse principalement aux personnes habituées à React / TypeScript / l’imagerie. Si ce n’est pas votre cas, envoyez-nous simplement un e-mail.",
     "persons": [
       {
-        "name": "Dr. med. Dr. rer. nat. Cassian Afting",
+        "name": "Cassian Afting, MD, PhD",
         "role": "Responsable du projet",
-        "unit": "DRK Francfort"
+        "unit": "Institut de médecine transfusionnelle et d’immunohématologie, Service de don du sang de la Croix-Rouge allemande Baden-Württemberg-Hessen"
       },
       {
-        "name": "Dr. med. Tarik Exner",
+        "name": "Tarik Exner, MD",
         "role": "Analyse d’images / pipeline",
-        "unit": "Hôpital universitaire de Heidelberg"
+        "unit": "Division de rhumatologie, Département de médecine V, Hôpital universitaire de Heidelberg"
       }
     ]
   },
   "about": {
     "title": "À propos d’AlloViewer",
-    "purpose_heading": "But",
-    "purpose_text": "AlloViewer a été créé pour fournir une méthode uniforme et compréhensible d’analyse des tests de cytotoxicité dépendante du complément (CDC). Il mesure la lyse cellulaire à partir d’images de microscopie et présente les résultats sous forme de cytotoxicité spécifique au donneur et de valeurs de PRA.",
-    "why_heading": "Pourquoi c’est utile",
-    "why_text": "L’évaluation manuelle des tests CDC prend du temps et peut varier d’une personne à l’autre. AlloViewer automatise cette étape afin de rendre les résultats plus cohérents et de réduire le temps de travail au laboratoire.",
-    "how_heading": "Fonctionnement",
-    "how_text": "Les images envoyées sont traitées par une chaîne d’analyse fixe. Le logiciel distingue les cellules intactes des cellules lysées, calcule la cytotoxicité pour chaque puits, puis regroupe les valeurs pour le rapport. Chaque analyse utilise une version identifiée afin qu’elle puisse être reproduite.",
-    "dev_heading": "Développement",
-    "dev_text": "AlloViewer a été développé par {{cassian}} (DRK Francfort) et {{tarik}} (Hôpital universitaire de Heidelberg).",
-    "license_heading": "Licence et utilisation",
-    "license_text": "AlloViewer est destiné à la recherche. Pour un usage clinique ou commercial, ou pour l’intégrer dans d’autres systèmes, veuillez contacter les auteurs."
-  }
 
+    "purpose_heading": "Objectif",
+    "purpose_text": "AlloViewer est une plateforme logicielle web destinée à l’interprétation standardisée et traçable du diagnostic des anticorps HLA. Elle prend en charge l’analyse automatisée des tests de cytotoxicité dépendante du complément (CDC) basés sur l’image et des données de crossmatch par cytométrie en flux (FCXM), dans le but de réduire l’interprétation dépendante de l’opérateur dans les tests physiques des anticorps HLA.",
+
+    "workflows_heading": "Flux de travail pris en charge",
+    "workflows_text": "AlloViewer prend actuellement en charge trois flux de travail d’analyse : l’analyse de la spécificité des anticorps HLA basée sur la CDC à l’aide de panels commerciaux de cellules test (CDC-PRA), l’analyse du crossmatch CDC et l’analyse FCXM. En CDC-PRA, les profils de cytotoxicité au niveau des puits sont associés à la disposition du panel de cellules test téléversé afin d’aider à déduire les spécificités possibles des anticorps HLA. Dans les tests de crossmatch CDC, les puits contenant des lymphocytes du donneur sont évalués pour leur cytotoxicité après incubation avec le sérum du receveur. En FCXM, les fichiers .fcs téléversés sont analysés par détection automatisée des populations et mesure de l’IgG spécifique à chaque population.",
+
+    "why_heading": "Pourquoi c’est important",
+    "why_text": "Les tests CDC et FCXM restent pertinents dans les tests d’histocompatibilité, mais leur interprétation peut dépendre fortement de l’examen manuel. La cotation microscopique de la CDC est souvent semi-quantitative, tandis que l’analyse FCXM dépend généralement du gating manuel des populations et d’une interprétation de la fluorescence définie par des experts. AlloViewer fournit des étapes d’analyse fixes et reproductibles, afin que les résultats puissent être comparés de manière plus cohérente entre opérateurs, séries d’analyse et formats de test.",
+
+    "how_heading": "Fonctionnement",
+    "how_text": "Pour la microscopie CDC, AlloViewer utilise une analyse d’images en pleine résolution avec un modèle U-Net entraîné par simulation pour détecter les lymphocytes. Les cellules détectées sont classées à l’aide de contrôles positifs et négatifs spécifiques à l’expérience dans l’espace de fluorescence rouge-vert, ce qui permet une cotation de la cytotoxicité au niveau des puits et une prise en compte explicite des cellules incertaines. Pour le FCXM, AlloViewer applique un contrôle qualité, une sélection des lymphocytes, une détection des populations guidée par les marqueurs et une extraction du signal IgG spécifique à chaque gate. Chaque flux de travail est accessible via une interface web propre au test et par un accès basé sur une API.",
+
+    "dev_heading": "Développement",
+    "dev_text": "AlloViewer a été principalement développé par {{cassian}} (Institut de médecine transfusionnelle et d’immunohématologie, Service de don du sang de la Croix-Rouge allemande Baden-Württemberg-Hessen, Francfort) et {{tarik}} (Division de rhumatologie, Département de médecine V, Hôpital universitaire de Heidelberg) dans le cadre d’un projet collaboratif (pour la liste complète des auteurs, voir notre article).",
+
+    "license_heading": "Licence et utilisation",
+    "license_text": "AlloViewer est mis à disposition sous la licence Creative Commons Attribution 4.0 International License (CC BY 4.0), sauf indication contraire. La version actuelle est destinée à un usage de recherche et à l’évaluation des flux de travail. Elle n’a pas été établie comme système autonome de décision clinique, et une validation prospective multicentrique est nécessaire avant toute utilisation régulière comme aide à la décision clinique."
+  },
+  "tutorial": {
+    "title": "Tutoriel",
+    "tabs": {
+      "cdc_pra": "CDC-PRA",
+      "cdc_xm": "CDC-XM",
+      "fcxm": "FC-XM"
+    },
+    "video": {
+      "text": "Pour un guide vidéo étape par étape à jour, veuillez consulter notre chaîne YouTube :",
+      "link": "Tutoriels vidéo AlloViewer",
+      "href": "https://www.youtube.com/@AlloViewer"
+    },
+    "cdc_pra": {
+      "title": "Analyse CDC-PRA",
+      "intro": "Utilisez ce flux de travail pour l’analyse de la spécificité des anticorps HLA basée sur la CDC avec un panel commercial de cellules test. AlloViewer associe le profil de cytotoxicité observé à la disposition du panel téléversé et indique les spécificités d’anticorps candidates.",
+
+      "step1_title": "1. Téléverser la disposition de la plaque",
+      "step1_body": "Commencez par téléverser la disposition de la plaque au format .xlsx. Le fichier doit décrire le panel de cellules test et le typage HLA associé à chaque puits. La disposition est nécessaire, car les résultats CDC-PRA sont interprétés à partir du profil des puits positifs et négatifs dans l’ensemble du panel. Vous pouvez télécharger le fichier d’exemple ci-dessous pour vérifier si vous utilisez la même disposition. Veuillez utiliser la disposition officielle de l’entreprise chaque fois que possible.",
+      "step1_alt": "Téléversement de la disposition de plaque CDC-PRA",
+      "download_example": "Télécharger l’exemple de disposition .xlsx",
+
+      "step2_title": "2. Téléverser le dossier d’images",
+      "step2_body": "Téléversez le dossier contenant les images microscopiques de la plaque. Les images sont associées selon leur ordre dans la liste d’images téléversée et l’ordre de balayage sélectionné. Bien que les noms de fichiers soient utilisés pour le tri, veuillez vérifier soigneusement le tableau d’association des images avant de lancer l’analyse.",
+      "step2_alt": "Téléversement des images CDC-PRA",
+
+      "step3_title": "3. Vérifier la plaque et l’association des images",
+      "step3_body": "Vérifiez les rôles des puits, l’ordre de balayage et l’association entre images et puits. Assurez-vous que chaque image téléversée est attribuée au bon puits. L’analyse ne doit être lancée que lorsque le nombre attendu de puits est associé et qu’aucune image requise ne manque.",
+      "step3_alt": "Vérification de la plaque CDC-PRA",
+
+      "step4_title": "4. Lancer l’analyse et vérifier les résultats",
+      "step4_body": "Après le lancement de l’analyse, AlloViewer segmente les lymphocytes, classe les cellules à l’aide des contrôles positifs et négatifs, et calcule les valeurs de cytotoxicité au niveau des puits. Les résultats comprennent le résultat de la plaque, les valeurs au niveau des puits, les indicateurs de qualité et un résumé des profils de réactivité inférés pouvant être comparés à la disposition du panel téléversé.",
+      "step4_alt": "Résultats CDC-PRA"
+    },
+
+    "cdc_xm": {
+      "title": "Analyse CDC-XM",
+      "intro": "Utilisez ce flux de travail pour l’analyse du crossmatch par cytotoxicité dépendante du complément basée sur l’image. AlloViewer traite les images microscopiques de lymphocytes du donneur incubés avec le sérum du receveur et indique les valeurs de cytotoxicité par puits et par mode cellulaire.",
+
+      "step1_title": "1. Téléverser le dossier d’images",
+      "step1_body": "Téléversez le dossier contenant les images microscopiques CDC-XM. Les puits peuvent être attribués comme échantillon, contrôle positif, contrôle négatif, contrôle IgM ou vide. Le contrôle IgM sert à vérifier si le traitement au dithiothréitol (DTT) réduit efficacement la réactivité médiée par les IgM, ce qui aide à distinguer le signal lié aux IgM de l’activation du complément médiée par les IgG, cliniquement pertinente.",
+      "step1_alt": "Téléversement des images CDC-XM",
+
+      "step2_title": "2. Vérifier la disposition de la plaque et les modes de colonne",
+      "step2_body": "Vérifiez les rôles des puits et les modes de colonne avant de lancer l’analyse. T signifie lymphocytes T, B signifie lymphocytes B, et T/B signifie que les résultats des lymphocytes T et B sont représentés pour le mode de colonne sélectionné. Ajustez la disposition si le schéma de plaque par défaut ne correspond pas à l’expérience. Vérifiez ensuite que les images sont associées aux bons puits.",
+      "step2_alt": "Disposition de plaque et modes de colonne CDC-XM",
+
+      "step3_title": "3. Lancer l’analyse",
+      "step3_body": "Lorsque tous les puits, contrôles, modes cellulaires, l’ordre de balayage et les associations d’images sont corrects, lancez l’analyse. AlloViewer détecte les cellules individuelles, classe les cellules viables et lysées à l’aide de contrôles internes, et calcule les fractions de cytotoxicité au niveau des puits.",
+      "step3_alt": "Lancement de l’analyse CDC-XM",
+
+      "step4_title": "4. Vérifier les résultats CDC-XM",
+      "step4_body": "Après le traitement, vérifiez l’aperçu de la plaque, le statut des puits, les valeurs de cytotoxicité et le tableau récapitulatif. Les puits limites ou inattendus doivent être vérifiés manuellement, en particulier si les puits de contrôle ou le contrôle IgM suggèrent des problèmes d’essai.",
+      "step4_alt": "Résultats CDC-XM"
+    },
+
+    "fcxm": {
+      "title": "Analyse FC-XM",
+      "intro": "Utilisez ce flux de travail pour l’analyse du crossmatch par cytométrie en flux à partir de fichiers .fcs. AlloViewer prend en charge l’extraction automatisée du panel, l’attribution des échantillons, la détection des populations et les mesures d’IgG spécifiques à chaque population.",
+
+      "step1_title": "1. Téléverser et attribuer les fichiers .fcs",
+      "step1_body": "Téléversez le dossier contenant les fichiers .fcs. Après le téléversement, attribuez les fichiers aux cartes d’échantillons correspondantes. Un contrôle négatif est requis. Des contrôles positifs peuvent être ajoutés s’ils sont disponibles, et des cartes d’échantillons peuvent être ajoutées pour les patients ou les échantillons de test. Les noms affichés peuvent correspondre aux noms de fichiers ou aux noms de tubes, selon les métadonnées FCS disponibles.",
+      "step1_alt": "Téléversement FCS et attribution des échantillons FC-XM",
+
+      "step2_title": "2. Vérifier le panel de marqueurs",
+      "step2_body": "AlloViewer lit le panel de marqueurs à partir des fichiers .fcs téléversés. Vérifiez les canaux détectés, les anticorps, les rôles des marqueurs et les populations cibles avant de lancer l’analyse. Au moins un marqueur IgG doit être sélectionné, car l’interprétation finale FC-XM dépend de l’extraction du signal IgG spécifique à chaque population.",
+      "step2_alt": "Vérification du panel de marqueurs FC-XM",
+
+      "step3_title": "3. Lancer l’analyse et inspecter les résultats",
+      "step3_body": "Lancez l’analyse après avoir vérifié les échantillons et le panel. AlloViewer effectue le contrôle qualité, la sélection des lymphocytes, la détection des populations guidée par les marqueurs et le calcul des mesures IgG spécifiques à chaque gate. La vue des résultats vous permet de sélectionner un échantillon, un fichier et un gate afin d’inspecter les diagrammes de dispersion, les courbes de densité IgG et les métriques par population.",
+      "step3_alt": "Lancement et inspection des résultats FC-XM",
+
+      "step4_title": "4. Définir la règle de rapport et télécharger le résumé",
+      "step4_body": "Une fois l’analyse terminée, choisissez la métrique de positivité et le seuil utilisés pour le rapport. Les métriques disponibles comprennent le ratio médian, le décalage médian, l’indice de fluorescence et le pourcentage de cellules positives. Téléchargez le résumé uniquement après avoir vérifié que le gate sélectionné et les résultats au niveau des échantillons correspondent à la règle d’interprétation prévue.",
+      "step4_alt": "Paramètres du rapport FC-XM"
+    }
+  }
 }
 

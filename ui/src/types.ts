@@ -1,5 +1,5 @@
-export const ROWS = ["A", "B", "C", "D", "E", "F"] as const;      // A–F
-export const COLS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;     // 1–10
+export const ROWS = ["A", "B", "C", "D", "E", "F"] as const;
+export const COLS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 export const WELL_TYPES = ["positive", "negative", "sample", "empty", "igm"] as const;
 
 export type PlateLayout = {

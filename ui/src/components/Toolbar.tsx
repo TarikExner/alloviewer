@@ -14,13 +14,16 @@ export function Toolbar({ title = "AlloViewer" }: { title?: string }) {
     { code: "en", flag: "🇬🇧", label: "English" },
     { code: "de", flag: "🇩🇪", label: "Deutsch" },
     { code: "es", flag: "🇪🇸", label: "Español" },
-    { code: "fr", flag: "🇫🇷", label: "Français" }
+    { code: "fr", flag: "🇫🇷", label: "Français" },
   ];
 
   return (
     <div className="w-full border-b bg-white/90 dark:bg-neutral-900/90 dark:border-neutral-800 backdrop-blur-md">
       <div className="w-full px-4 py-3 flex items-center justify-between">
-        <Link to="/" className="font-semibold text-neutral-900 dark:text-neutral-100">
+        <Link
+          to="/"
+          className="font-semibold text-neutral-900 dark:text-neutral-100"
+        >
           {title}
         </Link>
 
@@ -32,15 +35,14 @@ export function Toolbar({ title = "AlloViewer" }: { title?: string }) {
             <Link to="/tutorial" className="hover:underline">
               {t("toolbar.tutorial")}
             </Link>
-            <Link to="/docs" className="hover:underline">
-              {t("toolbar.docs")}
+            <Link to="/use-policy" className="hover:underline">
+              {t("toolbar.use_policy")}
             </Link>
             <Link to="/contact" className="hover:underline">
               {t("toolbar.contact")}
             </Link>
           </nav>
 
-          {/* 🌍 Language flags */}
           <div className="flex items-center gap-1">
             {LANGUAGES.map((lang) => (
               <button
@@ -70,4 +72,3 @@ export function Toolbar({ title = "AlloViewer" }: { title?: string }) {
     </div>
   );
 }
-

@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Toolbar } from "../components/Toolbar";
+import { useTranslation } from "react-i18next";
 
 type HomeItem = {
   label: string;
@@ -34,7 +35,6 @@ function wedgePath(
 function CircleMenu({ items }: { items: HomeItem[] }) {
   const nav = useNavigate();
 
-  // 3 items => 120° each
   const slices = useMemo(() => {
     const n = items.length;
     const step = 360 / n;
@@ -58,7 +58,6 @@ function CircleMenu({ items }: { items: HomeItem[] }) {
         className="w-[280px] h-[280px] sm:w-[320px] sm:h-[320px]"
         aria-label="Choose an app mode"
       >
-        {/* Outer ring */}
         <circle
           cx={cx}
           cy={cy}
@@ -102,7 +101,6 @@ function CircleMenu({ items }: { items: HomeItem[] }) {
           );
         })}
 
-        {/* Center dot */}
         <circle
           cx={cx}
           cy={cy}
@@ -116,6 +114,9 @@ function CircleMenu({ items }: { items: HomeItem[] }) {
 }
 
 export default function Home() {
+  const nav = useNavigate();
+  const { t } = useTranslation();
+
   const items: HomeItem[] = [
     { label: "CDC-PRA", to: "/cdc" },
     { label: "CDC-XM", to: "/crossmatch" },
@@ -128,15 +129,40 @@ export default function Home() {
 
       <div className="flex-1 flex items-center justify-center">
         <div className="w-full max-w-xl p-6">
-          <h1 className="text-center text-2xl font-semibold mb-6">AlloViewer</h1>
+          <h1 className="text-center text-2xl font-semibold mb-6">
+            AlloViewer
+          </h1>
 
           <div className="rounded-2xl border dark:border-neutral-800 bg-white/60 dark:bg-neutral-900/30 p-6">
             <CircleMenu items={items} />
 
+            <div className="mt-6 flex justify-center">
+              <button
+                type="button"
+                onClick={() => nav("/tutorial")}
+                className="rounded-xl border px-5 py-2.5 text-sm font-medium
+                           bg-neutral-900 text-white hover:bg-neutral-800
+                           dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200
+                           dark:border-neutral-700 transition-colors"
+              >
+                {t("home.get_started")}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+            <strong>{t("home.disclaimer_strong")}</strong>{" "}
+            {t("home.disclaimer_text")}{" "}
+            <button
+              type="button"
+              onClick={() => nav("/use-policy")}
+              className="font-medium underline underline-offset-4 hover:opacity-80"
+            >
+              {t("home.disclaimer_link")}
+            </button>
           </div>
         </div>
       </div>
     </div>
   );
 }
-

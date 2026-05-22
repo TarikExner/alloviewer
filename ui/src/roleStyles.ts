@@ -2,11 +2,10 @@ import type { WellType } from "./types";
 
 /**
  * One place to tune colors. Stronger borders and higher saturation in dark mode.
- * You can swap these to any palette you like (e.g. teal/orange/purple).
+ * swap these to any palette you like (e.g. teal/orange/purple).
  */
 export const ROLE_STYLES: Record<WellType, string> = {
   positive:
-    // light: darker text; soft bg  |  dark: as before
     "border-rose-500 bg-rose-50 text-rose-800 " +
     "dark:border-rose-400 dark:bg-rose-400/10 dark:text-rose-100",
 
@@ -27,7 +26,6 @@ export const ROLE_STYLES: Record<WellType, string> = {
     "dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300",
 };
 
-// Swatches can stay as you had them, or leave as-is:
 export const ROLE_SWATCH: Record<WellType, string> = {
   positive:
     "border-rose-500 bg-rose-500/40 dark:border-rose-400 dark:bg-rose-400/25",
