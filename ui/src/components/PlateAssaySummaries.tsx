@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import {
   EmptySummary,
   SummaryItem,
@@ -7,51 +8,106 @@ import {
 } from "./SummaryBlocks";
 
 function RunValiditySection({ run }: { run: any }) {
+  const { t } = useTranslation();
+
   return (
     <>
-      <SummarySection title="Run validity">
-        <SummaryItem label="Status" value={run.status} />
-        <SummaryItem label="PC mean raw" value={run.pc_mean_raw} />
-        <SummaryItem label="NC mean raw" value={run.nc_mean_raw} />
-        <SummaryItem label="Dynamic range" value={run.dynamic_range} />
-        <SummaryItem label="Positive controls" value={run.n_positive_controls} />
-        <SummaryItem label="Negative controls" value={run.n_negative_controls} />
-        <SummaryItem label="PC replicate range" value={run.pc_replicate_range} />
-        <SummaryItem label="NC replicate range" value={run.nc_replicate_range} />
+      <SummarySection title={t("SummaryGrids.runValidity.title")}>
+        <SummaryItem
+          label={t("SummaryGrids.runValidity.items.status")}
+          value={run.status}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.runValidity.items.pcMeanRaw")}
+          value={run.pc_mean_raw}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.runValidity.items.ncMeanRaw")}
+          value={run.nc_mean_raw}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.runValidity.items.dynamicRange")}
+          value={run.dynamic_range}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.runValidity.items.positiveControls")}
+          value={run.n_positive_controls}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.runValidity.items.negativeControls")}
+          value={run.n_negative_controls}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.runValidity.items.pcReplicateRange")}
+          value={run.pc_replicate_range}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.runValidity.items.ncReplicateRange")}
+          value={run.nc_replicate_range}
+        />
       </SummarySection>
 
-      <WarningList title="Control warnings" warnings={run.control_warnings} />
+      <WarningList
+        title={t("SummaryGrids.runValidity.controlWarnings")}
+        warnings={run.control_warnings}
+      />
     </>
   );
 }
 
-function QCSection({ qc, showWellLists }: { qc: any; showWellLists?: boolean }) {
+function QCSection({
+  qc,
+  showWellLists,
+}: {
+  qc: any;
+  showWellLists?: boolean;
+}) {
+  const { t } = useTranslation();
+
   return (
     <>
-      <SummarySection title="QC">
-        <SummaryItem label="Total wells" value={qc.total_wells} />
-        <SummaryItem label="Valid wells" value={qc.valid_wells} />
-        <SummaryItem label="Mean ROI count" value={qc.mean_n_rois} />
+      <SummarySection title={t("SummaryGrids.qc.title")}>
         <SummaryItem
-          label="Mean uncertain fraction"
+          label={t("SummaryGrids.qc.items.totalWells")}
+          value={qc.total_wells}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.qc.items.validWells")}
+          value={qc.valid_wells}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.qc.items.meanRoiCount")}
+          value={qc.mean_n_rois}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.qc.items.meanUncertainFraction")}
           value={qc.mean_uncertain_fraction}
         />
         <SummaryItem
-          label="Low ROI wells"
+          label={t("SummaryGrids.qc.items.lowRoiWells")}
           value={qc.low_roi_wells?.length ?? 0}
         />
         <SummaryItem
-          label="High uncertain wells"
+          label={t("SummaryGrids.qc.items.highUncertainWells")}
           value={qc.high_uncertain_wells?.length ?? 0}
         />
       </SummarySection>
 
-      <WarningList title="QC warnings" warnings={qc.warnings} />
+      <WarningList
+        title={t("SummaryGrids.qc.warnings")}
+        warnings={qc.warnings}
+      />
 
       {showWellLists ? (
         <>
-          <WellList title="Low ROI wells" wells={qc.low_roi_wells} />
-          <WellList title="High uncertain wells" wells={qc.high_uncertain_wells} />
+          <WellList
+            title={t("SummaryGrids.qc.lowRoiWells")}
+            wells={qc.low_roi_wells}
+          />
+          <WellList
+            title={t("SummaryGrids.qc.highUncertainWells")}
+            wells={qc.high_uncertain_wells}
+          />
         </>
       ) : null}
     </>
@@ -59,6 +115,8 @@ function QCSection({ qc, showWellLists }: { qc: any; showWellLists?: boolean }) 
 }
 
 export function PRASummaryGrid({ summary }: { summary: any | null }) {
+  const { t } = useTranslation();
+
   if (!summary) return <EmptySummary />;
 
   const run = summary.run_validity ?? {};
@@ -69,28 +127,43 @@ export function PRASummaryGrid({ summary }: { summary: any | null }) {
     <div className="space-y-4">
       <RunValiditySection run={run} />
 
-      <SummarySection title="PRA result">
-        <SummaryItem label="PRA %" value={assay.pra_percent} />
-        <SummaryItem label="Positive panel wells" value={assay.positive_panel_wells} />
-        <SummaryItem label="Valid panel wells" value={assay.valid_panel_wells} />
+      <SummarySection title={t("SummaryGrids.praResult.title")}>
         <SummaryItem
-          label="Mean corrected frac pos"
+          label={t("SummaryGrids.praResult.items.praPercent")}
+          value={assay.pra_percent}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.praResult.items.positivePanelWells")}
+          value={assay.positive_panel_wells}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.praResult.items.validPanelWells")}
+          value={assay.valid_panel_wells}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.praResult.items.meanCorrectedFracPos")}
           value={assay.mean_corrected_frac_pos}
         />
         <SummaryItem
-          label="Median corrected frac pos"
+          label={t("SummaryGrids.praResult.items.medianCorrectedFracPos")}
           value={assay.median_corrected_frac_pos}
         />
         <SummaryItem
-          label="Max corrected frac pos"
+          label={t("SummaryGrids.praResult.items.maxCorrectedFracPos")}
           value={assay.max_corrected_frac_pos}
         />
-        <SummaryItem label="Weak positive wells" value={assay.n_weak_positive} />
         <SummaryItem
-          label="Moderate positive wells"
+          label={t("SummaryGrids.praResult.items.weakPositiveWells")}
+          value={assay.n_weak_positive}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.praResult.items.moderatePositiveWells")}
           value={assay.n_moderate_positive}
         />
-        <SummaryItem label="Strong positive wells" value={assay.n_strong_positive} />
+        <SummaryItem
+          label={t("SummaryGrids.praResult.items.strongPositiveWells")}
+          value={assay.n_strong_positive}
+        />
       </SummarySection>
 
       <QCSection qc={qc} />
@@ -99,6 +172,8 @@ export function PRASummaryGrid({ summary }: { summary: any | null }) {
 }
 
 export function CrossmatchSummaryGrid({ summary }: { summary: any | null }) {
+  const { t } = useTranslation();
+
   if (!summary) return <EmptySummary />;
 
   const run = summary.run_validity ?? {};
@@ -109,23 +184,41 @@ export function CrossmatchSummaryGrid({ summary }: { summary: any | null }) {
     <div className="space-y-4">
       <RunValiditySection run={run} />
 
-      <SummarySection title="Crossmatch result">
-        <SummaryItem label="Final call" value={assay.final_call} />
+      <SummarySection title={t("SummaryGrids.crossmatchResult.title")}>
         <SummaryItem
-          label="Corrected frac pos"
+          label={t("SummaryGrids.crossmatchResult.items.finalCall")}
+          value={assay.final_call}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.crossmatchResult.items.correctedFracPos")}
           value={assay.sample_corrected_frac_pos}
         />
-        <SummaryItem label="Raw frac pos" value={assay.sample_raw_frac_pos} />
-        <SummaryItem label="Margin from cutoff" value={assay.margin_from_cutoff} />
-        <SummaryItem label="Replicate SD" value={assay.replicate_sd} />
-        <SummaryItem label="Replicate range" value={assay.replicate_range} />
         <SummaryItem
-          label="Replicate discordant"
+          label={t("SummaryGrids.crossmatchResult.items.rawFracPos")}
+          value={assay.sample_raw_frac_pos}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.crossmatchResult.items.marginFromCutoff")}
+          value={assay.margin_from_cutoff}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.crossmatchResult.items.replicateSd")}
+          value={assay.replicate_sd}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.crossmatchResult.items.replicateRange")}
+          value={assay.replicate_range}
+        />
+        <SummaryItem
+          label={t("SummaryGrids.crossmatchResult.items.replicateDiscordant")}
           value={assay.replicate_discordant}
         />
       </SummarySection>
 
-      <WellList title="Sample wells" wells={assay.sample_wells} />
+      <WellList
+        title={t("SummaryGrids.crossmatchResult.sampleWells")}
+        wells={assay.sample_wells}
+      />
 
       <QCSection qc={qc} showWellLists />
     </div>

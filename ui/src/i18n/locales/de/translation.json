@@ -137,7 +137,7 @@
       "intro": "Verwenden Sie diesen Arbeitsablauf für die Flow-Cytometry-Crossmatch-Analyse aus .fcs-Dateien. AlloViewer unterstützt die automatisierte Panel-Extraktion, Probenzuordnung, Populationserkennung und populationsspezifische IgG-Auslesung.",
 
       "step1_title": "1. .fcs-Dateien hochladen und zuordnen",
-      "step1_body": "Laden Sie den Ordner mit den .fcs-Dateien hoch. Ordnen Sie die Dateien nach dem Hochladen den richtigen Probenkarten zu. Eine negative Kontrolle ist erforderlich. Positive Kontrollen können hinzugefügt werden, falls vorhanden, und Probenkarten können für Patienten- oder Testproben ergänzt werden. Anzeigenamen können je nach verfügbaren FCS-Metadaten als Dateinamen oder Röhrchennamen angezeigt werden.",
+      "step1_body": "Laden Sie den Ordner mit den .fcs-Dateien hoch. Ordnen Sie die Dateien nach dem Hochladen den richtigen Probenkarten zu. Eine negative Kontrolle ist erforderlich. Positiv-Kontrollen können hinzugefügt werden, falls vorhanden, und Probenkarten können für Patienten- oder Testproben ergänzt werden. Anzeigenamen können je nach verfügbaren FCS-Metadaten als Dateinamen oder Röhrchennamen angezeigt werden.",
       "step1_alt": "FC-XM-FCS-Upload und Probenzuordnung",
 
       "step2_title": "2. Markerpanel prüfen",
@@ -151,6 +151,854 @@
       "step4_title": "4. Berichtsregel festlegen und Zusammenfassung herunterladen",
       "step4_body": "Wählen Sie nach Abschluss des Laufs die Positivitätsmetrik und den Schwellenwert für den Bericht aus. Verfügbare Metriken umfassen medianes Verhältnis, mediane Verschiebung, Fluoreszenzindex und Anteil positiver Zellen. Laden Sie die Zusammenfassung erst herunter, nachdem Sie geprüft haben, dass das ausgewählte Gate und die Ergebnisse auf Probenebene zur vorgesehenen Interpretationsregel passen.",
       "step4_alt": "FC-XM-Berichtseinstellungen"
+    }
+  },
+  "cdc_app": {
+    "toolbar_title": "AlloViewer - CDC-Panel-Reaktivitätsassay",
+
+    "workflow": {
+      "title": "Arbeitsablauf",
+      "description": "Wählen Sie einen Schritt aus. Der Hauptarbeitsbereich bleibt rechts."
+    },
+
+    "steps": {
+      "upload": {
+        "title": "Dateien hochladen",
+        "summary_missing_layout_and_images": "Layout und Bildordner hochladen",
+        "summary_layout_missing": "{{count}} Bild(er), Layout fehlt",
+        "summary_images_missing": "Layout hochgeladen, Bilder fehlen",
+        "summary_done": "{{count}} Bild(er), Layout hochgeladen"
+      },
+      "review": {
+        "title": "Platte prüfen",
+        "summary_upload_first": "Zuerst Dateien hochladen",
+        "summary_set_scan_order": "Scan-Reihenfolge festlegen",
+        "summary_missing_images": "{{count}} Well(s) ohne Bild",
+        "summary_done": "{{count}} Bild(er) zugeordnet"
+      },
+      "run": {
+        "title": "Analyse und Ergebnisse",
+        "summary_done": "Analyse abgeschlossen",
+        "summary_running": "Analyse läuft",
+        "summary_ready": "Bereit zur Analyse",
+        "summary_incomplete": "Einrichtung unvollständig"
+      },
+      "summary": {
+        "title": "Zusammenfassung",
+        "summary_ready": "Zusammenfassungswerte prüfen",
+        "summary_not_ready": "Nach der Analyse verfügbar"
+      }
+    },
+
+    "panels": {
+      "upload": {
+        "heading": "Schritt 1 · Dateien hochladen",
+        "description": "Laden Sie das Plattenlayout und den Bildordner hoch, bevor Sie die Platte prüfen."
+      },
+      "review": {
+        "heading": "Schritt 2 · Platte und Scan-Reihenfolge prüfen",
+        "description": "Prüfen Sie Well-Rollen, Scan-Reihenfolge und Bild-zu-Well-Zuordnung vor dem Start."
+      },
+      "run": {
+        "heading": "Schritt 3 · Analyse starten und Ergebnisse prüfen",
+        "description": "Starten Sie die Analyse und prüfen Sie anschließend die Plattenvorschau und den Well-Status."
+      },
+      "summary": {
+        "heading": "Schritt 4 · Zusammenfassung",
+        "description": "Prüfen Sie nach der Analyse die finale Zusammenfassung."
+      }
+    },
+
+    "upload_cards": {
+      "layout": {
+        "title": "Plattenlayout (.xlsx)"
+      },
+      "images": {
+        "title": "Bilder (Ordner)",
+        "list_label": "Hochgeladene Bilder"
+      }
+    },
+
+    "stats": {
+      "layout": {
+        "label": "Layout",
+        "uploaded": "Hochgeladen",
+        "missing": "Fehlt"
+      },
+      "images": {
+        "label": "Bilder"
+      },
+      "local_picked_files": {
+        "label": "Lokal ausgewählte Dateien"
+      }
+    },
+
+    "plate_checks": {
+      "title": "Plattenprüfungen",
+      "sample_wells": "Proben-Wells",
+      "negative_controls": "Negativ-Kontrollen",
+      "positive_controls": "Positiv-Kontrollen",
+      "scan_order_wells": "Wells in Scan-Reihenfolge"
+    },
+
+    "warnings": {
+      "no_negative_controls": "Es sind keine Wells für negative Kontrollen ausgewählt.",
+      "no_positive_controls": "Es sind keine Wells für positive Kontrollen ausgewählt.",
+      "missing_ordered_images": "{{count}} Well(s) in der Reihenfolge haben kein Bild.",
+      "unmapped_images": "{{count}} hochgeladene(s) Bild(er) sind keinen Wells zugeordnet."
+    },
+
+    "actions": {
+      "reset_experiment": "Experiment zurücksetzen",
+      "run_analysis": "Analyse starten",
+      "running": "Läuft…"
+    },
+
+    "run_button_titles": {
+      "upload_layout_first": "Laden Sie zuerst das Excel-Layout hoch",
+      "upload_images_first": "Laden Sie zuerst Bilder hoch",
+      "set_scan_order_first": "Legen Sie zuerst die Scan-Reihenfolge fest",
+      "missing_ordered_images": "Einige Wells in der Reihenfolge haben keine Bilder",
+      "run_analysis": "Analyse starten"
+    },
+
+    "run_setup": {
+      "title": "Analyse-Einrichtung",
+      "images_uploaded": "Hochgeladene Bilder",
+      "wells_to_process": "Zu verarbeitende Wells",
+      "template": "Vorlage",
+      "none": "Keine"
+    },
+
+    "summary_values": {
+      "title": "Zusammenfassungswerte"
+    },
+
+    "plate_result": {
+      "title": "Plattenergebnis"
+    },
+
+    "messages": {
+      "analysis_done": "Analyse abgeschlossen.",
+      "analysis_done_no_result": "Die Analyse wurde abgeschlossen, aber es wurde kein Ergebnis zurückgegeben.",
+      "process_failed": "Prozess fehlgeschlagen."
+    },
+
+    "status": {
+      "waiting_to_start": "Wartet auf Start.",
+      "processing_plate_images": "Plattenbilder werden verarbeitet.",
+      "analysis_done": "Analyse abgeschlossen.",
+      "process_failed": "Prozess fehlgeschlagen."
+    },
+
+    "stage_messages": {
+      "default": "Plattenbilder werden verarbeitet.",
+      "segmentation": "Zellen werden segmentiert.",
+      "classification": "Zellen werden klassifiziert.",
+      "scoring": "Well-Scores werden berechnet.",
+      "summary": "Zusammenfassung wird erstellt.",
+      "fit_qc": "Qualitätskontrolle läuft.",
+      "apply_file": "Datei wird verarbeitet.",
+      "payload": "Ergebnispaket wird erstellt.",
+      "plot_cache": "Plot-Cache wird erstellt."
+    }
+  },
+  "FCXM": {
+    "toolbar_title": "AlloViewer - Flow-Cytometry-Crossmatch",
+    "empty_value": "—",
+
+    "workflow": {
+      "title": "Arbeitsablauf",
+      "description": "Wählen Sie einen Schritt aus. Der Hauptarbeitsbereich bleibt rechts."
+    },
+
+    "steps": {
+      "upload": {
+        "title": "Hochladen und zuordnen",
+        "summary_missing": ".fcs-Dateien hochladen",
+        "summary_nc_missing": "{{count}} Datei(en), NK fehlt",
+        "summary_unassigned": "{{uploaded}} Datei(en), {{unassigned}} nicht zugeordnet",
+        "summary_done": "{{count}} Datei(en), alle zugeordnet"
+      },
+      "panel": {
+        "title": "Panel prüfen",
+        "summary_reading": "Panel wird gelesen",
+        "summary_error": "Panel-Fehler",
+        "summary_needs_review": "{{count}} Kanal/Kanäle, Prüfung erforderlich",
+        "summary_done": "{{count}} Kanal/Kanäle",
+        "summary_empty": "Noch kein Panel"
+      },
+      "run": {
+        "title": "Analyse und Ergebnisse",
+        "summary_done": "Analyse abgeschlossen",
+        "summary_running": "Analyse läuft",
+        "summary_ready": "Bereit zur Analyse",
+        "summary_incomplete": "Einrichtung unvollständig"
+      },
+      "report": {
+        "title": "Bericht",
+        "summary_ready": "Regel festlegen und herunterladen",
+        "summary_not_ready": "Nach der Analyse verfügbar"
+      }
+    },
+
+    "panels": {
+      "upload": {
+        "heading": "Schritt 1 · Dateien hochladen und zuordnen",
+        "description": "Laden Sie einen Ordner mit .fcs-Dateien hoch und ziehen Sie die Dateien anschließend in die passenden Karten."
+      },
+      "panel": {
+        "heading": "Schritt 2 · Panel prüfen",
+        "description": "Prüfen Sie die Kanalrollen und entfernen Sie Kanäle, die nicht verwendet werden sollen."
+      },
+      "run": {
+        "heading": "Schritt 3 · Analyse starten und Ergebnisse prüfen",
+        "description": "Starten Sie die Analyse und prüfen Sie anschließend die ausgewählte Probe und Datei."
+      },
+      "report": {
+        "heading": "Schritt 4 · Berichtseinstellungen",
+        "description": "Legen Sie die Positivitätsregel für den Bericht fest und laden Sie anschließend die Zusammenfassung herunter."
+      }
+    },
+
+    "upload_card": {
+      "title": "FCS-Dateien (Ordner)",
+      "uploaded_list_label": "Hochgeladen (.fcs)"
+    },
+
+    "display_names": {
+      "title": "Anzeigenamen",
+      "use_file_names": "Dateinamen verwenden",
+      "use_tube_names": "Röhrchennamen verwenden",
+      "reading": "FCS-Bezeichnungen werden gelesen…"
+    },
+
+    "sample_cards": {
+      "title": "Probenkarten",
+      "description": "Negative Kontrolle ist erforderlich. Positive Kontrolle ist optional.",
+      "drag_hint": "Ziehen Sie hochgeladene Dateien aus der linken Liste in die passende Karte."
+    },
+
+    "panel": {
+      "title": "Panel",
+      "files_uploaded": "{{count}} Datei(en) hochgeladen",
+      "no_files_yet": "Noch keine Dateien",
+      "reading": "Panel wird aus .fcs-Dateien gelesen…",
+      "no_igg_marker": "Es ist kein IgG-Marker ausgewählt. Prüfen Sie das Panel vor dem Start."
+    },
+
+    "samples": {
+      "title": "Proben",
+      "file_count": "{{count}} Datei",
+      "file_count_plural": "{{count}} Dateien"
+    },
+
+    "sample_types": {
+      "negative_control": "Negative Kontrolle",
+      "positive_control": "Positive Kontrolle",
+      "sample": "Probe"
+    },
+
+    "result_selection": {
+      "title": "Ergebnisauswahl",
+      "selected_sample": "Ausgewählte Probe",
+      "no_sample_selected": "Keine Probe ausgewählt",
+      "file": "Datei",
+      "no_files": "Keine Dateien",
+      "gate": "Gate"
+    },
+
+    "overview": {
+      "title": "Übersicht",
+      "description": "Asinh-transformierte IgG-Dichtekurven für Kontrollen und ausgewählte Datei",
+      "selected_file": "Ausgewählte Datei",
+      "no_results_yet": "Noch keine Ergebnisse.",
+      "series_fallback": "Serie {{number}}"
+    },
+
+    "gating": {
+      "title": "Gating-Strategie",
+      "show": "Gating-Strategie anzeigen",
+      "no_plots_yet": "Noch keine Gating-Plots."
+    },
+
+    "plots": {
+      "vs": "{{x}} gegen {{y}}"
+    },
+
+    "axes": {
+      "igg": "IgG"
+    },
+
+    "metrics": {
+      "igg_median": "IgG-Median",
+      "events": "Events",
+      "median_shift": "Medianverschiebung",
+      "median_ratio": "Medianverhältnis",
+      "fluorescence_index": "Fluoreszenzindex",
+      "igg_positive_fraction": "IgG+-Fraktion",
+      "percent_positive": "% pos"
+    },
+
+    "metrics_cards": {
+      "selected_file": "Ausgewählte Datei - {{label}}",
+      "combined_sample": "Kombinierte Probe - {{label}}"
+    },
+
+    "report_settings": {
+      "title": "Berichtseinstellungen",
+      "metric": "Metrik",
+      "positive_above": "Positiv oberhalb von",
+      "current_rule": "Aktuelle Regel",
+      "rule": "Positiv, wenn {{metric}} > {{threshold}}",
+      "run_must_be_done": "Der Lauf muss vor dem Download abgeschlossen sein",
+      "download_summary": "Zusammenfassung herunterladen"
+    },
+
+    "actions": {
+      "reset_experiment": "Experiment zurücksetzen",
+      "add_sample": "Probe hinzufügen",
+      "run_analysis": "Analyse starten",
+      "running": "Läuft…",
+      "download_summary": "Zusammenfassung herunterladen",
+      "preparing_summary": "Zusammenfassung wird vorbereitet…"
+    },
+
+    "run_button_titles": {
+      "panel_loading": "Panel wird noch geladen",
+      "fix_panel_error": "Beheben Sie zuerst den Panel-Fehler",
+      "load_panel_first": "Laden Sie zuerst ein Panel",
+      "run_analysis": "Analyse starten"
+    },
+
+    "run_stages": {
+      "default": "Analyse läuft.",
+      "fit_qc": "Datei-QC läuft.",
+      "fit_marker_calibration": "Marker werden kalibriert.",
+      "fit_lymphocytes": "Lymphozyten werden gegatet.",
+      "fit_clustering": "Clustering-Modell wird angepasst.",
+      "fit_cluster_labels": "Cluster werden beschriftet.",
+      "fit_control_stats": "Kontrollstatistiken werden erstellt.",
+      "apply_file": "Gates werden auf Dateien angewendet.",
+      "payload": "Ergebnispaket wird erstellt.",
+      "plot_cache": "Plot-Cache wird erstellt."
+    },
+
+    "messages": {
+      "loading_results": "Ergebnisse werden geladen…",
+      "running_analysis": "Analyse läuft.",
+      "results_after_run": "Ergebnisse werden geladen, wenn der Lauf abgeschlossen ist.",
+      "failed_to_load_results": "Ergebnisse konnten nicht geladen werden",
+      "could_not_read_fcs_labels": "FCS-Anzeigenamen konnten nicht gelesen werden.",
+      "panel_extraction_failed": "Panel-Extraktion fehlgeschlagen",
+      "panel_empty": "Das Panel ist leer. Laden Sie zuerst FCS-Dateien hoch.",
+      "missing_files_for": "Fehlende Dateien für: {{samples}}",
+      "nc_required": "Mindestens eine Datei für die negative Kontrolle (NK) ist erforderlich.",
+      "run_started": "Lauf gestartet.",
+      "done": "Erledigt.",
+      "run_failed": "Lauf fehlgeschlagen.",
+      "progress_check_failed": "Fortschrittsprüfung fehlgeschlagen.",
+      "download_failed": "Download fehlgeschlagen."
+    }
+  },
+  "cdc_xm_app": {
+    "toolbar_title": "AlloViewer - CDC-XM",
+
+    "workflow": {
+      "title": "Arbeitsablauf",
+      "description": "Wählen Sie einen Schritt aus. Der Hauptarbeitsbereich bleibt rechts."
+    },
+
+    "steps": {
+      "upload": {
+        "title": "Bilder hochladen",
+        "summary_missing": "Bildordner hochladen",
+        "summary_done": "{{count}} Bild(er) hochgeladen"
+      },
+      "review": {
+        "title": "Platte prüfen",
+        "summary_upload_first": "Zuerst Bilder hochladen",
+        "summary_set_scan_order": "Scan-Reihenfolge festlegen",
+        "summary_missing_images": "{{count}} Well(s) ohne Bild",
+        "summary_done": "{{count}} Bild(er) zugeordnet"
+      },
+      "run": {
+        "title": "Analyse und Ergebnisse",
+        "summary_done": "Analyse abgeschlossen",
+        "summary_running": "Analyse läuft",
+        "summary_ready": "Bereit zur Analyse",
+        "summary_incomplete": "Einrichtung unvollständig"
+      },
+      "summary": {
+        "title": "Zusammenfassung",
+        "summary_ready": "Zusammenfassungswerte prüfen",
+        "summary_not_ready": "Nach der Analyse verfügbar"
+      }
+    },
+
+    "panels": {
+      "upload": {
+        "heading": "Schritt 1 · Bilder hochladen",
+        "description": "Laden Sie den CDC-XM-Bildordner hoch. Die Bilder werden anhand der Upload-Reihenfolge der ausgewählten Scan-Reihenfolge zugeordnet."
+      },
+      "review": {
+        "heading": "Schritt 2 · Platte und Scan-Reihenfolge prüfen",
+        "description": "Prüfen Sie Well-Rollen, Zellmodus-Spalten, Scan-Reihenfolge und Bild-zu-Well-Zuordnung vor dem Start."
+      },
+      "run": {
+        "heading": "Schritt 3 · Analyse starten und Ergebnisse prüfen",
+        "description": "Starten Sie die Analyse und prüfen Sie anschließend die Plattenvorschau und den Well-Status."
+      },
+      "summary": {
+        "heading": "Schritt 4 · Zusammenfassung",
+        "description": "Prüfen Sie nach der Analyse die finale Zusammenfassung."
+      }
+    },
+
+    "upload_cards": {
+      "images": {
+        "title": "Bilder (Ordner)",
+        "list_label": "Hochgeladene Bilder"
+      }
+    },
+
+    "stats": {
+      "images_uploaded": "Hochgeladene Bilder",
+      "local_picked_files": "Lokal ausgewählte Dateien"
+    },
+
+    "plate_checks": {
+      "title": "Plattenprüfungen",
+      "sample_wells": "Proben-Wells",
+      "negative_controls": "Negativ-Kontrollen",
+      "positive_controls": "Positiv-Kontrollen",
+      "igm_wells": "IgM-Wells",
+      "scan_order_wells": "Wells in Scan-Reihenfolge"
+    },
+
+    "warnings": {
+      "no_negative_controls": "Es sind keine Wells für negative Kontrollen ausgewählt.",
+      "no_positive_controls": "Es sind keine Wells für positive Kontrollen ausgewählt.",
+      "no_igm_wells": "Es sind keine IgM-Wells ausgewählt.",
+      "missing_ordered_images": "{{count}} Well(s) in der Reihenfolge haben kein Bild.",
+      "unmapped_images": "{{count}} hochgeladene(s) Bild(er) sind keinen Wells zugeordnet."
+    },
+
+    "actions": {
+      "reset_experiment": "Experiment zurücksetzen",
+      "run_analysis": "Analyse starten",
+      "running": "Läuft…"
+    },
+
+    "run_button_titles": {
+      "upload_images_first": "Laden Sie zuerst Bilder hoch",
+      "set_scan_order_first": "Legen Sie zuerst die Scan-Reihenfolge fest",
+      "missing_ordered_images": "Einige Wells in der Reihenfolge haben keine Bilder",
+      "run_analysis": "Analyse starten"
+    },
+
+    "run_setup": {
+      "title": "Analyse-Einrichtung",
+      "images_uploaded": "Hochgeladene Bilder",
+      "wells_to_process": "Zu verarbeitende Wells",
+      "cell_mode_columns": "Zellmodus-Spalten"
+    },
+
+    "cell_modes": {
+      "t": "T",
+      "b": "B",
+      "tb": "T/B"
+    },
+
+    "summary_values": {
+      "title": "Zusammenfassungswerte"
+    },
+
+    "plate_result": {
+      "title": "Plattenergebnis"
+    },
+
+    "messages": {
+      "analysis_done": "Analyse abgeschlossen.",
+      "analysis_done_no_result": "Die Analyse wurde abgeschlossen, aber es wurde kein Ergebnis zurückgegeben.",
+      "process_failed": "Prozess fehlgeschlagen."
+    },
+
+    "status": {
+      "waiting_to_start": "Wartet auf Start.",
+      "processing_plate_images": "Plattenbilder werden verarbeitet.",
+      "analysis_done": "Analyse abgeschlossen.",
+      "process_failed": "Prozess fehlgeschlagen."
+    },
+
+    "stage_messages": {
+      "default": "Plattenbilder werden verarbeitet.",
+      "segmentation": "Zellen werden segmentiert.",
+      "classification": "Zellen werden klassifiziert.",
+      "scoring": "Well-Scores werden berechnet.",
+      "summary": "Zusammenfassung wird erstellt.",
+      "fit_qc": "Qualitätskontrolle läuft.",
+      "apply_file": "Datei wird verarbeitet.",
+      "payload": "Ergebnispaket wird erstellt.",
+      "plot_cache": "Plot-Cache wird erstellt."
+    }
+  },
+  "FullPanelTable": {
+    "table": {
+      "headers": {
+        "channel": "Kanal",
+        "type": "Typ",
+        "antibody": "Antikörper",
+        "populationName": "Populationsname"
+      },
+      "placeholders": {
+        "antibody": "z. B. CD3",
+        "population": "z. B. T-Zellen"
+      },
+      "actions": {
+        "removeChannel": "Kanal entfernen",
+        "removeChannelNamed": "Kanal {{channel}} entfernen"
+      },
+      "empty": "Laden Sie FCS-Dateien hoch, um das Panel zu laden."
+    },
+    "roles": {
+      "scatter": "Streuung",
+      "populationMarker": "Populationsmarker",
+      "iggMarker": "IgG-Marker"
+    }
+  },
+  "ImageMappingTable": {
+    "title": "Bildzuordnung",
+    "description": "Die Bilder werden anhand der Upload-Reihenfolge der ausgewählten Scan-Reihenfolge zugeordnet.",
+    "table": {
+      "headers": {
+        "index": "#",
+        "well": "Well",
+        "image": "Bild"
+      },
+      "empty": "Keine Scan-Reihenfolge festgelegt.",
+      "missingImage": "—"
+    }
+  },
+  "PanelTable": {
+    "columns": {
+      "channel": "Kanal",
+      "type": "Typ",
+      "antibody": "Antikörper",
+      "population_name": "Populationsname"
+    },
+    "roles": {
+      "Scatter": "Streuung",
+      "Population Marker": "Populationsmarker",
+      "IgG Marker": "IgG-Marker"
+    },
+    "placeholders": {
+      "antibody": "z. B. CD3",
+      "population": "z. B. T-Zellen"
+    },
+    "actions": {
+      "remove_channel": "Kanal entfernen",
+      "remove_channel_named": "Kanal {{channel}} entfernen"
+    },
+    "empty": "Laden Sie FCS-Dateien hoch, um das Panel zu laden."
+  },
+  "SummaryGrids": {
+    "runValidity": {
+      "title": "Laufgültigkeit",
+      "controlWarnings": "Kontrollwarnungen",
+      "items": {
+        "status": "Status",
+        "pcMeanRaw": "PK-Mittelwert roh",
+        "ncMeanRaw": "NK-Mittelwert roh",
+        "dynamicRange": "Dynamikbereich",
+        "positiveControls": "Positiv-Kontrollen",
+        "negativeControls": "Negativ-Kontrollen",
+        "pcReplicateRange": "PK-Replikatbereich",
+        "ncReplicateRange": "NK-Replikatbereich"
+      }
+    },
+    "qc": {
+      "title": "QC",
+      "warnings": "QC-Warnungen",
+      "lowRoiWells": "Wells mit niedriger ROI-Zahl",
+      "highUncertainWells": "Wells mit hoher Unsicherheit",
+      "items": {
+        "totalWells": "Wells gesamt",
+        "validWells": "Gültige Wells",
+        "meanRoiCount": "Mittlere ROI-Zahl",
+        "meanUncertainFraction": "Mittlerer unsicherer Anteil",
+        "lowRoiWells": "Wells mit niedriger ROI-Zahl",
+        "highUncertainWells": "Wells mit hoher Unsicherheit"
+      }
+    },
+    "praResult": {
+      "title": "PRA-Ergebnis",
+      "items": {
+        "praPercent": "PRA %",
+        "positivePanelWells": "Positive Panel-Wells",
+        "validPanelWells": "Gültige Panel-Wells",
+        "meanCorrectedFracPos": "Mittlere korrigierte positive Fraktion",
+        "medianCorrectedFracPos": "Mediane korrigierte positive Fraktion",
+        "maxCorrectedFracPos": "Maximale korrigierte positive Fraktion",
+        "weakPositiveWells": "Schwach positive Wells",
+        "moderatePositiveWells": "Moderat positive Wells",
+        "strongPositiveWells": "Stark positive Wells"
+      }
+    },
+    "crossmatchResult": {
+      "title": "Crossmatch-Ergebnis",
+      "sampleWells": "Proben-Wells",
+      "items": {
+        "finalCall": "Finale Bewertung",
+        "correctedFracPos": "Korrigierte positive Fraktion",
+        "rawFracPos": "Rohe positive Fraktion",
+        "marginFromCutoff": "Abstand zum Grenzwert",
+        "replicateSd": "Replikat-SD",
+        "replicateRange": "Replikatbereich",
+        "replicateDiscordant": "Diskordante Replikate"
+      }
+    }
+  },
+  "PlateEditorWithOrder": {
+    "title": "Platte (Editor)",
+    "help": {
+      "pickRole": "Klicken Sie mit der rechten Maustaste auf ein Well, um eine Rolle auszuwählen.",
+      "paint": "Oder verwenden Sie die Pinsel unten zum Markieren. Shift+Klick füllt ein Rechteck."
+    },
+    "roles": {
+      "sample": "Probe",
+      "positive": "Positive Kontrolle",
+      "negative": "Negative Kontrolle",
+      "igm": "IgM-Kontrolle",
+      "empty": "Leer"
+    },
+    "brush": {
+      "activeBrush": "Pinsel: {{role}}"
+    },
+    "well": {
+      "title": "{{well}}",
+      "titleWithRole": "{{well}} ({{role}})"
+    },
+    "columnType": {
+      "shortLabel": "Ty",
+      "ariaLabel": "Typ von Spalte {{column}}",
+      "options": {
+        "t": "T",
+        "b": "B",
+        "tb": "T/B",
+        "empty": "-"
+      }
+    },
+    "actions": {
+      "clear": "Leeren",
+      "reset": "Zurücksetzen",
+      "resetTitle": "Standardlayout wiederherstellen",
+      "flipVertical": "Vertikal spiegeln (A unten)"
+    },
+    "imageOrder": {
+      "title": "Bitte wählen Sie die Reihenfolge der Bildaufnahme aus",
+      "orientation": {
+        "title": "Ausrichtung",
+        "horizontalSnake": "Horizontale Schlange",
+        "verticalSnake": "Vertikale Schlange"
+      },
+      "startCorner": {
+        "title": "Startposition",
+        "topLeft": "Oben links",
+        "topRight": "Oben rechts",
+        "bottomLeft": "Unten links",
+        "bottomRight": "Unten rechts"
+      }
+    },
+    "miniPlate": {
+      "start": "Start",
+      "end": "Ende",
+      "legend": "durchgezogen = ausgewählt; gestrichelt = Lücke"
+    }
+  },
+  "PlateGrid": {
+    "title": "Platte (Editor): Klicken Sie auf ein Well, um einen Probentyp auszuwählen",
+    "well_title": "{{well}} ({{role}})",
+
+    "roles": {
+      "positive": "positive Kontrolle",
+      "negative": "negative Kontrolle",
+      "sample": "Probe",
+      "empty": "leer",
+      "igm": "IgM-Kontrolle"
+    },
+
+    "actions": {
+      "clear": "Leeren",
+      "clear_title": "Alle Wells auf leer setzen",
+      "reset": "Zurücksetzen",
+      "reset_title": "Alle Wells auf Probe setzen"
+    }
+  },
+  "PlateMatrix": {
+    "aria_label": "Plattenmatrix"
+  },
+  "PlatePopupWindow": {
+    "title": "Details zu Well {{well}}",
+    "description": "Originalbild und Segmentierungsergebnis. Bewegen Sie den Mauszeiger über das Originalbild, um beide Ansichten zu prüfen.",
+    "actions": {
+      "close": "Schließen"
+    },
+    "images": {
+      "original": {
+        "title": "Originalbild",
+        "alt": "Original von Well {{well}}",
+        "empty": "Kein Bild für dieses Well"
+      },
+      "segmented": {
+        "title": "Segmentiertes Bild",
+        "alt": "Segmentierung von Well {{well}}",
+        "empty": "Segmentiertes Bild noch nicht verfügbar"
+      }
+    },
+    "legend": {
+      "positive": "Positiv",
+      "negative": "Negativ",
+      "uncertain": "Unsicher"
+    },
+    "magnifier": {
+      "original": "Original",
+      "segmented": "Segmentiert",
+      "noSegmentation": "Keine Segmentierung"
+    }
+  },
+  "PlatePreview": {
+    "title": "Platte (Vorschau)",
+    "positive": "POSITIV",
+    "empty_value": "—",
+    "no_image": "Kein Bild",
+    "no_loci": "Keine Loci im Layout für dieses Well.",
+    "well_image_alt": "Well {{well}}",
+    "well_aria": "Well {{well}} {{imageStatus}} {{positiveStatus}}",
+
+    "image_status": {
+      "has_image": "(hat Bild)",
+      "no_image": ""
+    },
+
+    "progress": {
+      "queued": "Auftrag in Warteschlange…",
+      "running": "Wells werden verarbeitet…",
+      "done": "Abgeschlossen",
+      "error": "Fehler"
+    },
+
+    "fields": {
+      "well": "Well",
+      "role": "Rolle",
+      "frac_pos": "Pos. Fraktion",
+      "status": "Status",
+      "combo_id": "Kombi-ID",
+      "race": "Race",
+      "hla_loci": "HLA-Loci"
+    },
+
+    "actions": {
+      "pin": "Anheften",
+      "unpin": "Lösen",
+      "close": "Schließen"
+    }
+  },
+  "Plots": {
+    "linePlot": {
+      "defaultSeriesLabel": "Serie",
+      "noData": "Keine Daten"
+    }
+  },
+  "SampleCard": {
+    "fields": {
+      "sample_name": "Probenname",
+      "fcs_files": "FCS-Dateien:"
+    },
+    "actions": {
+      "view_results": "Klicken, um Ergebnisse anzuzeigen",
+      "remove": "Entfernen",
+      "remove_sample": "Probe entfernen",
+      "drag_uploaded_files": "Hochgeladene FCS-Dateien hierher ziehen",
+      "remove_file": "Datei entfernen",
+      "remove_file_named": "Datei {{file}} entfernen"
+    },
+    "empty": "FCS-Dateien nach dem Hochladen hierher ziehen"
+  },
+  "StatusPill": {
+    "status": {
+      "idle": "Inaktiv",
+      "queued": "In Warteschlange",
+      "running": "Läuft",
+      "done": "Abgeschlossen",
+      "error": "Fehler"
+    },
+    "current_file": "Aktuelle Datei: {{file}}",
+    "job_short": "Auftrag {{id}}"
+  },
+  "StepButton": {
+    "status": {
+      "not_started": "Nicht gestartet",
+      "needs_attention": "Benötigt Aufmerksamkeit",
+      "needs_review": "Benötigt Prüfung",
+      "ready": "Bereit",
+      "running": "Läuft",
+      "done": "Erledigt",
+      "error": "Fehler"
+    }
+  },
+  "SummaryBlocks": {
+    "empty_value": "—",
+    "boolean": {
+      "yes": "Ja",
+      "no": "Nein"
+    },
+    "empty_summary": "Noch keine Zusammenfassung. Starten Sie zuerst die Analyse."
+  },
+  "ThemeToggle": {
+    "actions": {
+      "switchToLightMode": "In den hellen Modus wechseln",
+      "switchToDarkMode": "In den dunklen Modus wechseln"
+    }
+  },
+  "UploadCard": {
+    "empty_value": "k. A.",
+
+    "actions": {
+      "browse": "Durchsuchen…",
+      "select_file_first": "Wählen Sie zuerst eine Datei aus",
+      "upload_selected": "Ausgewählte Datei(en) hochladen",
+      "uploading": "Wird hochgeladen…",
+      "load_layout": "Layout laden",
+      "upload": "Hochladen",
+      "remove": "Entfernen",
+      "remove_named": "{{file}} entfernen"
+    },
+
+    "instructions": {
+      "excel_layout": "Laden Sie ein Excel-Plattenlayout hoch (.xlsx oder .xlsm).",
+      "generic": "{{target}} hierher ziehen und ablegen oder auf Durchsuchen klicken.",
+      "folder": "einen Ordner",
+      "files": "Datei(en)"
+    },
+
+    "messages": {
+      "skipped_files": "{{count}} nicht passende Datei(en) übersprungen.",
+      "layout_loaded": "Layout geladen: {{lot}} • Wells: {{wells}}",
+      "uploaded_files": "{{count}} Datei(en) hochgeladen.",
+      "upload_failed": "Upload fehlgeschlagen"
+    },
+
+    "uploaded_list": {
+      "default_label": "Hochgeladen",
+      "heading": "{{label}} (in eine Karte ziehen)",
+      "already_assigned": "Bereits zugeordnet (zum Neu-Zuordnen ziehen)",
+      "drag": "Ziehen"
+    }
+  },
+  "ZoomModal": {
+    "actions": {
+      "close": "Schließen"
     }
   }
 }

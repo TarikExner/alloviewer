@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+
 export type RunStatus = "idle" | "queued" | "running" | "done" | "error";
 
 export function StatusPill({
@@ -17,16 +19,9 @@ export function StatusPill({
   progressPercent?: number | null;
   currentFile?: string | null;
 }) {
-  const label =
-    status === "queued"
-      ? "Queued"
-      : status === "running"
-      ? "Running"
-      : status === "done"
-      ? "Completed"
-      : status === "error"
-      ? "Error"
-      : "Idle";
+  const { t } = useTranslation();
+
+  const label = t(`StatusPill.status.${status}`);
 
   const dotClass =
     status === "done"
@@ -43,6 +38,8 @@ export function StatusPill({
       : status === "error" || error
       ? "text-red-700 dark:text-red-400"
       : "text-neutral-700 dark:text-neutral-300";
+
+  const shortJobId = jobId ? jobId.slice(0, 8) : "";
 
   return (
     <div className="min-w-0 rounded-xl border bg-neutral-50 dark:bg-neutral-950 dark:border-neutral-800 px-3 py-2">
@@ -70,7 +67,7 @@ export function StatusPill({
 
           {currentFile && status === "running" ? (
             <div className="text-[11px] text-neutral-500 dark:text-neutral-500 truncate">
-              Current file: {currentFile}
+              {t("StatusPill.current_file", { file: currentFile })}
             </div>
           ) : null}
         </div>
@@ -84,7 +81,7 @@ export function StatusPill({
             className="shrink-0 max-w-[120px] truncate text-[11px] text-neutral-500 dark:text-neutral-500 font-mono"
             title={jobId}
           >
-            job {jobId.slice(0, 8)}
+            {t("StatusPill.job_short", { id: shortJobId })}
           </div>
         ) : null}
       </div>
@@ -105,7 +102,7 @@ export function StatusPill({
           className="mt-1 truncate text-[11px] text-neutral-500 dark:text-neutral-500 font-mono"
           title={jobId}
         >
-          job {jobId.slice(0, 8)}
+          {t("StatusPill.job_short", { id: shortJobId })}
         </div>
       ) : null}
     </div>

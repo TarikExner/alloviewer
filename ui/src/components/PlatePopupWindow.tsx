@@ -1,5 +1,6 @@
 // src/components/PlatePopupWindow.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { type WellID } from "../types";
 
 type HoverPoint = {
@@ -21,6 +22,8 @@ export function PlatePopupWindow({
   segmentedImageUrl: string | null;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
+
   const originalWrapRef = useRef<HTMLDivElement | null>(null);
   const [hoverPoint, setHoverPoint] = useState<HoverPoint | null>(null);
   const [hoverWindowPos, setHoverWindowPos] = useState<{
@@ -97,11 +100,10 @@ export function PlatePopupWindow({
         <div className="flex items-start justify-between gap-4 border-b p-4 dark:border-neutral-800">
           <div>
             <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
-              Well {well} details
+              {t("PlatePopupWindow.title", { well })}
             </h2>
             <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              Original image and segmentation result. Hover over the original
-              image to inspect both views.
+              {t("PlatePopupWindow.description")}
             </p>
           </div>
 
@@ -110,8 +112,9 @@ export function PlatePopupWindow({
             onClick={onClose}
             className="px-3 py-1.5 rounded-md border text-sm bg-white hover:bg-neutral-50
                        dark:bg-neutral-900 dark:hover:bg-neutral-800 dark:border-neutral-700"
+            aria-label={t("PlatePopupWindow.actions.close")}
           >
-            Close
+            {t("PlatePopupWindow.actions.close")}
           </button>
         </div>
 
@@ -119,7 +122,7 @@ export function PlatePopupWindow({
           <div className="grid gap-4 lg:grid-cols-2">
             <div>
               <div className="text-xs font-medium mb-1 text-neutral-600 dark:text-neutral-300">
-                Original image
+                {t("PlatePopupWindow.images.original.title")}
               </div>
 
               {imageUrl ? (
@@ -132,7 +135,7 @@ export function PlatePopupWindow({
                 >
                   <img
                     src={imageUrl}
-                    alt={`Well ${well} original`}
+                    alt={t("PlatePopupWindow.images.original.alt", { well })}
                     className="h-full w-full object-contain"
                     draggable={false}
                   />
@@ -152,16 +155,16 @@ export function PlatePopupWindow({
                   className="h-[72vh] w-full grid place-items-center text-xs text-neutral-500 border rounded-lg bg-neutral-50
                              dark:bg-neutral-900 dark:text-neutral-400 dark:border-neutral-700"
                 >
-                  No image for this well
+                  {t("PlatePopupWindow.images.original.empty")}
                 </div>
               )}
             </div>
 
             <div>
               <div className="text-xs font-medium mb-1 text-neutral-600 dark:text-neutral-300">
-                Segmented image
+                {t("PlatePopupWindow.images.segmented.title")}
               </div>
-            
+
               {segmentedImageUrl ? (
                 <div
                   className="relative h-[72vh] w-full overflow-hidden border rounded-lg bg-white
@@ -169,11 +172,11 @@ export function PlatePopupWindow({
                 >
                   <img
                     src={segmentedImageUrl}
-                    alt={`Well ${well} segmented`}
+                    alt={t("PlatePopupWindow.images.segmented.alt", { well })}
                     className="h-full w-full object-contain"
                     draggable={false}
                   />
-            
+
                   {hoverPoint && (
                     <div
                       className="pointer-events-none absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-black bg-white/40 dark:border-white"
@@ -189,24 +192,24 @@ export function PlatePopupWindow({
                   className="h-[72vh] w-full grid place-items-center text-xs text-neutral-500 border rounded-lg bg-neutral-50
                              dark:bg-neutral-900 dark:text-neutral-400 dark:border-neutral-700"
                 >
-                  Segmented image not available yet
+                  {t("PlatePopupWindow.images.segmented.empty")}
                 </div>
               )}
-            
+
               <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-neutral-600 dark:text-neutral-300">
                 <div className="inline-flex items-center gap-1.5">
                   <span className="h-3 w-3 rounded-sm bg-orange-400 border border-black/10" />
-                  <span>Positive</span>
+                  <span>{t("PlatePopupWindow.legend.positive")}</span>
                 </div>
-            
+
                 <div className="inline-flex items-center gap-1.5">
                   <span className="h-3 w-3 rounded-sm bg-green-600 border border-black/10" />
-                  <span>Negative</span>
+                  <span>{t("PlatePopupWindow.legend.negative")}</span>
                 </div>
-            
+
                 <div className="inline-flex items-center gap-1.5">
                   <span className="h-3 w-3 rounded-sm bg-blue-500 border border-black/10" />
-                  <span>Uncertain</span>
+                  <span>{t("PlatePopupWindow.legend.uncertain")}</span>
                 </div>
               </div>
             </div>
@@ -223,8 +226,8 @@ export function PlatePopupWindow({
           }}
         >
           <div className="mb-2 grid grid-cols-2 gap-3 text-xs font-medium text-neutral-600 dark:text-neutral-300">
-            <div>Original</div>
-            <div>Segmented</div>
+            <div>{t("PlatePopupWindow.magnifier.original")}</div>
+            <div>{t("PlatePopupWindow.magnifier.segmented")}</div>
           </div>
 
           <div className="flex gap-3">
@@ -257,7 +260,7 @@ export function PlatePopupWindow({
                   height: MAG_BOX_SIZE,
                 }}
               >
-                No segmentation
+                {t("PlatePopupWindow.magnifier.noSegmentation")}
               </div>
             )}
           </div>

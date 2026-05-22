@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { uploadWithProgress } from "../api";
 import { parseLayout } from "../api";
 
@@ -10,7 +11,7 @@ export function UploadCard({
   onUploaded,
   mode = "generic",
   showUploadedList = false,
-  uploadedListLabel = "Uploaded",
+  uploadedListLabel,
   assignedFilenames = [],
   hideAssigned = false,
   hideSelectedList = false,
@@ -35,6 +36,8 @@ export function UploadCard({
   autoUpload?: boolean;
   className?: string;
 }) {
+  const { t } = useTranslation();
+
   const [dragging, setDragging] = useState(false);
   const [selected, setSelected] = useState<File[]>([]);
   const [progress, setProgress] = useState<number | null>(null);
@@ -44,6 +47,8 @@ export function UploadCard({
   const [uploadedItems, setUploadedItems] = useState<any[]>([]);
 
   const assignedSet = new Set(assignedFilenames);
+  const effectiveUploadedListLabel =
+    uploadedListLabel ?? t("UploadCard.uploaded_list.default_label");
 
   useEffect(() => {
     if (mode === "excel-layout") return;
@@ -75,12 +80,12 @@ export function UploadCard({
       const skipped = files.length - kept.length;
 
       if (skipped > 0) {
-        setMessage(`Skipped ${skipped} non-matching file(s).`);
+        setMessage(t("UploadCard.messages.skipped_files", { count: skipped }));
       }
 
       return kept;
     },
-    [fileFilter]
+    [fileFilter, t]
   );
 
   const onBrowse = useCallback(() => fileInputRef.current?.click(), []);
@@ -149,11 +154,13 @@ export function UploadCard({
       if (mode === "excel-layout") {
         const file = selected[0];
         const layout = await parseLayout(file);
+        const wells = Object.keys(layout.wells || {}).length;
 
         setMessage(
-          `Loaded layout: ${layout.lot_no ?? "n/a"} • wells: ${
-            Object.keys(layout.wells || {}).length
-          }`
+          t("UploadCard.messages.layout_loaded", {
+            lot: layout.lot_no ?? t("UploadCard.empty_value"),
+            wells,
+          })
         );
 
         onUploaded?.([layout]);
@@ -161,16 +168,20 @@ export function UploadCard({
         const names = await uploadWithProgress(selected, (p) => setProgress(p));
 
         setUploadedItems(names || []);
-        setMessage(`Uploaded ${names.length} file(s).`);
+        setMessage(
+          t("UploadCard.messages.uploaded_files", {
+            count: names.length,
+          })
+        );
         onUploaded?.(names);
       }
     } catch (err: any) {
-      setMessage(err?.message || "Upload failed");
+      setMessage(err?.message || t("UploadCard.messages.upload_failed"));
     } finally {
       setUploading(false);
       setTimeout(() => setProgress(null), 600);
     }
-  }, [selected, uploading, onUploaded, mode]);
+  }, [selected, uploading, onUploaded, mode, t]);
 
   useEffect(() => {
     if (!autoUpload) return;
@@ -222,7 +233,7 @@ export function UploadCard({
                        disabled:opacity-50 disabled:cursor-not-allowed
                        dark:bg-neutral-900 dark:hover:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-200"
           >
-            Browse…
+            {t("UploadCard.actions.browse")}
           </button>
 
           {!autoUpload ? (
@@ -239,15 +250,15 @@ export function UploadCard({
               ].join(" ")}
               title={
                 selected.length === 0
-                  ? "Select a file first"
-                  : "Upload selected file(s)"
+                  ? t("UploadCard.actions.select_file_first")
+                  : t("UploadCard.actions.upload_selected")
               }
             >
               {uploading
-                ? "Uploading…"
+                ? t("UploadCard.actions.uploading")
                 : mode === "excel-layout"
-                ? "Load layout"
-                : "Upload"}
+                ? t("UploadCard.actions.load_layout")
+                : t("UploadCard.actions.upload")}
             </button>
           ) : null}
         </div>
@@ -255,10 +266,12 @@ export function UploadCard({
 
       <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-3">
         {mode === "excel-layout"
-          ? "Upload an Excel plate layout (.xlsx or .xlsm)."
-          : `Drag & drop ${
-              allowDirectory ? "a folder" : "file(s)"
-            } here, or click Browse.`}
+          ? t("UploadCard.instructions.excel_layout")
+          : t("UploadCard.instructions.generic", {
+              target: allowDirectory
+                ? t("UploadCard.instructions.folder")
+                : t("UploadCard.instructions.files"),
+            })}
       </p>
 
       <input
@@ -287,8 +300,10 @@ export function UploadCard({
 
                   <button
                     type="button"
-                    aria-label={`Remove ${f.name}`}
-                    title="Remove"
+                    aria-label={t("UploadCard.actions.remove_named", {
+                      file: f.name,
+                    })}
+                    title={t("UploadCard.actions.remove")}
                     onClick={() => removeAt(i)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
@@ -308,57 +323,63 @@ export function UploadCard({
           </div>
         )}
 
-        {showUploadedList && mode !== "excel-layout" && uploadedItems.length > 0 && (
-          <div className="mt-3 rounded-md border dark:border-neutral-800">
-            <div className="px-2 py-1 text-xs text-neutral-600 dark:text-neutral-400">
-              {uploadedListLabel} (drag into a card)
-            </div>
+        {showUploadedList &&
+          mode !== "excel-layout" &&
+          uploadedItems.length > 0 && (
+            <div className="mt-3 rounded-md border dark:border-neutral-800">
+              <div className="px-2 py-1 text-xs text-neutral-600 dark:text-neutral-400">
+                {t("UploadCard.uploaded_list.heading", {
+                  label: effectiveUploadedListLabel,
+                })}
+              </div>
 
-            <ul className="text-xs divide-y dark:divide-neutral-800">
-              {uploadedItems
-                .map((x: any) => (typeof x === "string" ? x : x?.filename))
-                .filter(Boolean)
-                .filter((fname: string) => !(hideAssigned && assignedSet.has(fname)))
-                .map((fname: string) => (
-                  <li
-                    key={fname}
-                    className={[
-                      "px-2 py-1 cursor-grab active:cursor-grabbing",
-                      assignedSet.has(fname) ? "opacity-60" : "",
-                    ].join(" ")}
-                    draggable
-                    onDragStart={(e) => {
-                      const payload = JSON.stringify({
-                        fname,
-                        fromCardId: null,
-                      });
-                      e.dataTransfer.setData(
-                        "application/x-allocviewer-fcsref",
-                        payload
-                      );
-                      e.dataTransfer.setData(
-                        "application/x-allocviewer-filename",
-                        fname
-                      );
-                      e.dataTransfer.setData("text/plain", fname);
-                      e.dataTransfer.effectAllowed = "copyMove";
-                    }}
-                    title={
-                      assignedSet.has(fname)
-                        ? "Already assigned (drag to reassign)"
-                        : "Drag"
-                    }
-                  >
-                    {renderUploadedItem ? (
-                      renderUploadedItem(fname)
-                    ) : (
-                      <div className="truncate">{fname}</div>
-                    )}
-                  </li>
-                ))}
-            </ul>
-          </div>
-        )}
+              <ul className="text-xs divide-y dark:divide-neutral-800">
+                {uploadedItems
+                  .map((x: any) => (typeof x === "string" ? x : x?.filename))
+                  .filter(Boolean)
+                  .filter(
+                    (fname: string) => !(hideAssigned && assignedSet.has(fname))
+                  )
+                  .map((fname: string) => (
+                    <li
+                      key={fname}
+                      className={[
+                        "px-2 py-1 cursor-grab active:cursor-grabbing",
+                        assignedSet.has(fname) ? "opacity-60" : "",
+                      ].join(" ")}
+                      draggable
+                      onDragStart={(e) => {
+                        const payload = JSON.stringify({
+                          fname,
+                          fromCardId: null,
+                        });
+                        e.dataTransfer.setData(
+                          "application/x-allocviewer-fcsref",
+                          payload
+                        );
+                        e.dataTransfer.setData(
+                          "application/x-allocviewer-filename",
+                          fname
+                        );
+                        e.dataTransfer.setData("text/plain", fname);
+                        e.dataTransfer.effectAllowed = "copyMove";
+                      }}
+                      title={
+                        assignedSet.has(fname)
+                          ? t("UploadCard.uploaded_list.already_assigned")
+                          : t("UploadCard.uploaded_list.drag")
+                      }
+                    >
+                      {renderUploadedItem ? (
+                        renderUploadedItem(fname)
+                      ) : (
+                        <div className="truncate">{fname}</div>
+                      )}
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          )}
 
         {progress !== null && (
           <div className="mt-3">

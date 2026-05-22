@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ALL_WELLS, type WellMap, type WellType } from "../types";
 import { ROWS, COLS } from "../plateConfig";
 import { ROLE_STYLES, ROLE_SWATCH } from "../roleStyles";
-import { ROLE_LABEL } from "../types";
 
 const MENU_TYPES: WellType[] = ["positive", "negative", "sample"];
 
@@ -13,31 +13,41 @@ export function PlateGridEditor({
   wells: WellMap;
   setWells: (next: WellMap) => void;
 }) {
-  // context menu state
+  const { t } = useTranslation();
+
   const [menuOpen, setMenuOpen] = useState(false);
-  const [menuPos, setMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number }>({
+    x: 0,
+    y: 0,
+  });
   const [menuWell, setMenuWell] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  // close menu on outside click / escape
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
       if (!menuRef.current) return;
       if (!menuRef.current.contains(e.target as Node)) setMenuOpen(false);
     }
+
     function onEsc(e: KeyboardEvent) {
       if (e.key === "Escape") setMenuOpen(false);
     }
+
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("keydown", onEsc);
+
     return () => {
       document.removeEventListener("mousedown", onDocClick);
       document.removeEventListener("keydown", onEsc);
     };
   }, []);
 
+  function roleLabel(role: WellType) {
+    return t(`PlateGrid.roles.${role}`);
+  }
+
   function openMenu(wellId: string, evt: React.MouseEvent) {
-    evt.preventDefault(); // supports left & right click
+    evt.preventDefault();
     setMenuWell(wellId);
     setMenuPos({ x: evt.clientX, y: evt.clientY });
     setMenuOpen(true);
@@ -50,53 +60,71 @@ export function PlateGridEditor({
   }
 
   function clearAll() {
-    setWells({} as WellMap); // everything becomes "empty"
+    setWells({} as WellMap);
   }
 
   function resetAll() {
-    // everything becomes "sample"
-    setWells(Object.fromEntries(ALL_WELLS.map(w => [w, "sample"])) as WellMap);
+    setWells(
+      Object.fromEntries(ALL_WELLS.map((w) => [w, "sample"])) as WellMap
+    );
   }
 
   return (
     <div className="relative rounded-2xl border bg-white p-4 dark:bg-neutral-900 dark:border-neutral-800">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="font-medium text-neutral-900 dark:text-neutral-100">Plate (Editor): Click on a well to select a sample type</h3>
-        {/* legend */}
+        <h3 className="font-medium text-neutral-900 dark:text-neutral-100">
+          {t("PlateGrid.title")}
+        </h3>
+
         <div className="flex items-center gap-3">
-          <Legend label={ROLE_LABEL.positive} cls={ROLE_SWATCH.positive} />
-          <Legend label={ROLE_LABEL.negative} cls={ROLE_SWATCH.negative} />
-          <Legend label={ROLE_LABEL.sample}   cls={ROLE_SWATCH.sample} />
-          <Legend label={ROLE_LABEL.empty}    cls={ROLE_SWATCH.empty} />
+          <Legend label={roleLabel("positive")} cls={ROLE_SWATCH.positive} />
+          <Legend label={roleLabel("negative")} cls={ROLE_SWATCH.negative} />
+          <Legend label={roleLabel("sample")} cls={ROLE_SWATCH.sample} />
+          <Legend label={roleLabel("empty")} cls={ROLE_SWATCH.empty} />
         </div>
       </div>
 
-      {/* grid */}
       <div className="overflow-auto">
         <div className="inline-grid grid-cols-[auto_repeat(12,minmax(1.8rem,2.25rem))] gap-1">
           <div />
-          {COLS.map(c => (
-            <div key={c} className="text-xs text-center text-neutral-600 dark:text-neutral-400">{c}</div>
+
+          {COLS.map((c) => (
+            <div
+              key={c}
+              className="text-xs text-center text-neutral-600 dark:text-neutral-400"
+            >
+              {c}
+            </div>
           ))}
-          {ROWS.map(r => (
+
+          {ROWS.map((r) => (
             <React.Fragment key={r}>
-              <div className="text-xs text-right pr-1 text-neutral-600 dark:text-neutral-400">{r}</div>
-              {COLS.map(c => {
+              <div className="text-xs text-right pr-1 text-neutral-600 dark:text-neutral-400">
+                {r}
+              </div>
+
+              {COLS.map((c) => {
                 const id = `${r}${c}` as const;
-                const role = (wells as any)[id] ?? "empty";
+                const role = ((wells as any)[id] ?? "empty") as WellType;
+
                 return (
                   <button
                     key={id}
+                    type="button"
                     onClick={(e) => openMenu(id, e)}
                     onContextMenu={(e) => openMenu(id, e)}
-                    title={`${id} (${role})`}
+                    title={t("PlateGrid.well_title", {
+                      well: id,
+                      role: roleLabel(role),
+                    })}
                     className={[
                       "rounded-md border text-[10px] flex items-center justify-center aspect-square min-w-7 min-h-7",
-                      ROLE_STYLES[role as WellType],
+                      ROLE_STYLES[role],
                       "hover:ring-2 hover:ring-offset-0 hover:ring-neutral-300 dark:hover:ring-neutral-600 select-none",
                     ].join(" ")}
                   >
-                    {r}{c}
+                    {r}
+                    {c}
                   </button>
                 );
               })}
@@ -105,54 +133,59 @@ export function PlateGridEditor({
         </div>
       </div>
 
-      {/* actions under the plate */}
       <div className="mt-4 flex items-center gap-2">
         <button
+          type="button"
           onClick={clearAll}
           className="px-3 py-1.5 border rounded-lg bg-white hover:bg-neutral-50
                      dark:bg-neutral-900 dark:hover:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-200"
-          title="Set all wells to empty"
+          title={t("PlateGrid.actions.clear_title")}
         >
-          Clear
+          {t("PlateGrid.actions.clear")}
         </button>
+
         <button
+          type="button"
           onClick={resetAll}
           className="px-3 py-1.5 border rounded-lg bg-white hover:bg-neutral-50
                      dark:bg-neutral-900 dark:hover:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-200"
-          title="Set all wells to sample"
+          title={t("PlateGrid.actions.reset_title")}
         >
-          Reset
+          {t("PlateGrid.actions.reset")}
         </button>
       </div>
 
-      {/* context menu */}
-      {menuOpen && (
+      {menuOpen ? (
         <div
           ref={menuRef}
           style={{ left: menuPos.x, top: menuPos.y }}
           className="fixed z-50 bg-white border rounded-lg shadow-md p-1 text-sm
                      dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-200"
         >
-          {MENU_TYPES.map(t => (
+          {MENU_TYPES.map((tRole) => (
             <button
-              key={t}
-              onClick={() => applyType(t)}
+              key={tRole}
+              type="button"
+              onClick={() => applyType(tRole)}
               className="px-3 py-1.5 w-full text-left hover:bg-neutral-100 rounded-md
                          dark:hover:bg-neutral-800"
             >
-              {ROLE_LABEL[t]}
+              {roleLabel(tRole)}
             </button>
           ))}
+
           <div className="h-px bg-neutral-200 dark:bg-neutral-800 my-1" />
+
           <button
+            type="button"
             onClick={() => applyType("empty")}
             className="px-3 py-1.5 w-full text-left hover:bg-neutral-100 rounded-md
                        dark:hover:bg-neutral-800"
           >
-            {ROLE_LABEL.empty}
+            {roleLabel("empty")}
           </button>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -165,4 +198,3 @@ function Legend({ cls, label }: { cls: string; label: string }) {
     </div>
   );
 }
-

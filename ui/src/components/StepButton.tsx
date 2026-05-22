@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+
 export type StepState =
   | "not_started"
   | "needs_attention"
@@ -8,20 +10,9 @@ export type StepState =
   | "error";
 
 function StepBadge({ status }: { status: StepState }) {
-  const label =
-    status === "not_started"
-      ? "Not started"
-      : status === "needs_attention"
-      ? "Needs attention"
-      : status === "needs_review"
-      ? "Needs review"
-      : status === "ready"
-      ? "Ready"
-      : status === "running"
-      ? "Running"
-      : status === "error"
-      ? "Error"
-      : "Done";
+  const { t } = useTranslation();
+
+  const label = t(`StepButton.status.${status}`);
 
   const cls =
     status === "done"

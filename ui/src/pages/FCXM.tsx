@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DragEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { Toolbar } from "../components/Toolbar";
 import { UploadCard } from "../components/UploadCard";
 import { SampleCard, type SampleCardModel } from "../components/SampleCard";
@@ -47,6 +48,8 @@ type ZoomPlot = {
 };
 
 export default function FCXMApp() {
+  const { t } = useTranslation();
+
   const [, setFcsFilesLocal] = useState<File[]>([]);
   const [fcsSavedNames, setFcsSavedNames] = useState<string[]>([]);
   const [uploadResetKey, setUploadResetKey] = useState(0);
@@ -186,33 +189,18 @@ export default function FCXMApp() {
     return Math.max(0, Math.min(100, (runDoneFiles / runTotalFiles) * 100));
   }, [runDoneFiles, runTotalFiles]);
 
-  const runStageMessage =
-    runStage === "fit_qc"
-      ? "Running file QC."
-      : runStage === "fit_marker_calibration"
-      ? "Calibrating markers."
-      : runStage === "fit_lymphocytes"
-      ? "Gating lymphocytes."
-      : runStage === "fit_clustering"
-      ? "Fitting clustering model."
-      : runStage === "fit_cluster_labels"
-      ? "Labeling clusters."
-      : runStage === "fit_control_stats"
-      ? "Building control statistics."
-      : runStage === "apply_file"
-      ? "Applying gates to files."
-      : runStage === "payload"
-      ? "Building result payload."
-      : runStage === "plot_cache"
-      ? "Building plot cache."
-      : null;
+  const runStageMessage = runStage
+    ? t(`FCXM.run_stages.${runStage}`, {
+        defaultValue: t("FCXM.run_stages.default"),
+      })
+    : null;
 
   const messageForRun = resultsBusy
-    ? "Loading results…"
+    ? t("FCXM.messages.loading_results")
     : runStatus === "running"
-    ? runStageMessage || runMsg || "Running analysis."
+    ? runStageMessage || runMsg || t("FCXM.messages.running_analysis")
     : runJobId && runStatus !== "done"
-    ? runMsg || "Results will load when the run is finished."
+    ? runMsg || t("FCXM.messages.results_after_run")
     : runMsg;
 
   useEffect(() => {
@@ -256,20 +244,20 @@ export default function FCXMApp() {
       setResultsError(null);
       return;
     }
-  
+
     if (!runJobId || runStatus !== "done") {
       setResults(null);
       setResultsError(null);
       return;
     }
-  
+
     const jobId = runJobId;
     let cancelled = false;
-  
+
     async function loadResults() {
       setResultsBusy(true);
       setResultsError(null);
-  
+
       try {
         const res = await fetchFCXMResults({
           job_id: jobId,
@@ -277,11 +265,11 @@ export default function FCXMApp() {
           gate: selectedGate,
           timeoutMs: 10_000,
         });
-  
+
         if (cancelled) return;
-  
+
         setResults(res);
-  
+
         const opts = res.gate_options || [];
         setGateOptions(opts);
         setSelectedGate((prev) =>
@@ -289,19 +277,19 @@ export default function FCXMApp() {
         );
       } catch (err: any) {
         if (cancelled) return;
-        setResultsError(err?.message || "Failed to load results");
+        setResultsError(err?.message || t("FCXM.messages.failed_to_load_results"));
         setResults(null);
       } finally {
         if (!cancelled) setResultsBusy(false);
       }
     }
-  
+
     loadResults();
-  
+
     return () => {
       cancelled = true;
     };
-  }, [selectedCard?.id, selectedFile, selectedGate, runJobId, runStatus]);
+  }, [selectedCard?.id, selectedFile, selectedGate, runJobId, runStatus, t]);
 
   useEffect(() => {
     if (!fcsSavedNames.length) {
@@ -337,7 +325,7 @@ export default function FCXMApp() {
         const fallback = Object.fromEntries(fcsSavedNames.map((f) => [f, f]));
         setFcsDisplayNames(fallback);
         setFcsDisplayNamesError(
-          err?.message || "Could not read FCS display names."
+          err?.message || t("FCXM.messages.could_not_read_fcs_labels")
         );
       } finally {
         if (!cancelled) setFcsDisplayNamesBusy(false);
@@ -349,7 +337,7 @@ export default function FCXMApp() {
     return () => {
       cancelled = true;
     };
-  }, [fcsSavedNames, fcsNameMode]);
+  }, [fcsSavedNames, fcsNameMode, t]);
 
   useEffect(() => {
     if (autoJumpedToPanel) return;
@@ -388,28 +376,28 @@ export default function FCXMApp() {
   function displayNameForFcs(fname: string) {
     return fcsDisplayNames[fname] || fname;
   }
-  
+
   function basename(pathOrName: string | null | undefined) {
     const text = String(pathOrName || "");
     return text.split(/[\\/]/).pop() || text;
   }
-  
+
   function displayNameForFcsLoose(fname: string | null | undefined) {
     if (!fname) return "";
-  
+
     const direct = fcsDisplayNames[fname];
     if (direct) return direct;
-  
+
     const base = basename(fname);
     const byBase = fcsDisplayNames[base];
     if (byBase) return byBase;
-  
+
     const matchedKey = Object.keys(fcsDisplayNames).find(
       (key) => basename(key) === base
     );
-  
+
     if (matchedKey) return fcsDisplayNames[matchedKey];
-  
+
     return base;
   }
 
@@ -432,38 +420,38 @@ export default function FCXMApp() {
     roleLabel: string | null;
     rawMedian: number | null;
     xLabel: string | null;
-  };  
+  };
 
   function median(values: number[] | undefined | null): number | null {
     const clean = (values || [])
       .filter((v) => typeof v === "number" && Number.isFinite(v))
       .sort((a, b) => a - b);
-  
+
     if (!clean.length) return null;
-  
+
     const mid = Math.floor(clean.length / 2);
-  
+
     if (clean.length % 2 === 1) {
       return clean[mid];
     }
-  
+
     return (clean[mid - 1] + clean[mid]) / 2;
   }
-  
+
   function roleLabelForLineSeries(s: { label: string; role?: string | null }) {
     const role = String(s.role || "").toUpperCase();
-  
-    if (role === "NC") return "Negative control";
-    if (role === "PC") return "Positive control";
-  
+
+    if (role === "NC") return t("FCXM.sample_types.negative_control");
+    if (role === "PC") return t("FCXM.sample_types.positive_control");
+
     if (String(s.label || "").startsWith("Negative control")) {
-      return "Negative control";
+      return t("FCXM.sample_types.negative_control");
     }
-  
+
     if (String(s.label || "").startsWith("Positive control")) {
-      return "Positive control";
+      return t("FCXM.sample_types.positive_control");
     }
-  
+
     return null;
   }
 
@@ -480,31 +468,23 @@ export default function FCXMApp() {
 
       return {
         key: `${line.label || "series"}-${filename || ""}-${idx}`,
-        label: line.label || `Series ${idx + 1}`,
+        label: line.label || t("FCXM.overview.series_fallback", { number: idx + 1 }),
         color: line.color || "#64748b",
-      
-        // transformed values for the plot
         values: Array.isArray(line.values) ? line.values : [],
-      
         filename,
         role: typeof line.role === "string" ? line.role : null,
         roleLabel,
-      
-        // raw values for the cards; never fall back to line.values
         rawMedian:
           typeof line.raw_median === "number"
             ? line.raw_median
             : Array.isArray(line.values_raw)
             ? median(line.values_raw)
             : null,
-      
         xLabel: line.x_label || null,
       };
     });
-  }, [results?.line_series]);
+  }, [results?.line_series, t]);
 
-
-  
   const controlCurveCards: OverviewCurveCard[] = useMemo(() => {
     return overviewLineSeries
       .filter((s) => !!s.roleLabel)
@@ -521,17 +501,17 @@ export default function FCXMApp() {
   const selectedFileCurveKey = useMemo(() => {
     const selectedSeries = overviewLineSeries.find((s) => {
       const role = String((s as any).role || "").toUpperCase();
-  
+
       if (role === "__SEL__") return true;
-  
+
       if (String(s.label || "") === "Selected file") return true;
-  
+
       const selectedBase = basename(selectedFile);
       const seriesBase = basename(s.filename);
-  
+
       return !!selectedBase && !!seriesBase && selectedBase === seriesBase;
     });
-  
+
     return selectedSeries?.key || null;
   }, [overviewLineSeries, selectedFile]);
 
@@ -577,7 +557,7 @@ export default function FCXMApp() {
       setPanelData(res);
       setPanelRows((res as any).rows ?? []);
     } catch (err: any) {
-      setPanelError(err?.message || "Panel extraction failed");
+      setPanelError(err?.message || t("FCXM.messages.panel_extraction_failed"));
     } finally {
       setPanelBusy(false);
     }
@@ -608,7 +588,7 @@ export default function FCXMApp() {
     if (!panelRows || panelRows.length === 0) {
       setRunBusy(false);
       setRunStatus("error");
-      setRunMsg("Panel is empty. Upload FCS files first.");
+      setRunMsg(t("FCXM.messages.panel_empty"));
       return;
     }
 
@@ -620,9 +600,11 @@ export default function FCXMApp() {
       setRunBusy(false);
       setRunStatus("error");
       setRunMsg(
-        `Missing files for: ${missingRequired
-          .map((s) => `${s.name} (${s.role})`)
-          .join(", ")}`
+        t("FCXM.messages.missing_files_for", {
+          samples: missingRequired
+            .map((s) => `${s.name} (${s.role})`)
+            .join(", "),
+        })
       );
       return;
     }
@@ -634,7 +616,7 @@ export default function FCXMApp() {
     if (!hasAnyNCFile) {
       setRunBusy(false);
       setRunStatus("error");
-      setRunMsg("At least one Negative Control (NC) file is required.");
+      setRunMsg(t("FCXM.messages.nc_required"));
       return;
     }
 
@@ -650,7 +632,7 @@ export default function FCXMApp() {
 
       setRunJobId(job_id);
       setRunStatus("running");
-      setRunMsg("Run started.");
+      setRunMsg(t("FCXM.messages.run_started"));
 
       const poll = async () => {
         try {
@@ -670,7 +652,7 @@ export default function FCXMApp() {
 
           if (prog.status === "done") {
             setRunBusy(false);
-            setRunMsg(prog.message || "Done.");
+            setRunMsg(prog.message || t("FCXM.messages.done"));
             setRunStage(null);
             setRunCurrentFile(null);
 
@@ -684,7 +666,7 @@ export default function FCXMApp() {
 
           if (prog.status === "error") {
             setRunBusy(false);
-            setRunMsg(prog.message || "Run failed.");
+            setRunMsg(prog.message || t("FCXM.messages.run_failed"));
             setRunStage(null);
             setRunCurrentFile(null);
             return;
@@ -694,7 +676,7 @@ export default function FCXMApp() {
         } catch (err: any) {
           setRunBusy(false);
           setRunStatus("error");
-          setRunMsg(err?.message || "Progress check failed.");
+          setRunMsg(err?.message || t("FCXM.messages.progress_check_failed"));
           setRunStage(null);
           setRunCurrentFile(null);
         }
@@ -704,7 +686,7 @@ export default function FCXMApp() {
     } catch (err: any) {
       setRunBusy(false);
       setRunStatus("error");
-      setRunMsg(err?.message || "Run failed.");
+      setRunMsg(err?.message || t("FCXM.messages.run_failed"));
       setRunStage(null);
       setRunCurrentFile(null);
     }
@@ -723,7 +705,7 @@ export default function FCXMApp() {
         positivityThreshold
       );
     } catch (err: any) {
-      setSummaryError(err?.message || "Download failed.");
+      setSummaryError(err?.message || t("FCXM.messages.download_failed"));
     } finally {
       setSummaryBusy(false);
     }
@@ -782,83 +764,109 @@ export default function FCXMApp() {
     setPanelRows([]);
   }
 
+  function sampleTypeLabel(sampleType: SampleCardModel["sampleType"]) {
+    if (sampleType === "negative") return t("FCXM.sample_types.negative_control");
+    if (sampleType === "positive") return t("FCXM.sample_types.positive_control");
+    return t("FCXM.sample_types.sample");
+  }
+
+  function metricLabel(metric: PositivityMetric) {
+    if (metric === "Median Ratio") return t("FCXM.metrics.median_ratio");
+    if (metric === "Median Shift") return t("FCXM.metrics.median_shift");
+    if (metric === "Fluorescence Index") {
+      return t("FCXM.metrics.fluorescence_index");
+    }
+    return t("FCXM.metrics.percent_positive");
+  }
+
   return (
     <div className="h-screen overflow-hidden bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 flex flex-col">
-      <Toolbar title="AlloViewer - Flow Cytometry Crossmatch" />
+      <Toolbar title={t("FCXM.toolbar_title")} />
 
       <div className="flex-1 min-h-0 overflow-hidden p-4 grid grid-cols-1 xl:grid-cols-[280px_minmax(0,1fr)] gap-4">
         <aside className="min-h-0 overflow-y-auto pr-1">
           <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4 mb-4">
-            <div className="font-medium">Workflow</div>
+            <div className="font-medium">{t("FCXM.workflow.title")}</div>
             <div className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-              Select a step. The main work area stays on the right.
+              {t("FCXM.workflow.description")}
             </div>
           </div>
 
           <div className="space-y-3">
             <StepButton
               number={1}
-              title="Upload and assign"
+              title={t("FCXM.steps.upload.title")}
               status={setupStepStatus}
               active={activeStep === 1}
               onClick={() => goToStep(1)}
               summary={
                 !hasUploadedFiles
-                  ? "Upload .fcs files"
+                  ? t("FCXM.steps.upload.summary_missing")
                   : !hasAnyNC
-                  ? `${uploadedCount} file(s), NC missing`
+                  ? t("FCXM.steps.upload.summary_nc_missing", {
+                      count: uploadedCount,
+                    })
                   : unassignedCount > 0
-                  ? `${uploadedCount} file(s), ${unassignedCount} unassigned`
-                  : `${uploadedCount} file(s), all assigned`
+                  ? t("FCXM.steps.upload.summary_unassigned", {
+                      uploaded: uploadedCount,
+                      unassigned: unassignedCount,
+                    })
+                  : t("FCXM.steps.upload.summary_done", {
+                      count: uploadedCount,
+                    })
               }
             />
 
             <StepButton
               number={2}
-              title="Review panel"
+              title={t("FCXM.steps.panel.title")}
               status={panelStepStatus}
               active={activeStep === 2}
               onClick={() => goToStep(2)}
               summary={
                 panelBusy
-                  ? "Reading panel"
+                  ? t("FCXM.steps.panel.summary_reading")
                   : panelError
-                  ? "Panel error"
+                  ? t("FCXM.steps.panel.summary_error")
                   : hasPanelRows && !panelVisited
-                  ? `${panelRows.length} channel(s), needs review`
+                  ? t("FCXM.steps.panel.summary_needs_review", {
+                      count: panelRows.length,
+                    })
                   : hasPanelRows
-                  ? `${panelRows.length} channel(s)`
-                  : "No panel yet"
+                  ? t("FCXM.steps.panel.summary_done", {
+                      count: panelRows.length,
+                    })
+                  : t("FCXM.steps.panel.summary_empty")
               }
             />
 
             <StepButton
               number={3}
-              title="Run and results"
+              title={t("FCXM.steps.run.title")}
               status={runStepStatus}
               active={activeStep === 3}
               onClick={() => goToStep(3)}
               summary={
                 runStatus === "done"
-                  ? "Analysis completed"
+                  ? t("FCXM.steps.run.summary_done")
                   : runStatus === "running" || runStatus === "queued"
-                  ? "Analysis running"
+                  ? t("FCXM.steps.run.summary_running")
                   : hasAnyNC && hasPanelRows
-                  ? "Ready to run"
-                  : "Setup incomplete"
+                  ? t("FCXM.steps.run.summary_ready")
+                  : t("FCXM.steps.run.summary_incomplete")
               }
             />
 
             <StepButton
               number={4}
-              title="Report"
+              title={t("FCXM.steps.report.title")}
               status={reportStepStatus}
               active={activeStep === 4}
               onClick={() => goToStep(4)}
               summary={
                 runStatus === "done"
-                  ? "Set rule and download"
-                  : "Available after run"
+                  ? t("FCXM.steps.report.summary_ready")
+                  : t("FCXM.steps.report.summary_not_ready")
               }
             />
 
@@ -871,7 +879,7 @@ export default function FCXMApp() {
                            dark:bg-neutral-900 dark:hover:bg-red-950
                            dark:border-red-900 dark:text-red-300"
               >
-                Reset Experiment
+                {t("FCXM.actions.reset_experiment")}
               </button>
             </div>
           </div>
@@ -880,9 +888,9 @@ export default function FCXMApp() {
         <main className="min-h-0 overflow-y-auto pr-1">
           <section className={activeStep === 1 ? "block" : "hidden"}>
             <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4 mb-4">
-              <div className="font-medium">Step 1 · Upload and assign files</div>
+              <div className="font-medium">{t("FCXM.panels.upload.heading")}</div>
               <div className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-                Upload a folder of .fcs files, then drag files into the correct cards.
+                {t("FCXM.panels.upload.description")}
               </div>
             </div>
 
@@ -890,7 +898,7 @@ export default function FCXMApp() {
               <div className="min-h-0 flex flex-col">
                 <UploadCard
                   key={uploadResetKey}
-                  title="FCS Files (Folder)"
+                  title={t("FCXM.upload_card.title")}
                   accept=".fcs"
                   allowDirectory
                   autoUpload
@@ -909,7 +917,7 @@ export default function FCXMApp() {
                     extractPanel(names);
                   }}
                   showUploadedList
-                  uploadedListLabel="Uploaded (.fcs)"
+                  uploadedListLabel={t("FCXM.upload_card.uploaded_list_label")}
                   assignedFilenames={assignedFilenames}
                   hideAssigned={true}
                   hideSelectedList={true}
@@ -933,7 +941,9 @@ export default function FCXMApp() {
                 />
 
                 <div className="mt-3 rounded-xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-3">
-                  <div className="text-sm font-medium mb-2">display names</div>
+                  <div className="text-sm font-medium mb-2">
+                    {t("FCXM.display_names.title")}
+                  </div>
 
                   <select
                     value={fcsNameMode}
@@ -943,13 +953,17 @@ export default function FCXMApp() {
                     className="w-full h-10 rounded-xl border px-3 bg-white
                                dark:bg-neutral-900 dark:border-neutral-700"
                   >
-                    <option value="filename">Use file names</option>
-                    <option value="tube_name">Use tube names</option>
+                    <option value="filename">
+                      {t("FCXM.display_names.use_file_names")}
+                    </option>
+                    <option value="tube_name">
+                      {t("FCXM.display_names.use_tube_names")}
+                    </option>
                   </select>
 
                   {fcsDisplayNamesBusy ? (
                     <div className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
-                      Reading FCS labels…
+                      {t("FCXM.display_names.reading")}
                     </div>
                   ) : null}
 
@@ -964,9 +978,9 @@ export default function FCXMApp() {
               <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4 h-[620px] min-h-0 flex flex-col">
                 <div className="flex items-center justify-between gap-2 mb-3">
                   <div>
-                    <h3 className="font-medium">Sample Cards</h3>
+                    <h3 className="font-medium">{t("FCXM.sample_cards.title")}</h3>
                     <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-                      Negative Control is required. Positive Control is optional.
+                      {t("FCXM.sample_cards.description")}
                     </p>
                   </div>
 
@@ -976,7 +990,7 @@ export default function FCXMApp() {
                     className="text-sm px-3 py-1.5 rounded-lg border bg-white hover:bg-neutral-50
                                dark:bg-neutral-900 dark:hover:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-200"
                   >
-                    Add Sample
+                    {t("FCXM.actions.add_sample")}
                   </button>
                 </div>
 
@@ -1010,7 +1024,7 @@ export default function FCXMApp() {
                 </div>
 
                 <p className="mt-3 text-xs text-neutral-600 dark:text-neutral-400">
-                  Drag uploaded files from the left list into the correct card.
+                  {t("FCXM.sample_cards.drag_hint")}
                 </p>
               </div>
             </div>
@@ -1018,26 +1032,26 @@ export default function FCXMApp() {
 
           <section className={activeStep === 2 ? "block" : "hidden"}>
             <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4 mb-4">
-              <div className="font-medium">Step 2 · Review panel</div>
+              <div className="font-medium">{t("FCXM.panels.panel.heading")}</div>
               <div className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-                Check channel roles and remove channels that should not be used.
+                {t("FCXM.panels.panel.description")}
               </div>
             </div>
 
             <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4">
               <div className="flex items-center justify-between gap-3 mb-3">
-                <h3 className="font-medium">Panel</h3>
+                <h3 className="font-medium">{t("FCXM.panel.title")}</h3>
                 <div className="text-xs text-neutral-600 dark:text-neutral-400">
                   {uploadedCount
-                    ? `${uploadedCount} file(s) uploaded`
-                    : "No files yet"}
+                    ? t("FCXM.panel.files_uploaded", { count: uploadedCount })
+                    : t("FCXM.panel.no_files_yet")}
                 </div>
               </div>
 
               <div className="space-y-3">
                 {panelBusy ? (
                   <div className="text-sm text-neutral-600 dark:text-neutral-400">
-                    Reading panel from .fcs files…
+                    {t("FCXM.panel.reading")}
                   </div>
                 ) : panelError ? (
                   <div className="text-sm text-red-600 dark:text-red-400">
@@ -1049,7 +1063,7 @@ export default function FCXMApp() {
 
                 {hasPanelRows && !hasIgGMarker ? (
                   <div className="text-xs text-amber-700 dark:text-amber-400 rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950 px-3 py-2">
-                    No IgG marker is selected. Check the panel before running.
+                    {t("FCXM.panel.no_igg_marker")}
                   </div>
                 ) : null}
               </div>
@@ -1058,9 +1072,9 @@ export default function FCXMApp() {
 
           <section className={activeStep === 3 ? "block" : "hidden"}>
             <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4 mb-4">
-              <div className="font-medium">Step 3 · Run and inspect results</div>
+              <div className="font-medium">{t("FCXM.panels.run.heading")}</div>
               <div className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-                Start analysis, then inspect the selected sample and file.
+                {t("FCXM.panels.run.description")}
               </div>
             </div>
 
@@ -1085,21 +1099,21 @@ export default function FCXMApp() {
                                dark:border-blue-500"
                     title={
                       panelBusy
-                        ? "Panel is still loading"
+                        ? t("FCXM.run_button_titles.panel_loading")
                         : panelError
-                        ? "Fix the panel error first"
+                        ? t("FCXM.run_button_titles.fix_panel_error")
                         : panelRows.length === 0
-                        ? "Load a panel first"
-                        : "Run analysis"
+                        ? t("FCXM.run_button_titles.load_panel_first")
+                        : t("FCXM.run_button_titles.run_analysis")
                     }
                   >
-                    {runBusy ? "Running…" : "Run analysis"}
+                    {runBusy ? t("FCXM.actions.running") : t("FCXM.actions.run_analysis")}
                   </button>
                 </div>
               </div>
 
               <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4">
-                <div className="font-medium mb-3">Samples</div>
+                <div className="font-medium mb-3">{t("FCXM.samples.title")}</div>
 
                 <div className="overflow-x-auto">
                   <div className="flex gap-2 pb-1">
@@ -1126,15 +1140,11 @@ export default function FCXMApp() {
                           </div>
 
                           <div className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-                            {c.sampleType === "negative"
-                              ? "Negative Control"
-                              : c.sampleType === "positive"
-                              ? "Positive Control"
-                              : "Sample"}
+                            {sampleTypeLabel(c.sampleType)}
                           </div>
 
                           <div className="mt-2 text-xs">
-                            {fileCount} file{fileCount === 1 ? "" : "s"}
+                            {t("FCXM.samples.file_count", { count: fileCount })}
                           </div>
                         </button>
                       );
@@ -1145,25 +1155,27 @@ export default function FCXMApp() {
 
               <div className="grid grid-cols-1 2xl:grid-cols-[420px_minmax(0,1fr)] gap-4 items-stretch">
                 <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4 h-full flex flex-col">
-                  <div className="font-medium">Result selection</div>
+                  <div className="font-medium">
+                    {t("FCXM.result_selection.title")}
+                  </div>
 
                   <div className="mt-3 space-y-3">
                     <div>
                       <div className="text-xs text-neutral-600 dark:text-neutral-400 mb-1">
-                        Selected sample
+                        {t("FCXM.result_selection.selected_sample")}
                       </div>
                       <div className="h-11 rounded-xl border px-3 flex items-center bg-neutral-50 dark:bg-neutral-950 dark:border-neutral-800">
                         <span className="truncate text-sm font-medium">
                           {selectedCard
                             ? selectedCard.name || selectedCard.title
-                            : "No sample selected"}
+                            : t("FCXM.result_selection.no_sample_selected")}
                         </span>
                       </div>
                     </div>
 
                     <div>
                       <div className="text-xs text-neutral-600 dark:text-neutral-400 mb-1">
-                        File
+                        {t("FCXM.result_selection.file")}
                       </div>
                       <select
                         value={selectedFile}
@@ -1173,7 +1185,9 @@ export default function FCXMApp() {
                                    dark:bg-neutral-900 dark:border-neutral-700 disabled:opacity-50 truncate"
                       >
                         {fileOptions.length === 0 ? (
-                          <option value="">No files</option>
+                          <option value="">
+                            {t("FCXM.result_selection.no_files")}
+                          </option>
                         ) : (
                           fileOptions.map((f) => (
                             <option key={f} value={f}>
@@ -1186,7 +1200,7 @@ export default function FCXMApp() {
 
                     <div>
                       <div className="text-xs text-neutral-600 dark:text-neutral-400 mb-1">
-                        Gate
+                        {t("FCXM.result_selection.gate")}
                       </div>
                       <select
                         value={selectedGate}
@@ -1206,9 +1220,9 @@ export default function FCXMApp() {
                 </div>
 
                 <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4 overflow-hidden flex flex-col">
-                  <div className="font-medium">Overview</div>
+                  <div className="font-medium">{t("FCXM.overview.title")}</div>
                   <div className="text-sm text-neutral-600 dark:text-neutral-400">
-                    Asinh-transformed IgG density curves for controls and selected file
+                    {t("FCXM.overview.description")}
                   </div>
 
                   <div className="mt-3 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4">
@@ -1216,7 +1230,10 @@ export default function FCXMApp() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                         {controlCurveCards.map((card) => {
                           const hasTubeName =
-                            card.filename && card.label && card.label !== basename(card.filename);                      
+                            card.filename &&
+                            card.label &&
+                            card.label !== basename(card.filename);
+
                           return (
                             <button
                               type="button"
@@ -1240,30 +1257,34 @@ export default function FCXMApp() {
                                 />
                                 <span className="truncate">{card.label}</span>
                               </div>
-                      
+
                               <div className="mt-1 text-[11px] text-neutral-500 dark:text-neutral-500 truncate">
                                 {card.roleLabel}
-                                {hasTubeName ? ` · ${basename(card.filename)}` : ""}
+                                {hasTubeName
+                                  ? ` · ${basename(card.filename)}`
+                                  : ""}
                               </div>
-                      
+
                               <div className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
-                                IgG median
+                                {t("FCXM.metrics.igg_median")}
                               </div>
-                      
+
                               <div className="text-base font-semibold">
                                 {fmtNum(card.median)}
                               </div>
                             </button>
                           );
                         })}
-                      
+
                         {results?.selected_file_metrics ? (
                           <button
                             type="button"
                             onClick={() => {
                               if (!selectedFileCurveKey) return;
                               setActiveCurveKey((prev) =>
-                                prev === selectedFileCurveKey ? null : selectedFileCurveKey
+                                prev === selectedFileCurveKey
+                                  ? null
+                                  : selectedFileCurveKey
                               );
                             }}
                             disabled={!selectedFileCurveKey}
@@ -1278,28 +1299,35 @@ export default function FCXMApp() {
                           >
                             <div className="flex items-center gap-2 text-sm font-medium min-w-0">
                               <span className="inline-block w-3 h-3 rounded shrink-0 bg-blue-500" />
-                              <span className="truncate">Selected file</span>
+                              <span className="truncate">
+                                {t("FCXM.overview.selected_file")}
+                              </span>
                             </div>
-                      
+
                             <div className="mt-1 text-[11px] text-neutral-500 dark:text-neutral-500 truncate">
-                              {selectedFile ? displayNameForFcsLoose(selectedFile) : "—"}
-                              {selectedFile && displayNameForFcsLoose(selectedFile) !== basename(selectedFile)
+                              {selectedFile
+                                ? displayNameForFcsLoose(selectedFile)
+                                : t("FCXM.empty_value")}
+                              {selectedFile &&
+                              displayNameForFcsLoose(selectedFile) !==
+                                basename(selectedFile)
                                 ? ` · ${basename(selectedFile)}`
                                 : ""}
-                            </div>                      
-                            <div className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
-                              IgG median
                             </div>
-                      
+
+                            <div className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
+                              {t("FCXM.metrics.igg_median")}
+                            </div>
+
                             <div className="text-base font-semibold">
                               {fmtNum(results.selected_file_metrics.igg_median_raw)}
                             </div>
                           </button>
                         ) : null}
-                      
+
                         {selectedCard && !results ? (
                           <div className="text-neutral-600 dark:text-neutral-400 text-sm">
-                            No results yet.
+                            {t("FCXM.overview.no_results_yet")}
                           </div>
                         ) : null}
                       </div>
@@ -1313,7 +1341,7 @@ export default function FCXMApp() {
                             values: s.values,
                           }))}
                           activeSeriesKey={activeCurveKey}
-                          xLabel={"IgG"}
+                          xLabel={t("FCXM.axes.igg")}
                           showLegend={false}
                         />
                       </div>
@@ -1323,43 +1351,48 @@ export default function FCXMApp() {
                       {results?.selected_file_metrics ? (
                         <div className="rounded-xl border p-3 dark:border-neutral-800">
                           <div className="text-sm font-medium mb-2">
-                            Selected file - {results.selected_file_metrics.label}
+                            {t("FCXM.metrics_cards.selected_file", {
+                              label: results.selected_file_metrics.label,
+                            })}
                           </div>
 
                           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                             <div className="text-neutral-600 dark:text-neutral-400">
-                              Events
+                              {t("FCXM.metrics.events")}
                             </div>
                             <div>{results.selected_file_metrics.n_events}</div>
 
                             <div className="text-neutral-600 dark:text-neutral-400">
-                              Median shift
+                              {t("FCXM.metrics.median_shift")}
                             </div>
                             <div>
                               {fmtNum(results.selected_file_metrics.igg_median_shift)}
                             </div>
 
                             <div className="text-neutral-600 dark:text-neutral-400">
-                              Median ratio
+                              {t("FCXM.metrics.median_ratio")}
                             </div>
                             <div>
                               {fmtNum(results.selected_file_metrics.igg_median_ratio)}
                             </div>
 
                             <div className="text-neutral-600 dark:text-neutral-400">
-                              Fluorescence index
+                              {t("FCXM.metrics.fluorescence_index")}
                             </div>
                             <div>
                               {fmtNum(
-                                results.selected_file_metrics.igg_fluorescence_index
+                                results.selected_file_metrics
+                                  .igg_fluorescence_index
                               )}
                             </div>
 
                             <div className="text-neutral-600 dark:text-neutral-400">
-                              IgG+ fraction
+                              {t("FCXM.metrics.igg_positive_fraction")}
                             </div>
                             <div>
-                              {fmtPct01(results.selected_file_metrics.igg_pos_fraction)}
+                              {fmtPct01(
+                                results.selected_file_metrics.igg_pos_fraction
+                              )}
                             </div>
                           </div>
                         </div>
@@ -1368,43 +1401,52 @@ export default function FCXMApp() {
                       {results?.selected_sample_metrics ? (
                         <div className="rounded-xl border p-3 dark:border-neutral-800">
                           <div className="text-sm font-medium mb-2">
-                            Combined sample - {results.selected_sample_metrics.label}
+                            {t("FCXM.metrics_cards.combined_sample", {
+                              label: results.selected_sample_metrics.label,
+                            })}
                           </div>
 
                           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                             <div className="text-neutral-600 dark:text-neutral-400">
-                              Events
+                              {t("FCXM.metrics.events")}
                             </div>
                             <div>{results.selected_sample_metrics.n_events}</div>
 
                             <div className="text-neutral-600 dark:text-neutral-400">
-                              Median shift
-                            </div>
-                            <div>
-                              {fmtNum(results.selected_sample_metrics.igg_median_shift)}
-                            </div>
-
-                            <div className="text-neutral-600 dark:text-neutral-400">
-                              Median ratio
-                            </div>
-                            <div>
-                              {fmtNum(results.selected_sample_metrics.igg_median_ratio)}
-                            </div>
-
-                            <div className="text-neutral-600 dark:text-neutral-400">
-                              Fluorescence index
+                              {t("FCXM.metrics.median_shift")}
                             </div>
                             <div>
                               {fmtNum(
-                                results.selected_sample_metrics.igg_fluorescence_index
+                                results.selected_sample_metrics.igg_median_shift
                               )}
                             </div>
 
                             <div className="text-neutral-600 dark:text-neutral-400">
-                              IgG+ fraction
+                              {t("FCXM.metrics.median_ratio")}
                             </div>
                             <div>
-                              {fmtPct01(results.selected_sample_metrics.igg_pos_fraction)}
+                              {fmtNum(
+                                results.selected_sample_metrics.igg_median_ratio
+                              )}
+                            </div>
+
+                            <div className="text-neutral-600 dark:text-neutral-400">
+                              {t("FCXM.metrics.fluorescence_index")}
+                            </div>
+                            <div>
+                              {fmtNum(
+                                results.selected_sample_metrics
+                                  .igg_fluorescence_index
+                              )}
+                            </div>
+
+                            <div className="text-neutral-600 dark:text-neutral-400">
+                              {t("FCXM.metrics.igg_positive_fraction")}
+                            </div>
+                            <div>
+                              {fmtPct01(
+                                results.selected_sample_metrics.igg_pos_fraction
+                              )}
                             </div>
                           </div>
                         </div>
@@ -1420,7 +1462,7 @@ export default function FCXMApp() {
                 }`}
               >
                 <div className="flex items-center justify-between gap-3">
-                  <div className="font-medium">Gating strategy</div>
+                  <div className="font-medium">{t("FCXM.gating.title")}</div>
 
                   <label className="flex items-center gap-2 select-none">
                     <input
@@ -1430,7 +1472,7 @@ export default function FCXMApp() {
                       className="rounded border"
                       disabled={!selectedCard}
                     />
-                    <span className="text-sm">Show gating strategy</span>
+                    <span className="text-sm">{t("FCXM.gating.show")}</span>
                   </label>
                 </div>
 
@@ -1441,7 +1483,10 @@ export default function FCXMApp() {
                         <PlotCard
                           key={gp.title + idx}
                           title={gp.title}
-                          subtitle={`${gp.x_label} vs ${gp.y_label}`}
+                          subtitle={t("FCXM.plots.vs", {
+                            x: gp.x_label,
+                            y: gp.y_label,
+                          })}
                           className="min-h-[200px]"
                         >
                           <ScatterPlot
@@ -1453,7 +1498,10 @@ export default function FCXMApp() {
                             onDoubleClick={() =>
                               setZoomPlot({
                                 title: gp.title,
-                                subtitle: `${gp.x_label} vs ${gp.y_label}`,
+                                subtitle: t("FCXM.plots.vs", {
+                                  x: gp.x_label,
+                                  y: gp.y_label,
+                                }),
                                 xLabel: gp.x_label,
                                 yLabel: gp.y_label,
                                 points: gp.points || [],
@@ -1465,7 +1513,7 @@ export default function FCXMApp() {
 
                       {selectedCard && (results?.gating_plots ?? []).length === 0 ? (
                         <div className="w-[260px] h-[200px] rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-3 text-sm text-neutral-600 dark:text-neutral-400 flex items-center justify-center">
-                          No gating plots yet.
+                          {t("FCXM.gating.no_plots_yet")}
                         </div>
                       ) : null}
                     </div>
@@ -1477,19 +1525,19 @@ export default function FCXMApp() {
 
           <section className={activeStep === 4 ? "block" : "hidden"}>
             <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4 mb-4">
-              <div className="font-medium">Step 4 · Report settings</div>
+              <div className="font-medium">{t("FCXM.panels.report.heading")}</div>
               <div className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-                Set the positivity rule used for the report, then download the summary.
+                {t("FCXM.panels.report.description")}
               </div>
             </div>
 
             <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4">
-              <div className="font-medium">Report settings</div>
+              <div className="font-medium">{t("FCXM.report_settings.title")}</div>
 
               <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
                 <div>
                   <div className="text-xs text-neutral-600 dark:text-neutral-400 mb-1">
-                    Metric
+                    {t("FCXM.report_settings.metric")}
                   </div>
 
                   <select
@@ -1500,16 +1548,24 @@ export default function FCXMApp() {
                     className="w-full h-11 rounded-xl border px-3 bg-white
                                dark:bg-neutral-900 dark:border-neutral-700"
                   >
-                    <option value="Median Ratio">Median Ratio</option>
-                    <option value="Median Shift">Median Shift</option>
-                    <option value="Fluorescence Index">Fluorescence Index</option>
-                    <option value="% pos">% pos</option>
+                    <option value="Median Ratio">
+                      {t("FCXM.metrics.median_ratio")}
+                    </option>
+                    <option value="Median Shift">
+                      {t("FCXM.metrics.median_shift")}
+                    </option>
+                    <option value="Fluorescence Index">
+                      {t("FCXM.metrics.fluorescence_index")}
+                    </option>
+                    <option value="% pos">
+                      {t("FCXM.metrics.percent_positive")}
+                    </option>
                   </select>
                 </div>
 
                 <div>
                   <div className="text-xs text-neutral-600 dark:text-neutral-400 mb-1">
-                    Positive above
+                    {t("FCXM.report_settings.positive_above")}
                   </div>
 
                   <input
@@ -1526,12 +1582,17 @@ export default function FCXMApp() {
 
               <div className="mt-3 rounded-xl border p-3 dark:border-neutral-800 text-sm">
                 <div className="text-neutral-600 dark:text-neutral-400">
-                  Current rule
+                  {t("FCXM.report_settings.current_rule")}
                 </div>
 
                 <div className="mt-1 font-medium">
-                  Positive if {positivityMetric} &gt;{" "}
-                  {positivityThreshold === "" ? "—" : positivityThreshold}
+                  {t("FCXM.report_settings.rule", {
+                    metric: metricLabel(positivityMetric),
+                    threshold:
+                      positivityThreshold === ""
+                        ? t("FCXM.empty_value")
+                        : positivityThreshold,
+                  })}
                 </div>
               </div>
 
@@ -1543,11 +1604,13 @@ export default function FCXMApp() {
                            dark:bg-neutral-900 dark:hover:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-200"
                 title={
                   runStatus !== "done"
-                    ? "Run must be done before download"
-                    : "Download summary"
+                    ? t("FCXM.report_settings.run_must_be_done")
+                    : t("FCXM.report_settings.download_summary")
                 }
               >
-                {summaryBusy ? "Preparing summary…" : "Download summary"}
+                {summaryBusy
+                  ? t("FCXM.actions.preparing_summary")
+                  : t("FCXM.actions.download_summary")}
               </button>
 
               {summaryError ? (

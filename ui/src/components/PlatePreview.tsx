@@ -1,5 +1,6 @@
 // src/components/PlatePreview.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { API_BASE } from "../App";
 import { type ProcessResponse, type WellID } from "../types";
 import { ROWS, COLS } from "../plateConfig";
@@ -35,6 +36,8 @@ export function PlatePreview({
   jobStatus?: "idle" | "queued" | "running" | "done" | "error";
   imageScores?: Record<string, number>;
 }) {
+  const { t } = useTranslation();
+
   const gridWrapRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [cell, setCell] = useState(36);
@@ -180,16 +183,16 @@ export function PlatePreview({
 
   const detailSegmentedImageUrl = useMemo(() => {
     if (!detailWell) return null;
-  
+
     const wellResult = result?.wells?.[detailWell];
     const url = wellResult?.segmented_image_url ?? null;
-  
+
     if (!url) return null;
-  
+
     if (url.startsWith("http://") || url.startsWith("https://")) {
       return url;
     }
-  
+
     return `${API_BASE}${url}`;
   }, [detailWell, result]);
 
@@ -269,6 +272,24 @@ export function PlatePreview({
     setHoverWell(null);
   }
 
+  function progressLabel() {
+    if (jobStatus === "queued") return t("PlatePreview.progress.queued");
+    if (jobStatus === "running") return t("PlatePreview.progress.running");
+    if (jobStatus === "done") return t("PlatePreview.progress.done");
+    if (jobStatus === "error") return t("PlatePreview.progress.error");
+    return "";
+  }
+
+  function wellAriaLabel(id: WellID, hasImage: boolean, isPositive: boolean) {
+    return t("PlatePreview.well_aria", {
+      well: id,
+      imageStatus: hasImage
+        ? t("PlatePreview.image_status.has_image")
+        : t("PlatePreview.image_status.no_image"),
+      positiveStatus: isPositive ? t("PlatePreview.positive") : "",
+    });
+  }
+
   return (
     <div
       ref={containerRef}
@@ -277,7 +298,7 @@ export function PlatePreview({
       style={{ overflow: "visible" }}
     >
       <h3 className="font-medium mb-2 text-neutral-900 dark:text-neutral-100">
-        Plate (Preview)
+        {t("PlatePreview.title")}
       </h3>
 
       {typeof progressPercent === "number" &&
@@ -291,10 +312,7 @@ export function PlatePreview({
           >
             <div className="flex justify-between text-xs mb-1">
               <span className="text-neutral-500 dark:text-neutral-400">
-                {jobStatus === "queued" && "Job queued…"}
-                {jobStatus === "running" && "Processing wells…"}
-                {jobStatus === "done" && "Finished"}
-                {jobStatus === "error" && "Error"}
+                {progressLabel()}
               </span>
 
               <span className="font-medium text-neutral-700 dark:text-neutral-200">
@@ -391,9 +409,7 @@ export function PlatePreview({
                           }),
                     }}
                     title={id}
-                    aria-label={`Well ${id}${url ? " (has image)" : ""}${
-                      isPositive ? " (POSITIVE)" : ""
-                    }`}
+                    aria-label={wellAriaLabel(id, !!url, isPositive)}
                   />
                 );
               })}
@@ -425,22 +441,22 @@ export function PlatePreview({
             {data.img ? (
               <img
                 src={data.img}
-                alt={`Well ${hoverWell}`}
+                alt={t("PlatePreview.well_image_alt", { well: hoverWell })}
                 className="w-64 h-64 object-contain border rounded-lg bg-white dark:bg-neutral-900 dark:border-neutral-700"
                 draggable={false}
               />
             ) : (
               <div className="w-64 h-64 grid place-items-center text-xs text-neutral-500 border rounded-lg bg-white dark:bg-neutral-900 dark:text-neutral-400 dark:border-neutral-700">
-                No image
+                {t("PlatePreview.no_image")}
               </div>
             )}
 
             <div className="text-sm text-neutral-900 dark:text-neutral-100">
               <div className="font-medium mb-1">
-                Well: {hoverWell}{" "}
+                {t("PlatePreview.fields.well")}: {hoverWell}{" "}
                 {data.frac !== null && data.frac > 20 && (
                   <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
-                    POSITIVE
+                    {t("PlatePreview.positive")}
                   </span>
                 )}
               </div>
@@ -448,7 +464,7 @@ export function PlatePreview({
               {data.role && (
                 <div>
                   <span className="text-neutral-600 dark:text-neutral-400">
-                    Role:
+                    {t("PlatePreview.fields.role")}:
                   </span>{" "}
                   {data.role}
                 </div>
@@ -456,40 +472,42 @@ export function PlatePreview({
 
               <div>
                 <span className="text-neutral-600 dark:text-neutral-400">
-                  Frac pos:
+                  {t("PlatePreview.fields.frac_pos")}:
                 </span>{" "}
-                {data.frac === null ? "—" : `${Math.round(data.frac)}%`}
+                {data.frac === null
+                  ? t("PlatePreview.empty_value")
+                  : `${Math.round(data.frac)}%`}
               </div>
 
               <div>
                 <span className="text-neutral-600 dark:text-neutral-400">
-                  Status:
+                  {t("PlatePreview.fields.status")}:
                 </span>{" "}
                 {data.status}
               </div>
 
               <div className="mt-2">
                 <span className="text-neutral-600 dark:text-neutral-400">
-                  Combo ID:
+                  {t("PlatePreview.fields.combo_id")}:
                 </span>{" "}
-                {data.comboId ?? "—"}
+                {data.comboId ?? t("PlatePreview.empty_value")}
               </div>
 
               <div>
                 <span className="text-neutral-600 dark:text-neutral-400">
-                  Race:
+                  {t("PlatePreview.fields.race")}:
                 </span>{" "}
-                {data.race ?? "—"}
+                {data.race ?? t("PlatePreview.empty_value")}
               </div>
 
               <div className="mt-2">
                 <div className="text-neutral-600 dark:text-neutral-400 mb-1">
-                  HLA loci
+                  {t("PlatePreview.fields.hla_loci")}
                 </div>
 
                 {data.orderedLoci.length === 0 ? (
                   <div className="text-sm text-neutral-500 dark:text-neutral-400">
-                    No loci in layout for this well.
+                    {t("PlatePreview.no_loci")}
                   </div>
                 ) : (
                   <div className="flex flex-wrap gap-1.5 max-w-[360px]">
@@ -518,7 +536,9 @@ export function PlatePreview({
                   onClick={() => setPinned((p) => !p)}
                   className="px-3 py-1.5 rounded-md border bg-white hover:bg-neutral-50 dark:bg-neutral-900 dark:hover:bg-neutral-800 dark:border-neutral-700"
                 >
-                  {pinned ? "Unpin" : "Pin"}
+                  {pinned
+                    ? t("PlatePreview.actions.unpin")
+                    : t("PlatePreview.actions.pin")}
                 </button>
 
                 {!pinned && (
@@ -527,7 +547,7 @@ export function PlatePreview({
                     onClick={() => setHoverWell(null)}
                     className="px-3 py-1.5 rounded-md border bg-white hover:bg-neutral-50 dark:bg-neutral-900 dark:hover:bg-neutral-800 dark:border-neutral-700"
                   >
-                    Close
+                    {t("PlatePreview.actions.close")}
                   </button>
                 )}
               </div>
@@ -550,8 +570,7 @@ export function PlatePreview({
         onMouseEnter={() => {
           if (!pinned) setHoverWell(null);
         }}
-      >
-      </div>
+      />
     </div>
   );
 }

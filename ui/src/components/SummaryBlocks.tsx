@@ -1,19 +1,22 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 
-export function formatSummaryValue(value: any): string {
+export function formatSummaryValue(value: any, t: (key: string) => string): string {
   if (typeof value === "number") {
-    if (!Number.isFinite(value)) return "—";
+    if (!Number.isFinite(value)) return t("SummaryBlocks.empty_value");
     return String(Math.round(value * 1000) / 1000);
   }
 
   if (typeof value === "boolean") {
-    return value ? "Yes" : "No";
+    return value ? t("SummaryBlocks.boolean.yes") : t("SummaryBlocks.boolean.no");
   }
 
-  return value ?? "—";
+  return value ?? t("SummaryBlocks.empty_value");
 }
 
 export function SummaryItem({ label, value }: { label: string; value: any }) {
+  const { t } = useTranslation();
+
   return (
     <div className="rounded-xl border p-3 dark:border-neutral-800">
       <div className="text-xs text-neutral-600 dark:text-neutral-400">
@@ -21,7 +24,7 @@ export function SummaryItem({ label, value }: { label: string; value: any }) {
       </div>
 
       <div className="mt-1 text-lg font-semibold">
-        {formatSummaryValue(value)}
+        {formatSummaryValue(value, t)}
       </div>
     </div>
   );
@@ -95,9 +98,11 @@ export function WellList({
 }
 
 export function EmptySummary() {
+  const { t } = useTranslation();
+
   return (
     <div className="rounded-xl border p-3 dark:border-neutral-800 text-sm text-neutral-600 dark:text-neutral-400">
-      No summary yet. Run the analysis first.
+      {t("SummaryBlocks.empty_summary")}
     </div>
   );
 }

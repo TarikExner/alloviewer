@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { type PanelRow } from "./PanelTable";
 
 export function FullPanelTable({
@@ -7,6 +8,8 @@ export function FullPanelTable({
   rows: PanelRow[];
   onChange: (next: PanelRow[]) => void;
 }) {
+  const { t } = useTranslation();
+
   function setCell(
     idx: number,
     key: "role" | "antibody" | "population",
@@ -24,11 +27,22 @@ export function FullPanelTable({
       <table className="w-full text-sm">
         <thead className="bg-white dark:bg-neutral-900">
           <tr className="border-b dark:border-neutral-800">
-            <th className="text-left px-3 py-2 font-medium">Channel</th>
-            <th className="text-left px-3 py-2 font-medium">Type</th>
-            <th className="text-left px-3 py-2 font-medium">Antibody</th>
-            <th className="text-left px-3 py-2 font-medium">Population name</th>
-            <th className="w-10 px-2 py-2" aria-label="Remove channel" />
+            <th className="text-left px-3 py-2 font-medium">
+              {t("FullPanelTable.table.headers.channel")}
+            </th>
+            <th className="text-left px-3 py-2 font-medium">
+              {t("FullPanelTable.table.headers.type")}
+            </th>
+            <th className="text-left px-3 py-2 font-medium">
+              {t("FullPanelTable.table.headers.antibody")}
+            </th>
+            <th className="text-left px-3 py-2 font-medium">
+              {t("FullPanelTable.table.headers.populationName")}
+            </th>
+            <th
+              className="w-10 px-2 py-2"
+              aria-label={t("FullPanelTable.table.actions.removeChannel")}
+            />
           </tr>
         </thead>
 
@@ -39,7 +53,7 @@ export function FullPanelTable({
                 colSpan={5}
                 className="px-3 py-3 text-neutral-600 dark:text-neutral-400"
               >
-                Upload FCS files to load panel.
+                {t("FullPanelTable.table.empty")}
               </td>
             </tr>
           ) : (
@@ -59,9 +73,15 @@ export function FullPanelTable({
                     className="w-full rounded-lg border px-2 py-1 bg-white
                                dark:bg-neutral-950 dark:border-neutral-700"
                   >
-                    <option value="Scatter">Scatter</option>
-                    <option value="Population Marker">Population Marker</option>
-                    <option value="IgG Marker">IgG Marker</option>
+                    <option value="Scatter">
+                      {t("FullPanelTable.roles.scatter")}
+                    </option>
+                    <option value="Population Marker">
+                      {t("FullPanelTable.roles.populationMarker")}
+                    </option>
+                    <option value="IgG Marker">
+                      {t("FullPanelTable.roles.iggMarker")}
+                    </option>
                   </select>
                 </td>
 
@@ -71,7 +91,9 @@ export function FullPanelTable({
                     onChange={(e) => setCell(idx, "antibody", e.target.value)}
                     className="w-full rounded-lg border px-2 py-1 bg-white
                                dark:bg-neutral-950 dark:border-neutral-700"
-                    placeholder="e.g. CD3"
+                    placeholder={t(
+                      "FullPanelTable.table.placeholders.antibody"
+                    )}
                   />
                 </td>
 
@@ -81,7 +103,9 @@ export function FullPanelTable({
                     onChange={(e) => setCell(idx, "population", e.target.value)}
                     className="w-full rounded-lg border px-2 py-1 bg-white
                                dark:bg-neutral-950 dark:border-neutral-700"
-                    placeholder="e.g. T cells"
+                    placeholder={t(
+                      "FullPanelTable.table.placeholders.population"
+                    )}
                   />
                 </td>
 
@@ -93,8 +117,15 @@ export function FullPanelTable({
                                bg-white hover:bg-neutral-50 text-neutral-600
                                dark:bg-neutral-950 dark:hover:bg-neutral-800
                                dark:border-neutral-700 dark:text-neutral-300"
-                    title={`Remove channel ${r.channel}`}
-                    aria-label={`Remove channel ${r.channel}`}
+                    title={t("FullPanelTable.table.actions.removeChannelNamed", {
+                      channel: r.channel,
+                    })}
+                    aria-label={t(
+                      "FullPanelTable.table.actions.removeChannelNamed",
+                      {
+                        channel: r.channel,
+                      }
+                    )}
                   >
                     ×
                   </button>

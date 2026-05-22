@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { WellID } from "../types";
 
 export function ImageMappingTable({
@@ -7,12 +8,16 @@ export function ImageMappingTable({
   imageOrder: WellID[];
   imageSavedNames: string[];
 }) {
+  const { t } = useTranslation();
+
   return (
     <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4 flex-1 min-h-0 overflow-hidden flex flex-col">
       <div className="shrink-0">
-        <div className="font-medium">Image mapping</div>
+        <div className="font-medium">
+          {t("ImageMappingTable.title")}
+        </div>
         <div className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-          Images are assigned by upload order against the selected scan order.
+          {t("ImageMappingTable.description")}
         </div>
       </div>
 
@@ -20,9 +25,15 @@ export function ImageMappingTable({
         <table className="w-full text-sm">
           <thead className="bg-white dark:bg-neutral-900 sticky top-0 z-10">
             <tr className="border-b dark:border-neutral-800">
-              <th className="text-left px-3 py-2 font-medium">#</th>
-              <th className="text-left px-3 py-2 font-medium">Well</th>
-              <th className="text-left px-3 py-2 font-medium">Image</th>
+              <th className="text-left px-3 py-2 font-medium">
+                {t("ImageMappingTable.table.headers.index")}
+              </th>
+              <th className="text-left px-3 py-2 font-medium">
+                {t("ImageMappingTable.table.headers.well")}
+              </th>
+              <th className="text-left px-3 py-2 font-medium">
+                {t("ImageMappingTable.table.headers.image")}
+              </th>
             </tr>
           </thead>
 
@@ -33,7 +44,7 @@ export function ImageMappingTable({
                   colSpan={3}
                   className="px-3 py-3 text-neutral-600 dark:text-neutral-400"
                 >
-                  No scan order set.
+                  {t("ImageMappingTable.table.empty")}
                 </td>
               </tr>
             ) : (
@@ -49,7 +60,8 @@ export function ImageMappingTable({
                   <td className="px-3 py-2 font-mono text-xs">{well}</td>
 
                   <td className="px-3 py-2 truncate">
-                    {imageSavedNames[idx] || "—"}
+                    {imageSavedNames[idx] ||
+                      t("ImageMappingTable.table.missingImage")}
                   </td>
                 </tr>
               ))

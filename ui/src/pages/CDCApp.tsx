@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Toolbar } from "../components/Toolbar";
 import { UploadCard } from "../components/UploadCard";
 import PlateEditorWithOrder from "../components/PlateEditorWithOrder";
@@ -32,13 +33,14 @@ import {
   computeSummary,
   countWellsByType,
   extractImageScores,
-  plateStageMessage,
   type WellRunStatus,
 } from "../lib/plateAssay";
 
 type ActiveStep = 1 | 2 | 3 | 4;
 
 export default function CDCApp() {
+  const { t } = useTranslation();
+
   const [flip, setFlip] = useState(true);
 
   const [layout, setLayout] = useState<any | null>(null);
@@ -277,10 +279,10 @@ export default function CDCApp() {
           if (prog.status === "done") {
             if (prog.result) {
               setProc(prog.result as ProcessResponse);
-              setMsg("Analysis done.");
+              setMsg(t("cdc_app.messages.analysis_done"));
               setImageScores(extractImageScores(prog.result, wellToFileAtRun));
             } else {
-              setMsg("Analysis finished, but no result was returned.");
+              setMsg(t("cdc_app.messages.analysis_done_no_result"));
             }
 
             setBusy(false);
@@ -290,7 +292,7 @@ export default function CDCApp() {
           }
 
           if (prog.status === "error") {
-            setMsg("Process failed.");
+            setMsg(t("cdc_app.messages.process_failed"));
             setBusy(false);
             setProgressPercent(null);
             setJobStage(null);
@@ -299,7 +301,7 @@ export default function CDCApp() {
 
           setTimeout(poll, 800);
         } catch (err: any) {
-          setMsg(err.message || "Process failed");
+          setMsg(err.message || t("cdc_app.messages.process_failed"));
           setBusy(false);
           setJobStatus("error");
           setProgressPercent(null);
@@ -309,101 +311,113 @@ export default function CDCApp() {
 
       poll();
     } catch (err: any) {
-      setMsg(err.message || "Process failed");
+      setMsg(err.message || t("cdc_app.messages.process_failed"));
       setBusy(false);
       setJobStatus("error");
       setProgressPercent(null);
     }
   }
 
-  const stageMessage = plateStageMessage(jobStage);
+  const stageMessage = jobStage
+    ? t(`cdc_app.stage_messages.${jobStage}`, {
+        defaultValue: t("cdc_app.stage_messages.default"),
+      })
+    : null;
 
   const statusMessage =
     jobStatus === "queued"
-      ? "Waiting to start."
+      ? t("cdc_app.status.waiting_to_start")
       : jobStatus === "running"
-      ? stageMessage || "Processing plate images."
+      ? stageMessage || t("cdc_app.status.processing_plate_images")
       : jobStatus === "done"
-      ? msg || "Analysis done."
+      ? msg || t("cdc_app.status.analysis_done")
       : jobStatus === "error"
-      ? msg || "Process failed."
+      ? msg || t("cdc_app.status.process_failed")
       : msg;
 
   return (
     <div className="h-screen overflow-hidden bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 flex flex-col">
-      <Toolbar title="AlloViewer - CDC panel reactivity assay" />
+      <Toolbar title={t("cdc_app.toolbar_title")} />
 
       <div className="flex-1 min-h-0 overflow-hidden p-4 grid grid-cols-1 xl:grid-cols-[280px_minmax(0,1fr)] gap-4">
         <aside className="min-h-0 overflow-y-auto pr-1">
           <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4 mb-4">
-            <div className="font-medium">Workflow</div>
+            <div className="font-medium">{t("cdc_app.workflow.title")}</div>
             <div className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-              Select a step. The main work area stays on the right.
+              {t("cdc_app.workflow.description")}
             </div>
           </div>
 
           <div className="space-y-3">
             <StepButton
               number={1}
-              title="Upload files"
+              title={t("cdc_app.steps.upload.title")}
               status={uploadStepStatus}
               active={activeStep === 1}
               onClick={() => goToStep(1)}
               summary={
                 !hasLayout && !hasImages
-                  ? "Upload layout and image folder"
+                  ? t("cdc_app.steps.upload.summary_missing_layout_and_images")
                   : !hasLayout
-                  ? `${imageSavedNames.length} image(s), layout missing`
+                  ? t("cdc_app.steps.upload.summary_layout_missing", {
+                      count: imageSavedNames.length,
+                    })
                   : !hasImages
-                  ? "Layout uploaded, images missing"
-                  : `${imageSavedNames.length} image(s), layout uploaded`
+                  ? t("cdc_app.steps.upload.summary_images_missing")
+                  : t("cdc_app.steps.upload.summary_done", {
+                      count: imageSavedNames.length,
+                    })
               }
             />
 
             <StepButton
               number={2}
-              title="Review plate"
+              title={t("cdc_app.steps.review.title")}
               status={plateStepStatus}
               active={activeStep === 2}
               onClick={() => goToStep(2)}
               summary={
                 !hasLayout || !hasImages
-                  ? "Upload files first"
+                  ? t("cdc_app.steps.review.summary_upload_first")
                   : !hasOrder
-                  ? "Set scan order"
+                  ? t("cdc_app.steps.review.summary_set_scan_order")
                   : missingImageCount > 0
-                  ? `${missingImageCount} well(s) without image`
-                  : `${mappedImageCount} image(s) mapped`
+                  ? t("cdc_app.steps.review.summary_missing_images", {
+                      count: missingImageCount,
+                    })
+                  : t("cdc_app.steps.review.summary_done", {
+                      count: mappedImageCount,
+                    })
               }
             />
 
             <StepButton
               number={3}
-              title="Run and results"
+              title={t("cdc_app.steps.run.title")}
               status={runStepStatus}
               active={activeStep === 3}
               onClick={() => goToStep(3)}
               summary={
                 jobStatus === "done"
-                  ? "Analysis completed"
+                  ? t("cdc_app.steps.run.summary_done")
                   : jobStatus === "running" || jobStatus === "queued"
-                  ? "Analysis running"
+                  ? t("cdc_app.steps.run.summary_running")
                   : canRun
-                  ? "Ready to run"
-                  : "Setup incomplete"
+                  ? t("cdc_app.steps.run.summary_ready")
+                  : t("cdc_app.steps.run.summary_incomplete")
               }
             />
 
             <StepButton
               number={4}
-              title="Summary"
+              title={t("cdc_app.steps.summary.title")}
               status={reportStepStatus}
               active={activeStep === 4}
               onClick={() => goToStep(4)}
               summary={
                 jobStatus === "done"
-                  ? "Review summary values"
-                  : "Available after run"
+                  ? t("cdc_app.steps.summary.summary_ready")
+                  : t("cdc_app.steps.summary.summary_not_ready")
               }
             />
 
@@ -416,7 +430,7 @@ export default function CDCApp() {
                            dark:bg-neutral-900 dark:hover:bg-red-950
                            dark:border-red-900 dark:text-red-300"
               >
-                Reset Experiment
+                {t("cdc_app.actions.reset_experiment")}
               </button>
             </div>
           </div>
@@ -425,16 +439,18 @@ export default function CDCApp() {
         <main className="min-h-0 overflow-y-auto pr-1">
           <section className={activeStep === 1 ? "block" : "hidden"}>
             <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4 mb-4">
-              <div className="font-medium">Step 1 · Upload files</div>
+              <div className="font-medium">
+                {t("cdc_app.panels.upload.heading")}
+              </div>
               <div className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-                Upload the plate layout and the image folder before checking the plate.
+                {t("cdc_app.panels.upload.description")}
               </div>
             </div>
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
               <UploadCard
                 key={`layout-${uploadResetKey}`}
-                title="Plate layout (.xlsx)"
+                title={t("cdc_app.upload_cards.layout.title")}
                 accept=".xlsx,.xls"
                 allowDirectory={false}
                 mode="excel-layout"
@@ -446,7 +462,7 @@ export default function CDCApp() {
 
               <UploadCard
                 key={`images-${uploadResetKey}`}
-                title="Images (Folder)"
+                title={t("cdc_app.upload_cards.images.title")}
                 accept="image/*"
                 allowDirectory
                 autoUpload
@@ -454,7 +470,7 @@ export default function CDCApp() {
                 onPicked={handleImagesPicked}
                 onUploaded={handleImagesUploaded}
                 showUploadedList
-                uploadedListLabel="Uploaded images"
+                uploadedListLabel={t("cdc_app.upload_cards.images.list_label")}
                 hideSelectedList={true}
                 className="h-[320px]"
               />
@@ -463,23 +479,25 @@ export default function CDCApp() {
             <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="rounded-xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-3">
                 <div className="text-xs text-neutral-600 dark:text-neutral-400">
-                  Layout
+                  {t("cdc_app.stats.layout.label")}
                 </div>
                 <div className="mt-1 font-medium">
-                  {hasLayout ? "Uploaded" : "Missing"}
+                  {hasLayout
+                    ? t("cdc_app.stats.layout.uploaded")
+                    : t("cdc_app.stats.layout.missing")}
                 </div>
               </div>
 
               <div className="rounded-xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-3">
                 <div className="text-xs text-neutral-600 dark:text-neutral-400">
-                  Images
+                  {t("cdc_app.stats.images.label")}
                 </div>
                 <div className="mt-1 font-medium">{imageSavedNames.length}</div>
               </div>
 
               <div className="rounded-xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-3">
                 <div className="text-xs text-neutral-600 dark:text-neutral-400">
-                  Local picked files
+                  {t("cdc_app.stats.local_picked_files.label")}
                 </div>
                 <div className="mt-1 font-medium">{imageFiles.length}</div>
               </div>
@@ -489,10 +507,10 @@ export default function CDCApp() {
           <section className={activeStep === 2 ? "block" : "hidden"}>
             <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4 mb-4">
               <div className="font-medium">
-                Step 2 · Review plate and scan order
+                {t("cdc_app.panels.review.heading")}
               </div>
               <div className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-                Check well roles, scan order, and image-to-well mapping before running.
+                {t("cdc_app.panels.review.description")}
               </div>
             </div>
 
@@ -511,33 +529,35 @@ export default function CDCApp() {
 
               <div className="2xl:h-0 2xl:min-h-full min-h-0 flex flex-col gap-4 overflow-hidden">
                 <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4 shrink-0">
-                  <div className="font-medium">Plate checks</div>
+                  <div className="font-medium">
+                    {t("cdc_app.plate_checks.title")}
+                  </div>
 
                   <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
                     <div className="rounded-xl border p-3 dark:border-neutral-800">
                       <div className="text-xs text-neutral-600 dark:text-neutral-400">
-                        Sample wells
+                        {t("cdc_app.plate_checks.sample_wells")}
                       </div>
                       <div className="mt-1 font-semibold">{sampleCount}</div>
                     </div>
 
                     <div className="rounded-xl border p-3 dark:border-neutral-800">
                       <div className="text-xs text-neutral-600 dark:text-neutral-400">
-                        Negative controls
+                        {t("cdc_app.plate_checks.negative_controls")}
                       </div>
                       <div className="mt-1 font-semibold">{negativeCount}</div>
                     </div>
 
                     <div className="rounded-xl border p-3 dark:border-neutral-800">
                       <div className="text-xs text-neutral-600 dark:text-neutral-400">
-                        Positive controls
+                        {t("cdc_app.plate_checks.positive_controls")}
                       </div>
                       <div className="mt-1 font-semibold">{positiveCount}</div>
                     </div>
 
                     <div className="rounded-xl border p-3 dark:border-neutral-800">
                       <div className="text-xs text-neutral-600 dark:text-neutral-400">
-                        Scan order wells
+                        {t("cdc_app.plate_checks.scan_order_wells")}
                       </div>
                       <div className="mt-1 font-semibold">{imageOrder.length}</div>
                     </div>
@@ -545,25 +565,29 @@ export default function CDCApp() {
 
                   {negativeCount === 0 ? (
                     <div className="mt-3 text-xs text-red-700 dark:text-red-400 rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950 px-3 py-2">
-                      No negative control wells are selected.
+                      {t("cdc_app.warnings.no_negative_controls")}
                     </div>
                   ) : null}
 
                   {positiveCount === 0 ? (
                     <div className="mt-3 text-xs text-amber-700 dark:text-amber-400 rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950 px-3 py-2">
-                      No positive control wells are selected.
+                      {t("cdc_app.warnings.no_positive_controls")}
                     </div>
                   ) : null}
 
                   {missingImageCount > 0 ? (
                     <div className="mt-3 text-xs text-red-700 dark:text-red-400 rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950 px-3 py-2">
-                      {missingImageCount} ordered well(s) do not have an image.
+                      {t("cdc_app.warnings.missing_ordered_images", {
+                        count: missingImageCount,
+                      })}
                     </div>
                   ) : null}
 
                   {unmappedImageCount > 0 ? (
                     <div className="mt-3 text-xs text-amber-700 dark:text-amber-400 rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950 px-3 py-2">
-                      {unmappedImageCount} uploaded image(s) are not mapped to wells.
+                      {t("cdc_app.warnings.unmapped_images", {
+                        count: unmappedImageCount,
+                      })}
                     </div>
                   ) : null}
                 </div>
@@ -578,9 +602,11 @@ export default function CDCApp() {
 
           <section className={activeStep === 3 ? "block" : "hidden"}>
             <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4 mb-4">
-              <div className="font-medium">Step 3 · Run and inspect results</div>
+              <div className="font-medium">
+                {t("cdc_app.panels.run.heading")}
+              </div>
               <div className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-                Start the analysis, then inspect the plate preview and well status.
+                {t("cdc_app.panels.run.description")}
               </div>
             </div>
 
@@ -602,29 +628,33 @@ export default function CDCApp() {
                                dark:border-blue-500"
                     title={
                       !hasLayout
-                        ? "Upload the Excel layout first"
+                        ? t("cdc_app.run_button_titles.upload_layout_first")
                         : !hasImages
-                        ? "Upload images first"
+                        ? t("cdc_app.run_button_titles.upload_images_first")
                         : !hasOrder
-                        ? "Set scan order first"
+                        ? t("cdc_app.run_button_titles.set_scan_order_first")
                         : missingImageCount > 0
-                        ? "Some ordered wells do not have images"
-                        : "Run analysis"
+                        ? t("cdc_app.run_button_titles.missing_ordered_images")
+                        : t("cdc_app.run_button_titles.run_analysis")
                     }
                   >
-                    {busy ? "Running…" : "Run analysis"}
+                    {busy
+                      ? t("cdc_app.actions.running")
+                      : t("cdc_app.actions.run_analysis")}
                   </button>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 2xl:grid-cols-[360px_minmax(0,1fr)] gap-4">
                 <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4">
-                  <div className="font-medium">Run setup</div>
+                  <div className="font-medium">
+                    {t("cdc_app.run_setup.title")}
+                  </div>
 
                   <div className="mt-3 space-y-3 text-sm">
                     <div className="rounded-xl border p-3 dark:border-neutral-800">
                       <div className="text-xs text-neutral-600 dark:text-neutral-400">
-                        Images uploaded
+                        {t("cdc_app.run_setup.images_uploaded")}
                       </div>
                       <div className="mt-1 font-semibold">
                         {imageSavedNames.length}
@@ -633,17 +663,17 @@ export default function CDCApp() {
 
                     <div className="rounded-xl border p-3 dark:border-neutral-800">
                       <div className="text-xs text-neutral-600 dark:text-neutral-400">
-                        Wells to process
+                        {t("cdc_app.run_setup.wells_to_process")}
                       </div>
                       <div className="mt-1 font-semibold">{imageOrder.length}</div>
                     </div>
 
                     <div className="rounded-xl border p-3 dark:border-neutral-800">
                       <div className="text-xs text-neutral-600 dark:text-neutral-400">
-                        Template
+                        {t("cdc_app.run_setup.template")}
                       </div>
                       <div className="mt-1 font-semibold truncate">
-                        {uploadId || "None"}
+                        {uploadId || t("cdc_app.run_setup.none")}
                       </div>
                     </div>
                   </div>
@@ -667,20 +697,26 @@ export default function CDCApp() {
 
           <section className={activeStep === 4 ? "block" : "hidden"}>
             <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4 mb-4">
-              <div className="font-medium">Step 4 · Summary</div>
+              <div className="font-medium">
+                {t("cdc_app.panels.summary.heading")}
+              </div>
               <div className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-                Review the final run summary after analysis.
+                {t("cdc_app.panels.summary.description")}
               </div>
             </div>
 
             <div className="space-y-4">
               <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4">
-                <div className="font-medium mb-3">Summary values</div>
+                <div className="font-medium mb-3">
+                  {t("cdc_app.summary_values.title")}
+                </div>
                 <PRASummaryGrid summary={summary} />
               </div>
 
               <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4">
-                <div className="font-medium mb-3">Plate result</div>
+                <div className="font-medium mb-3">
+                  {t("cdc_app.plate_result.title")}
+                </div>
 
                 <div className="min-h-[620px]">
                   <PlatePreview

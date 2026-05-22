@@ -152,6 +152,854 @@
       "step4_body": "Une fois l’analyse terminée, choisissez la métrique de positivité et le seuil utilisés pour le rapport. Les métriques disponibles comprennent le ratio médian, le décalage médian, l’indice de fluorescence et le pourcentage de cellules positives. Téléchargez le résumé uniquement après avoir vérifié que le gate sélectionné et les résultats au niveau des échantillons correspondent à la règle d’interprétation prévue.",
       "step4_alt": "Paramètres du rapport FC-XM"
     }
+  },
+  "cdc_app": {
+    "toolbar_title": "AlloViewer - Test de réactivité de panel CDC",
+
+    "workflow": {
+      "title": "Flux de travail",
+      "description": "Sélectionnez une étape. La zone principale de travail reste à droite."
+    },
+
+    "steps": {
+      "upload": {
+        "title": "Téléverser les fichiers",
+        "summary_missing_layout_and_images": "Téléverser la disposition et le dossier d’images",
+        "summary_layout_missing": "{{count}} image(s), disposition manquante",
+        "summary_images_missing": "Disposition téléversée, images manquantes",
+        "summary_done": "{{count}} image(s), disposition téléversée"
+      },
+      "review": {
+        "title": "Vérifier la plaque",
+        "summary_upload_first": "Téléverser d’abord les fichiers",
+        "summary_set_scan_order": "Définir l’ordre de balayage",
+        "summary_missing_images": "{{count}} puits sans image",
+        "summary_done": "{{count}} image(s) associée(s)"
+      },
+      "run": {
+        "title": "Analyse et résultats",
+        "summary_done": "Analyse terminée",
+        "summary_running": "Analyse en cours",
+        "summary_ready": "Prêt pour l’analyse",
+        "summary_incomplete": "Configuration incomplète"
+      },
+      "summary": {
+        "title": "Résumé",
+        "summary_ready": "Vérifier les valeurs du résumé",
+        "summary_not_ready": "Disponible après l’analyse"
+      }
+    },
+
+    "panels": {
+      "upload": {
+        "heading": "Étape 1 · Téléverser les fichiers",
+        "description": "Téléversez la disposition de la plaque et le dossier d’images avant de vérifier la plaque."
+      },
+      "review": {
+        "heading": "Étape 2 · Vérifier la plaque et l’ordre de balayage",
+        "description": "Vérifiez les rôles des puits, l’ordre de balayage et l’association image-puits avant de lancer l’analyse."
+      },
+      "run": {
+        "heading": "Étape 3 · Lancer l’analyse et inspecter les résultats",
+        "description": "Lancez l’analyse, puis inspectez l’aperçu de la plaque et le statut des puits."
+      },
+      "summary": {
+        "heading": "Étape 4 · Résumé",
+        "description": "Vérifiez le résumé final après l’analyse."
+      }
+    },
+
+    "upload_cards": {
+      "layout": {
+        "title": "Disposition de la plaque (.xlsx)"
+      },
+      "images": {
+        "title": "Images (dossier)",
+        "list_label": "Images téléversées"
+      }
+    },
+
+    "stats": {
+      "layout": {
+        "label": "Disposition",
+        "uploaded": "Téléversée",
+        "missing": "Manquante"
+      },
+      "images": {
+        "label": "Images"
+      },
+      "local_picked_files": {
+        "label": "Fichiers locaux sélectionnés"
+      }
+    },
+
+    "plate_checks": {
+      "title": "Contrôles de la plaque",
+      "sample_wells": "Puits d’échantillon",
+      "negative_controls": "Contrôles négatifs",
+      "positive_controls": "Contrôles positifs",
+      "scan_order_wells": "Puits dans l’ordre de balayage"
+    },
+
+    "warnings": {
+      "no_negative_controls": "Aucun puits de contrôle négatif n’est sélectionné.",
+      "no_positive_controls": "Aucun puits de contrôle positif n’est sélectionné.",
+      "missing_ordered_images": "{{count}} puits dans l’ordre n’ont pas d’image.",
+      "unmapped_images": "{{count}} image(s) téléversée(s) ne sont associées à aucun puits."
+    },
+
+    "actions": {
+      "reset_experiment": "Réinitialiser l’expérience",
+      "run_analysis": "Lancer l’analyse",
+      "running": "En cours…"
+    },
+
+    "run_button_titles": {
+      "upload_layout_first": "Téléversez d’abord la disposition Excel",
+      "upload_images_first": "Téléversez d’abord les images",
+      "set_scan_order_first": "Définissez d’abord l’ordre de balayage",
+      "missing_ordered_images": "Certains puits dans l’ordre n’ont pas d’images",
+      "run_analysis": "Lancer l’analyse"
+    },
+
+    "run_setup": {
+      "title": "Configuration de l’analyse",
+      "images_uploaded": "Images téléversées",
+      "wells_to_process": "Puits à traiter",
+      "template": "Modèle",
+      "none": "Aucun"
+    },
+
+    "summary_values": {
+      "title": "Valeurs du résumé"
+    },
+
+    "plate_result": {
+      "title": "Résultat de la plaque"
+    },
+
+    "messages": {
+      "analysis_done": "Analyse terminée.",
+      "analysis_done_no_result": "L’analyse est terminée, mais aucun résultat n’a été renvoyé.",
+      "process_failed": "Le processus a échoué."
+    },
+
+    "status": {
+      "waiting_to_start": "En attente de démarrage.",
+      "processing_plate_images": "Traitement des images de la plaque.",
+      "analysis_done": "Analyse terminée.",
+      "process_failed": "Le processus a échoué."
+    },
+
+    "stage_messages": {
+      "default": "Traitement des images de la plaque.",
+      "segmentation": "Segmentation des cellules.",
+      "classification": "Classification des cellules.",
+      "scoring": "Calcul des scores des puits.",
+      "summary": "Création du résumé.",
+      "fit_qc": "Contrôle qualité en cours.",
+      "apply_file": "Traitement du fichier.",
+      "payload": "Création du paquet de résultats.",
+      "plot_cache": "Création du cache des graphiques."
+    }
+  },
+  "FCXM": {
+    "toolbar_title": "AlloViewer - Crossmatch par cytométrie en flux",
+    "empty_value": "—",
+
+    "workflow": {
+      "title": "Flux de travail",
+      "description": "Sélectionnez une étape. La zone principale de travail reste à droite."
+    },
+
+    "steps": {
+      "upload": {
+        "title": "Téléverser et attribuer",
+        "summary_missing": "Téléverser les fichiers .fcs",
+        "summary_nc_missing": "{{count}} fichier(s), CN manquant",
+        "summary_unassigned": "{{uploaded}} fichier(s), {{unassigned}} non attribué(s)",
+        "summary_done": "{{count}} fichier(s), tous attribués"
+      },
+      "panel": {
+        "title": "Vérifier le panel",
+        "summary_reading": "Lecture du panel",
+        "summary_error": "Erreur du panel",
+        "summary_needs_review": "{{count}} canal/canaux, vérification requise",
+        "summary_done": "{{count}} canal/canaux",
+        "summary_empty": "Aucun panel pour le moment"
+      },
+      "run": {
+        "title": "Analyse et résultats",
+        "summary_done": "Analyse terminée",
+        "summary_running": "Analyse en cours",
+        "summary_ready": "Prêt pour l’analyse",
+        "summary_incomplete": "Configuration incomplète"
+      },
+      "report": {
+        "title": "Rapport",
+        "summary_ready": "Définir la règle et télécharger",
+        "summary_not_ready": "Disponible après l’analyse"
+      }
+    },
+
+    "panels": {
+      "upload": {
+        "heading": "Étape 1 · Téléverser et attribuer les fichiers",
+        "description": "Téléversez un dossier de fichiers .fcs, puis glissez les fichiers dans les cartes correspondantes."
+      },
+      "panel": {
+        "heading": "Étape 2 · Vérifier le panel",
+        "description": "Vérifiez les rôles des canaux et supprimez les canaux qui ne doivent pas être utilisés."
+      },
+      "run": {
+        "heading": "Étape 3 · Lancer l’analyse et inspecter les résultats",
+        "description": "Lancez l’analyse, puis inspectez l’échantillon et le fichier sélectionnés."
+      },
+      "report": {
+        "heading": "Étape 4 · Paramètres du rapport",
+        "description": "Définissez la règle de positivité utilisée pour le rapport, puis téléchargez le résumé."
+      }
+    },
+
+    "upload_card": {
+      "title": "Fichiers FCS (dossier)",
+      "uploaded_list_label": "Téléversés (.fcs)"
+    },
+
+    "display_names": {
+      "title": "Noms affichés",
+      "use_file_names": "Utiliser les noms de fichiers",
+      "use_tube_names": "Utiliser les noms de tubes",
+      "reading": "Lecture des étiquettes FCS…"
+    },
+
+    "sample_cards": {
+      "title": "Cartes d’échantillons",
+      "description": "Le contrôle négatif est requis. Le contrôle positif est facultatif.",
+      "drag_hint": "Glissez les fichiers téléversés depuis la liste de gauche vers la carte correspondante."
+    },
+
+    "panel": {
+      "title": "Panel",
+      "files_uploaded": "{{count}} fichier(s) téléversé(s)",
+      "no_files_yet": "Aucun fichier pour le moment",
+      "reading": "Lecture du panel à partir des fichiers .fcs…",
+      "no_igg_marker": "Aucun marqueur IgG n’est sélectionné. Vérifiez le panel avant de lancer l’analyse."
+    },
+
+    "samples": {
+      "title": "Échantillons",
+      "file_count": "{{count}} fichier",
+      "file_count_plural": "{{count}} fichiers"
+    },
+
+    "sample_types": {
+      "negative_control": "Contrôle négatif",
+      "positive_control": "Contrôle positif",
+      "sample": "Échantillon"
+    },
+
+    "result_selection": {
+      "title": "Sélection des résultats",
+      "selected_sample": "Échantillon sélectionné",
+      "no_sample_selected": "Aucun échantillon sélectionné",
+      "file": "Fichier",
+      "no_files": "Aucun fichier",
+      "gate": "Gate"
+    },
+
+    "overview": {
+      "title": "Aperçu",
+      "description": "Courbes de densité IgG transformées par asinh pour les contrôles et le fichier sélectionné",
+      "selected_file": "Fichier sélectionné",
+      "no_results_yet": "Aucun résultat pour le moment.",
+      "series_fallback": "Série {{number}}"
+    },
+
+    "gating": {
+      "title": "Stratégie de gating",
+      "show": "Afficher la stratégie de gating",
+      "no_plots_yet": "Aucun graphique de gating pour le moment."
+    },
+
+    "plots": {
+      "vs": "{{x}} vs {{y}}"
+    },
+
+    "axes": {
+      "igg": "IgG"
+    },
+
+    "metrics": {
+      "igg_median": "Médiane IgG",
+      "events": "Événements",
+      "median_shift": "Décalage médian",
+      "median_ratio": "Ratio médian",
+      "fluorescence_index": "Indice de fluorescence",
+      "igg_positive_fraction": "Fraction IgG+",
+      "percent_positive": "% pos"
+    },
+
+    "metrics_cards": {
+      "selected_file": "Fichier sélectionné - {{label}}",
+      "combined_sample": "Échantillon combiné - {{label}}"
+    },
+
+    "report_settings": {
+      "title": "Paramètres du rapport",
+      "metric": "Métrique",
+      "positive_above": "Positif au-dessus de",
+      "current_rule": "Règle actuelle",
+      "rule": "Positif si {{metric}} > {{threshold}}",
+      "run_must_be_done": "L’analyse doit être terminée avant le téléchargement",
+      "download_summary": "Télécharger le résumé"
+    },
+
+    "actions": {
+      "reset_experiment": "Réinitialiser l’expérience",
+      "add_sample": "Ajouter un échantillon",
+      "run_analysis": "Lancer l’analyse",
+      "running": "En cours…",
+      "download_summary": "Télécharger le résumé",
+      "preparing_summary": "Préparation du résumé…"
+    },
+
+    "run_button_titles": {
+      "panel_loading": "Le panel est encore en cours de chargement",
+      "fix_panel_error": "Corrigez d’abord l’erreur du panel",
+      "load_panel_first": "Chargez d’abord un panel",
+      "run_analysis": "Lancer l’analyse"
+    },
+
+    "run_stages": {
+      "default": "Analyse en cours.",
+      "fit_qc": "CQ des fichiers en cours.",
+      "fit_marker_calibration": "Calibration des marqueurs.",
+      "fit_lymphocytes": "Gating des lymphocytes.",
+      "fit_clustering": "Ajustement du modèle de clustering.",
+      "fit_cluster_labels": "Étiquetage des clusters.",
+      "fit_control_stats": "Création des statistiques de contrôle.",
+      "apply_file": "Application des gates aux fichiers.",
+      "payload": "Création du paquet de résultats.",
+      "plot_cache": "Création du cache des graphiques."
+    },
+
+    "messages": {
+      "loading_results": "Chargement des résultats…",
+      "running_analysis": "Analyse en cours.",
+      "results_after_run": "Les résultats seront chargés lorsque l’analyse sera terminée.",
+      "failed_to_load_results": "Échec du chargement des résultats",
+      "could_not_read_fcs_labels": "Impossible de lire les noms affichés FCS.",
+      "panel_extraction_failed": "Échec de l’extraction du panel",
+      "panel_empty": "Le panel est vide. Téléversez d’abord des fichiers FCS.",
+      "missing_files_for": "Fichiers manquants pour : {{samples}}",
+      "nc_required": "Au moins un fichier de contrôle négatif (CN) est requis.",
+      "run_started": "Analyse démarrée.",
+      "done": "Terminé.",
+      "run_failed": "L’analyse a échoué.",
+      "progress_check_failed": "Échec de la vérification de la progression.",
+      "download_failed": "Échec du téléchargement."
+    }
+  },
+  "cdc_xm_app": {
+    "toolbar_title": "AlloViewer - CDC-XM",
+
+    "workflow": {
+      "title": "Flux de travail",
+      "description": "Sélectionnez une étape. La zone principale de travail reste à droite."
+    },
+
+    "steps": {
+      "upload": {
+        "title": "Téléverser les images",
+        "summary_missing": "Téléverser le dossier d’images",
+        "summary_done": "{{count}} image(s) téléversée(s)"
+      },
+      "review": {
+        "title": "Vérifier la plaque",
+        "summary_upload_first": "Téléverser d’abord les images",
+        "summary_set_scan_order": "Définir l’ordre de balayage",
+        "summary_missing_images": "{{count}} puits sans image",
+        "summary_done": "{{count}} image(s) associée(s)"
+      },
+      "run": {
+        "title": "Analyse et résultats",
+        "summary_done": "Analyse terminée",
+        "summary_running": "Analyse en cours",
+        "summary_ready": "Prêt pour l’analyse",
+        "summary_incomplete": "Configuration incomplète"
+      },
+      "summary": {
+        "title": "Résumé",
+        "summary_ready": "Vérifier les valeurs du résumé",
+        "summary_not_ready": "Disponible après l’analyse"
+      }
+    },
+
+    "panels": {
+      "upload": {
+        "heading": "Étape 1 · Téléverser les images",
+        "description": "Téléversez le dossier d’images CDC-XM. Les images sont associées selon l’ordre de téléversement et l’ordre de balayage sélectionné."
+      },
+      "review": {
+        "heading": "Étape 2 · Vérifier la plaque et l’ordre de balayage",
+        "description": "Vérifiez les rôles des puits, les colonnes de mode cellulaire, l’ordre de balayage et l’association image-puits avant de lancer l’analyse."
+      },
+      "run": {
+        "heading": "Étape 3 · Lancer l’analyse et inspecter les résultats",
+        "description": "Lancez l’analyse, puis inspectez l’aperçu de la plaque et le statut des puits."
+      },
+      "summary": {
+        "heading": "Étape 4 · Résumé",
+        "description": "Vérifiez le résumé final après l’analyse."
+      }
+    },
+
+    "upload_cards": {
+      "images": {
+        "title": "Images (dossier)",
+        "list_label": "Images téléversées"
+      }
+    },
+
+    "stats": {
+      "images_uploaded": "Images téléversées",
+      "local_picked_files": "Fichiers locaux sélectionnés"
+    },
+
+    "plate_checks": {
+      "title": "Contrôles de la plaque",
+      "sample_wells": "Puits d’échantillon",
+      "negative_controls": "Contrôles négatifs",
+      "positive_controls": "Contrôles positifs",
+      "igm_wells": "Puits IgM",
+      "scan_order_wells": "Puits dans l’ordre de balayage"
+    },
+
+    "warnings": {
+      "no_negative_controls": "Aucun puits de contrôle négatif n’est sélectionné.",
+      "no_positive_controls": "Aucun puits de contrôle positif n’est sélectionné.",
+      "no_igm_wells": "Aucun puits IgM n’est sélectionné.",
+      "missing_ordered_images": "{{count}} puits dans l’ordre n’ont pas d’image.",
+      "unmapped_images": "{{count}} image(s) téléversée(s) ne sont associées à aucun puits."
+    },
+
+    "actions": {
+      "reset_experiment": "Réinitialiser l’expérience",
+      "run_analysis": "Lancer l’analyse",
+      "running": "En cours…"
+    },
+
+    "run_button_titles": {
+      "upload_images_first": "Téléversez d’abord les images",
+      "set_scan_order_first": "Définissez d’abord l’ordre de balayage",
+      "missing_ordered_images": "Certains puits dans l’ordre n’ont pas d’images",
+      "run_analysis": "Lancer l’analyse"
+    },
+
+    "run_setup": {
+      "title": "Configuration de l’analyse",
+      "images_uploaded": "Images téléversées",
+      "wells_to_process": "Puits à traiter",
+      "cell_mode_columns": "Colonnes de mode cellulaire"
+    },
+
+    "cell_modes": {
+      "t": "T",
+      "b": "B",
+      "tb": "T/B"
+    },
+
+    "summary_values": {
+      "title": "Valeurs du résumé"
+    },
+
+    "plate_result": {
+      "title": "Résultat de la plaque"
+    },
+
+    "messages": {
+      "analysis_done": "Analyse terminée.",
+      "analysis_done_no_result": "L’analyse est terminée, mais aucun résultat n’a été renvoyé.",
+      "process_failed": "Le processus a échoué."
+    },
+
+    "status": {
+      "waiting_to_start": "En attente de démarrage.",
+      "processing_plate_images": "Traitement des images de la plaque.",
+      "analysis_done": "Analyse terminée.",
+      "process_failed": "Le processus a échoué."
+    },
+
+    "stage_messages": {
+      "default": "Traitement des images de la plaque.",
+      "segmentation": "Segmentation des cellules.",
+      "classification": "Classification des cellules.",
+      "scoring": "Calcul des scores des puits.",
+      "summary": "Création du résumé.",
+      "fit_qc": "Contrôle qualité en cours.",
+      "apply_file": "Traitement du fichier.",
+      "payload": "Création du paquet de résultats.",
+      "plot_cache": "Création du cache des graphiques."
+    }
+  },
+  "FullPanelTable": {
+    "table": {
+      "headers": {
+        "channel": "Canal",
+        "type": "Type",
+        "antibody": "Anticorps",
+        "populationName": "Nom de la population"
+      },
+      "placeholders": {
+        "antibody": "p. ex. CD3",
+        "population": "p. ex. cellules T"
+      },
+      "actions": {
+        "removeChannel": "Supprimer le canal",
+        "removeChannelNamed": "Supprimer le canal {{channel}}"
+      },
+      "empty": "Téléversez des fichiers FCS pour charger le panel."
+    },
+    "roles": {
+      "scatter": "Diffusion",
+      "populationMarker": "Marqueur de population",
+      "iggMarker": "Marqueur IgG"
+    }
+  },
+  "ImageMappingTable": {
+    "title": "Association des images",
+    "description": "Les images sont associées selon l’ordre de téléversement et l’ordre de balayage sélectionné.",
+    "table": {
+      "headers": {
+        "index": "#",
+        "well": "Puits",
+        "image": "Image"
+      },
+      "empty": "Aucun ordre de balayage défini.",
+      "missingImage": "—"
+    }
+  },
+  "PanelTable": {
+    "columns": {
+      "channel": "Canal",
+      "type": "Type",
+      "antibody": "Anticorps",
+      "population_name": "Nom de la population"
+    },
+    "roles": {
+      "Scatter": "Diffusion",
+      "Population Marker": "Marqueur de population",
+      "IgG Marker": "Marqueur IgG"
+    },
+    "placeholders": {
+      "antibody": "p. ex. CD3",
+      "population": "p. ex. cellules T"
+    },
+    "actions": {
+      "remove_channel": "Supprimer le canal",
+      "remove_channel_named": "Supprimer le canal {{channel}}"
+    },
+    "empty": "Téléversez des fichiers FCS pour charger le panel."
+  },
+  "SummaryGrids": {
+    "runValidity": {
+      "title": "Validité de l’analyse",
+      "controlWarnings": "Avertissements des contrôles",
+      "items": {
+        "status": "Statut",
+        "pcMeanRaw": "Moyenne brute CP",
+        "ncMeanRaw": "Moyenne brute CN",
+        "dynamicRange": "Plage dynamique",
+        "positiveControls": "Contrôles positifs",
+        "negativeControls": "Contrôles négatifs",
+        "pcReplicateRange": "Plage des réplicats CP",
+        "ncReplicateRange": "Plage des réplicats CN"
+      }
+    },
+    "qc": {
+      "title": "CQ",
+      "warnings": "Avertissements CQ",
+      "lowRoiWells": "Puits avec faible nombre de ROI",
+      "highUncertainWells": "Puits avec forte incertitude",
+      "items": {
+        "totalWells": "Nombre total de puits",
+        "validWells": "Puits valides",
+        "meanRoiCount": "Nombre moyen de ROI",
+        "meanUncertainFraction": "Fraction incertaine moyenne",
+        "lowRoiWells": "Puits avec faible nombre de ROI",
+        "highUncertainWells": "Puits avec forte incertitude"
+      }
+    },
+    "praResult": {
+      "title": "Résultat PRA",
+      "items": {
+        "praPercent": "PRA %",
+        "positivePanelWells": "Puits positifs du panel",
+        "validPanelWells": "Puits valides du panel",
+        "meanCorrectedFracPos": "Fraction positive corrigée moyenne",
+        "medianCorrectedFracPos": "Fraction positive corrigée médiane",
+        "maxCorrectedFracPos": "Fraction positive corrigée maximale",
+        "weakPositiveWells": "Puits faiblement positifs",
+        "moderatePositiveWells": "Puits modérément positifs",
+        "strongPositiveWells": "Puits fortement positifs"
+      }
+    },
+    "crossmatchResult": {
+      "title": "Résultat du crossmatch",
+      "sampleWells": "Puits d’échantillon",
+      "items": {
+        "finalCall": "Résultat final",
+        "correctedFracPos": "Fraction positive corrigée",
+        "rawFracPos": "Fraction positive brute",
+        "marginFromCutoff": "Marge par rapport au seuil",
+        "replicateSd": "Écart-type des réplicats",
+        "replicateRange": "Plage des réplicats",
+        "replicateDiscordant": "Réplicats discordants"
+      }
+    }
+  },
+  "PlateEditorWithOrder": {
+    "title": "Plaque (éditeur)",
+    "help": {
+      "pickRole": "Faites un clic droit sur un puits pour choisir un rôle.",
+      "paint": "Ou utilisez les pinceaux ci-dessous pour marquer. Shift+clic remplit un rectangle."
+    },
+    "roles": {
+      "sample": "Échantillon",
+      "positive": "Contrôle positif",
+      "negative": "Contrôle négatif",
+      "igm": "Contrôle IgM",
+      "empty": "Vide"
+    },
+    "brush": {
+      "activeBrush": "Pinceau : {{role}}"
+    },
+    "well": {
+      "title": "{{well}}",
+      "titleWithRole": "{{well}} ({{role}})"
+    },
+    "columnType": {
+      "shortLabel": "Ty",
+      "ariaLabel": "Type de la colonne {{column}}",
+      "options": {
+        "t": "T",
+        "b": "B",
+        "tb": "T/B",
+        "empty": "-"
+      }
+    },
+    "actions": {
+      "clear": "Effacer",
+      "reset": "Réinitialiser",
+      "resetTitle": "Restaurer la disposition par défaut",
+      "flipVertical": "Inverser verticalement (A en bas)"
+    },
+    "imageOrder": {
+      "title": "Veuillez sélectionner l’ordre d’acquisition des images",
+      "orientation": {
+        "title": "Orientation",
+        "horizontalSnake": "Serpentin horizontal",
+        "verticalSnake": "Serpentin vertical"
+      },
+      "startCorner": {
+        "title": "Coin de départ",
+        "topLeft": "En haut à gauche",
+        "topRight": "En haut à droite",
+        "bottomLeft": "En bas à gauche",
+        "bottomRight": "En bas à droite"
+      }
+    },
+    "miniPlate": {
+      "start": "début",
+      "end": "fin",
+      "legend": "trait plein = sélectionné ; pointillé = espace"
+    }
+  },
+  "PlateGrid": {
+    "title": "Plaque (éditeur) : cliquez sur un puits pour sélectionner un type d’échantillon",
+    "well_title": "{{well}} ({{role}})",
+
+    "roles": {
+      "positive": "contrôle positif",
+      "negative": "contrôle négatif",
+      "sample": "échantillon",
+      "empty": "vide",
+      "igm": "contrôle IgM"
+    },
+
+    "actions": {
+      "clear": "Effacer",
+      "clear_title": "Définir tous les puits comme vides",
+      "reset": "Réinitialiser",
+      "reset_title": "Définir tous les puits comme échantillons"
+    }
+  },
+  "PlateMatrix": {
+    "aria_label": "Matrice de plaque"
+  },
+  "PlatePopupWindow": {
+    "title": "Détails du puits {{well}}",
+    "description": "Image originale et résultat de segmentation. Survolez l’image originale pour examiner les deux vues.",
+    "actions": {
+      "close": "Fermer"
+    },
+    "images": {
+      "original": {
+        "title": "Image originale",
+        "alt": "Image originale du puits {{well}}",
+        "empty": "Aucune image pour ce puits"
+      },
+      "segmented": {
+        "title": "Image segmentée",
+        "alt": "Image segmentée du puits {{well}}",
+        "empty": "L’image segmentée n’est pas encore disponible"
+      }
+    },
+    "legend": {
+      "positive": "Positif",
+      "negative": "Négatif",
+      "uncertain": "Incertain"
+    },
+    "magnifier": {
+      "original": "Originale",
+      "segmented": "Segmentée",
+      "noSegmentation": "Aucune segmentation"
+    }
+  },
+  "PlatePreview": {
+    "title": "Plaque (aperçu)",
+    "positive": "POSITIF",
+    "empty_value": "—",
+    "no_image": "Aucune image",
+    "no_loci": "Aucun locus dans la disposition pour ce puits.",
+    "well_image_alt": "Puits {{well}}",
+    "well_aria": "Puits {{well}} {{imageStatus}} {{positiveStatus}}",
+
+    "image_status": {
+      "has_image": "(contient une image)",
+      "no_image": ""
+    },
+
+    "progress": {
+      "queued": "Tâche en file d’attente…",
+      "running": "Traitement des puits…",
+      "done": "Terminé",
+      "error": "Erreur"
+    },
+
+    "fields": {
+      "well": "Puits",
+      "role": "Rôle",
+      "frac_pos": "Frac. pos.",
+      "status": "Statut",
+      "combo_id": "ID combiné",
+      "race": "Race",
+      "hla_loci": "Loci HLA"
+    },
+
+    "actions": {
+      "pin": "Épingler",
+      "unpin": "Désépingler",
+      "close": "Fermer"
+    }
+  },
+  "Plots": {
+    "linePlot": {
+      "defaultSeriesLabel": "Série",
+      "noData": "Aucune donnée"
+    }
+  },
+  "SampleCard": {
+    "fields": {
+      "sample_name": "Nom de l’échantillon",
+      "fcs_files": "Fichiers FCS :"
+    },
+    "actions": {
+      "view_results": "Cliquer pour voir les résultats",
+      "remove": "Supprimer",
+      "remove_sample": "Supprimer l’échantillon",
+      "drag_uploaded_files": "Glisser les fichiers FCS téléversés ici",
+      "remove_file": "Supprimer le fichier",
+      "remove_file_named": "Supprimer le fichier {{file}}"
+    },
+    "empty": "Glisser les fichiers FCS ici après le téléversement"
+  },
+  "StatusPill": {
+    "status": {
+      "idle": "Inactif",
+      "queued": "En file d’attente",
+      "running": "En cours",
+      "done": "Terminé",
+      "error": "Erreur"
+    },
+    "current_file": "Fichier actuel : {{file}}",
+    "job_short": "tâche {{id}}"
+  },
+  "StepButton": {
+    "status": {
+      "not_started": "Non commencé",
+      "needs_attention": "Nécessite une attention",
+      "needs_review": "Nécessite une vérification",
+      "ready": "Prêt",
+      "running": "En cours",
+      "done": "Terminé",
+      "error": "Erreur"
+    }
+  },
+  "SummaryBlocks": {
+    "empty_value": "—",
+    "boolean": {
+      "yes": "Oui",
+      "no": "Non"
+    },
+    "empty_summary": "Aucun résumé pour le moment. Lancez d’abord l’analyse."
+  },
+  "ThemeToggle": {
+    "actions": {
+      "switchToLightMode": "Passer au mode clair",
+      "switchToDarkMode": "Passer au mode sombre"
+    }
+  },
+  "UploadCard": {
+    "empty_value": "n.d.",
+
+    "actions": {
+      "browse": "Parcourir…",
+      "select_file_first": "Sélectionnez d’abord un fichier",
+      "upload_selected": "Téléverser le(s) fichier(s) sélectionné(s)",
+      "uploading": "Téléversement…",
+      "load_layout": "Charger la disposition",
+      "upload": "Téléverser",
+      "remove": "Supprimer",
+      "remove_named": "Supprimer {{file}}"
+    },
+
+    "instructions": {
+      "excel_layout": "Téléversez une disposition de plaque Excel (.xlsx ou .xlsm).",
+      "generic": "Glissez-déposez {{target}} ici, ou cliquez sur Parcourir.",
+      "folder": "un dossier",
+      "files": "fichier(s)"
+    },
+
+    "messages": {
+      "skipped_files": "{{count}} fichier(s) non correspondant(s) ignoré(s).",
+      "layout_loaded": "Disposition chargée : {{lot}} • puits : {{wells}}",
+      "uploaded_files": "{{count}} fichier(s) téléversé(s).",
+      "upload_failed": "Échec du téléversement"
+    },
+
+    "uploaded_list": {
+      "default_label": "Téléversé",
+      "heading": "{{label}} (glisser dans une carte)",
+      "already_assigned": "Déjà attribué (glisser pour réattribuer)",
+      "drag": "Glisser"
+    }
+  },
+  "ZoomModal": {
+    "actions": {
+      "close": "Fermer"
+    }
   }
 }
 

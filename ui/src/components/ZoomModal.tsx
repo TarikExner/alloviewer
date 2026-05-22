@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 
 export function ZoomModal({
   open,
@@ -13,6 +14,8 @@ export function ZoomModal({
   subtitle?: string;
   children: React.ReactNode;
 }) {
+  const { t } = useTranslation();
+
   if (!open) return null;
 
   return (
@@ -20,6 +23,7 @@ export function ZoomModal({
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
+      aria-label={title}
       onMouseDown={onClose}
     >
       <div className="absolute inset-0 bg-black/40" />
@@ -43,8 +47,9 @@ export function ZoomModal({
             onClick={onClose}
             className="text-sm px-3 py-1.5 rounded-lg border bg-white hover:bg-neutral-50
                        dark:bg-neutral-900 dark:hover:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-200"
+            aria-label={t("ZoomModal.actions.close")}
           >
-            Close
+            {t("ZoomModal.actions.close")}
           </button>
         </div>
 

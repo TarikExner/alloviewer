@@ -152,6 +152,854 @@
       "step4_body": "Una vez completado el análisis, elija la métrica de positividad y el umbral utilizados para el informe. Las métricas disponibles incluyen razón de medianas, desplazamiento de mediana, índice de fluorescencia y porcentaje de células positivas. Descargue el resumen solo después de comprobar que el gate seleccionado y los resultados a nivel de muestra coinciden con la regla de interpretación prevista.",
       "step4_alt": "Configuración del informe FC-XM"
     }
+  },
+  "cdc_app": {
+    "toolbar_title": "AlloViewer - Ensayo de reactividad de panel CDC",
+
+    "workflow": {
+      "title": "Flujo de trabajo",
+      "description": "Seleccione un paso. El área principal de trabajo permanece a la derecha."
+    },
+
+    "steps": {
+      "upload": {
+        "title": "Cargar archivos",
+        "summary_missing_layout_and_images": "Cargar diseño y carpeta de imágenes",
+        "summary_layout_missing": "{{count}} imagen(es), falta el diseño",
+        "summary_images_missing": "Diseño cargado, faltan imágenes",
+        "summary_done": "{{count}} imagen(es), diseño cargado"
+      },
+      "review": {
+        "title": "Revisar placa",
+        "summary_upload_first": "Cargar archivos primero",
+        "summary_set_scan_order": "Definir orden de escaneo",
+        "summary_missing_images": "{{count}} pocillo(s) sin imagen",
+        "summary_done": "{{count}} imagen(es) asignada(s)"
+      },
+      "run": {
+        "title": "Ejecutar y resultados",
+        "summary_done": "Análisis completado",
+        "summary_running": "Análisis en ejecución",
+        "summary_ready": "Listo para ejecutar",
+        "summary_incomplete": "Configuración incompleta"
+      },
+      "summary": {
+        "title": "Resumen",
+        "summary_ready": "Revisar valores del resumen",
+        "summary_not_ready": "Disponible después de la ejecución"
+      }
+    },
+
+    "panels": {
+      "upload": {
+        "heading": "Paso 1 · Cargar archivos",
+        "description": "Cargue el diseño de la placa y la carpeta de imágenes antes de revisar la placa."
+      },
+      "review": {
+        "heading": "Paso 2 · Revisar placa y orden de escaneo",
+        "description": "Compruebe los roles de los pocillos, el orden de escaneo y la asignación de imágenes a pocillos antes de ejecutar."
+      },
+      "run": {
+        "heading": "Paso 3 · Ejecutar e inspeccionar resultados",
+        "description": "Inicie el análisis y luego inspeccione la vista previa de la placa y el estado de los pocillos."
+      },
+      "summary": {
+        "heading": "Paso 4 · Resumen",
+        "description": "Revise el resumen final después del análisis."
+      }
+    },
+
+    "upload_cards": {
+      "layout": {
+        "title": "Diseño de placa (.xlsx)"
+      },
+      "images": {
+        "title": "Imágenes (carpeta)",
+        "list_label": "Imágenes cargadas"
+      }
+    },
+
+    "stats": {
+      "layout": {
+        "label": "Diseño",
+        "uploaded": "Cargado",
+        "missing": "Faltante"
+      },
+      "images": {
+        "label": "Imágenes"
+      },
+      "local_picked_files": {
+        "label": "Archivos locales seleccionados"
+      }
+    },
+
+    "plate_checks": {
+      "title": "Comprobaciones de placa",
+      "sample_wells": "Pocillos de muestra",
+      "negative_controls": "Controles negativos",
+      "positive_controls": "Controles positivos",
+      "scan_order_wells": "Pocillos en el orden de escaneo"
+    },
+
+    "warnings": {
+      "no_negative_controls": "No se han seleccionado pocillos de control negativo.",
+      "no_positive_controls": "No se han seleccionado pocillos de control positivo.",
+      "missing_ordered_images": "{{count}} pocillo(s) ordenado(s) no tienen imagen.",
+      "unmapped_images": "{{count}} imagen(es) cargada(s) no están asignadas a pocillos."
+    },
+
+    "actions": {
+      "reset_experiment": "Restablecer experimento",
+      "run_analysis": "Ejecutar análisis",
+      "running": "Ejecutando…"
+    },
+
+    "run_button_titles": {
+      "upload_layout_first": "Cargue primero el diseño de Excel",
+      "upload_images_first": "Cargue primero las imágenes",
+      "set_scan_order_first": "Defina primero el orden de escaneo",
+      "missing_ordered_images": "Algunos pocillos ordenados no tienen imágenes",
+      "run_analysis": "Ejecutar análisis"
+    },
+
+    "run_setup": {
+      "title": "Configuración de ejecución",
+      "images_uploaded": "Imágenes cargadas",
+      "wells_to_process": "Pocillos a procesar",
+      "template": "Plantilla",
+      "none": "Ninguna"
+    },
+
+    "summary_values": {
+      "title": "Valores del resumen"
+    },
+
+    "plate_result": {
+      "title": "Resultado de la placa"
+    },
+
+    "messages": {
+      "analysis_done": "Análisis completado.",
+      "analysis_done_no_result": "El análisis finalizó, pero no se devolvió ningún resultado.",
+      "process_failed": "El proceso falló."
+    },
+
+    "status": {
+      "waiting_to_start": "Esperando inicio.",
+      "processing_plate_images": "Procesando imágenes de la placa.",
+      "analysis_done": "Análisis completado.",
+      "process_failed": "El proceso falló."
+    },
+
+    "stage_messages": {
+      "default": "Procesando imágenes de la placa.",
+      "segmentation": "Segmentando células.",
+      "classification": "Clasificando células.",
+      "scoring": "Calculando puntuaciones de pocillos.",
+      "summary": "Generando resumen.",
+      "fit_qc": "Ejecutando control de calidad.",
+      "apply_file": "Procesando archivo.",
+      "payload": "Generando paquete de resultados.",
+      "plot_cache": "Generando caché de gráficos."
+    }
+  },
+  "FCXM": {
+    "toolbar_title": "AlloViewer - Crossmatch por citometría de flujo",
+    "empty_value": "—",
+
+    "workflow": {
+      "title": "Flujo de trabajo",
+      "description": "Seleccione un paso. El área principal de trabajo permanece a la derecha."
+    },
+
+    "steps": {
+      "upload": {
+        "title": "Cargar y asignar",
+        "summary_missing": "Cargar archivos .fcs",
+        "summary_nc_missing": "{{count}} archivo(s), falta CN",
+        "summary_unassigned": "{{uploaded}} archivo(s), {{unassigned}} sin asignar",
+        "summary_done": "{{count}} archivo(s), todos asignados"
+      },
+      "panel": {
+        "title": "Revisar panel",
+        "summary_reading": "Leyendo panel",
+        "summary_error": "Error del panel",
+        "summary_needs_review": "{{count}} canal(es), requiere revisión",
+        "summary_done": "{{count}} canal(es)",
+        "summary_empty": "Aún no hay panel"
+      },
+      "run": {
+        "title": "Ejecutar y resultados",
+        "summary_done": "Análisis completado",
+        "summary_running": "Análisis en ejecución",
+        "summary_ready": "Listo para ejecutar",
+        "summary_incomplete": "Configuración incompleta"
+      },
+      "report": {
+        "title": "Informe",
+        "summary_ready": "Definir regla y descargar",
+        "summary_not_ready": "Disponible después de la ejecución"
+      }
+    },
+
+    "panels": {
+      "upload": {
+        "heading": "Paso 1 · Cargar y asignar archivos",
+        "description": "Cargue una carpeta de archivos .fcs y luego arrastre los archivos a las tarjetas correctas."
+      },
+      "panel": {
+        "heading": "Paso 2 · Revisar panel",
+        "description": "Compruebe los roles de los canales y elimine los canales que no deban usarse."
+      },
+      "run": {
+        "heading": "Paso 3 · Ejecutar e inspeccionar resultados",
+        "description": "Inicie el análisis y luego inspeccione la muestra y el archivo seleccionados."
+      },
+      "report": {
+        "heading": "Paso 4 · Configuración del informe",
+        "description": "Defina la regla de positividad usada para el informe y luego descargue el resumen."
+      }
+    },
+
+    "upload_card": {
+      "title": "Archivos FCS (carpeta)",
+      "uploaded_list_label": "Cargados (.fcs)"
+    },
+
+    "display_names": {
+      "title": "Nombres mostrados",
+      "use_file_names": "Usar nombres de archivo",
+      "use_tube_names": "Usar nombres de tubo",
+      "reading": "Leyendo etiquetas FCS…"
+    },
+
+    "sample_cards": {
+      "title": "Tarjetas de muestra",
+      "description": "El control negativo es obligatorio. El control positivo es opcional.",
+      "drag_hint": "Arrastre los archivos cargados desde la lista izquierda a la tarjeta correcta."
+    },
+
+    "panel": {
+      "title": "Panel",
+      "files_uploaded": "{{count}} archivo(s) cargado(s)",
+      "no_files_yet": "Aún no hay archivos",
+      "reading": "Leyendo panel desde archivos .fcs…",
+      "no_igg_marker": "No se ha seleccionado ningún marcador IgG. Compruebe el panel antes de ejecutar."
+    },
+
+    "samples": {
+      "title": "Muestras",
+      "file_count": "{{count}} archivo",
+      "file_count_plural": "{{count}} archivos"
+    },
+
+    "sample_types": {
+      "negative_control": "Control negativo",
+      "positive_control": "Control positivo",
+      "sample": "Muestra"
+    },
+
+    "result_selection": {
+      "title": "Selección de resultados",
+      "selected_sample": "Muestra seleccionada",
+      "no_sample_selected": "Ninguna muestra seleccionada",
+      "file": "Archivo",
+      "no_files": "Sin archivos",
+      "gate": "Gate"
+    },
+
+    "overview": {
+      "title": "Resumen general",
+      "description": "Curvas de densidad de IgG transformadas con asinh para controles y archivo seleccionado",
+      "selected_file": "Archivo seleccionado",
+      "no_results_yet": "Aún no hay resultados.",
+      "series_fallback": "Serie {{number}}"
+    },
+
+    "gating": {
+      "title": "Estrategia de gating",
+      "show": "Mostrar estrategia de gating",
+      "no_plots_yet": "Aún no hay gráficos de gating."
+    },
+
+    "plots": {
+      "vs": "{{x}} vs {{y}}"
+    },
+
+    "axes": {
+      "igg": "IgG"
+    },
+
+    "metrics": {
+      "igg_median": "Mediana de IgG",
+      "events": "Eventos",
+      "median_shift": "Desplazamiento de mediana",
+      "median_ratio": "Razón de medianas",
+      "fluorescence_index": "Índice de fluorescencia",
+      "igg_positive_fraction": "Fracción IgG+",
+      "percent_positive": "% pos"
+    },
+
+    "metrics_cards": {
+      "selected_file": "Archivo seleccionado - {{label}}",
+      "combined_sample": "Muestra combinada - {{label}}"
+    },
+
+    "report_settings": {
+      "title": "Configuración del informe",
+      "metric": "Métrica",
+      "positive_above": "Positivo por encima de",
+      "current_rule": "Regla actual",
+      "rule": "Positivo si {{metric}} > {{threshold}}",
+      "run_must_be_done": "La ejecución debe completarse antes de la descarga",
+      "download_summary": "Descargar resumen"
+    },
+
+    "actions": {
+      "reset_experiment": "Restablecer experimento",
+      "add_sample": "Añadir muestra",
+      "run_analysis": "Ejecutar análisis",
+      "running": "Ejecutando…",
+      "download_summary": "Descargar resumen",
+      "preparing_summary": "Preparando resumen…"
+    },
+
+    "run_button_titles": {
+      "panel_loading": "El panel aún se está cargando",
+      "fix_panel_error": "Corrija primero el error del panel",
+      "load_panel_first": "Cargue primero un panel",
+      "run_analysis": "Ejecutar análisis"
+    },
+
+    "run_stages": {
+      "default": "Ejecutando análisis.",
+      "fit_qc": "Ejecutando CC de archivos.",
+      "fit_marker_calibration": "Calibrando marcadores.",
+      "fit_lymphocytes": "Aplicando gating a linfocitos.",
+      "fit_clustering": "Ajustando modelo de clustering.",
+      "fit_cluster_labels": "Etiquetando clusters.",
+      "fit_control_stats": "Generando estadísticas de control.",
+      "apply_file": "Aplicando gates a archivos.",
+      "payload": "Generando paquete de resultados.",
+      "plot_cache": "Generando caché de gráficos."
+    },
+
+    "messages": {
+      "loading_results": "Cargando resultados…",
+      "running_analysis": "Ejecutando análisis.",
+      "results_after_run": "Los resultados se cargarán cuando finalice la ejecución.",
+      "failed_to_load_results": "No se pudieron cargar los resultados",
+      "could_not_read_fcs_labels": "No se pudieron leer los nombres mostrados de FCS.",
+      "panel_extraction_failed": "Error al extraer el panel",
+      "panel_empty": "El panel está vacío. Cargue primero archivos FCS.",
+      "missing_files_for": "Faltan archivos para: {{samples}}",
+      "nc_required": "Se requiere al menos un archivo de control negativo (CN).",
+      "run_started": "Ejecución iniciada.",
+      "done": "Hecho.",
+      "run_failed": "La ejecución falló.",
+      "progress_check_failed": "La comprobación del progreso falló.",
+      "download_failed": "La descarga falló."
+    }
+  },
+  "cdc_xm_app": {
+    "toolbar_title": "AlloViewer - CDC-XM",
+
+    "workflow": {
+      "title": "Flujo de trabajo",
+      "description": "Seleccione un paso. El área principal de trabajo permanece a la derecha."
+    },
+
+    "steps": {
+      "upload": {
+        "title": "Cargar imágenes",
+        "summary_missing": "Cargar carpeta de imágenes",
+        "summary_done": "{{count}} imagen(es) cargada(s)"
+      },
+      "review": {
+        "title": "Revisar placa",
+        "summary_upload_first": "Cargar imágenes primero",
+        "summary_set_scan_order": "Definir orden de escaneo",
+        "summary_missing_images": "{{count}} pocillo(s) sin imagen",
+        "summary_done": "{{count}} imagen(es) asignada(s)"
+      },
+      "run": {
+        "title": "Ejecutar y resultados",
+        "summary_done": "Análisis completado",
+        "summary_running": "Análisis en ejecución",
+        "summary_ready": "Listo para ejecutar",
+        "summary_incomplete": "Configuración incompleta"
+      },
+      "summary": {
+        "title": "Resumen",
+        "summary_ready": "Revisar valores del resumen",
+        "summary_not_ready": "Disponible después de la ejecución"
+      }
+    },
+
+    "panels": {
+      "upload": {
+        "heading": "Paso 1 · Cargar imágenes",
+        "description": "Cargue la carpeta de imágenes CDC-XM. Las imágenes se asignan según el orden de carga y el orden de escaneo seleccionado."
+      },
+      "review": {
+        "heading": "Paso 2 · Revisar placa y orden de escaneo",
+        "description": "Compruebe los roles de los pocillos, las columnas de modo celular, el orden de escaneo y la asignación de imágenes a pocillos antes de ejecutar."
+      },
+      "run": {
+        "heading": "Paso 3 · Ejecutar e inspeccionar resultados",
+        "description": "Inicie el análisis y luego inspeccione la vista previa de la placa y el estado de los pocillos."
+      },
+      "summary": {
+        "heading": "Paso 4 · Resumen",
+        "description": "Revise el resumen final después del análisis."
+      }
+    },
+
+    "upload_cards": {
+      "images": {
+        "title": "Imágenes (carpeta)",
+        "list_label": "Imágenes cargadas"
+      }
+    },
+
+    "stats": {
+      "images_uploaded": "Imágenes cargadas",
+      "local_picked_files": "Archivos locales seleccionados"
+    },
+
+    "plate_checks": {
+      "title": "Comprobaciones de placa",
+      "sample_wells": "Pocillos de muestra",
+      "negative_controls": "Controles negativos",
+      "positive_controls": "Controles positivos",
+      "igm_wells": "Pocillos IgM",
+      "scan_order_wells": "Pocillos en el orden de escaneo"
+    },
+
+    "warnings": {
+      "no_negative_controls": "No se han seleccionado pocillos de control negativo.",
+      "no_positive_controls": "No se han seleccionado pocillos de control positivo.",
+      "no_igm_wells": "No se han seleccionado pocillos IgM.",
+      "missing_ordered_images": "{{count}} pocillo(s) ordenado(s) no tienen imagen.",
+      "unmapped_images": "{{count}} imagen(es) cargada(s) no están asignadas a pocillos."
+    },
+
+    "actions": {
+      "reset_experiment": "Restablecer experimento",
+      "run_analysis": "Ejecutar análisis",
+      "running": "Ejecutando…"
+    },
+
+    "run_button_titles": {
+      "upload_images_first": "Cargue primero las imágenes",
+      "set_scan_order_first": "Defina primero el orden de escaneo",
+      "missing_ordered_images": "Algunos pocillos ordenados no tienen imágenes",
+      "run_analysis": "Ejecutar análisis"
+    },
+
+    "run_setup": {
+      "title": "Configuración de ejecución",
+      "images_uploaded": "Imágenes cargadas",
+      "wells_to_process": "Pocillos a procesar",
+      "cell_mode_columns": "Columnas de modo celular"
+    },
+
+    "cell_modes": {
+      "t": "T",
+      "b": "B",
+      "tb": "T/B"
+    },
+
+    "summary_values": {
+      "title": "Valores del resumen"
+    },
+
+    "plate_result": {
+      "title": "Resultado de la placa"
+    },
+
+    "messages": {
+      "analysis_done": "Análisis completado.",
+      "analysis_done_no_result": "El análisis finalizó, pero no se devolvió ningún resultado.",
+      "process_failed": "El proceso falló."
+    },
+
+    "status": {
+      "waiting_to_start": "Esperando inicio.",
+      "processing_plate_images": "Procesando imágenes de la placa.",
+      "analysis_done": "Análisis completado.",
+      "process_failed": "El proceso falló."
+    },
+
+    "stage_messages": {
+      "default": "Procesando imágenes de la placa.",
+      "segmentation": "Segmentando células.",
+      "classification": "Clasificando células.",
+      "scoring": "Calculando puntuaciones de pocillos.",
+      "summary": "Generando resumen.",
+      "fit_qc": "Ejecutando control de calidad.",
+      "apply_file": "Procesando archivo.",
+      "payload": "Generando paquete de resultados.",
+      "plot_cache": "Generando caché de gráficos."
+    }
+  },
+  "FullPanelTable": {
+    "table": {
+      "headers": {
+        "channel": "Canal",
+        "type": "Tipo",
+        "antibody": "Anticuerpo",
+        "populationName": "Nombre de la población"
+      },
+      "placeholders": {
+        "antibody": "p. ej., CD3",
+        "population": "p. ej., células T"
+      },
+      "actions": {
+        "removeChannel": "Eliminar canal",
+        "removeChannelNamed": "Eliminar canal {{channel}}"
+      },
+      "empty": "Cargue archivos FCS para cargar el panel."
+    },
+    "roles": {
+      "scatter": "Dispersión",
+      "populationMarker": "Marcador de población",
+      "iggMarker": "Marcador IgG"
+    }
+  },
+  "ImageMappingTable": {
+    "title": "Asignación de imágenes",
+    "description": "Las imágenes se asignan según el orden de carga y el orden de escaneo seleccionado.",
+    "table": {
+      "headers": {
+        "index": "#",
+        "well": "Pocillo",
+        "image": "Imagen"
+      },
+      "empty": "No se ha definido ningún orden de escaneo.",
+      "missingImage": "—"
+    }
+  },
+  "PanelTable": {
+    "columns": {
+      "channel": "Canal",
+      "type": "Tipo",
+      "antibody": "Anticuerpo",
+      "population_name": "Nombre de la población"
+    },
+    "roles": {
+      "Scatter": "Dispersión",
+      "Population Marker": "Marcador de población",
+      "IgG Marker": "Marcador IgG"
+    },
+    "placeholders": {
+      "antibody": "p. ej., CD3",
+      "population": "p. ej., células T"
+    },
+    "actions": {
+      "remove_channel": "Eliminar canal",
+      "remove_channel_named": "Eliminar canal {{channel}}"
+    },
+    "empty": "Cargue archivos FCS para cargar el panel."
+  },
+  "SummaryGrids": {
+    "runValidity": {
+      "title": "Validez de la ejecución",
+      "controlWarnings": "Advertencias de control",
+      "items": {
+        "status": "Estado",
+        "pcMeanRaw": "Media bruta CP",
+        "ncMeanRaw": "Media bruta CN",
+        "dynamicRange": "Rango dinámico",
+        "positiveControls": "Controles positivos",
+        "negativeControls": "Controles negativos",
+        "pcReplicateRange": "Rango de réplicas CP",
+        "ncReplicateRange": "Rango de réplicas CN"
+      }
+    },
+    "qc": {
+      "title": "CC",
+      "warnings": "Advertencias de CC",
+      "lowRoiWells": "Pocillos con ROI bajo",
+      "highUncertainWells": "Pocillos con alta incertidumbre",
+      "items": {
+        "totalWells": "Pocillos totales",
+        "validWells": "Pocillos válidos",
+        "meanRoiCount": "Recuento medio de ROI",
+        "meanUncertainFraction": "Fracción media incierta",
+        "lowRoiWells": "Pocillos con ROI bajo",
+        "highUncertainWells": "Pocillos con alta incertidumbre"
+      }
+    },
+    "praResult": {
+      "title": "Resultado PRA",
+      "items": {
+        "praPercent": "PRA %",
+        "positivePanelWells": "Pocillos positivos del panel",
+        "validPanelWells": "Pocillos válidos del panel",
+        "meanCorrectedFracPos": "Fracción positiva corregida media",
+        "medianCorrectedFracPos": "Fracción positiva corregida mediana",
+        "maxCorrectedFracPos": "Fracción positiva corregida máxima",
+        "weakPositiveWells": "Pocillos débilmente positivos",
+        "moderatePositiveWells": "Pocillos moderadamente positivos",
+        "strongPositiveWells": "Pocillos fuertemente positivos"
+      }
+    },
+    "crossmatchResult": {
+      "title": "Resultado de crossmatch",
+      "sampleWells": "Pocillos de muestra",
+      "items": {
+        "finalCall": "Resultado final",
+        "correctedFracPos": "Fracción positiva corregida",
+        "rawFracPos": "Fracción positiva bruta",
+        "marginFromCutoff": "Margen respecto al punto de corte",
+        "replicateSd": "DE de réplicas",
+        "replicateRange": "Rango de réplicas",
+        "replicateDiscordant": "Réplicas discordantes"
+      }
+    }
+  },
+  "PlateEditorWithOrder": {
+    "title": "Placa (editor)",
+    "help": {
+      "pickRole": "Haga clic derecho en un pocillo para elegir un rol.",
+      "paint": "O use los pinceles de abajo para pintar. Shift+clic rellena un rectángulo."
+    },
+    "roles": {
+      "sample": "Muestra",
+      "positive": "Control positivo",
+      "negative": "Control negativo",
+      "igm": "Control IgM",
+      "empty": "Vacío"
+    },
+    "brush": {
+      "activeBrush": "Pincel: {{role}}"
+    },
+    "well": {
+      "title": "{{well}}",
+      "titleWithRole": "{{well}} ({{role}})"
+    },
+    "columnType": {
+      "shortLabel": "Ti",
+      "ariaLabel": "Tipo de columna {{column}}",
+      "options": {
+        "t": "T",
+        "b": "B",
+        "tb": "T/B",
+        "empty": "-"
+      }
+    },
+    "actions": {
+      "clear": "Borrar",
+      "reset": "Restablecer",
+      "resetTitle": "Restaurar el diseño predeterminado",
+      "flipVertical": "Invertir verticalmente (A abajo)"
+    },
+    "imageOrder": {
+      "title": "Seleccione el orden de adquisición de imágenes",
+      "orientation": {
+        "title": "Orientación",
+        "horizontalSnake": "Serpentina horizontal",
+        "verticalSnake": "Serpentina vertical"
+      },
+      "startCorner": {
+        "title": "Esquina inicial",
+        "topLeft": "Superior izquierda",
+        "topRight": "Superior derecha",
+        "bottomLeft": "Inferior izquierda",
+        "bottomRight": "Inferior derecha"
+      }
+    },
+    "miniPlate": {
+      "start": "inicio",
+      "end": "fin",
+      "legend": "línea continua = seleccionado; línea discontinua = salto"
+    }
+  },
+  "PlateGrid": {
+    "title": "Placa (editor): Haga clic en un pocillo para seleccionar un tipo de muestra",
+    "well_title": "{{well}} ({{role}})",
+
+    "roles": {
+      "positive": "control positivo",
+      "negative": "control negativo",
+      "sample": "muestra",
+      "empty": "vacío",
+      "igm": "control IgM"
+    },
+
+    "actions": {
+      "clear": "Borrar",
+      "clear_title": "Marcar todos los pocillos como vacíos",
+      "reset": "Restablecer",
+      "reset_title": "Marcar todos los pocillos como muestra"
+    }
+  },
+  "PlateMatrix": {
+    "aria_label": "Matriz de placa"
+  },
+  "PlatePopupWindow": {
+    "title": "Detalles del pocillo {{well}}",
+    "description": "Imagen original y resultado de segmentación. Pase el cursor sobre la imagen original para revisar ambas vistas.",
+    "actions": {
+      "close": "Cerrar"
+    },
+    "images": {
+      "original": {
+        "title": "Imagen original",
+        "alt": "Original del pocillo {{well}}",
+        "empty": "No hay imagen para este pocillo"
+      },
+      "segmented": {
+        "title": "Imagen segmentada",
+        "alt": "Segmentación del pocillo {{well}}",
+        "empty": "La imagen segmentada aún no está disponible"
+      }
+    },
+    "legend": {
+      "positive": "Positivo",
+      "negative": "Negativo",
+      "uncertain": "Incierto"
+    },
+    "magnifier": {
+      "original": "Original",
+      "segmented": "Segmentada",
+      "noSegmentation": "Sin segmentación"
+    }
+  },
+  "PlatePreview": {
+    "title": "Placa (vista previa)",
+    "positive": "POSITIVO",
+    "empty_value": "—",
+    "no_image": "Sin imagen",
+    "no_loci": "No hay loci en el diseño para este pocillo.",
+    "well_image_alt": "Pocillo {{well}}",
+    "well_aria": "Pocillo {{well}} {{imageStatus}} {{positiveStatus}}",
+
+    "image_status": {
+      "has_image": "(tiene imagen)",
+      "no_image": ""
+    },
+
+    "progress": {
+      "queued": "Tarea en cola…",
+      "running": "Procesando pocillos…",
+      "done": "Finalizado",
+      "error": "Error"
+    },
+
+    "fields": {
+      "well": "Pocillo",
+      "role": "Rol",
+      "frac_pos": "Frac. pos.",
+      "status": "Estado",
+      "combo_id": "ID de combinación",
+      "race": "Raza",
+      "hla_loci": "Loci HLA"
+    },
+
+    "actions": {
+      "pin": "Fijar",
+      "unpin": "Desfijar",
+      "close": "Cerrar"
+    }
+  },
+  "Plots": {
+    "linePlot": {
+      "defaultSeriesLabel": "Serie",
+      "noData": "Sin datos"
+    }
+  },
+  "SampleCard": {
+    "fields": {
+      "sample_name": "Nombre de la muestra",
+      "fcs_files": "Archivos FCS:"
+    },
+    "actions": {
+      "view_results": "Haga clic para ver los resultados",
+      "remove": "Eliminar",
+      "remove_sample": "Eliminar muestra",
+      "drag_uploaded_files": "Arrastre aquí los archivos FCS cargados",
+      "remove_file": "Eliminar archivo",
+      "remove_file_named": "Eliminar archivo {{file}}"
+    },
+    "empty": "Arrastre archivos FCS aquí después de cargarlos"
+  },
+  "StatusPill": {
+    "status": {
+      "idle": "Inactivo",
+      "queued": "En cola",
+      "running": "En ejecución",
+      "done": "Completado",
+      "error": "Error"
+    },
+    "current_file": "Archivo actual: {{file}}",
+    "job_short": "tarea {{id}}"
+  },
+  "StepButton": {
+    "status": {
+      "not_started": "No iniciado",
+      "needs_attention": "Requiere atención",
+      "needs_review": "Requiere revisión",
+      "ready": "Listo",
+      "running": "En ejecución",
+      "done": "Hecho",
+      "error": "Error"
+    }
+  },
+  "SummaryBlocks": {
+    "empty_value": "—",
+    "boolean": {
+      "yes": "Sí",
+      "no": "No"
+    },
+    "empty_summary": "Aún no hay resumen. Ejecute primero el análisis."
+  },
+  "ThemeToggle": {
+    "actions": {
+      "switchToLightMode": "Cambiar a modo claro",
+      "switchToDarkMode": "Cambiar a modo oscuro"
+    }
+  },
+  "UploadCard": {
+    "empty_value": "n/d",
+
+    "actions": {
+      "browse": "Buscar…",
+      "select_file_first": "Seleccione primero un archivo",
+      "upload_selected": "Cargar archivo(s) seleccionado(s)",
+      "uploading": "Cargando…",
+      "load_layout": "Cargar diseño",
+      "upload": "Cargar",
+      "remove": "Eliminar",
+      "remove_named": "Eliminar {{file}}"
+    },
+
+    "instructions": {
+      "excel_layout": "Cargue un diseño de placa de Excel (.xlsx o .xlsm).",
+      "generic": "Arrastre y suelte {{target}} aquí, o haga clic en Buscar.",
+      "folder": "una carpeta",
+      "files": "archivo(s)"
+    },
+
+    "messages": {
+      "skipped_files": "Se omitieron {{count}} archivo(s) no coincidente(s).",
+      "layout_loaded": "Diseño cargado: {{lot}} • pocillos: {{wells}}",
+      "uploaded_files": "{{count}} archivo(s) cargado(s).",
+      "upload_failed": "Error al cargar"
+    },
+
+    "uploaded_list": {
+      "default_label": "Cargado",
+      "heading": "{{label}} (arrastrar a una tarjeta)",
+      "already_assigned": "Ya asignado (arrastrar para reasignar)",
+      "drag": "Arrastrar"
+    }
+  },
+  "ZoomModal": {
+    "actions": {
+      "close": "Cerrar"
+    }
   }
 }
 
