@@ -1,0 +1,42 @@
+# Core Sphinx
+sphinx>=7.0
+sphinx-autodoc-typehints>=2.0
+sphinx-copybutton>=0.5
+
+# Theme
+sphinx-book-theme>=1.1
+
+# Markdown and notebooks
+myst-parser>=2.0
+myst-nb>=1.1
+
+# Package itself, installed from repo root by Read the Docs
+# Do not put "-e ." here if .readthedocs.yaml already installs path: .
+
+# Runtime dependencies needed for autodoc imports
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+scikit-learn>=1.3
+torch>=2.0
+matplotlib>=3.7
+seaborn>=0.13
+opencv-python-headless>=4.8
+scikit-image>=0.21
+tifffile>=2023.7.10
+h5py>=3.8
+tqdm>=4.65
+flowio==1.3.0
+flowutils>=1.0
+openpyxl>=3.1
+hdbscan>=0.8.33
+parc==0.40
+flowsom>=0.2
+hnswlib==0.8.0
+pybind11>=2.12
+reportlab>=4.0
+fastapi>=0.110
+starlette>=0.37
+pydantic>=2.0
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9

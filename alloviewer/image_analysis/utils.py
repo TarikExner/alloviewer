@@ -1,45 +1,49 @@
-import numpy as np
 from pathlib import Path
-from typing import Any, List
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
+import numpy as np
+import torch
 from PIL import Image
+from scipy import ndimage as ndi
+from skimage import feature, measure, morphology
 
 from .structs import Plate, PlateLayout, WellImage, WellResult
+from ..dev.segmentation import UNET_MEAN, UNET_STD
 
 
 PRA_GENERIC_LAYOUT = PlateLayout(
     wells={
-        'A1': 'negative', 'A2': 'sample',  'A3': 'sample',  'A4': 'sample',  'A5': 'sample',
-        'A6': 'sample',   'A7': 'sample',  'A8': 'sample',  'A9': 'sample',  'A10': 'positive',
+        "A1": "negative", "A2": "sample",  "A3": "sample",  "A4": "sample",  "A5": "sample",
+        "A6": "sample",   "A7": "sample",  "A8": "sample",  "A9": "sample",  "A10": "positive",
 
-        'B1': 'negative', 'B2': 'sample',  'B3': 'sample',  'B4': 'sample',  'B5': 'sample',
-        'B6': 'sample',   'B7': 'sample',  'B8': 'sample',  'B9': 'sample',  'B10': 'positive',
+        "B1": "negative", "B2": "sample",  "B3": "sample",  "B4": "sample",  "B5": "sample",
+        "B6": "sample",   "B7": "sample",  "B8": "sample",  "B9": "sample",  "B10": "positive",
 
-        'C1': 'sample',   'C2': 'sample',  'C3': 'sample',  'C4': 'sample',  'C5': 'sample',
-        'C6': 'sample',   'C7': 'sample',  'C8': 'sample',  'C9': 'sample',  'C10': 'sample',
+        "C1": "sample",   "C2": "sample",  "C3": "sample",  "C4": "sample",  "C5": "sample",
+        "C6": "sample",   "C7": "sample",  "C8": "sample",  "C9": "sample",  "C10": "sample",
 
-        'D1': 'sample',   'D2': 'sample',  'D3': 'sample',  'D4': 'sample',  'D5': 'sample',
-        'D6': 'sample',   'D7': 'sample',  'D8': 'sample',  'D9': 'sample',  'D10': 'sample',
+        "D1": "sample",   "D2": "sample",  "D3": "sample",  "D4": "sample",  "D5": "sample",
+        "D6": "sample",   "D7": "sample",  "D8": "sample",  "D9": "sample",  "D10": "sample",
 
-        'E1': 'sample',   'E2': 'sample',  'E3': 'sample',  'E4': 'sample',  'E5': 'sample',
-        'E6': 'sample',   'E7': 'sample',  'E8': 'sample',  'E9': 'sample',  'E10': 'sample',
+        "E1": "sample",   "E2": "sample",  "E3": "sample",  "E4": "sample",  "E5": "sample",
+        "E6": "sample",   "E7": "sample",  "E8": "sample",  "E9": "sample",  "E10": "sample",
 
-        'F1': 'sample',   'F2': 'sample',  'F3': 'sample',  'F4': 'sample',  'F5': 'sample',
-        'F6': 'sample',   'F7': 'sample',  'F8': 'sample',  'F9': 'sample',  'F10': 'sample',
+        "F1": "sample",   "F2": "sample",  "F3": "sample",  "F4": "sample",  "F5": "sample",
+        "F6": "sample",   "F7": "sample",  "F8": "sample",  "F9": "sample",  "F10": "sample",
     }
 )
 
-PRA_GENERIC_IMAGE_ORDER=[
-    'A1', 'B1', 'C1', 'D1', 'E1', 'F1',
-    'F2', 'E2', 'D2', 'C2', 'B2', 'A2',
-    'A3', 'B3', 'C3', 'D3', 'E3', 'F3',
-    'F4', 'E4', 'D4', 'C4', 'B4', 'A4',
-    'A5', 'B5', 'C5', 'D5', 'E5', 'F5',
-    'F6', 'E6', 'D6', 'C6', 'B6', 'A6',
-    'A7', 'B7', 'C7', 'D7', 'E7', 'F7',
-    'F8', 'E8', 'D8', 'C8', 'B8', 'A8',
-    'A9', 'B9', 'C9', 'D9', 'E9', 'F9',
-    'F10', 'E10', 'D10', 'C10', 'B10', 'A10',
+PRA_GENERIC_IMAGE_ORDER = [
+    "A1", "B1", "C1", "D1", "E1", "F1",
+    "F2", "E2", "D2", "C2", "B2", "A2",
+    "A3", "B3", "C3", "D3", "E3", "F3",
+    "F4", "E4", "D4", "C4", "B4", "A4",
+    "A5", "B5", "C5", "D5", "E5", "F5",
+    "F6", "E6", "D6", "C6", "B6", "A6",
+    "A7", "B7", "C7", "D7", "E7", "F7",
+    "F8", "E8", "D8", "C8", "B8", "A8",
+    "A9", "B9", "C9", "D9", "E9", "F9",
+    "F10", "E10", "D10", "C10", "B10", "A10",
 ]
 
 
@@ -49,11 +53,35 @@ def create_plate(
     image_order: List[str],
     image_paths: List[str],
 ) -> Plate:
+    """Create a plate object from images and a well layout.
+
+    Parameters
+    ----------
+    layout : PlateLayout
+        Plate layout containing a role for each well ID.
+    images : list of numpy.ndarray
+        Images in acquisition order.
+    image_order : list of str
+        Well IDs matching the order of ``images``.
+    image_paths : list of str
+        Image file paths matching the order of ``images``.
+
+    Returns
+    -------
+    Plate
+        Plate containing one :class:`WellImage` per image.
+
+    Raises
+    ------
+    KeyError
+        If a well ID in ``image_order`` is missing from ``layout``.
+    IndexError
+        If ``images`` or ``image_paths`` is shorter than ``image_order``.
+    """
     plate = Plate(plate_id="SIM001")
 
     for i, well_id in enumerate(image_order):
         role = layout.wells[well_id]
-
         plate.add(
             WellImage(
                 well_id,
@@ -67,11 +95,19 @@ def create_plate(
 
 
 def frac_pos_raw(wr: WellResult) -> float:
-    """
-    Raw fraction positive in percent.
+    """Compute the raw positive ROI fraction in percent.
 
-    Only classified positive and negative ROIs are used in the denominator.
-    Uncertain ROIs are ignored here.
+    Parameters
+    ----------
+    wr : WellResult
+        Well result containing classified ROIs.
+
+    Returns
+    -------
+    float
+        Percentage of positive ROIs among positive and negative ROIs.
+        Uncertain ROIs are ignored. Returns ``numpy.nan`` if no positive or
+        negative ROIs are present.
     """
     n_pos = sum(1 for r in wr.rois if r.label == "pos")
     n_neg = sum(1 for r in wr.rois if r.label == "neg")
@@ -84,6 +120,18 @@ def frac_pos_raw(wr: WellResult) -> float:
 
 
 def convert_frac_pos_to_score(frac_pos: int) -> int:
+    """Convert a positive fraction to a discrete score.
+
+    Parameters
+    ----------
+    frac_pos : int
+        Positive fraction in percent.
+
+    Returns
+    -------
+    int
+        Score in ``{1, 2, 4, 6, 8}``.
+    """
     if frac_pos <= 10:
         return 1
     if frac_pos <= 20:
@@ -96,7 +144,21 @@ def convert_frac_pos_to_score(frac_pos: int) -> int:
     return 8
 
 
-def _safe_float(x, default=np.nan) -> float:
+def _safe_float(x: Any, default: float = np.nan) -> float:
+    """Convert a value to float with a fallback.
+
+    Parameters
+    ----------
+    x : Any
+        Input value.
+    default : float, optional
+        Value returned when conversion fails. The default is ``numpy.nan``.
+
+    Returns
+    -------
+    float
+        Converted value or ``default``.
+    """
     try:
         if x is None:
             return default
@@ -105,27 +167,90 @@ def _safe_float(x, default=np.nan) -> float:
         return default
 
 
-def _mean_or_nan(xs: list[float]) -> float:
+def _mean_or_nan(xs: List[float]) -> float:
+    """Return the mean of finite values or NaN.
+
+    Parameters
+    ----------
+    xs : list of float
+        Input values.
+
+    Returns
+    -------
+    float
+        Mean of non-NaN values, or ``nan`` if no values remain.
+    """
     xs = [x for x in xs if not np.isnan(x)]
     return float(np.mean(xs)) if xs else float("nan")
 
 
-def _median_or_nan(xs: list[float]) -> float:
+def _median_or_nan(xs: List[float]) -> float:
+    """Return the median of finite values or NaN.
+
+    Parameters
+    ----------
+    xs : list of float
+        Input values.
+
+    Returns
+    -------
+    float
+        Median of non-NaN values, or ``nan`` if no values remain.
+    """
     xs = [x for x in xs if not np.isnan(x)]
     return float(np.median(xs)) if xs else float("nan")
 
 
-def _sd_or_nan(xs: list[float]) -> float:
+def _sd_or_nan(xs: List[float]) -> float:
+    """Return the sample standard deviation of finite values or NaN.
+
+    Parameters
+    ----------
+    xs : list of float
+        Input values.
+
+    Returns
+    -------
+    float
+        Sample standard deviation using ``ddof=1``. Returns ``nan`` when fewer
+        than two non-NaN values are present.
+    """
     xs = [x for x in xs if not np.isnan(x)]
     return float(np.std(xs, ddof=1)) if len(xs) > 1 else float("nan")
 
 
-def _range_or_nan(xs: list[float]) -> float:
+def _range_or_nan(xs: List[float]) -> float:
+    """Return the range of finite values or NaN.
+
+    Parameters
+    ----------
+    xs : list of float
+        Input values.
+
+    Returns
+    -------
+    float
+        Difference between maximum and minimum non-NaN values. Returns ``nan``
+        if no non-NaN values are present.
+    """
     xs = [x for x in xs if not np.isnan(x)]
     return float(max(xs) - min(xs)) if xs else float("nan")
 
 
-def _roi_label_counts(wr: WellResult) -> dict[str, int]:
+def _roi_label_counts(wr: WellResult) -> Dict[str, int]:
+    """Count positive, negative, and uncertain ROIs.
+
+    Parameters
+    ----------
+    wr : WellResult
+        Well result containing ROI labels.
+
+    Returns
+    -------
+    dict
+        Counts with keys ``"n_total"``, ``"n_pos"``, ``"n_neg"``, and
+        ``"n_uncertain"``.
+    """
     n_pos = sum(1 for r in wr.rois if (r.label or "").lower() == "pos")
     n_neg = sum(1 for r in wr.rois if (r.label or "").lower() == "neg")
     n_total = len(wr.rois)
@@ -140,6 +265,19 @@ def _roi_label_counts(wr: WellResult) -> dict[str, int]:
 
 
 def _uncertain_fraction(wr: WellResult) -> float:
+    """Compute the fraction of uncertain ROIs.
+
+    Parameters
+    ----------
+    wr : WellResult
+        Well result containing ROI labels.
+
+    Returns
+    -------
+    float
+        Fraction of ROIs that are neither positive nor negative. Returns
+        ``nan`` if the well has no ROIs.
+    """
     counts = _roi_label_counts(wr)
 
     if counts["n_total"] == 0:
@@ -149,11 +287,32 @@ def _uncertain_fraction(wr: WellResult) -> float:
 
 
 def build_pra_result(
-    sample_ids: list[str],
-    sample_corr: list[float],
+    sample_ids: List[str],
+    sample_corr: List[float],
     positive_cutoff: float,
-    config: dict,
-) -> dict[str, Any]:
+    config: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build a PRA assay result summary.
+
+    Parameters
+    ----------
+    sample_ids : list of str
+        Sample well IDs.
+    sample_corr : list of float
+        Corrected positive fractions for sample wells.
+    positive_cutoff : float
+        Cutoff used to define positive panel wells.
+    config : dict
+        Assay configuration. Must contain ``"weak_positive"``,
+        ``"moderate_positive"``, and ``"strong_positive"``.
+
+    Returns
+    -------
+    dict
+        PRA summary with positive well count, valid well count, PRA percentage,
+        corrected fraction summaries, intensity class counts, and positive well
+        IDs.
+    """
     valid = [
         (wid, val)
         for wid, val in zip(sample_ids, sample_corr)
@@ -196,6 +355,23 @@ def _call_from_value(
     borderline_low: float,
     borderline_high: float,
 ) -> str:
+    """Convert a corrected fraction into a categorical assay call.
+
+    Parameters
+    ----------
+    value : float
+        Corrected positive fraction.
+    borderline_low : float
+        Lower threshold of the borderline interval.
+    borderline_high : float
+        Upper threshold of the borderline interval.
+
+    Returns
+    -------
+    str
+        One of ``"not_available"``, ``"negative"``, ``"borderline"``, or
+        ``"positive"``.
+    """
     if np.isnan(value):
         return "not_available"
 
@@ -209,14 +385,40 @@ def _call_from_value(
 
 
 def build_crossmatch_result(
-    sample_ids: list[str],
-    sample_raw: list[float],
-    sample_corr: list[float],
+    sample_ids: List[str],
+    sample_raw: List[float],
+    sample_corr: List[float],
     positive_cutoff: float,
     borderline_low: float,
     borderline_high: float,
     max_replicate_range: float,
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
+    """Build a crossmatch assay result summary.
+
+    Parameters
+    ----------
+    sample_ids : list of str
+        Sample well IDs.
+    sample_raw : list of float
+        Raw positive fractions for sample wells.
+    sample_corr : list of float
+        Corrected positive fractions for sample wells.
+    positive_cutoff : float
+        Positive cutoff used for margin reporting.
+    borderline_low : float
+        Lower threshold of the borderline interval.
+    borderline_high : float
+        Upper threshold of the borderline interval.
+    max_replicate_range : float
+        Maximum allowed range between replicate corrected fractions.
+
+    Returns
+    -------
+    dict
+        Crossmatch summary containing the final call, raw and corrected sample
+        means, cutoff margin, replicate metrics, discordance flag, and sample
+        well IDs.
+    """
     valid_corr = [v for v in sample_corr if not np.isnan(v)]
     valid_raw = [v for v in sample_raw if not np.isnan(v)]
 
@@ -257,11 +459,32 @@ def build_crossmatch_result(
 
 
 def build_cdc_summary(
-    per_well: dict[str, WellResult],
+    per_well: Dict[str, WellResult],
     plate: Plate,
-    config: dict,
+    config: Dict[str, Any],
     assay_type: str = "pra",
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
+    """Build a CDC assay summary with run validity and QC fields.
+
+    Parameters
+    ----------
+    per_well : dict
+        Mapping from well ID to :class:`WellResult`.
+    plate : Plate
+        Plate object containing positive control, negative control, and sample
+        wells.
+    config : dict
+        Assay configuration containing cutoffs and QC thresholds.
+    assay_type : str, optional
+        Assay type. Supported values are ``"pra"`` and ``"crossmatch"``. Any
+        other value falls back to ``"pra"``.
+
+    Returns
+    -------
+    dict
+        Summary containing assay type, run validity, assay result, and QC
+        fields.
+    """
     positive_cutoff = float(config["positive_cutoff"])
     borderline_low = float(config["borderline_low"])
     borderline_high = float(config["borderline_high"])
@@ -297,7 +520,6 @@ def build_cdc_summary(
     )
 
     all_ids = list(per_well.keys())
-
     low_roi_wells = []
     high_uncertain_wells = []
 
@@ -401,7 +623,20 @@ def build_cdc_summary(
     }
 
 
-def _roi_label_to_rgb(label) -> tuple[int, int, int]:
+def _roi_label_to_rgb(label: Any) -> Tuple[int, int, int]:
+    """Map an ROI label to an RGB color.
+
+    Parameters
+    ----------
+    label : Any
+        ROI label.
+
+    Returns
+    -------
+    tuple of int
+        RGB color. Positive is orange, negative is green, and all other labels
+        are blue.
+    """
     label = (label or "").strip().lower()
 
     if label in {"pos", "positive"}:
@@ -413,7 +648,19 @@ def _roi_label_to_rgb(label) -> tuple[int, int, int]:
     return (65, 105, 225)
 
 
-def _safe_int(value) -> int | None:
+def _safe_int(value: Any) -> Optional[int]:
+    """Convert a value to int with a ``None`` fallback.
+
+    Parameters
+    ----------
+    value : Any
+        Input value.
+
+    Returns
+    -------
+    int or None
+        Converted integer, or ``None`` if conversion fails.
+    """
     if value is None:
         return None
 
@@ -423,7 +670,21 @@ def _safe_int(value) -> int | None:
         return None
 
 
-def _roi_instance_id(roi, fallback_id: int) -> int:
+def _roi_instance_id(roi: Any, fallback_id: int) -> int:
+    """Return an instance ID from an ROI object or dictionary.
+
+    Parameters
+    ----------
+    roi : Any
+        ROI object or dictionary.
+    fallback_id : int
+        ID returned when no valid instance ID field is found.
+
+    Returns
+    -------
+    int
+        Positive instance ID.
+    """
     keys = (
         "instance_id",
         "roi_id",
@@ -450,17 +711,34 @@ def _roi_instance_id(roi, fallback_id: int) -> int:
 
 def save_segmented_preview(
     instance_labels: np.ndarray,
-    rois,
+    rois: Any,
     out_path: str | Path,
     max_size: int = 900,
 ) -> None:
-    """
-    Save a classified segmentation preview.
+    """Save a color-coded segmentation preview.
 
-    Background: white.
-    Positive ROIs: orange.
-    Negative ROIs: green.
-    Uncertain/unknown ROIs: blue.
+    Parameters
+    ----------
+    instance_labels : numpy.ndarray
+        Two-dimensional instance label image. Background is expected to be
+        label ``0``.
+    rois : iterable
+        ROI dictionaries or objects containing labels and, when available,
+        instance IDs.
+    out_path : str or pathlib.Path
+        Output path. The suffix is forced to ``.png``.
+    max_size : int, optional
+        Maximum output width or height in pixels. The default is ``900``.
+
+    Raises
+    ------
+    ValueError
+        If ``instance_labels`` is not two-dimensional.
+
+    Notes
+    -----
+    Background is white. Positive ROIs are orange, negative ROIs are green, and
+    uncertain or unknown ROIs are blue.
     """
     out_path = Path(out_path).with_suffix(".png")
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -496,7 +774,20 @@ def save_segmented_preview(
     pil_img.save(out_path, compress_level=1)
 
 
-def to_jsonable(obj):
+def to_jsonable(obj: Any) -> Any:
+    """Convert common NumPy objects into JSON-compatible Python objects.
+
+    Parameters
+    ----------
+    obj : Any
+        Input object.
+
+    Returns
+    -------
+    Any
+        Object converted to dictionaries, lists, Python scalars, or unchanged
+        values when no conversion is needed.
+    """
     if isinstance(obj, dict):
         return {k: to_jsonable(v) for k, v in obj.items()}
 
@@ -513,3 +804,498 @@ def to_jsonable(obj):
         return obj.item()
 
     return obj
+
+
+def build_unet_by_mode(
+    mode: str,
+    builders: Dict[str, Callable[..., torch.nn.Module]],
+) -> Callable[..., torch.nn.Module]:
+    """Return a UNet builder for a given model size.
+
+    Parameters
+    ----------
+    mode : str
+        Model size key.
+    builders : dict
+        Mapping from model size keys to builder callables.
+
+    Returns
+    -------
+    callable
+        UNet builder.
+
+    Raises
+    ------
+    ValueError
+        If ``mode`` is not present in ``builders``.
+    """
+    try:
+        return builders[mode]
+    except KeyError as exc:
+        valid = ", ".join(sorted(builders))
+        raise ValueError(f"Unknown unet_mode: {mode}. Expected one of: {valid}") from exc
+
+
+def to_chw_numpy(img: np.ndarray) -> np.ndarray:
+    """Convert an image to ``(3, H, W)`` float32 in ``[0, 1]``.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input image with shape ``(H, W, 3)``, ``(3, H, W)``,
+        ``(1, 3, H, W)``, or ``(H, W)``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Contiguous image array with shape ``(3, H, W)`` and dtype
+        ``float32``.
+
+    Raises
+    ------
+    ValueError
+        If the input cannot be interpreted as a three-channel image.
+    """
+    if img.ndim == 3 and img.shape[0] == 3 and img.dtype == np.float32:
+        return np.ascontiguousarray(img)
+
+    if img.ndim == 4 and img.shape[0] == 1 and img.shape[1] == 3:
+        img = img[0]
+
+    if img.ndim == 3 and img.shape[0] == 3 and img.shape[2] != 3:
+        img = np.transpose(img, (1, 2, 0))
+
+    if img.ndim == 2:
+        img = np.stack([img, img, img], axis=-1)
+
+    if img.ndim != 3 or img.shape[-1] != 3:
+        raise ValueError(f"Expected image with 3 channels, got shape {img.shape}")
+
+    x = img.astype(np.float32, copy=False)
+
+    if x.max() > 1.0:
+        x = x / 255.0
+
+    x = np.transpose(x, (2, 0, 1))
+    return np.ascontiguousarray(x, dtype=np.float32)
+
+
+def normalize_tensor(x: torch.Tensor) -> torch.Tensor:
+    """Normalize an image tensor with UNet training statistics.
+
+    Parameters
+    ----------
+    x : torch.Tensor
+        Tensor with shape ``(B, 3, H, W)``.
+
+    Returns
+    -------
+    torch.Tensor
+        Normalized tensor.
+    """
+    mean = torch.as_tensor(
+        UNET_MEAN,
+        dtype=x.dtype,
+        device=x.device,
+    ).view(1, 3, 1, 1)
+
+    std = torch.as_tensor(
+        UNET_STD,
+        dtype=x.dtype,
+        device=x.device,
+    ).view(1, 3, 1, 1)
+
+    return (x - mean) / std
+
+
+def to_tensor_tiles(
+    tiles: np.ndarray,
+    device: torch.device,
+    normalize: bool = True,
+) -> torch.Tensor:
+    """Convert tile arrays to a torch tensor.
+
+    Parameters
+    ----------
+    tiles : numpy.ndarray
+        Tile batch with shape ``(T, 3, H, W)`` or ``(T, H, W, 3)``.
+    device : torch.device
+        Target torch device.
+    normalize : bool, optional
+        Whether to normalize with UNet training statistics. The default is
+        ``True``.
+
+    Returns
+    -------
+    torch.Tensor
+        Tensor with shape ``(T, 3, H, W)`` on ``device``.
+
+    Raises
+    ------
+    ValueError
+        If ``tiles`` is not a 4D array with three channels.
+    """
+    if tiles.ndim != 4:
+        raise ValueError(f"Expected 4D tiles array, got shape {tiles.shape}")
+
+    if tiles.shape[1] == 3:
+        x = tiles.astype(np.float32, copy=False)
+    elif tiles.shape[-1] == 3:
+        x = np.transpose(tiles, (0, 3, 1, 2)).astype(np.float32, copy=False)
+    else:
+        raise ValueError(f"Expected tiles with 3 channels, got shape {tiles.shape}")
+
+    if x.max() > 1.0:
+        x = x / 255.0
+
+    x = np.ascontiguousarray(x, dtype=np.float32)
+    t = torch.from_numpy(x).to(device, non_blocking=True)
+
+    if normalize:
+        t = normalize_tensor(t)
+
+    return t
+
+
+def iter_sliding_windows(
+    height: int,
+    width: int,
+    tile_size: int,
+    overlap: int,
+) -> Iterator[Tuple[int, int, int, int]]:
+    """Yield sliding-window coordinates for an image.
+
+    Parameters
+    ----------
+    height : int
+        Image height.
+    width : int
+        Image width.
+    tile_size : int
+        Tile size in pixels.
+    overlap : int
+        Overlap between neighboring tiles.
+
+    Yields
+    ------
+    tuple of int
+        Coordinates ``(y0, y1, x0, x1)``.
+
+    Raises
+    ------
+    ValueError
+        If ``overlap`` is greater than or equal to ``tile_size``.
+    """
+    stride = int(tile_size) - int(overlap)
+    if stride <= 0:
+        raise ValueError("overlap must be smaller than tile_size")
+
+    ys = list(range(0, max(1, height - tile_size + 1), stride))
+    if ys[-1] + tile_size < height:
+        ys.append(height - tile_size)
+
+    xs = list(range(0, max(1, width - tile_size + 1), stride))
+    if xs[-1] + tile_size < width:
+        xs.append(width - tile_size)
+
+    for y0 in ys:
+        y1 = y0 + tile_size
+        for x0 in xs:
+            x1 = x0 + tile_size
+            yield y0, y1, x0, x1
+
+
+def tile_image_numpy(
+    image_chw: np.ndarray,
+    tile_size: int,
+    overlap: int,
+    pad_value: float = 0.0,
+) -> Tuple[np.ndarray, Tuple[int, int]]:
+    """Split a CHW image into fixed-size tiles.
+
+    Parameters
+    ----------
+    image_chw : numpy.ndarray
+        Image with shape ``(3, H, W)``.
+    tile_size : int
+        Tile size in pixels.
+    overlap : int
+        Overlap between neighboring tiles.
+    pad_value : float, optional
+        Value used for bottom and right padding. The default is ``0.0``.
+
+    Returns
+    -------
+    tiles : numpy.ndarray
+        Tile batch with shape ``(T, 3, tile_size, tile_size)``.
+    orig_hw : tuple of int
+        Original image size as ``(H, W)``.
+
+    Raises
+    ------
+    AssertionError
+        If ``image_chw`` is not shaped ``(3, H, W)``.
+    RuntimeError
+        If no tiles are produced.
+    """
+    assert image_chw.ndim == 3 and image_chw.shape[0] == 3, "image must be [3, H, W]"
+
+    _, height, width = image_chw.shape
+    windows = list(iter_sliding_windows(height, width, tile_size, overlap))
+
+    if not windows:
+        raise RuntimeError("No tiles produced. Check tile_size, overlap, and image size.")
+
+    tiles_arr = np.empty(
+        (len(windows), 3, tile_size, tile_size),
+        dtype=image_chw.dtype,
+    )
+
+    for idx, (y0, y1, x0, x1) in enumerate(windows):
+        crop = image_chw[:, y0:y1, x0:x1]
+        tile = tiles_arr[idx]
+        tile.fill(pad_value)
+
+        th, tw = crop.shape[1], crop.shape[2]
+        tile[:, :th, :tw] = crop
+
+    return tiles_arr, (height, width)
+
+
+def reconstruct_from_tiles_probability(
+    tiles: np.ndarray,
+    orig_hw: Tuple[int, int],
+    tile_size: int,
+    overlap: int,
+) -> np.ndarray:
+    """Reconstruct full probability maps by averaging overlapping tiles.
+
+    Parameters
+    ----------
+    tiles : numpy.ndarray
+        Tile predictions with shape ``(T, C, tile_size, tile_size)``.
+    orig_hw : tuple of int
+        Original image size as ``(H, W)``.
+    tile_size : int
+        Tile size in pixels.
+    overlap : int
+        Overlap between neighboring tiles.
+
+    Returns
+    -------
+    numpy.ndarray
+        Reconstructed probability maps with shape ``(C, H, W)``.
+
+    Raises
+    ------
+    AssertionError
+        If ``tiles`` has the wrong shape.
+    RuntimeError
+        If the number of tiles does not match the tiling scheme.
+    """
+    assert tiles.ndim == 4, "tiles must be [N, C, tile_size, tile_size]"
+
+    n_tiles, n_channels, tile_h, tile_w = tiles.shape
+    assert tile_h == tile_size and tile_w == tile_size, "tile_size mismatch"
+
+    height, width = orig_hw
+
+    acc = np.zeros((n_channels, height, width), dtype=np.float32)
+    acc_w = np.zeros((1, height, width), dtype=np.float32)
+
+    idx = 0
+    for y0, _, x0, _ in iter_sliding_windows(height, width, tile_size, overlap):
+        if idx >= n_tiles:
+            raise RuntimeError("Not enough tiles for the requested reconstruction.")
+
+        th = min(tile_size, height - y0)
+        tw = min(tile_size, width - x0)
+        patch = tiles[idx, :, :th, :tw]
+
+        acc[:, y0:y0 + th, x0:x0 + tw] += patch
+        acc_w[:, y0:y0 + th, x0:x0 + tw] += 1.0
+
+        idx += 1
+
+    if idx != n_tiles:
+        raise RuntimeError(
+            f"Number of tiles ({n_tiles}) does not match tiling scheme ({idx})."
+        )
+
+    acc_w[acc_w == 0] = 1.0
+    return (acc / acc_w).astype(np.float32)
+
+
+def as_contiguous_f32(x: Optional[np.ndarray]) -> Optional[np.ndarray]:
+    """Convert an array to contiguous float32.
+
+    Parameters
+    ----------
+    x : numpy.ndarray or None
+        Input array.
+
+    Returns
+    -------
+    numpy.ndarray or None
+        Contiguous ``float32`` array, or ``None`` if the input is ``None``.
+    """
+    if x is None:
+        return None
+
+    if x.dtype == np.float32 and x.flags["C_CONTIGUOUS"]:
+        return x
+
+    return np.ascontiguousarray(x, dtype=np.float32)
+
+
+def hysteresis_mask(
+    p_cell: np.ndarray,
+    low_thr: float,
+    high_thr: float,
+    close_selem: Optional[np.ndarray],
+    min_hole_area: int,
+    min_object_area: int,
+) -> np.ndarray:
+    """Create a binary cell mask using two-threshold hysteresis.
+
+    Parameters
+    ----------
+    p_cell : numpy.ndarray
+        Cell probability map with shape ``(H, W)``.
+    low_thr : float
+        Low probability threshold.
+    high_thr : float
+        High probability threshold.
+    close_selem : numpy.ndarray or None
+        Structuring element for binary closing.
+    min_hole_area : int
+        Minimum hole area retained.
+    min_object_area : int
+        Minimum object area retained.
+
+    Returns
+    -------
+    numpy.ndarray
+        Boolean cell mask.
+    """
+    strong = p_cell >= float(high_thr)
+    weak = p_cell >= float(low_thr)
+
+    lab = measure.label(weak, connectivity=1)
+
+    if strong.any():
+        strong_ids = np.unique(lab[strong])
+        strong_ids = strong_ids[strong_ids != 0]
+
+        if strong_ids.size > 0:
+            lut = np.zeros(lab.max() + 1, dtype=bool)
+            lut[strong_ids] = True
+            mask = lut[lab]
+        else:
+            mask = np.zeros_like(weak, dtype=bool)
+    else:
+        mask = np.zeros_like(weak, dtype=bool)
+
+    if close_selem is not None:
+        mask = morphology.binary_closing(mask, close_selem)
+
+    mask = ndi.binary_fill_holes(mask)
+
+    if min_hole_area > 0:
+        mask = morphology.remove_small_holes(
+            mask,
+            area_threshold=int(min_hole_area),
+        )
+
+    if min_object_area > 0:
+        mask = morphology.remove_small_objects(
+            mask,
+            min_size=int(min_object_area),
+        )
+
+    return mask.astype(bool, copy=False)
+
+
+def smooth01(x: np.ndarray, sigma: float) -> np.ndarray:
+    """Smooth and clip a probability map.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        Input probability map.
+    sigma : float
+        Gaussian smoothing sigma. If non-positive, the input is returned
+        unchanged.
+
+    Returns
+    -------
+    numpy.ndarray
+        Smoothed probability map clipped to ``[0, 1]``.
+    """
+    if sigma and sigma > 0:
+        y = ndi.gaussian_filter(x, float(sigma))
+        return np.clip(y, 0.0, 1.0)
+
+    return x
+
+
+def make_markers(
+    mask: np.ndarray,
+    p_center: Optional[np.ndarray],
+    dist_s: np.ndarray,
+    use_centers: bool,
+    center_seed_method: str,
+    center_min_distance: int,
+    center_thr: float,
+) -> np.ndarray:
+    """Create watershed markers from center probabilities or mask components.
+
+    Parameters
+    ----------
+    mask : numpy.ndarray
+        Boolean watershed mask.
+    p_center : numpy.ndarray or None
+        Center probability map.
+    dist_s : numpy.ndarray
+        Smoothed distance transform. The value is accepted to keep the call
+        signature aligned with distance-based segmentation code.
+    use_centers : bool
+        Whether to use center probabilities for seed creation.
+    center_seed_method : str
+        Seed creation method. Supported values are ``"nms"`` and ``"thr"``.
+    center_min_distance : int
+        Minimum distance between local-maximum center seeds.
+    center_thr : float
+        Center probability threshold.
+
+    Returns
+    -------
+    numpy.ndarray
+        Integer marker image with shape matching ``mask``.
+    """
+    _ = dist_s
+
+    work_mask = mask if mask.dtype == bool else mask.astype(bool, copy=False)
+    seeds_bool = np.zeros_like(work_mask, dtype=bool)
+
+    if use_centers and p_center is not None:
+        if center_seed_method == "nms":
+            coords = feature.peak_local_max(
+                p_center,
+                min_distance=int(center_min_distance),
+                threshold_abs=float(center_thr),
+                labels=work_mask,
+                exclude_border=False,
+            )
+
+            if coords.size:
+                seeds_bool[tuple(coords.T)] = True
+        else:
+            seeds_bool |= (p_center >= float(center_thr)) & work_mask
+
+    markers = measure.label(seeds_bool, connectivity=1).astype(np.int32)
+
+    if markers.max() == 0:
+        markers = measure.label(work_mask, connectivity=1).astype(np.int32)
+
+    return markers

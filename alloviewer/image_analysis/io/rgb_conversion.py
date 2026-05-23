@@ -22,35 +22,36 @@ from .utils import (
 
 @dataclass
 class NamedImageSource:
-    """
-    Backend-friendly image input.
+    """Named image input used for channel grouping.
 
-    name:
-        Original filename. Used for channel detection and output naming.
-
-    source:
-        Path, bytes, bytearray, or file-like object.
-        FastAPI UploadFile.file works here.
+    Parameters
+    ----------
+    name : str
+        Original filename or display name. Used for channel detection and
+        output naming.
+    source : SourceType
+        Image source. Supported values are paths, bytes, bytearray objects, and
+        file-like objects.
     """
+
     name: str
     source: SourceType
 
 
 @dataclass
 class CombinedRGBImage:
-    """
-    In-memory combined RGB image.
+    """Combined in-memory RGB image.
 
-    array:
-        RGB image in HxWx3 layout.
-        Raw values are preserved. No scaling is done.
-
-    output_name:
+    Parameters
+    ----------
+    array : numpy.ndarray
+        RGB image in ``(H, W, 3)`` layout. Raw values are preserved.
+    output_name : str
         Suggested output filename.
-
-    report:
-        Metadata and warnings.
+    report : ChannelCombineReport
+        Metadata and warnings for the channel-combination step.
     """
+
     array: np.ndarray
     output_name: str
     report: ChannelCombineReport
@@ -63,38 +64,35 @@ def extract_declared_mono_channel(
     image_name: str,
     warnings: list[str],
 ) -> np.ndarray:
-    """
-    Extract one monochrome channel from an image based on the filename-declared
-    channel.
+    """Extract a declared monochrome channel from an image array.
 
-    This function is intentionally used in the RGB-combination workflow, where
-    the user is asking to build one RGB image from separate channel files.
+    Parameters
+    ----------
+    arr : numpy.ndarray
+        Input image. Supported shapes are ``(H, W)``, ``(H, W, 1)``,
+        ``(H, W, 3)``, and ``(H, W, 4)``.
+    declared_channel : {'r', 'g', 'b'}
+        Channel declared by the filename.
+    image_name : str
+        Image name used in warning messages.
+    warnings : list of str
+        Warning list updated in place.
 
-    Supported inputs:
-      - HxW:
-          Already monochrome. Returned unchanged.
+    Returns
+    -------
+    numpy.ndarray
+        Two-dimensional channel image.
 
-      - HxWx1:
-          Single-channel image. The only channel is returned.
+    Raises
+    ------
+    ValueError
+        If ``declared_channel`` is invalid or the image shape is unsupported.
 
-      - HxWx3:
-          Fallback case. The image is treated as RGB information stored in one
-          uploaded file, but the filename still declares which single channel
-          should be extracted.
-
-          Filename declares r -> use RGB channel 0
-          Filename declares g -> use RGB channel 1
-          Filename declares b -> use RGB channel 2
-
-      - HxWx4:
-          Same as HxWx3, but alpha is ignored.
-
-    Important:
-      open_image() returns OpenCV-native channel order for color images.
-      Therefore HxWx3/HxWx4 images are interpreted as BGR/BGRA and converted
-      to RGB before the declared channel is extracted.
-
-    No scaling, clipping, shifting, or normalization is done.
+    Notes
+    -----
+    Three- and four-channel inputs are treated as OpenCV-native BGR or BGRA
+    arrays, converted to RGB, and then reduced to the filename-declared channel.
+    No scaling, clipping, bit shifting, or normalization is applied.
     """
     declared_channel = declared_channel.lower()
 
@@ -123,9 +121,6 @@ def extract_declared_mono_channel(
             "expected HxW, HxWx1, HxWx3, or HxWx4."
         )
 
-    # Fallback case:
-    # The user called the mono-to-RGB combiner, so a 3-channel input is treated
-    # as a source from which one declared channel should be extracted.
     bgr = arr[..., :3]
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
@@ -183,12 +178,28 @@ def group_named_sources_by_rgb_channel(
     *,
     error_on_unmatched: bool = False,
 ) -> tuple[dict[str, dict[str, NamedImageSource]], list[str]]:
-    """
-    Group named image sources into RGB channel groups.
+    """Group named sources by RGB channel and group key.
 
-    Returns:
-      grouped[group_key][channel] = NamedImageSource
-      unmatched_warnings
+    Parameters
+    ----------
+    sources : sequence of NamedImageSource
+        Image sources with filenames used for channel detection.
+    error_on_unmatched : bool, optional
+        If ``True``, raise an error when any source cannot be assigned to an
+        RGB channel. The default is ``False``.
+
+    Returns
+    -------
+    grouped : dict
+        Nested mapping ``grouped[group_key][channel] = NamedImageSource``.
+    unmatched_warnings : list of str
+        Warnings for files that could not be assigned to a channel.
+
+    Raises
+    ------
+    ValueError
+        If duplicate channels are found in one group, or if unmatched files are
+        present and ``error_on_unmatched`` is ``True``.
     """
     grouped: dict[str, dict[str, NamedImageSource]] = defaultdict(dict)
     unmatched_warnings: list[str] = []
@@ -225,41 +236,40 @@ def combine_mono_rgb_sources(
     require_complete_rgb: bool = True,
     error_on_unmatched: bool = False,
 ) -> list[CombinedRGBImage]:
-    """
-    Combine named monochrome r/g/b image sources into RGB images.
+    """Combine named monochrome R/G/B sources into RGB images.
 
-    This is the main backend-friendly function.
+    Parameters
+    ----------
+    sources : sequence of NamedImageSource
+        Named image sources. Filenames are used to assign files to ``r``,
+        ``g``, and ``b`` channels.
+    output_ext : str, optional
+        Output filename extension. The default is ``".tif"``.
+    max_mp : float or None, optional
+        Maximum allowed image size in megapixels. Passed to :func:`open_image`.
+        If ``None``, no size limit is applied.
+    require_complete_rgb : bool, optional
+        If ``True``, groups missing any RGB channel are skipped. If ``False``,
+        missing channels are filled with zeros.
+    error_on_unmatched : bool, optional
+        If ``True``, raise an error for files that cannot be assigned to a
+        channel.
 
-    It accepts:
-      - disk paths
-      - bytes
-      - bytearray
-      - file-like objects
-      - FastAPI UploadFile.file via:
-        NamedImageSource(name=file.filename, source=file.file)
+    Returns
+    -------
+    list of CombinedRGBImage
+        Combined RGB images and reports.
 
-    Channel assignment is based on the filename. The filename must contain a
-    standalone r/g/b token separated by the configured channel separators.
+    Raises
+    ------
+    ValueError
+        If no valid groups are found, no images are created, shapes mismatch
+        within a group, or channel detection fails under strict settings.
 
-    Input image handling:
-      - HxW:
-          used directly as the declared channel
-
-      - HxWx1:
-          the only channel is used as the declared channel
-
-      - HxWx3:
-          fallback extraction is used. The declared filename channel decides
-          which RGB channel is extracted.
-
-      - HxWx4:
-          same as HxWx3, alpha ignored.
-
-    No scaling is done.
-    No right-shifting is done.
-    No intensity normalization is done.
-
-    The returned image arrays are RGB, HxWx3, and keep raw values.
+    Notes
+    -----
+    No scaling, right shifting, or intensity normalization is applied. Output
+    arrays are RGB with shape ``(H, W, 3)`` and preserve raw channel values.
     """
     if not output_ext.startswith("."):
         output_ext = "." + output_ext
@@ -378,10 +388,35 @@ def save_rgb_image(
     *,
     overwrite: bool = False,
 ) -> Path:
-    """
-    Save an RGB image array to disk.
+    """Save an RGB image array to disk.
 
-    OpenCV writes color images as BGR, so RGB -> BGR conversion is done here.
+    Parameters
+    ----------
+    rgb : numpy.ndarray
+        RGB image with shape ``(H, W, 3)``.
+    output_path : str or pathlib.Path
+        Output file path.
+    overwrite : bool, optional
+        If ``True``, replace an existing file. The default is ``False``.
+
+    Returns
+    -------
+    pathlib.Path
+        Resolved output path.
+
+    Raises
+    ------
+    FileExistsError
+        If the output file exists and ``overwrite`` is ``False``.
+    ValueError
+        If ``rgb`` is not shaped ``(H, W, 3)``.
+    RuntimeError
+        If OpenCV fails to write the image.
+
+    Notes
+    -----
+    OpenCV writes color images in BGR order, so the input RGB image is converted
+    to BGR before writing.
     """
     output_path = Path(output_path).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -410,10 +445,32 @@ def encode_rgb_image(
     *,
     ext: str = ".tif",
 ) -> bytes:
-    """
-    Encode an RGB image array to bytes.
+    """Encode an RGB image array to bytes.
 
-    Useful for FastAPI responses or object storage.
+    Parameters
+    ----------
+    rgb : numpy.ndarray
+        RGB image with shape ``(H, W, 3)``.
+    ext : str, optional
+        Image extension passed to OpenCV, for example ``".tif"`` or ``".png"``.
+        The default is ``".tif"``.
+
+    Returns
+    -------
+    bytes
+        Encoded image bytes.
+
+    Raises
+    ------
+    ValueError
+        If ``rgb`` is not shaped ``(H, W, 3)``.
+    RuntimeError
+        If OpenCV fails to encode the image.
+
+    Notes
+    -----
+    OpenCV encodes color images in BGR order, so the input RGB image is
+    converted to BGR before encoding.
     """
     if not ext.startswith("."):
         ext = "." + ext
@@ -442,12 +499,52 @@ def combine_mono_rgb_folder(
     require_complete_rgb: bool = True,
     error_on_unmatched: bool = False,
 ) -> list[ChannelCombineReport]:
-    """
-    Folder-based wrapper around combine_mono_rgb_sources().
+    """Combine monochrome RGB channel files from a folder and save outputs.
 
-    Use this for batch processing from disk.
+    Parameters
+    ----------
+    folder : str or pathlib.Path
+        Input folder containing channel images.
+    output_folder : str or pathlib.Path
+        Folder where combined RGB images are written.
+    base_dir : str or pathlib.Path or None, optional
+        Optional root directory used to resolve relative input and output
+        folders.
+    output_ext : str, optional
+        Output image extension. The default is ``".tif"``.
+    overwrite : bool, optional
+        If ``True``, replace existing output files. The default is ``False``.
+    max_mp : float or None, optional
+        Maximum allowed image size in megapixels. Passed to :func:`open_image`.
+    require_complete_rgb : bool, optional
+        If ``True``, groups missing any RGB channel are skipped. If ``False``,
+        missing channels are filled with zeros.
+    error_on_unmatched : bool, optional
+        If ``True``, raise an error for files that cannot be assigned to a
+        channel.
 
-    For FastAPI, prefer combine_mono_rgb_sources().
+    Returns
+    -------
+    list of ChannelCombineReport
+        Reports for all written RGB images.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the input folder does not exist.
+    NotADirectoryError
+        If ``folder`` is not a directory.
+    FileExistsError
+        If an output file exists and ``overwrite`` is ``False``.
+    ValueError
+        If no valid channel groups are found or no RGB images are created.
+    RuntimeError
+        If an image cannot be read, encoded, or written.
+
+    Notes
+    -----
+    This function is intended for batch processing from disk. For web backends
+    or in-memory workflows, use :func:`combine_mono_rgb_sources`.
     """
     base = Path(base_dir).resolve() if base_dir else None
 

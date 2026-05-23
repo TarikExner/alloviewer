@@ -1,16 +1,47 @@
 import math
 from typing import List, Dict, Any, Optional
+
 import numpy as np
 
 from .config import DEFAULT_CALIB_RG_GAUSS
 
 
 def _phi_cdf(z: float) -> float:
-    # standard normal CDF
+    """Return the standard normal cumulative distribution value.
+
+    Parameters
+    ----------
+    z : float
+        Standardized input value.
+
+    Returns
+    -------
+    float
+        Probability mass of the standard normal distribution up to ``z``.
+    """
     return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
 
+
 def _normalize_gauss_calib(calib: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Fill missing keys from defaults and clamp stds."""
+    """Fill missing Gaussian calibration values and clamp standard deviations.
+
+    Parameters
+    ----------
+    calib : dict or None
+        Calibration dictionary. Missing values are filled from
+        ``DEFAULT_CALIB_RG_GAUSS``.
+
+    Returns
+    -------
+    dict
+        Calibration dictionary containing Gaussian R/G parameters. The keys
+        ``"sd_pc"`` and ``"sd_nc"`` are forced to be at least ``1e-6``.
+
+    Notes
+    -----
+    This function returns a shallow merged copy and does not modify the input
+    dictionary.
+    """
     base = DEFAULT_CALIB_RG_GAUSS
     c = {**base, **(calib or {})}
     c["sd_pc"] = max(float(c["sd_pc"]), 1e-6)
@@ -20,16 +51,34 @@ def _normalize_gauss_calib(calib: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 class ROIClassifier:
+    """Classify ROIs with a binary R/G threshold.
+
+    The classifier labels an ROI as ``"pos"`` when its red/green ratio is
+    greater than or equal to the threshold, and ``"neg"`` otherwise.
+
+    Notes
+    -----
+    This class overlaps with :class:`ROIClassifierMedianRG`. Keeping both may
+    be intentional for compatibility, but the duplicate logic is worth cleaning
+    up if no external code depends on both names.
     """
-    Binary classifier using an R/G threshold.
-    - Expects calib with 'rg_thresh' (from PCNCMedianCalibrator).
-    - If missing, falls back to midpoint of default means.
-    """
+
     def __init__(self, calib: Optional[Dict[str, Any]] = None):
+        """Initialize the threshold classifier.
+
+        Parameters
+        ----------
+        calib : dict or None, optional
+            Calibration dictionary containing ``"rg_thresh"``. If absent, the
+            threshold is set to the midpoint between the default positive and
+            negative Gaussian R/G means.
+        """
         if calib is None or "rg_thresh" not in calib:
             # fallback: midpoint between default R/G means (PC high, NC low)
-            thr = 0.5 * (float(DEFAULT_CALIB_RG_GAUSS["mu_pc"]) +
-                         float(DEFAULT_CALIB_RG_GAUSS["mu_nc"]))
+            thr = 0.5 * (
+                float(DEFAULT_CALIB_RG_GAUSS["mu_pc"])
+                + float(DEFAULT_CALIB_RG_GAUSS["mu_nc"])
+            )
             self.thr = float(thr)
             self.method = "pc_nc_median_rg_fallback"
         else:
@@ -37,6 +86,30 @@ class ROIClassifier:
             self.method = calib.get("method", "pc_nc_median_rg")
 
     def __call__(self, rois: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Classify ROIs.
+
+        Parameters
+        ----------
+        rois : list of dict
+            ROI dictionaries. Each ROI must contain ``"mean_r"`` and
+            ``"mean_g"``.
+
+        Returns
+        -------
+        list of dict
+            Copies of the input ROI dictionaries with added keys:
+
+            ``"score"``
+                R/G ratio.
+            ``"label"``
+                ``"pos"`` or ``"neg"``.
+            ``"method"``
+                Name of the classification method.
+
+        Notes
+        -----
+        The green channel denominator is clipped to at least ``1e-6``.
+        """
         out: List[Dict[str, Any]] = []
         for r in rois:
             score = r["mean_r"] / max(1e-6, r["mean_g"])  # R/G
@@ -49,14 +122,28 @@ class ROIClassifier:
 
 
 class ROIClassifierMedianRG:
+    """Classify ROIs with a median-derived R/G threshold.
+
+    The classifier expects a calibration dictionary with ``"rg_thresh"``. ROIs
+    with R/G ratios greater than or equal to the threshold are labeled
+    ``"pos"``; all others are labeled ``"neg"``.
     """
-    Binary classifier using a single R/G threshold.
-    Expects calib dict with 'rg_thresh'. If missing, falls back to midpoint of
-    DEFAULT_CALIB_RG_GAUSS means.
-    """
+
     def __init__(self, calib: Optional[Dict[str, Any]] = None):
+        """Initialize the median R/G threshold classifier.
+
+        Parameters
+        ----------
+        calib : dict or None, optional
+            Calibration dictionary containing ``"rg_thresh"``. If absent, the
+            threshold is set to the midpoint between the default positive and
+            negative Gaussian R/G means.
+        """
         if calib is None or "rg_thresh" not in calib:
-            thr = 0.5 * (float(DEFAULT_CALIB_RG_GAUSS["mu_pc"]) + float(DEFAULT_CALIB_RG_GAUSS["mu_nc"]))
+            thr = 0.5 * (
+                float(DEFAULT_CALIB_RG_GAUSS["mu_pc"])
+                + float(DEFAULT_CALIB_RG_GAUSS["mu_nc"])
+            )
             self.thr = float(thr)
             self.method = "pc_nc_median_rg_fallback"
         else:
@@ -64,9 +151,23 @@ class ROIClassifierMedianRG:
             self.method = calib.get("method", "pc_nc_median_rg")
 
     def __call__(self, rois: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Classify ROIs.
+
+        Parameters
+        ----------
+        rois : list of dict
+            ROI dictionaries. Each ROI must contain ``"mean_r"`` and
+            ``"mean_g"``.
+
+        Returns
+        -------
+        list of dict
+            Copies of the input ROI dictionaries with added R/G score, binary
+            label, and method name.
+        """
         out: List[Dict[str, Any]] = []
         for r in rois:
-            score = r["mean_r"] / max(1e-6, r["mean_g"])   # R/G
+            score = r["mean_r"] / max(1e-6, r["mean_g"])  # R/G
             rr = dict(r)
             rr["score"] = float(score)
             rr["label"] = "pos" if score >= self.thr else "neg"
@@ -76,11 +177,25 @@ class ROIClassifierMedianRG:
 
 
 class ROIClassifierNCUpper:
+    """Classify ROIs by testing against the NC upper tail.
+
+    ROIs are labeled ``"pos"`` when their R/G ratio is at least ``k`` standard
+    deviations above the negative control mean. Other ROIs are labeled
+    ``"uncertain"``.
     """
-    One-sided upper-tail test vs NC on R/G.
-    z_nc = (rg - mu_nc)/sd_nc; label 'pos' if z_nc >= k, else 'uncertain'.
-    """
+
     def __init__(self, calib: Optional[Dict[str, Any]] = None, k: float = 3.0):
+        """Initialize the NC upper-tail classifier.
+
+        Parameters
+        ----------
+        calib : dict or None, optional
+            Gaussian R/G calibration dictionary with ``"mu_nc"`` and
+            ``"sd_nc"``. Missing values are filled from defaults.
+        k : float, optional
+            Z-score cutoff above the negative control mean. The default is
+            ``3.0``.
+        """
         c = _normalize_gauss_calib(calib)
         self.mu_nc = float(c["mu_nc"])
         self.sd_nc = float(c["sd_nc"])
@@ -88,6 +203,30 @@ class ROIClassifierNCUpper:
         self.method = c.get("method", "pc_nc_gaussian_rg") + f"_NCUpper_k{self.k:g}"
 
     def __call__(self, rois: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Classify ROIs using the NC upper-tail rule.
+
+        Parameters
+        ----------
+        rois : list of dict
+            ROI dictionaries. Each ROI must contain ``"mean_r"`` and
+            ``"mean_g"``.
+
+        Returns
+        -------
+        list of dict
+            Copies of the input ROI dictionaries with added keys:
+
+            ``"score_rg"``
+                R/G ratio.
+            ``"z_nc"``
+                Z-score relative to the negative control distribution.
+            ``"p_nc_upper"``
+                Upper-tail probability under the negative control model.
+            ``"label"``
+                ``"pos"`` or ``"uncertain"``.
+            ``"method"``
+                Name of the classification method.
+        """
         out: List[Dict[str, Any]] = []
         for r in rois:
             rg = r["mean_r"] / max(1e-6, r["mean_g"])
@@ -104,11 +243,25 @@ class ROIClassifierNCUpper:
 
 
 class ROIClassifierPCLower:
+    """Classify ROIs by testing against the PC lower tail.
+
+    ROIs are labeled ``"neg"`` when their R/G ratio is at least ``k`` standard
+    deviations below the positive control mean. Other ROIs are labeled
+    ``"uncertain"``.
     """
-    One-sided lower-tail test vs PC on R/G.
-    z_pc = (rg - mu_pc)/sd_pc; label 'neg' if z_pc <= -k, else 'uncertain'.
-    """
+
     def __init__(self, calib: Optional[Dict[str, Any]] = None, k: float = 3.0):
+        """Initialize the PC lower-tail classifier.
+
+        Parameters
+        ----------
+        calib : dict or None, optional
+            Gaussian R/G calibration dictionary with ``"mu_pc"`` and
+            ``"sd_pc"``. Missing values are filled from defaults.
+        k : float, optional
+            Z-score cutoff below the positive control mean. The default is
+            ``3.0``.
+        """
         c = _normalize_gauss_calib(calib)
         self.mu_pc = float(c["mu_pc"])
         self.sd_pc = float(c["sd_pc"])
@@ -116,11 +269,34 @@ class ROIClassifierPCLower:
         self.method = c.get("method", "pc_nc_gaussian_rg") + f"_PCLower_k{self.k:g}"
 
     def __call__(self, rois: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Classify ROIs using the PC lower-tail rule.
+
+        Parameters
+        ----------
+        rois : list of dict
+            ROI dictionaries. Each ROI must contain ``"mean_r"`` and
+            ``"mean_g"``.
+
+        Returns
+        -------
+        list of dict
+            Copies of the input ROI dictionaries with added keys:
+
+            ``"score_rg"``
+                R/G ratio.
+            ``"z_pc"``
+                Z-score relative to the positive control distribution.
+            ``"p_pc_lower"``
+                Lower-tail probability under the positive control model.
+            ``"label"``
+                ``"neg"`` or ``"uncertain"``.
+            ``"method"``
+                Name of the classification method.
+        """
         out: List[Dict[str, Any]] = []
         for r in rois:
             rg = r["mean_r"] / max(1e-6, r["mean_g"])
             z_pc = (rg - self.mu_pc) / self.sd_pc
-            # lower tail p = CDF(z_pc)
             p_pc_lower = _phi_cdf(z_pc)
             rr = dict(r)
             rr["score_rg"] = float(rg)
@@ -133,13 +309,28 @@ class ROIClassifierPCLower:
 
 
 class ROIClassifierGaussian3Way:
+    """Classify ROIs into positive, negative, or uncertain by Gaussian R/G tests.
+
+    The classifier combines two one-sided tests:
+
+    - ``"pos"`` if the R/G ratio is high relative to the negative control.
+    - ``"neg"`` if the R/G ratio is low relative to the positive control.
+    - ``"uncertain"`` otherwise.
     """
-    Combine both tails on R/G:
-      - 'pos' if z_nc >= k
-      - 'neg' if z_pc <= -k
-      - else 'uncertain'
-    """
+
     def __init__(self, calib: Optional[Dict[str, Any]] = None, k: float = 2.0):
+        """Initialize the three-way Gaussian R/G classifier.
+
+        Parameters
+        ----------
+        calib : dict or None, optional
+            Gaussian R/G calibration dictionary with ``"mu_nc"``, ``"sd_nc"``,
+            ``"mu_pc"``, and ``"sd_pc"``. Missing values are filled from
+            defaults.
+        k : float, optional
+            Absolute Z-score cutoff for assigning positive or negative labels.
+            The default is ``2.0``.
+        """
         c = _normalize_gauss_calib(calib)
         self.mu_nc = float(c["mu_nc"])
         self.sd_nc = float(c["sd_nc"])
@@ -149,7 +340,22 @@ class ROIClassifierGaussian3Way:
         self.method = c.get("method", "pc_nc_gaussian_rg") + f"_3way_k{self.k:g}"
 
     def __call__(self, rois: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Classify ROIs into ``"pos"``, ``"neg"``, or ``"uncertain"``.
+
+        Parameters
+        ----------
+        rois : list of dict
+            ROI dictionaries. Each ROI must contain ``"mean_r"`` and
+            ``"mean_g"``.
+
+        Returns
+        -------
+        list of dict
+            Copies of the input ROI dictionaries with added R/G score, PC and
+            NC Z-scores, tail probabilities, label, and method name.
+        """
         from math import erf, sqrt
+
         out: List[Dict[str, Any]] = []
         for r in rois:
             rg = r["mean_r"] / max(1e-6, r["mean_g"])
@@ -176,25 +382,114 @@ class ROIClassifierGaussian3Way:
             out.append(rr)
         return out
 
+
 class ROIClassifierGaussian2D3Way:
+    """Classify ROIs with two-dimensional Gaussian PC and NC models.
+
+    Each ROI is represented by ``mean_r`` and ``mean_g``. The classifier
+    compares the log-density under the positive control model with the
+    log-density under the negative control model.
+
+    Labels are assigned from the log-density difference:
+
+    - ``"pos"`` if ``logp_pc - logp_nc > margin``.
+    - ``"neg"`` if ``logp_pc - logp_nc < -margin``.
+    - ``"uncertain"`` otherwise.
+    """
+
     def __init__(self, calib: Dict[str, Any], margin: float = 1.0):
+        """Initialize the two-dimensional Gaussian classifier.
+
+        Parameters
+        ----------
+        calib : dict
+            Calibration dictionary containing ``"mu_pc"``, ``"cov_pc"``,
+            ``"mu_nc"``, and ``"cov_nc"``.
+        margin : float, optional
+            Minimum absolute log-density difference required for a positive or
+            negative label. The default is ``1.0``.
+
+        Raises
+        ------
+        KeyError
+            If a required calibration key is missing.
+        numpy.linalg.LinAlgError
+            If either covariance matrix cannot be inverted.
+
+        Notes
+        -----
+        The normalizing constant ``-log(2*pi)`` is omitted in the log-density
+        because it cancels when comparing two two-dimensional Gaussian models.
+        """
         self.mu_pc = np.asarray(calib["mu_pc"], dtype=float)
         self.cov_pc = np.asarray(calib["cov_pc"], dtype=float)
         self.mu_nc = np.asarray(calib["mu_nc"], dtype=float)
         self.cov_nc = np.asarray(calib["cov_nc"], dtype=float)
         self.margin = float(margin)
-        self.method = calib.get("method", "pc_nc_gaussian_2d") + f"_3way_margin{self.margin:g}"
+        self.method = (
+            calib.get("method", "pc_nc_gaussian_2d")
+            + f"_3way_margin{self.margin:g}"
+        )
 
         self.inv_pc = np.linalg.inv(self.cov_pc)
         self.inv_nc = np.linalg.inv(self.cov_nc)
         self.logdet_pc = np.linalg.slogdet(self.cov_pc)[1]
         self.logdet_nc = np.linalg.slogdet(self.cov_nc)[1]
 
-    def _logpdf(self, x: np.ndarray, mu: np.ndarray, inv: np.ndarray, logdet: float) -> float:
+    def _logpdf(
+        self,
+        x: np.ndarray,
+        mu: np.ndarray,
+        inv: np.ndarray,
+        logdet: float,
+    ) -> float:
+        """Return the Gaussian log-density up to an additive constant.
+
+        Parameters
+        ----------
+        x : numpy.ndarray
+            Observation vector with shape ``(2,)``.
+        mu : numpy.ndarray
+            Mean vector with shape ``(2,)``.
+        inv : numpy.ndarray
+            Inverse covariance matrix with shape ``(2, 2)``.
+        logdet : float
+            Log-determinant of the covariance matrix.
+
+        Returns
+        -------
+        float
+            Gaussian log-density without the constant term shared by both
+            classes.
+        """
         d = x - mu
         return -0.5 * (d @ inv @ d + logdet)
 
     def __call__(self, rois: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Classify ROIs into ``"pos"``, ``"neg"``, or ``"uncertain"``.
+
+        Parameters
+        ----------
+        rois : list of dict
+            ROI dictionaries. Each ROI must contain ``"mean_r"`` and
+            ``"mean_g"``.
+
+        Returns
+        -------
+        list of dict
+            Copies of the input ROI dictionaries with added keys:
+
+            ``"logp_pc"``
+                Log-density under the positive control model.
+            ``"logp_nc"``
+                Log-density under the negative control model.
+            ``"score"``
+                Difference ``logp_pc - logp_nc``.
+            ``"label"``
+                ``"pos"``, ``"neg"``, or ``"uncertain"``.
+            ``"method"``
+                Name of the classification method.
+        """
         out = []
         for r in rois:
             x = np.array([float(r["mean_r"]), float(r["mean_g"])], dtype=float)

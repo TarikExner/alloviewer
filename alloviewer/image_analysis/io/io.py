@@ -21,11 +21,32 @@ def infer_bit_depth_and_normalize_scale(
     *,
     fast: bool = True,
 ) -> Tuple[np.ndarray, Optional[int]]:
-    """
-    Convert array to float32 in [0, 1].
+    """Infer image bit depth and scale image data to ``float32`` in ``[0, 1]``.
 
-    Returns:
-      scaled_arr, bit_depth
+    Parameters
+    ----------
+    arr : numpy.ndarray
+        Raw image array.
+    report : LoadReport
+        Load report updated in place with dtype, bit-depth, white-level,
+        shift, and warning information.
+    fast : bool, optional
+        If ``True``, skips percentile-based uint16 bit-depth detection. The
+        default is ``True``.
+
+    Returns
+    -------
+    scaled_arr : numpy.ndarray
+        Image array converted to ``float32`` and scaled to ``[0, 1]``.
+    bit_depth : int or None
+        Inferred bit depth. Returns ``None`` when no meaningful bit depth can
+        be assigned.
+
+    Notes
+    -----
+    Boolean, uint8, uint16, integer, and floating-point arrays are handled
+    separately. For floating-point arrays outside common ranges, min-max
+    scaling is used and a warning is added to ``report``.
     """
     dtype = arr.dtype
     report.dtype = str(dtype)
@@ -186,12 +207,32 @@ def infer_bit_depth_and_normalize_scale(
 
     return scaled, None
 
-def read_cv2_from_path(path: Path, page: int, report: LoadReport) -> np.ndarray:
-    """
-    Read from disk using OpenCV.
 
-    For TIFF and page > 0, uses imreadmulti.
-    Otherwise uses imread.
+def read_cv2_from_path(path: Path, page: int, report: LoadReport) -> np.ndarray:
+    """Read an image from disk with OpenCV.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        Image path.
+    page : int
+        Page index for multi-page TIFF files. For non-TIFF files, this value is
+        ignored.
+    report : LoadReport
+        Load report updated in place with path, page count, and backend
+        information.
+
+    Returns
+    -------
+    numpy.ndarray
+        Raw image array with original dtype.
+
+    Raises
+    ------
+    RuntimeError
+        If OpenCV fails to read the image.
+    ValueError
+        If a requested TIFF page does not exist.
     """
     report.path = str(path.resolve())
     ext = path.suffix.lower()
@@ -220,15 +261,39 @@ def read_cv2_from_path(path: Path, page: int, report: LoadReport) -> np.ndarray:
     report.used_backend = "opencv"
     return arr
 
+
 def read_cv2_from_bytes_or_file(
     src: SourceType,
     page: int,
     report: LoadReport,
 ) -> np.ndarray:
-    """
-    Read from bytes or file-like object using cv2.imdecode.
+    """Read an image from bytes or a file-like object with OpenCV.
 
-    Only the first page is available for in-memory multi-page TIFFs.
+    Parameters
+    ----------
+    src : SourceType
+        Raw bytes, bytearray, or file-like object with a ``read`` method.
+    page : int
+        Requested page index. Only page ``0`` is available for in-memory
+        decoding.
+    report : LoadReport
+        Load report updated in place with path, page count, backend, and
+        warnings.
+
+    Returns
+    -------
+    numpy.ndarray
+        Raw image array with original dtype.
+
+    Raises
+    ------
+    RuntimeError
+        If OpenCV fails to decode the image from memory.
+
+    Notes
+    -----
+    OpenCV's in-memory decoder returns only the first page for multi-page TIFF
+    data.
     """
     if isinstance(src, (bytes, bytearray)):
         buf = bytes(src)
@@ -267,17 +332,36 @@ def open_image(
     base_dir: Optional[Union[str, Path]] = None,
     max_mp: Optional[float] = 200.0,
 ) -> Tuple[np.ndarray, LoadReport]:
-    """
-    Low-level image loader using OpenCV.
+    """Open an image with OpenCV without scaling or channel normalization.
 
-    Accepts:
-      - str / Path
-      - raw bytes
-      - bytearray
-      - file-like object
+    Parameters
+    ----------
+    source : SourceType
+        Image source. Supported inputs are ``str``, ``Path``, ``bytes``,
+        ``bytearray``, and file-like objects.
+    page : int, optional
+        Page index for multi-page TIFF files on disk. The default is ``0``.
+    base_dir : str or pathlib.Path or None, optional
+        Optional root directory used to resolve relative paths.
+    max_mp : float or None, optional
+        Maximum allowed image size in megapixels. If ``None``, no size check is
+        applied. The default is ``200.0``.
 
-    Returns raw image data with original dtype.
-    No scaling or channel reordering is done here.
+    Returns
+    -------
+    arr : numpy.ndarray
+        Raw image array with original dtype and OpenCV channel order.
+    report : LoadReport
+        Metadata and warnings collected during loading.
+
+    Raises
+    ------
+    FileNotFoundError
+        If a path source does not exist.
+    ValueError
+        If the image has fewer than two dimensions or exceeds ``max_mp``.
+    RuntimeError
+        If OpenCV fails to read or decode the image.
     """
     resolved_source: Any = source
     base = Path(base_dir).resolve() if base_dir else None
@@ -328,10 +412,24 @@ def scale_image(
     *,
     fast: bool = False,
 ) -> Tuple[np.ndarray, LoadReport]:
-    """
-    Scale a raw image array to float32 in [0,1].
+    """Scale a raw image array to ``float32`` in ``[0, 1]``.
 
-    fast=True skips percentile-based uint16 bit-depth detection.
+    Parameters
+    ----------
+    arr : numpy.ndarray
+        Raw image array.
+    report : LoadReport or None, optional
+        Existing load report to update. If ``None``, a new report is created.
+    fast : bool, optional
+        If ``True``, skips percentile-based uint16 bit-depth detection. The
+        default is ``False``.
+
+    Returns
+    -------
+    scaled : numpy.ndarray
+        Scaled image array with dtype ``float32``.
+    report : LoadReport
+        Updated load report.
     """
     if report is None:
         report = LoadReport(
@@ -354,6 +452,7 @@ def scale_image(
 
     return scaled, report
 
+
 def load_image(
     source: SourceType,
     *,
@@ -365,14 +464,44 @@ def load_image(
     fast_scale: bool = True,
     **kwargs: Any,
 ) -> Tuple[np.ndarray, LoadReport]:
-    """
-    High-level image loader.
+    """Load an image and return RGB data.
 
-    - Opens with OpenCV
-    - Converts BGR -> RGB for color images
-    - Ensures RGB
-    - Optionally scales to [0,1]
-    - Optionally returns CHW instead of HWC
+    Parameters
+    ----------
+    source : SourceType
+        Image source. Supported inputs are ``str``, ``Path``, ``bytes``,
+        ``bytearray``, and file-like objects.
+    page : int, optional
+        Page index for multi-page TIFF files on disk. The default is ``0``.
+    base_dir : str or pathlib.Path or None, optional
+        Optional root directory used to resolve relative paths.
+    max_mp : float or None, optional
+        Maximum allowed image size in megapixels. If ``None``, no size check is
+        applied. The default is ``200.0``.
+    as_chw : bool, optional
+        If ``True``, return data as ``(C, H, W)``. If ``False``, return data as
+        ``(H, W, C)``. The default is ``True``.
+    scale : bool, optional
+        If ``True``, scale image values to ``float32`` in ``[0, 1]``. The
+        default is ``True``.
+    fast_scale : bool, optional
+        If ``True``, skips percentile-based uint16 bit-depth detection during
+        scaling. The default is ``True``.
+    **kwargs : Any
+        Accepted for caller compatibility. Values are not used.
+
+    Returns
+    -------
+    arr : numpy.ndarray
+        RGB image array, optionally scaled and optionally moved to CHW layout.
+    report : LoadReport
+        Metadata and warnings collected during loading.
+
+    Notes
+    -----
+    Color images loaded by OpenCV are converted from BGR to RGB before channel
+    normalization. Single-channel images are expanded to RGB by
+    ``ensure_rgb_anydepth``.
     """
     arr, report = open_image(
         source,
@@ -395,16 +524,42 @@ def load_image(
 
     return arr, report
 
+
 def load_images(
     filenames: List[str],
     data_dir: str,
     scale: bool = True,
     **kwargs: Any,
 ) -> List[np.ndarray]:
+    """Load multiple images from one directory.
+
+    Parameters
+    ----------
+    filenames : list of str
+        Image filenames or relative paths.
+    data_dir : str
+        Base directory used to resolve image paths.
+    scale : bool, optional
+        If ``True``, scale image values to ``float32`` in ``[0, 1]``. The
+        default is ``True``.
+    **kwargs : Any
+        Additional keyword arguments passed to :func:`load_image`.
+
+    Returns
+    -------
+    list of numpy.ndarray
+        Loaded image arrays in the order of ``filenames``.
+
+    Raises
+    ------
+    FileNotFoundError
+        If any requested file does not exist.
+    ValueError
+        If any image is invalid or exceeds the configured size limit.
+    RuntimeError
+        If OpenCV fails to read or decode any image.
     """
-    Load several images from one data directory.
-    """
-    res: list[np.ndarray] = []
+    res: List[np.ndarray] = []
 
     for file in filenames:
         img, _ = load_image(

@@ -1,7 +1,6 @@
 18.05.2026:
 
     - Work through the whole paper including all figures
-    - Website Online
     - Create Summary Output CDC
     - Create Pattern-HLA function and cross-check with Cassian
 
@@ -11,11 +10,10 @@ After author-send:
     - Documentation for frontend
     - refactoring frontend code
     - create API and document
-    - translation i18 implementation
-    - tutorial/About/whatever section
     - youtube videos
     - test suite
     - ruff final check
+    - job-dependent folder structure and data management
 
 08.03.2026:
     - Create Figures
