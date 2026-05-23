@@ -19,7 +19,12 @@ settings = Settings(
         "http://127.0.0.1:5173",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "https://alloviewer.org"
+
+        "https://alloviewer.org",
+        "https://www.alloviewer.org",
+
+        "https://alloviewer-woeh.vercel.app",
+        "https://alloviewer-f4x0be0x0-tarikexners-projects.vercel.app",
     ],
     plate_layout_store=os.getenv("PLATE_LAYOUT_STORE", "/tmp/plate_layouts"),
 )
