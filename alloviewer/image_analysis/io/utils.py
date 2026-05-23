@@ -23,27 +23,37 @@ IMAGE_EXTS: set[str] = {
 }
 
 # Channel markers must be standalone filename tokens separated by one of these.
-#
-# Accepted:
-#   sample_r.tif
-#   sample-R.tif
-#   sample.g.tif
-#   sample b.tif
-#   r_sample.tif
-#   G-sample.tif
-#   b.sample.tif
-#
-# Rejected:
-#   sampleR.tif
-#   Rsample.tif
-#   sample_red.tif
-#   sample_blue.tif
-#   bright_sample.tif
 CHANNEL_SEPARATORS: tuple[str, ...] = ("_", "-", ".", " ")
 
 
 @dataclass
 class LoadReport:
+    """Metadata collected while loading and scaling an image.
+
+    Parameters
+    ----------
+    path : str
+        Source path or placeholder for in-memory sources.
+    shape : tuple of int
+        Image shape after the current processing step.
+    dtype : str
+        Image dtype after the current processing step.
+    mode : str or None, optional
+        Optional image mode, if provided by a backend.
+    pages : int or None, optional
+        Number of pages in the image file, when known.
+    used_backend : str, optional
+        Backend used for loading. The default is ``"opencv"``.
+    bit_depth : int or None, optional
+        Inferred bit depth.
+    white_level : int or None, optional
+        Maximum expected white value for the inferred bit depth.
+    shifted : bool or None, optional
+        Whether the data appears left-shifted in uint16 storage.
+    warnings : list of str, optional
+        Non-fatal loading or scaling warnings.
+    """
+
     path: str
     shape: Tuple[int, ...]
     dtype: str
@@ -58,6 +68,30 @@ class LoadReport:
 
 @dataclass
 class ChannelCombineReport:
+    """Metadata collected while combining monochrome channels into RGB.
+
+    Parameters
+    ----------
+    group_key : str
+        Name of the matched image group.
+    output_path : str
+        Suggested or written output path.
+    input_paths : dict
+        Mapping from channel name to source path or source name.
+    shape : tuple of int
+        Shape of the combined RGB image.
+    dtype : str
+        Dtype of the combined RGB image.
+    bit_depth : int or None
+        Inferred shared bit depth for the input channels.
+    white_level : int or None
+        Shared white level for the inferred bit depth.
+    shifted : bool or None
+        Whether all non-zero uint16 channels appear left-shifted.
+    warnings : list of str, optional
+        Non-fatal channel-combination warnings.
+    """
+
     group_key: str
     output_path: str
     input_paths: Dict[str, str]
@@ -73,11 +107,25 @@ def resolve_to_data_root(
     p: Union[str, Path],
     base_dir: Optional[Path] = None,
 ) -> Path:
-    """
-    If p is absolute and exists, return it.
+    """Resolve a path against a base directory or the configured data root.
 
-    Otherwise, treat p as a relative path under base_dir or DATA_ROOT.
-    Backslashes are normalized first.
+    Parameters
+    ----------
+    p : str or pathlib.Path
+        Input path. Backslashes are normalized before resolution.
+    base_dir : pathlib.Path or None, optional
+        Base directory used for relative paths. If omitted, ``DATA_ROOT`` is
+        used.
+
+    Returns
+    -------
+    pathlib.Path
+        Absolute resolved path.
+
+    Notes
+    -----
+    Existing absolute paths are returned unchanged. Non-existing absolute paths
+    are treated like relative paths under ``base_dir`` or ``DATA_ROOT``.
     """
     s = str(p).replace("\\", "/")
     candidate = Path(s)
@@ -88,13 +136,32 @@ def resolve_to_data_root(
     base = base_dir or DATA_ROOT
     return (base / candidate).resolve()
 
-def ensure_rgb_anydepth(arr: np.ndarray, report: LoadReport) -> np.ndarray:
-    """
-    Ensure HxWx3 while keeping dtype unchanged.
 
-    - Gray -> stacked to 3 channels
-    - RGBA/BGRA -> alpha dropped
-    - More than 3 channels -> first 3
+def ensure_rgb_anydepth(arr: np.ndarray, report: LoadReport) -> np.ndarray:
+    """Ensure that an image has RGB layout while keeping its dtype unchanged.
+
+    Parameters
+    ----------
+    arr : numpy.ndarray
+        Input image with shape ``(H, W)`` or ``(H, W, C)``.
+    report : LoadReport
+        Load report updated in place with channel-conversion warnings.
+
+    Returns
+    -------
+    numpy.ndarray
+        Image with shape ``(H, W, 3)`` and original dtype.
+
+    Raises
+    ------
+    ValueError
+        If the input cannot be converted to ``(H, W, 3)``.
+
+    Notes
+    -----
+    Grayscale images are stacked into three channels. Four-channel images drop
+    the alpha channel. Images with more than three channels keep the first
+    three channels.
     """
     if arr.ndim == 2:
         report.warnings.append("grayscale -> RGB by channel stacking.")
@@ -121,11 +188,32 @@ def ensure_rgb_anydepth(arr: np.ndarray, report: LoadReport) -> np.ndarray:
     pads = [arr[..., -1]] * (3 - c)
     return np.concatenate([arr] + pads, axis=-1)
 
-def as_single_channel_raw(arr: np.ndarray, name: Union[str, Path]) -> np.ndarray:
-    """
-    Convert loaded image data to one raw monochrome channel.
 
-    No scaling is done.
+def as_single_channel_raw(arr: np.ndarray, name: Union[str, Path]) -> np.ndarray:
+    """Return one raw monochrome channel from loaded image data.
+
+    Parameters
+    ----------
+    arr : numpy.ndarray
+        Input image array. Supported shapes are ``(H, W)``, ``(H, W, 1)``, or
+        ``(H, W, C)`` where all channels are identical.
+    name : str or pathlib.Path
+        Image name used in error messages.
+
+    Returns
+    -------
+    numpy.ndarray
+        Two-dimensional raw image channel.
+
+    Raises
+    ------
+    ValueError
+        If the image has multiple non-identical channels or an unsupported
+        shape.
+
+    Notes
+    -----
+    No scaling, clipping, shifting, or normalization is applied.
     """
     if arr.ndim == 2:
         return arr
@@ -146,19 +234,46 @@ def as_single_channel_raw(arr: np.ndarray, name: Union[str, Path]) -> np.ndarray
 
     raise ValueError(f"Unsupported image shape {arr.shape} for {name}.")
 
+
 def detect_bitdepth_u16(
     a: np.ndarray,
     p: float = 99.9,
     use_percentile: bool = True,
     sample_stride: int = 16,
 ) -> Tuple[int, int, bool]:
-    """
-    Detect nominal bit depth for a uint16 image.
+    """Infer nominal bit depth for a uint16 image.
 
-    Returns:
-      bit_depth : int
-      white     : int
-      shifted   : bool
+    Parameters
+    ----------
+    a : numpy.ndarray
+        Input image with dtype ``uint16``.
+    p : float, optional
+        Percentile used for bit-depth estimation when ``use_percentile`` is
+        ``True``. The default is ``99.9``.
+    use_percentile : bool, optional
+        If ``True``, estimate bit depth from a percentile of the full array.
+        If ``False``, use a strided sample and maximum-value checks.
+    sample_stride : int, optional
+        Stride used when ``use_percentile`` is ``False``. The default is ``16``.
+
+    Returns
+    -------
+    bit_depth : int
+        Inferred nominal bit depth.
+    white : int
+        White level for the inferred bit depth.
+    shifted : bool
+        Whether the image appears left-shifted in uint16 storage.
+
+    Raises
+    ------
+    TypeError
+        If ``a`` is not a uint16 array.
+
+    Notes
+    -----
+    Left-shift detection checks whether the lower unused bits are all zero for
+    candidate bit depths ``8``, ``10``, ``12``, and ``14``.
     """
     if a.dtype != np.uint16:
         raise TypeError("Expected uint16 array for detect_bitdepth_u16")
@@ -209,11 +324,28 @@ def detect_bitdepth_u16(
 def infer_group_bit_depth(
     channels: Dict[str, np.ndarray],
 ) -> Tuple[Optional[int], Optional[int], Optional[bool], list[str]]:
-    """
-    Infer a shared bit depth for r/g/b channels.
+    """Infer a shared bit depth for RGB channel arrays.
 
-    All-zero uint16 channels are ambiguous, so non-zero channels decide.
-    No values are modified here.
+    Parameters
+    ----------
+    channels : dict
+        Mapping from channel name to image array.
+
+    Returns
+    -------
+    bit_depth : int or None
+        Inferred shared bit depth.
+    white_level : int or None
+        White level for the inferred bit depth.
+    shifted : bool or None
+        Whether all non-zero uint16 channels appear left-shifted.
+    warnings : list of str
+        Non-fatal warnings about ambiguous or mixed channel data.
+
+    Notes
+    -----
+    No input values are modified. All-zero uint16 channels are ignored for bit
+    depth decisions when at least one non-zero uint16 channel is present.
     """
     warnings: list[str] = []
     dtypes = {arr.dtype for arr in channels.values()}
@@ -284,8 +416,22 @@ def infer_group_bit_depth(
 
 
 def common_output_dtype(channels: Dict[str, np.ndarray]) -> np.dtype:
-    """
-    Pick a safe output dtype without scaling.
+    """Choose an output dtype for combined channel data.
+
+    Parameters
+    ----------
+    channels : dict
+        Mapping from channel name to image array.
+
+    Returns
+    -------
+    numpy.dtype
+        Output dtype. Returns ``uint8`` for all-uint8 input, ``uint16`` for
+        integer input with any non-uint8 dtype, and ``float32`` otherwise.
+
+    Notes
+    -----
+    This function selects a safe storage dtype without scaling the values.
     """
     dtypes = [arr.dtype for arr in channels.values()]
 
@@ -301,12 +447,34 @@ def common_output_dtype(channels: Dict[str, np.ndarray]) -> np.dtype:
 def detect_channel_from_name(
     filename: str,
 ) -> Tuple[Optional[str], Optional[str], list[str]]:
-    """
-    Detect r/g/b only when it appears as a standalone filename token
-    separated by one of CHANNEL_SEPARATORS.
+    """Detect a standalone RGB channel token from a filename.
 
-    Returns:
-      channel, group_key, warnings
+    Parameters
+    ----------
+    filename : str
+        Input filename. Only the stem is inspected.
+
+    Returns
+    -------
+    channel : str or None
+        Detected channel, one of ``"r"``, ``"g"``, or ``"b"``. Returns
+        ``None`` if no valid channel token is found.
+    group_key : str or None
+        Group key formed from the remaining filename tokens. Returns
+        ``None`` if channel detection fails.
+    warnings : list of str
+        Warning messages explaining skipped or ambiguous filenames.
+
+    Raises
+    ------
+    ValueError
+        If ``CHANNEL_SEPARATORS`` is empty.
+
+    Notes
+    -----
+    The channel token must be a standalone filename token separated by one of
+    ``CHANNEL_SEPARATORS``. Names like ``sample_r.tif`` are accepted; names like
+    ``sampleR.tif`` or ``sample_red.tif`` are rejected.
     """
     warnings: list[str] = []
 

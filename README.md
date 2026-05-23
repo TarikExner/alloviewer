@@ -1,2 +1,269 @@
 # AlloViewer
-AlloViewer backend, frontend and FASTAPI
+
+AlloViewer is a web-based software platform for standardized and traceable interpretation of physical HLA antibody diagnostics.
+
+It supports automated analysis of:
+
+- CDC-based HLA antibody specificity testing using commercial test-cell panels, also referred to as CDC-PRA
+- complement-dependent cytotoxicity crossmatch assays, also referred to as CDC-XM
+- flow cytometry crossmatch data from `.fcs` files, also referred to as FC-XM
+
+The project contains a Python/FastAPI backend and a TypeScript/React frontend.
+
+> **Research use only.** AlloViewer is an experimental software tool. It is not certified or approved for clinical diagnostics, treatment decisions, transplant allocation, donor-recipient compatibility decisions, or patient management.
+
+---
+
+## Website
+
+Public website:
+
+[https://alloviewer.org](https://alloviewer.org)
+
+Backend API:
+
+[https://alloviewer.onrender.com](https://alloviewer.onrender.com)
+
+Documentation:
+
+[https://alloviewer.readthedocs.io](https://alloviewer.readthedocs.io)
+
+The documentation page is planned but may not yet be reachable.
+
+Video tutorials:
+
+[AlloViewer video tutorials](https://www.youtube.com/@AlloViewer)
+
+Replace the YouTube URL above with the final channel URL.
+
+---
+
+## Purpose
+
+AlloViewer was built to provide a standardized and traceable way to analyze physical HLA antibody diagnostics.
+
+Manual interpretation of CDC microscopy and FC-XM data can vary between operators, runs, local protocols, and software settings. AlloViewer aims to reduce this variability by applying fixed analysis steps, preserving quantitative intermediate outputs, and making assay-specific workflows accessible through a web interface and API.
+
+AlloViewer is not intended to replace expert laboratory judgment. Results require independent review, local validation, and compliance with applicable institutional and regulatory rules before any operational or clinical use.
+
+---
+
+## Supported workflows
+
+### CDC-PRA
+
+The CDC-PRA workflow supports CDC-based HLA antibody specificity analysis using commercial test-cell panels.
+
+Users upload:
+
+- an Excel-based panel layout
+- a folder of microscopy images
+
+AlloViewer maps images to wells, segments lymphocytes, classifies cells using positive and negative controls, calculates well-level cytotoxicity, and maps the observed reactivity pattern to the uploaded panel layout.
+
+The goal is to support candidate HLA antibody specificity inference from CDC panel reactivity patterns.
+
+### CDC-XM
+
+The CDC-XM workflow supports image-based complement-dependent cytotoxicity crossmatch analysis.
+
+Users upload microscopy images, define well roles, review the plate layout and scan order, and run automated well-level analysis.
+
+Supported well roles include:
+
+- sample
+- positive control
+- negative control
+- IgM control
+- empty
+
+The IgM control can be used to check whether Dithiothreitol, or DTT, treatment effectively reduces IgM-mediated reactivity.
+
+### FC-XM
+
+The FC-XM workflow supports flow cytometry crossmatch analysis from `.fcs` files.
+
+Users upload FCS files, assign them to negative control, positive control, or sample cards, review the detected marker panel, and run automated analysis.
+
+The FC-XM workflow includes:
+
+- FCS upload and sample assignment
+- marker panel review
+- quality control
+- lymphocyte selection
+- marker-informed population detection
+- population-specific IgG readout extraction
+- summary report generation
+
+---
+
+## Technology stack
+
+### Backend
+
+- Python
+- FastAPI
+- Uvicorn
+- NumPy
+- PyTorch
+- scikit-image / OpenCV-style image processing
+- flow cytometry processing tools
+- ReportLab for PDF output
+- Render deployment
+
+### Frontend
+
+- TypeScript
+- React
+- Vite
+- Tailwind CSS
+- i18next
+- Vercel deployment
+
+---
+
+## Local setup
+
+### Clone the repository
+
+```bash
+git clone https://github.com/TarikExner/alloviewer.git
+cd alloviewer
+```
+
+Replace the URL with the actual GitHub repository URL.
+
+---
+
+## Data handling
+
+AlloViewer processes uploaded microscopy images, Excel layouts, and FCS files. Uploaded files should be treated as temporary data.
+
+Recommended backend behavior:
+
+- Store uploaded files in job-specific temporary folders.
+- Delete raw uploaded files after analysis when no longer needed.
+- Keep only required outputs for a limited time.
+- Run periodic cleanup for old job folders.
+- Do not store identifiable patient data unless the deployment has the required legal, institutional, and ethical basis.
+
+Recommended temporary storage pattern:
+
+```text
+/tmp/alloviewer_jobs/{job_id}/
+```
+
+Do not store uploaded user files inside the Git repository.
+
+---
+
+## Use policy
+
+AlloViewer is provided for research use, method development, teaching, and workflow evaluation.
+
+AlloViewer is not certified, approved, or validated as a stand-alone clinical diagnostic system.
+
+Outputs generated by AlloViewer must not be used as the sole basis for:
+
+- clinical diagnosis
+- donor-recipient compatibility assessment
+- transplant eligibility assessment
+- organ allocation
+- treatment decisions
+- patient management
+
+All results require independent review by qualified laboratory or clinical experts.
+
+Users are responsible for validating AlloViewer in their own laboratory setting and for complying with applicable institutional, regulatory, quality-management, and data-protection requirements.
+
+The authors and developers do not accept responsibility for clinical, regulatory, operational, or financial decisions made on the basis of unvalidated software output.
+
+---
+
+
+## Known limitations
+
+- The current version is intended for research and workflow evaluation.
+- The software has not been established as a stand-alone clinical decision system.
+- External and prospective multi-center validation is required before routine clinical decision support.
+- FC-XM analysis may depend on marker panel design, compensation, instrument settings, sample quality, and local interpretation rules.
+- CDC image analysis may be affected by staining failures, poor focus, debris, rare artifacts, unusual lymphocyte morphology, or local imaging conditions.
+- Free hosting tiers may sleep or restart services.
+- Large uploads may hit hosting memory, time, or storage limits.
+
+---
+
+## Development commands
+
+### Frontend
+
+```bash
+cd ui
+npm install
+npm run dev
+npm run build
+```
+
+### Backend
+
+```bash
+cd backend
+poetry install
+poetry run uvicorn app.main:app --reload --port 8000
+```
+
+---
+
+## Authors and affiliations
+
+AlloViewer was developed by:
+
+- Dr. med. Dr. rer. nat. Cassian Afting
+- Dr. med. Tarik Exner
+
+with collaborators from:
+
+- Institute for Transfusion Medicine and Immunohematology, German Red Cross Blood Donation Service Baden-Württemberg-Hessen, Frankfurt, Germany
+- Division of Rheumatology, Department of Medicine V, Heidelberg University Hospital, Heidelberg, Germany
+- Institute for Clinical Transfusion Medicine and Immunogenetics Ulm, German Red Cross Blood Transfusion Service Baden-Württemberg-Hessen and University Hospital Ulm, Ulm, Germany
+- Institute of Transfusion Medicine, University of Ulm, Ulm, Germany
+- Goethe University Hospital Medical School, Frankfurt, Germany
+
+---
+
+## Contact
+
+Corresponding contacts:
+
+**Dr. med. Dr. rer. nat. Cassian Afting**  
+Institute for Transfusion Medicine and Immunohematology  
+German Red Cross Blood Donation Service Baden-Württemberg-Hessen  
+Frankfurt, Germany  
+Email: c.afting@blutspende.de
+
+**Dr. med. Tarik Exner**  
+Division of Rheumatology, Department of Medicine V  
+Heidelberg University Hospital  
+Heidelberg, Germany  
+Email: Tarik.Exner@med.uni-heidelberg.de
+
+Website contact page:
+
+[https://alloviewer.org/contact](https://alloviewer.org/contact)
+
+---
+
+## Citation
+
+A formal citation will be added once the manuscript or preprint record is finalized.
+
+For now, cite the project website and repository when referring to AlloViewer.
+
+
+---
+
+## License
+
+AlloViewer is intended to be made available under the Creative Commons Attribution 4.0 International License, or CC BY 4.0, unless stated otherwise.
+
+Please verify the final license against the manuscript, preprint server, journal, and repository license file before public release.

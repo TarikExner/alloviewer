@@ -1,4 +1,3 @@
-# gater.py
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -6,34 +5,30 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from .config import GatingConfig, ClustererConfig
-from .qc import QCGater
-from .labeling import label_clusters
-from .lymphocytes import gate_lymphocytes
-from .types import (
-    FittedGater,
-    FileAnalysis,
-    PopulationResult,
-    FileResult,
-    SampleResult,
-)
-from .marker_calibration import calibrate_markers
+from ._utils import fcs_display_name, freeze_mapping
 from .clusterers import default_clusterer_factory
-from .clustering import (
-    BaseClusterer,
-    predict_file_in_mask,
-    fit_clustering,
-)
-from ..fcs_file import FCSFile
-from ..panel import Panel
-from ..sample import Dataset
+from .clustering import BaseClusterer, fit_clustering, predict_file_in_mask
+from .config import ClustererConfig, GatingConfig
 from .igg import (
     IgGControlStats,
     build_igg_control_stats,
     compute_igg_readouts,
     get_igg_values_from_mask,
 )
-from ._utils import freeze_mapping, fcs_display_name
+from .labeling import label_clusters
+from .lymphocytes import gate_lymphocytes
+from .marker_calibration import calibrate_markers
+from .qc import QCGater
+from .types import (
+    FileAnalysis,
+    FileResult,
+    FittedGater,
+    PopulationResult,
+    SampleResult,
+)
+from ..fcs_file import FCSFile
+from ..panel import Panel
+from ..sample import Dataset
 
 
 ProgressEvent = Dict[str, Any]
@@ -41,6 +36,39 @@ ProgressCallback = Callable[[ProgressEvent], None]
 
 
 class Gater:
+    """Fit and apply a flow-cytometry gating workflow.
+
+    The gater performs quality-control gating, lymphocyte gating, marker
+    calibration, global clustering, cluster labeling, and IgG readout
+    calculation.
+
+    Parameters
+    ----------
+    panel : Panel
+        Panel definition with scatter, IgG, and marker channels.
+    config : GatingConfig or None, optional
+        Gating configuration. If ``None``, a default ``GatingConfig`` is used.
+    clusterer_factory : callable or None, optional
+        Factory that receives a ``ClustererConfig`` and returns a
+        ``BaseClusterer``. If ``None``, ``default_clusterer_factory`` is used.
+
+    Attributes
+    ----------
+    panel : Panel
+        Panel used by the workflow.
+    config : GatingConfig
+        Gating configuration.
+    qc : QCGater
+        Quality-control gater.
+    clusterer_factory : callable
+        Factory used to create the clustering backend.
+
+    Raises
+    ------
+    ValueError
+        If ``panel.markers`` is empty or ``panel.igg`` is not set.
+    """
+
     def __init__(
         self,
         panel: Panel,
@@ -68,6 +96,21 @@ class Gater:
         values: np.ndarray,
         cofactor: Optional[float] = None,
     ) -> np.ndarray:
+        """Apply arcsinh transformation to channel values.
+
+        Parameters
+        ----------
+        values : numpy.ndarray
+            Raw channel values.
+        cofactor : float or None, optional
+            Transformation cofactor. If ``None``, the default cofactor from the
+            configuration is used.
+
+        Returns
+        -------
+        numpy.ndarray
+            Arcsinh-transformed channel values.
+        """
         c = (
             float(self.config.transform.default_cofactor)
             if cofactor is None
@@ -80,6 +123,20 @@ class Gater:
         fcs: FCSFile,
         fitted: FittedGater,
     ) -> FileAnalysis:
+        """Analyze a file with caching.
+
+        Parameters
+        ----------
+        fcs : FCSFile
+            FCS file to analyze.
+        fitted : FittedGater
+            Fitted gater state.
+
+        Returns
+        -------
+        FileAnalysis
+            File-level masks, events, marker assignments, and notes.
+        """
         key = (id(fcs), self._cfg_token, id(fitted))
         hit = self._cache_file_analysis.get(key)
 
@@ -96,6 +153,20 @@ class Gater:
         fcs: FCSFile,
         fitted: FittedGater,
     ) -> FileAnalysis:
+        """Analyze one FCS file with a fitted gater.
+
+        Parameters
+        ----------
+        fcs : FCSFile
+            FCS file to analyze.
+        fitted : FittedGater
+            Fitted gater state.
+
+        Returns
+        -------
+        FileAnalysis
+            Event matrix, QC masks, lymphocyte masks, marker masks, and notes.
+        """
         qc = self.qc.compute_qc(fcs)
         events = qc.events
         n = int(events.shape[0])
@@ -164,6 +235,13 @@ class Gater:
         )
 
     def _get_gate_options(self) -> List[str]:
+        """Return gate labels available for the current panel.
+
+        Returns
+        -------
+        list of str
+            Gate labels, including core gates and marker gates.
+        """
         gate_options: List[str] = ["All Cells"]
 
         if self.panel.fsc_a and self.panel.fsc_h:
@@ -180,6 +258,20 @@ class Gater:
         fa: FileAnalysis,
         fitted: FittedGater,
     ) -> Dict[str, np.ndarray]:
+        """Build gate masks for one analyzed file.
+
+        Parameters
+        ----------
+        fa : FileAnalysis
+            File analysis object.
+        fitted : FittedGater
+            Fitted gater state.
+
+        Returns
+        -------
+        dict
+            Mapping from gate label to boolean mask.
+        """
         n_events = int(fa.events.shape[0])
         marker_names = list(fitted.panel.markers.keys())
 
@@ -218,6 +310,22 @@ class Gater:
         fcs: Optional[FCSFile] = None,
         extra: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Emit a progress event.
+
+        Parameters
+        ----------
+        progress_cb : callable or None
+            Callback receiving a progress-event dictionary. If ``None``, no
+            event is emitted.
+        stage : str
+            Processing stage name.
+        sample : Any, optional
+            Sample object used to populate sample metadata.
+        fcs : FCSFile or None, optional
+            FCS file used to populate file metadata.
+        extra : dict or None, optional
+            Extra event fields.
+        """
         if progress_cb is None:
             return
 
@@ -248,11 +356,33 @@ class Gater:
         gate_options: List[str],
         marker_info: Dict[str, Any],
     ) -> FittedGater:
-        """
-        Build an intermediate FittedGater during fit().
+        """Build an intermediate fitted state during fitting.
 
-        This is needed because analyze_file() expects a FittedGater, while
-        IgG control statistics are still being calculated.
+        Parameters
+        ----------
+        cfg : GatingConfig
+            Gating configuration.
+        marker_thresholds : dict
+            Marker thresholds by marker name.
+        marker_cofactors : dict
+            Marker transformation cofactors by marker name.
+        feature_scaler : Any
+            Fitted feature scaler.
+        clusterer : BaseClusterer
+            Fitted clusterer.
+        outlier_thr : float
+            Outlier score threshold.
+        cluster_to_type : dict
+            Cluster-to-population mapping.
+        gate_options : list of str
+            Available gate labels.
+        marker_info : dict
+            Marker calibration metadata.
+
+        Returns
+        -------
+        FittedGater
+            Temporary fitted state with empty IgG control statistics.
         """
         return FittedGater(
             panel=self.panel,
@@ -274,10 +404,24 @@ class Gater:
         dataset: Dataset,
         progress_cb: Optional[ProgressCallback] = None,
     ) -> FittedGater:
+        """Fit the gating workflow on a dataset.
+
+        Parameters
+        ----------
+        dataset : Dataset
+            Dataset containing NC, optional PC, and sample files.
+        progress_cb : callable or None, optional
+            Callback receiving progress-event dictionaries.
+
+        Returns
+        -------
+        FittedGater
+            Fitted gater state with marker thresholds, marker cofactors,
+            clustering model, gate labels, and IgG control statistics.
+        """
         cfg = self.config
         rng = np.random.default_rng(int(cfg.random_state))
 
-        # 1) QC for all files
         file_records: List[Dict[str, Any]] = []
 
         for sample in dataset.samples:
@@ -303,8 +447,6 @@ class Gater:
 
         marker_names = list(self.panel.markers.keys())
 
-        # 2) Calibrate markers globally.
-        # This must see all file_records.
         self._emit_progress(progress_cb, stage="fit_marker_calibration")
 
         cal = calibrate_markers(
@@ -321,7 +463,6 @@ class Gater:
         marker_thresholds = cal.marker_thresholds
         marker_info = cal.marker_info
 
-        # 3) Lymphocyte masks per file.
         for rec in file_records:
             sample = rec["sample"]
             fcs: FCSFile = rec["fcs"]
@@ -348,8 +489,6 @@ class Gater:
                 fcs=fcs,
             )
 
-        # 4) Fit clustering globally.
-        # This must see all file_records.
         self._emit_progress(progress_cb, stage="fit_clustering")
 
         clusterer = self.clusterer_factory(cfg.clusterer)
@@ -373,7 +512,6 @@ class Gater:
             rng=rng,
         )
 
-        # 5) Label clusters globally.
         self._emit_progress(progress_cb, stage="fit_cluster_labels")
 
         cluster_to_type = label_clusters(
@@ -386,10 +524,7 @@ class Gater:
             marker_thresholds=marker_thresholds,
         )
 
-        # 6) Gate options.
         gate_options = self._get_gate_options()
-
-        # 7) Build IgG control stats per gate.
         has_pc = bool(dataset.get("PC"))
 
         nc_raw_parts: Dict[str, List[np.ndarray]] = {g: [] for g in gate_options}
@@ -414,7 +549,6 @@ class Gater:
             fcs: FCSFile = rec["fcs"]
 
             fa = self.analyze_file(fcs=fcs, fitted=temp_fitted)
-
             gate_masks = self._get_gate_masks(fa=fa, fitted=temp_fitted)
 
             for gate in gate_options:
@@ -512,14 +646,27 @@ class Gater:
         Dict[str, List[np.ndarray]],
         List[str],
     ]:
-        """
-        Apply a fitted gater to one FCS file.
+        """Apply a fitted gater to one FCS file.
 
-        Returns:
-          - FileResult for this file
-          - raw IgG value parts by gate for later sample-level combination
-          - transformed IgG value parts by gate for later sample-level combination
-          - file notes
+        Parameters
+        ----------
+        sample : Any
+            Sample object containing at least ``name`` and ``role`` attributes.
+        fcs : FCSFile
+            FCS file to analyze.
+        fitted : FittedGater
+            Fitted gater state.
+
+        Returns
+        -------
+        file_result : FileResult
+            File-level population metrics.
+        raw_parts_by_gate : dict
+            Raw IgG values by gate, used for sample-level combination.
+        t_parts_by_gate : dict
+            Transformed IgG values by gate, used for sample-level combination.
+        notes : list of str
+            File-level notes.
         """
         fa = self.analyze_file_cached(fcs, fitted)
         notes: List[str] = list(fa.notes or [])
@@ -601,6 +748,28 @@ class Gater:
         t_parts_by_gate: Dict[str, List[np.ndarray]],
         sample_notes: List[str],
     ) -> SampleResult:
+        """Combine per-file results into one sample-level result.
+
+        Parameters
+        ----------
+        sample : Any
+            Sample object containing ``name``, ``role``, and ``files``.
+        fitted : FittedGater
+            Fitted gater state.
+        per_file_results : list of FileResult
+            File-level results for the sample.
+        raw_parts_by_gate : dict
+            Raw IgG values grouped by gate.
+        t_parts_by_gate : dict
+            Transformed IgG values grouped by gate.
+        sample_notes : list of str
+            Notes collected across the sample files.
+
+        Returns
+        -------
+        SampleResult
+            Combined sample-level result.
+        """
         gate_options = list(fitted.gate_options)
 
         combined: List[PopulationResult] = []
@@ -670,11 +839,21 @@ class Gater:
         fitted: FittedGater,
         progress_cb: Optional[ProgressCallback] = None,
     ) -> SampleResult:
-        """
-        Apply a fitted gater to all files of one sample.
+        """Apply a fitted gater to all files of one sample.
 
-        This is separated from apply() so callers can process one sample at a time
-        if they want finer control later.
+        Parameters
+        ----------
+        sample : Any
+            Sample object containing FCS files.
+        fitted : FittedGater
+            Fitted gater state.
+        progress_cb : callable or None, optional
+            Callback receiving progress-event dictionaries.
+
+        Returns
+        -------
+        SampleResult
+            Sample-level result with per-file and combined metrics.
         """
         gate_options = list(fitted.gate_options)
 
@@ -730,11 +909,21 @@ class Gater:
         fitted: FittedGater,
         progress_cb: Optional[ProgressCallback] = None,
     ) -> List[SampleResult]:
-        """
-        Apply a fitted gater to a full dataset.
+        """Apply a fitted gater to a dataset.
 
-        Internally this now works sample-by-sample and file-by-file. This makes
-        progress tracking possible without changing the returned result shape.
+        Parameters
+        ----------
+        dataset : Dataset
+            Dataset to analyze.
+        fitted : FittedGater
+            Fitted gater state returned by :meth:`fit`.
+        progress_cb : callable or None, optional
+            Callback receiving progress-event dictionaries.
+
+        Returns
+        -------
+        list of SampleResult
+            One result per sample, preserving dataset order.
         """
         out: List[SampleResult] = []
 

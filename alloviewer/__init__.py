@@ -16,8 +16,6 @@ from .image_analysis.classifiers import (
 )
 
 from .image_analysis.segmenter import (
-    DummySegmenter,
-    DummyByOrderSegmenter,
     SegmenterUNet,
     InstanceSegmenter
 )
@@ -38,12 +36,7 @@ __all__ = [
     "ROIClassifierGaussian3Way",
     "SegmenterUNet",
     "InstanceSegmenter",
-    "DummySegmenter",
-    "DummyByOrderSegmenter",
     "simulate_image",
     "Plate",
     "WellImage",
 ]
-
-
-    

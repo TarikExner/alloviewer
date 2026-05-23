@@ -7,8 +7,6 @@ from scipy.spatial import cKDTree
 from skimage import measure, morphology, filters
 
 
-# ===================== Config =====================
-
 @dataclass
 class QCMonitorConfig:
     # --- touching rule ---
@@ -47,8 +45,6 @@ class QCMonitorConfig:
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
-
-# ===================== Monitor =====================
 
 class QCMonitor:
     """

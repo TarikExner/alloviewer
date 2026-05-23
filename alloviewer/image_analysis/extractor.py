@@ -3,15 +3,49 @@ from typing import List, Dict, Any
 
 
 class RGBExtractor:
-    def __call__(self, img: np.ndarray, inst: np.ndarray) -> List[Dict[str, Any]]:
-        """
-        Compute mean RGB per instance.
+    """Extract mean RGB intensities for labeled instances.
 
-        img:
-          - HWC: [H, W, 3]
-          - CHW: [3, H, W]
-        inst:
-          - [H, W], integer instance labels (0 = background)
+    The extractor computes per-instance mean red, green, and blue channel
+    values from an RGB image and a matching integer instance map. Label ``0`` is
+    treated as background and ignored.
+    """
+
+    def __call__(self, img: np.ndarray, inst: np.ndarray) -> List[Dict[str, Any]]:
+        """Compute mean RGB values per instance.
+
+        Parameters
+        ----------
+        img : numpy.ndarray
+            RGB image with either shape ``(H, W, 3)`` or ``(3, H, W)``.
+        inst : numpy.ndarray
+            Integer instance label map with shape ``(H, W)``. Label ``0`` is
+            treated as background.
+
+        Returns
+        -------
+        list of dict
+            One dictionary per instance label with the following keys:
+
+            ``"roi_id"``
+                Instance label ID.
+            ``"mean_r"``
+                Mean red-channel intensity.
+            ``"mean_g"``
+                Mean green-channel intensity.
+            ``"mean_b"``
+                Mean blue-channel intensity.
+            ``"area"``
+                Number of pixels assigned to the instance.
+
+        Raises
+        ------
+        ValueError
+            If ``img`` is not a 3D RGB array, if ``inst`` is not a 2D array, or
+            if the image and instance map spatial shapes do not match.
+
+        Notes
+        -----
+        The output order follows ascending instance label IDs.
         """
         # --- normalize image to HWC [H, W, 3] ---
         if img.ndim != 3:
@@ -77,4 +111,3 @@ class RGBExtractor:
             })
 
         return res
-

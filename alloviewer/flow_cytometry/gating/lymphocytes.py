@@ -5,10 +5,9 @@ from typing import Any, Dict
 import numpy as np
 from sklearn.mixture import GaussianMixture
 
+from ._utils import fit_1d_gmm2, log1p_nonneg, subsample
 from .config import LymphocyteConfig, TransformConfig
 from .types import LymphResult
-from ._utils import subsample, log1p_nonneg, fit_1d_gmm2
-
 from ..fcs_file import FCSFile
 from ..panel import Panel
 
@@ -25,21 +24,48 @@ def gate_lymphocytes(
     marker_thresholds: Dict[str, float],
     marker_cofactors: Dict[str, float],
 ) -> LymphResult:
-    """
-    Lymphocytes gate (FSC/SSC), marker-informed.
+    """Gate lymphocytes using FSC/SSC with marker-informed back-gating.
 
-    Key points:
-      - Lymphocytes are defined by FSC/SSC, not by a single marker.
-      - Many clusters can be lymphocytes.
-      - We use back-gating: take marker-positive events (union over user markers)
-        and pick the FSC/SSC component(s) that best cover those events.
-      - We try to avoid low-FSC marker-positive events dragging the gate left.
+    Parameters
+    ----------
+    lymph_cfg : LymphocyteConfig
+        Lymphocyte-gating configuration.
+    transform_cfg : TransformConfig
+        Transformation configuration used for marker channels.
+    random_state : int
+        Random seed used for subsampling and mixture-model fitting.
+    panel : Panel
+        Panel definition with scatter and marker channels.
+    fcs : FCSFile
+        FCS file object used for channel index lookup.
+    events : numpy.ndarray
+        Event matrix with shape ``(n_events, n_channels)``.
+    mask_qc : numpy.ndarray
+        Boolean QC mask defining events eligible for lymphocyte gating.
+    marker_thresholds : dict
+        Marker thresholds in transformed space, keyed by marker name.
+    marker_cofactors : dict
+        Marker transformation cofactors, keyed by marker name.
+
+    Returns
+    -------
+    LymphResult
+        Lymphocyte mask and diagnostic information.
+
+    Notes
+    -----
+    Lymphocytes are selected in FSC/SSC space. Marker-positive events are used
+    as a guide to choose FSC/SSC mixture components, but marker positivity alone
+    does not define the lymphocyte gate. If marker guidance is insufficient or
+    the fitted model keeps too few events, the function falls back to FSC/SSC
+    quantile rails.
     """
     lc = lymph_cfg
     tc = transform_cfg
 
     mask_qc = np.asarray(mask_qc, dtype=bool)
     idx_qc = np.flatnonzero(mask_qc)
+
     if idx_qc.size == 0:
         return LymphResult(
             mask_lymph=np.zeros(events.shape[0], dtype=bool),
@@ -64,12 +90,12 @@ def gate_lymphocytes(
 
     rng = np.random.default_rng(int(random_state))
 
-    # build marker-positive guide (union over markers)
     guide = np.zeros(idx_qc.size, dtype=bool)
     guide_counts: Dict[str, int] = {}
 
     for mname, ch in (panel.markers or {}).items():
         thr = float(marker_thresholds.get(mname, np.nan))
+
         if not np.isfinite(thr):
             continue
 
@@ -88,7 +114,6 @@ def gate_lymphocytes(
         "guide_counts": dict(guide_counts),
     }
 
-    # if guide too small, fall back to mild FSC/SSC rails
     if int(guide.sum()) < int(lc.min_guide_events):
         f_lo = float(np.quantile(fsc[idx_qc], float(lc.fsc_low_q)))
         s_hi = float(np.quantile(ssc[idx_qc], float(lc.ssc_high_q)))
@@ -97,15 +122,24 @@ def gate_lymphocytes(
         info["fallback"] = "qc_quantile_rails"
         info["fsc_low"] = f_lo
         info["ssc_high"] = s_hi
+
         return LymphResult(mask_lymph=m, info=info)
 
-    # optionally remove low-FSC guide component
     guide_keep = guide.copy()
-    if bool(lc.exclude_low_fsc_in_guide) and int(guide.sum()) >= int(lc.guide_fsc_gmm_min_events):
-        g1 = fit_1d_gmm2(log1p_nonneg(fsc[idx_qc][guide]), rs=int(random_state))
+
+    if bool(lc.exclude_low_fsc_in_guide) and int(guide.sum()) >= int(
+        lc.guide_fsc_gmm_min_events
+    ):
+        g1 = fit_1d_gmm2(
+            log1p_nonneg(fsc[idx_qc][guide]),
+            rs=int(random_state),
+        )
+
         if g1 is not None:
             gmm1, order = g1
-            resp1 = gmm1.predict_proba(log1p_nonneg(fsc[idx_qc][guide]).reshape(-1, 1))
+            resp1 = gmm1.predict_proba(
+                log1p_nonneg(fsc[idx_qc][guide]).reshape(-1, 1)
+            )
             high_k = int(order[-1])
             keep_high = resp1[:, high_k] >= 0.5
 
@@ -115,7 +149,12 @@ def gate_lymphocytes(
             info["guide_low_fsc_removed"] = True
             info["guide_keep"] = int(guide_keep.sum())
         else:
-            fthr = float(np.quantile(fsc[idx_qc][guide], float(lc.guide_fsc_fallback_q)))
+            fthr = float(
+                np.quantile(
+                    fsc[idx_qc][guide],
+                    float(lc.guide_fsc_fallback_q),
+                )
+            )
             guide_keep = guide & (fsc[idx_qc] >= fthr)
             info["guide_low_fsc_removed"] = True
             info["guide_keep"] = int(guide_keep.sum())
@@ -124,7 +163,6 @@ def gate_lymphocytes(
         guide_keep = guide
         info["guide_low_fsc_removed"] = False
 
-    # 2D GMM on FSC/SSC in QC
     sub = subsample(X, int(lc.subsample), rng)
     X_sub = X[sub]
 
@@ -138,7 +176,6 @@ def gate_lymphocytes(
 
     resp = gmm2.predict_proba(X)
 
-    # choose components that best cover guide_keep events
     guide_idx = np.flatnonzero(guide_keep)
     guide_resp_sum = resp[guide_idx].sum(axis=0)
 
@@ -148,9 +185,11 @@ def gate_lymphocytes(
     total = float(np.sum(guide_resp_sum)) + 1e-12
 
     target = float(lc.guide_coverage)
+
     for k in order:
         picked.append(int(k))
         covered += float(guide_resp_sum[k]) / total
+
         if covered >= target:
             break
 
@@ -158,8 +197,11 @@ def gate_lymphocytes(
     info["picked_components"] = picked.tolist()
     info["guide_coverage"] = float(covered)
 
-    # build lymph mask by responsibility threshold on chosen components
-    p = resp[:, picked].sum(axis=1) if picked.size else np.zeros(resp.shape[0], dtype=float)
+    p = (
+        resp[:, picked].sum(axis=1)
+        if picked.size
+        else np.zeros(resp.shape[0], dtype=float)
+    )
     keep_local = p >= float(lc.resp_threshold)
 
     keep_frac = float(np.mean(keep_local))
@@ -173,7 +215,6 @@ def gate_lymphocytes(
         info["fsc_low"] = f_lo
         info["ssc_high"] = s_hi
 
-    # final safety rails
     f_lo = float(np.quantile(fsc[idx_qc], float(lc.fsc_low_q)))
     s_hi = float(np.quantile(ssc[idx_qc], float(lc.ssc_high_q)))
     keep_local &= (fsc[idx_qc] >= f_lo) & (ssc[idx_qc] <= s_hi)
