@@ -6,16 +6,32 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from sklearn.mixture import GaussianMixture
 
-from .config import SingletMode, QCConfig
-from .types import QCResult
 from ._utils import freeze_mapping
+from .config import QCConfig, SingletMode
+from .types import QCResult
 from alloviewer.flow_cytometry.fcs_file import FCSFile
 from alloviewer.flow_cytometry.panel import Panel
 
 
 class QCGater:
-    """
-    QC stage = edge -> singlets -> broad debris removal.
+    """Quality-control gater for FCS event data.
+
+    The QC stage applies edge-event filtering, optional singlet gating, and
+    returns the resulting QC mask.
+
+    Parameters
+    ----------
+    panel : Panel
+        Panel definition containing scatter-channel assignments.
+    config : QCConfig
+        Quality-control configuration.
+
+    Attributes
+    ----------
+    panel : Panel
+        Panel used for channel lookup.
+    config : QCConfig
+        Quality-control configuration.
     """
 
     def __init__(self, panel: Panel, config: QCConfig) -> None:
@@ -26,28 +42,113 @@ class QCGater:
         self._cache: Dict[Tuple[int, Tuple], QCResult] = {}
 
     def _events(self, fcs: FCSFile) -> np.ndarray:
+        """Return events from the configured source.
+
+        Parameters
+        ----------
+        fcs : FCSFile
+            FCS file object.
+
+        Returns
+        -------
+        numpy.ndarray
+            Event matrix.
+        """
         return fcs.get_events(self.config.event_source)
 
     def _idx(self, fcs: FCSFile, channel_label: str) -> int:
+        """Return the event-matrix column index for a channel.
+
+        Parameters
+        ----------
+        fcs : FCSFile
+            FCS file object.
+        channel_label : str
+            Channel label.
+
+        Returns
+        -------
+        int
+            Zero-based channel index.
+        """
         return int(fcs.get_channel_index(channel_label))
 
     def _col(self, events: np.ndarray, idx: int) -> np.ndarray:
+        """Return one event column as float32.
+
+        Parameters
+        ----------
+        events : numpy.ndarray
+            Event matrix.
+        idx : int
+            Column index.
+
+        Returns
+        -------
+        numpy.ndarray
+            Selected column as ``float32``.
+        """
         return events[:, idx].astype(np.float32, copy=False)
 
     @staticmethod
     def _mad(x: np.ndarray) -> float:
+        """Compute the median absolute deviation.
+
+        Parameters
+        ----------
+        x : numpy.ndarray
+            Input values.
+
+        Returns
+        -------
+        float
+            Median absolute deviation around the median.
+        """
         med = np.median(x)
         return float(np.median(np.abs(x - med)))
 
     @staticmethod
-    def _subsample_idx(n: int, k: int, rng: np.random.Generator) -> np.ndarray:
+    def _subsample_idx(
+        n: int,
+        k: int,
+        rng: np.random.Generator,
+    ) -> np.ndarray:
+        """Return random subsample indices.
+
+        Parameters
+        ----------
+        n : int
+            Number of available rows.
+        k : int
+            Number of rows to sample.
+        rng : numpy.random.Generator
+            Random number generator.
+
+        Returns
+        -------
+        numpy.ndarray
+            Selected row indices. If ``k <= 0`` or ``k >= n``, all indices are
+            returned.
+        """
         if k <= 0 or k >= n:
             return np.arange(n)
+
         return rng.choice(n, size=k, replace=False)
 
     @staticmethod
     def _log1p_f32(x: np.ndarray) -> np.ndarray:
-        # explicit log transform used by singlet/debris gates
+        """Apply ``log1p`` after float32 conversion.
+
+        Parameters
+        ----------
+        x : numpy.ndarray
+            Input values.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``log1p``-transformed values as ``float32``.
+        """
         return np.log1p(np.asarray(x, dtype=np.float32))
 
     def gate_edge_events(
@@ -56,13 +157,45 @@ class QCGater:
         events: np.ndarray,
         mask_in: Optional[np.ndarray] = None,
     ) -> np.ndarray:
-        m = (np.ones(events.shape[0], dtype=bool) if mask_in is None else np.asarray(mask_in, dtype=bool).copy())
+        """Remove events at scatter-channel acquisition boundaries.
+
+        Parameters
+        ----------
+        fcs : FCSFile
+            FCS file object.
+        events : numpy.ndarray
+            Event matrix.
+        mask_in : numpy.ndarray or None, optional
+            Optional input mask. If ``None``, all events are considered.
+
+        Returns
+        -------
+        numpy.ndarray
+            Boolean mask retaining events above zero and below the configured
+            upper edge fraction for available scatter channels.
+        """
+        m = (
+            np.ones(events.shape[0], dtype=bool)
+            if mask_in is None
+            else np.asarray(mask_in, dtype=bool).copy()
+        )
         pnl = self.panel
 
-        for ch in filter(None, [pnl.fsc_a, pnl.ssc_a, getattr(pnl, "fsc_h", None), getattr(pnl, "ssc_h", None)]):
+        for ch in filter(
+            None,
+            [
+                pnl.fsc_a,
+                pnl.ssc_a,
+                getattr(pnl, "fsc_h", None),
+                getattr(pnl, "ssc_h", None),
+            ],
+        ):
             j = self._idx(fcs, ch)
             hi = float(fcs.channels.loc[ch, "pnr"] / fcs.channels.loc[ch, "png"])
-            m &= (events[:, j] > 0.0) & (events[:, j] < (float(self.config.edge.hi_frac) * hi))
+            m &= (events[:, j] > 0.0) & (
+                events[:, j] < (float(self.config.edge.hi_frac) * hi)
+            )
+
         return m
 
     def gate_singlets(
@@ -72,9 +205,24 @@ class QCGater:
         *,
         mode: Optional[SingletMode] = None,
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
-        """
-        Returns:
-          mask_singlets_full_length, info
+        """Gate singlets from FSC-A and FSC-H values.
+
+        Parameters
+        ----------
+        fsc_a : numpy.ndarray
+            Forward-scatter area values.
+        fsc_h : numpy.ndarray
+            Forward-scatter height values.
+        mode : SingletMode or None, optional
+            Singlet gating mode. If ``None``, the configured mode is used.
+
+        Returns
+        -------
+        mask_singlets : numpy.ndarray
+            Boolean singlet mask with the same length as ``fsc_a``.
+        info : dict
+            Diagnostic information about the selected gating method and
+            fallback path, if any.
         """
         cfg = self.config
         mode_use: SingletMode = mode or cfg.singlet.mode
@@ -85,11 +233,16 @@ class QCGater:
         if np.any(valid):
             q = float(cfg.singlet.min_fsc_quantile)
             cut = float(np.quantile(fsc_a[valid], q))
-            valid &= (fsc_a >= cut)
+            valid &= fsc_a >= cut
 
         n_valid = int(np.sum(valid))
+
         if n_valid < int(cfg.singlet.min_events):
-            return valid, {"mode_used": "fallback_valid", "reason": "too_few_valid", "n_valid": n_valid}
+            return valid, {
+                "mode_used": "fallback_valid",
+                "reason": "too_few_valid",
+                "n_valid": n_valid,
+            }
 
         if mode_use == "hybrid":
             try:
@@ -113,9 +266,6 @@ class QCGater:
 
         return self.gate_singlets_mad(fsc_a, fsc_h, valid=valid)
 
-    # -------------------------
-    # MAD singlets
-    # -------------------------
     def gate_singlets_mad(
         self,
         fsc_a: np.ndarray,
@@ -123,9 +273,24 @@ class QCGater:
         *,
         valid: np.ndarray,
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
-        """
-        Stable for FSC-A/FSC-H:
-          r = log1p(FSC-H) - log1p(FSC-A)
+        """Gate singlets using a MAD band on log-transformed FSC values.
+
+        Parameters
+        ----------
+        fsc_a : numpy.ndarray
+            Forward-scatter area values.
+        fsc_h : numpy.ndarray
+            Forward-scatter height values.
+        valid : numpy.ndarray
+            Boolean mask defining events eligible for singlet gating.
+
+        Returns
+        -------
+        mask_singlets : numpy.ndarray
+            Boolean singlet mask with the same length as ``valid``.
+        info : dict
+            Diagnostic information, including median, MAD, MAD multiplier, and
+            retained fraction when available.
         """
         cfg = self.config
         x = self._log1p_f32(fsc_a[valid])
@@ -137,6 +302,7 @@ class QCGater:
 
         r_med = float(np.median(r))
         r_mad = float(self._mad(r))
+
         if r_mad <= 0.0 or not np.isfinite(r_mad):
             return valid, {"mode_used": "mad", "reason": "mad_zero_or_bad"}
 
@@ -149,6 +315,7 @@ class QCGater:
         out[idx] = (r >= lo) & (r <= hi)
 
         keep_frac = float(np.mean(out[valid])) if np.any(valid) else 0.0
+
         return out, {
             "mode_used": "mad",
             "r_med": r_med,
@@ -157,9 +324,6 @@ class QCGater:
             "keep_frac": keep_frac,
         }
 
-    # -------------------------
-    # GMM singlets
-    # -------------------------
     def gate_singlets_gmm(
         self,
         fsc_a: np.ndarray,
@@ -167,11 +331,30 @@ class QCGater:
         *,
         valid: np.ndarray,
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
-        """
-        2D GMM in log space.
-        Robust component selection for your plots:
-          - pick the component with higher median log(FSC-A)
-          - use diagonal alignment only as a tie-break
+        """Gate singlets using a Gaussian mixture model.
+
+        Parameters
+        ----------
+        fsc_a : numpy.ndarray
+            Forward-scatter area values.
+        fsc_h : numpy.ndarray
+            Forward-scatter height values.
+        valid : numpy.ndarray
+            Boolean mask defining events eligible for singlet gating.
+
+        Returns
+        -------
+        mask_singlets : numpy.ndarray
+            Boolean singlet mask with the same length as ``valid``.
+        info : dict
+            Diagnostic information about model configuration, selected
+            component, component metrics, and retained fraction.
+
+        Notes
+        -----
+        The model is fitted in two-dimensional log space. The selected component
+        is primarily the component with the highest median log FSC-A value, with
+        diagonal alignment used as a tie-breaker.
         """
         cfg = self.config
         rng = np.random.default_rng(int(getattr(cfg, "random_state", 0)))
@@ -181,8 +364,13 @@ class QCGater:
         X = np.column_stack([x, y]).astype(np.float32, copy=False)
 
         n = int(X.shape[0])
+
         if n < int(cfg.singlet.gmm_min_events):
-            return valid, {"mode_used": "gmm_fallback_valid", "reason": "too_few_events", "n": n}
+            return valid, {
+                "mode_used": "gmm_fallback_valid",
+                "reason": "too_few_events",
+                "n": n,
+            }
 
         sub_k = int(cfg.singlet.gmm_subsample)
         sub_idx = self._subsample_idx(n, sub_k, rng)
@@ -200,10 +388,9 @@ class QCGater:
         )
         gmm.fit(X_sub)
 
-        resp = gmm.predict_proba(X)  # (n, K)
+        resp = gmm.predict_proba(X)
         hard = np.argmax(resp, axis=1)
 
-        # per-component metrics
         med_a = np.full(K, -np.inf, dtype=np.float32)
         frac = np.zeros(K, dtype=np.float32)
         align = np.full(K, -np.inf, dtype=np.float32)
@@ -212,28 +399,27 @@ class QCGater:
         diag /= np.linalg.norm(diag)
 
         for k in range(K):
-            sel = (hard == k)
+            sel = hard == k
+
             if not np.any(sel):
                 continue
+
             frac[k] = float(np.mean(sel))
             med_a[k] = float(np.median(X[sel, 0]))
 
-            # diagonal alignment from covariance (component-specific covariance is best,
-            # but we can estimate from assigned points; stable enough)
             C = np.cov(X[sel].T)
             w, v = np.linalg.eigh(C)
             v_max = v[:, int(np.argmax(w))]
             v_max = v_max / (np.linalg.norm(v_max) + 1e-12)
             align[k] = float(abs(np.dot(v_max, diag)))
 
-        # choose component:
-        # mainly highest med_a; if very close, use align.
         k_star = int(np.argmax(med_a))
+
         if K > 1:
             best = float(med_a[k_star])
-            # if another component within delta, pick higher alignment
             delta = float(cfg.singlet.gmm_med_a_tie_delta)
             close = np.flatnonzero((med_a >= (best - delta)) & np.isfinite(med_a))
+
             if close.size > 1:
                 k_star = int(close[np.argmax(align[close])])
 
@@ -244,13 +430,11 @@ class QCGater:
         min_keep = float(cfg.singlet.min_keep_fraction)
         max_keep = float(cfg.singlet.max_keep_fraction)
 
-        # if responsibility threshold is too strict/lenient, fall back to hard assignment
-        if (keep_frac_local < min_keep) or (keep_frac_local > max_keep):
-            keep_local = (hard == k_star)
+        if keep_frac_local < min_keep or keep_frac_local > max_keep:
+            keep_local = hard == k_star
             keep_frac_local = float(np.mean(keep_local)) if keep_local.size else 0.0
 
-        # if still bad, fall back to valid
-        if (keep_frac_local < min_keep) or (keep_frac_local > max_keep):
+        if keep_frac_local < min_keep or keep_frac_local > max_keep:
             return valid, {
                 "mode_used": "gmm_fallback_valid",
                 "reason": "keep_frac_out_of_bounds",
@@ -285,9 +469,6 @@ class QCGater:
             "thresholded": True,
         }
 
-    # -------------------------
-    # Hybrid: MAD screen then GMM
-    # -------------------------
     def gate_singlets_hybrid(
         self,
         fsc_a: np.ndarray,
@@ -295,26 +476,44 @@ class QCGater:
         *,
         valid: np.ndarray,
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
-        """
-        Hybrid (reversed):
-          Stage 1: GMM in log space to remove the "bad cloud" (coarse).
-          Stage 2: tight MAD band (log-diff) on the GMM-kept events (fine).
+        """Gate singlets with GMM followed by a tightened MAD band.
 
-        Fallbacks:
-          - If GMM fails -> MAD on `valid`.
-          - If GMM result looks unreasonable -> MAD on `valid`.
-          - If MAD-on-GMM is unreasonable -> return GMM-only mask.
+        Parameters
+        ----------
+        fsc_a : numpy.ndarray
+            Forward-scatter area values.
+        fsc_h : numpy.ndarray
+            Forward-scatter height values.
+        valid : numpy.ndarray
+            Boolean mask defining events eligible for singlet gating.
+
+        Returns
+        -------
+        mask_singlets : numpy.ndarray
+            Boolean singlet mask with the same length as ``valid``.
+        info : dict
+            Diagnostic information for both stages and fallback decisions.
+
+        Notes
+        -----
+        Stage 1 uses GMM gating in log space. Stage 2 applies a MAD band to the
+        GMM-kept events. If either stage gives an out-of-bounds retained
+        fraction, the method returns the fallback mask recorded in ``info``.
         """
         cfg = self.config
 
-        # -------------------------
-        # Stage 1: GMM (coarse)
-        # -------------------------
         try:
-            mask_gmm, info_gmm = self.gate_singlets_gmm(fsc_a, fsc_h, valid=valid)
+            mask_gmm, info_gmm = self.gate_singlets_gmm(
+                fsc_a,
+                fsc_h,
+                valid=valid,
+            )
         except Exception as e:
-            # hard fallback: MAD on valid
-            m_mad, info_mad = self.gate_singlets_mad(fsc_a, fsc_h, valid=valid)
+            m_mad, info_mad = self.gate_singlets_mad(
+                fsc_a,
+                fsc_h,
+                valid=valid,
+            )
             return m_mad, {
                 "mode_used": "hybrid",
                 "stage": "fallback_mad_only",
@@ -323,14 +522,16 @@ class QCGater:
                 "mad_info": info_mad,
             }
 
-        # sanity check for stage1 keep fraction
         keep1 = float(np.mean(mask_gmm[valid])) if np.any(valid) else 0.0
         min_keep = float(cfg.singlet.min_keep_fraction)
         max_keep = float(cfg.singlet.max_keep_fraction)
 
-        if (keep1 < min_keep) or (keep1 > max_keep):
-            # fallback: MAD on valid (GMM did something weird)
-            m_mad, info_mad = self.gate_singlets_mad(fsc_a, fsc_h, valid=valid)
+        if keep1 < min_keep or keep1 > max_keep:
+            m_mad, info_mad = self.gate_singlets_mad(
+                fsc_a,
+                fsc_h,
+                valid=valid,
+            )
             return m_mad, {
                 "mode_used": "hybrid",
                 "stage": "fallback_mad_only",
@@ -342,9 +543,9 @@ class QCGater:
                 "mad_info": info_mad,
             }
 
-        # If too few points after GMM, don't attempt MAD tightening.
         min_after = int(cfg.singlet.min_events)
         n_after = int(np.sum(mask_gmm))
+
         if n_after < min_after:
             return mask_gmm, {
                 "mode_used": "hybrid",
@@ -356,10 +557,6 @@ class QCGater:
                 "gmm_info": info_gmm,
             }
 
-        # -------------------------
-        # Stage 2: tight MAD (fine)
-        # -------------------------
-        # Use a separate knob if present; otherwise use singlet_k_mad (tight).
         k_tight = float(cfg.singlet.hybrid_k_mad)
 
         x = self._log1p_f32(fsc_a[mask_gmm])
@@ -377,6 +574,7 @@ class QCGater:
 
         r_med = float(np.median(r))
         r_mad = float(self._mad(r))
+
         if r_mad <= 0.0 or not np.isfinite(r_mad):
             return mask_gmm, {
                 "mode_used": "hybrid",
@@ -389,19 +587,16 @@ class QCGater:
         lo = r_med - k_tight * r_mad
         hi = r_med + k_tight * r_mad
 
-        # Map stage2 result back to full length mask
         out = np.zeros_like(valid, dtype=bool)
         idx_gmm = np.flatnonzero(mask_gmm)
         keep2_local = (r >= lo) & (r <= hi)
         out[idx_gmm] = keep2_local
 
-        # Sanity check: stage2 should not destroy everything
         keep2_rel = float(np.mean(out[mask_gmm])) if np.any(mask_gmm) else 0.0
-        # Accept stage2 if it keeps a reasonable fraction of the GMM-kept points
         min_keep2_rel = float(cfg.singlet.hybrid_min_keep_rel)
         max_keep2_rel = float(cfg.singlet.hybrid_max_keep_rel)
 
-        if (keep2_rel < min_keep2_rel) or (keep2_rel > max_keep2_rel):
+        if keep2_rel < min_keep2_rel or keep2_rel > max_keep2_rel:
             return mask_gmm, {
                 "mode_used": "hybrid",
                 "stage": "fallback_gmm_only",
@@ -415,7 +610,6 @@ class QCGater:
                 "gmm_info": info_gmm,
             }
 
-        # Final overall keep fraction (relative to `valid`)
         keep_final = float(np.mean(out[valid])) if np.any(valid) else 0.0
 
         return out, {
@@ -431,25 +625,48 @@ class QCGater:
             "gmm_info": info_gmm,
         }
 
-
     def compute_qc(
         self,
-        fcs: FCSFile, *,
-        singlet_mode: Optional[SingletMode] = None
+        fcs: FCSFile,
+        *,
+        singlet_mode: Optional[SingletMode] = None,
     ) -> QCResult:
+        """Compute QC masks for one FCS file.
+
+        Parameters
+        ----------
+        fcs : FCSFile
+            FCS file object.
+        singlet_mode : SingletMode or None, optional
+            Optional singlet mode override.
+
+        Returns
+        -------
+        QCResult
+            QC result containing events, edge mask, optional singlet mask, final
+            QC mask, and notes.
+
+        Raises
+        ------
+        ValueError
+            If the configured event source returns ``None``.
+        """
         key = (id(fcs), self._cfg_token, singlet_mode)
         hit = self._cache.get(key)
+
         if hit is not None:
             return hit
 
         notes: List[str] = []
         events = self._events(fcs)
+
         if events is None:
             raise ValueError(f"get_events('{self.config.event_source}') returned None.")
 
         mask_edge = self.gate_edge_events(fcs, events)
 
         mask_sing: Optional[np.ndarray] = None
+
         if self.panel.fsc_a and self.panel.fsc_h:
             try:
                 ia = self._idx(fcs, self.panel.fsc_a)
@@ -464,16 +681,19 @@ class QCGater:
                 )
                 mask_sing = np.asarray(mask_sing_raw, dtype=bool) & mask_edge
 
-                # optional: keep your fallback preference visible
                 notes.append(f"Singlets: {info.get('mode_used')}")
+
                 if info.get("fallback_from"):
-                    notes.append(f"Singlets fallback from {info.get('fallback_from')}: {info.get('fallback_error')}")
+                    notes.append(
+                        f"Singlets fallback from {info.get('fallback_from')}: "
+                        f"{info.get('fallback_error')}"
+                    )
 
             except Exception as e:
                 notes.append(f"Singlets skipped: {e}")
                 mask_sing = None
 
-        mask_qc = (mask_sing.copy() if mask_sing is not None else mask_edge.copy())
+        mask_qc = mask_sing.copy() if mask_sing is not None else mask_edge.copy()
 
         out = QCResult(
             events=events,
@@ -483,5 +703,5 @@ class QCGater:
             notes=notes,
         )
         self._cache[key] = out
-        return out
 
+        return out

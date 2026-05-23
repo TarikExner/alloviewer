@@ -107,5 +107,3 @@ Links
    installation
    api_flow_cytometry/index
    api_image_analysis/index
-   dev_code/index
-   tutorials/index

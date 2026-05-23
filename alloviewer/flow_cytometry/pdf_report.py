@@ -34,10 +34,6 @@ from .scoring import ScoreRule, RatioRule, pct_to_score_verdict, ratio_to_score_
 from .plots import build_results_response_from_cache
 
 
-# -------------------------
-# Config (edit these later)
-# -------------------------
-
 # Gating dot plots (match frontend defaults)
 PLOT_POINT_COLOR = "#64748b"  # out-of-gate fill
 PLOT_GATE_COLOR = "#22c55e"   # in-gate fill
@@ -72,10 +68,6 @@ class ReportMeta:
     positivity_threshold: Optional[float] = None
 
 
-# -------------------------
-# Page sizes
-# -------------------------
-
 def _safe_pagesizes() -> tuple[tuple[float, float], tuple[float, float]]:
     """Return (portrait, landscape) that fits within both A4 and Letter."""
     a4w, a4h = A4
@@ -93,10 +85,6 @@ def _pagesizes(mode: str) -> tuple[tuple[float, float], tuple[float, float]]:
         return (LETTER, (LETTER[1], LETTER[0]))
     return _safe_pagesizes()
 
-
-# -------------------------
-# Formatting helpers
-# -------------------------
 
 def _fig_to_png_bytes(fig: plt.Figure, dpi: int = 150) -> bytes:
     try:

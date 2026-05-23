@@ -11,6 +11,19 @@ CORE_GATES = ("All Cells", "Singlets", "Lymphocytes")
 
 
 def norm_path(p: str) -> str:
+    """Normalize a path for stable dictionary lookups.
+
+    Parameters
+    ----------
+    p : str
+        Input path.
+
+    Returns
+    -------
+    str
+        Normalized absolute path when resolution succeeds. If resolution fails,
+        returns a normalized version of the original path string.
+    """
     try:
         return os.path.normcase(os.path.normpath(str(Path(p).resolve())))
     except Exception:
@@ -18,6 +31,19 @@ def norm_path(p: str) -> str:
 
 
 def sanitize_array(a: np.ndarray) -> np.ndarray:
+    """Convert an array to finite float32 values.
+
+    Parameters
+    ----------
+    a : numpy.ndarray
+        Input array.
+
+    Returns
+    -------
+    numpy.ndarray
+        Float32 array where NaN, positive infinity, and negative infinity are
+        replaced by ``0.0``.
+    """
     return np.nan_to_num(
         a.astype(np.float32, copy=False),
         nan=0.0,
@@ -27,6 +53,18 @@ def sanitize_array(a: np.ndarray) -> np.ndarray:
 
 
 def as_list_finite(a: np.ndarray) -> List[float]:
+    """Convert an array to a finite Python list.
+
+    Parameters
+    ----------
+    a : numpy.ndarray
+        Input array.
+
+    Returns
+    -------
+    list of float
+        Sanitized array values as a list.
+    """
     return sanitize_array(a).tolist()
 
 
@@ -35,6 +73,22 @@ def downsample_idx(
     max_points: int,
     rng: np.random.Generator,
 ) -> np.ndarray:
+    """Return indices for optional random downsampling.
+
+    Parameters
+    ----------
+    n : int
+        Total number of available points.
+    max_points : int
+        Maximum number of returned indices.
+    rng : numpy.random.Generator
+        Random number generator used for sampling.
+
+    Returns
+    -------
+    numpy.ndarray
+        Integer indices. If ``n <= max_points``, all indices are returned.
+    """
     if n <= max_points:
         return np.arange(n, dtype=int)
 
@@ -46,6 +100,22 @@ def simpoints(
     y: np.ndarray,
     in_gate: np.ndarray,
 ) -> List[Dict[str, Any]]:
+    """Build serializable scatter-plot points.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        X-axis values.
+    y : numpy.ndarray
+        Y-axis values.
+    in_gate : numpy.ndarray
+        Boolean mask indicating whether each point is in the selected gate.
+
+    Returns
+    -------
+    list of dict
+        List of point dictionaries with ``"x"``, ``"y"``, and ``"inGate"``.
+    """
     x2 = sanitize_array(x)
     y2 = sanitize_array(y)
     g2 = in_gate.astype(bool, copy=False)
@@ -57,6 +127,20 @@ def simpoints(
 
 
 def population_result_to_dict(p, display_label_fn) -> Dict[str, Any]:
+    """Convert a population result to a serializable dictionary.
+
+    Parameters
+    ----------
+    p : Any
+        Population result object with IgG metric attributes.
+    display_label_fn : callable
+        Function used to convert internal labels to display labels.
+
+    Returns
+    -------
+    dict
+        Serialized population metrics.
+    """
     return {
         "label": display_label_fn(p.label),
         "n_events": int(p.n_events),
@@ -78,12 +162,29 @@ def build_label_maps(
     fitted,
     marker_to_population: Dict[str, str],
 ) -> tuple[List[str], Dict[str, str], Dict[str, str], Dict[str, str]]:
-    """
-    Returns:
-      - pop_labels
-      - label_to_marker: frontend population label -> internal marker name
-      - marker_to_label: internal marker name -> frontend population label
-      - marker_to_pop: internal marker name -> frontend population label
+    """Build display labels and marker lookup maps.
+
+    Parameters
+    ----------
+    fitted : Any
+        Fitted analysis object containing a panel with marker mappings.
+    marker_to_population : dict
+        Mapping from internal marker names to requested population labels.
+
+    Returns
+    -------
+    pop_labels : list of str
+        Population labels for display.
+    label_to_marker : dict
+        Mapping from display population label to internal marker name.
+    marker_to_label : dict
+        Mapping from internal marker name to display population label.
+    marker_to_pop : dict
+        Mapping from internal marker name to display population label.
+
+    Notes
+    -----
+    Duplicate population labels are made unique by appending the marker name.
     """
     marker_names = list((fitted.panel.markers or {}).keys())
 
@@ -102,11 +203,13 @@ def build_label_maps(
         label_to_marker[label] = marker_name
 
     marker_to_label: Dict[str, str] = {
-        marker_name: label for label, marker_name in label_to_marker.items()
+        marker_name: label
+        for label, marker_name in label_to_marker.items()
     }
 
     marker_to_pop: Dict[str, str] = {
-        marker_name: label for label, marker_name in label_to_marker.items()
+        marker_name: label
+        for label, marker_name in label_to_marker.items()
     }
 
     return pop_labels, label_to_marker, marker_to_label, marker_to_pop
@@ -116,6 +219,20 @@ def build_gate_options(
     fitted,
     pop_labels: List[str],
 ) -> List[str]:
+    """Build selectable gate labels.
+
+    Parameters
+    ----------
+    fitted : Any
+        Fitted analysis object containing panel scatter-channel assignments.
+    pop_labels : list of str
+        Population labels to add after core gates.
+
+    Returns
+    -------
+    list of str
+        Gate labels for display and downstream selection.
+    """
     can_singlets = bool(fitted.panel.fsc_a and fitted.panel.fsc_h)
 
     gate_options: List[str] = ["All Cells"]
@@ -130,7 +247,32 @@ def build_gate_options(
 
 
 def make_display_label_fn(marker_to_label: Dict[str, str]):
+    """Create a function that maps internal labels to display labels.
+
+    Parameters
+    ----------
+    marker_to_label : dict
+        Mapping from internal marker names to display labels.
+
+    Returns
+    -------
+    callable
+        Function accepting a label string and returning its display label.
+    """
+
     def display_label(label: str) -> str:
+        """Return a display label for an internal population label.
+
+        Parameters
+        ----------
+        label : str
+            Internal label.
+
+        Returns
+        -------
+        str
+            Display label.
+        """
         if label in CORE_GATES:
             return label
 
@@ -145,6 +287,22 @@ def build_cutoff_by_gate(
     gate_options: List[str],
     label_to_marker: Dict[str, str],
 ) -> Dict[str, float]:
+    """Build IgG cutoff values keyed by display gate label.
+
+    Parameters
+    ----------
+    fitted : Any
+        Fitted analysis object with ``igg_cutoff_by_gate``.
+    gate_options : list of str
+        Display gate labels.
+    label_to_marker : dict
+        Mapping from display population labels to internal marker names.
+
+    Returns
+    -------
+    dict
+        Mapping from display gate label to IgG cutoff.
+    """
     cutoff_by_gate: Dict[str, float] = {}
 
     for gate in gate_options:
@@ -165,6 +323,25 @@ def build_metrics_maps(
     results,
     marker_to_label: Dict[str, str],
 ) -> tuple[Dict[str, Dict[str, Dict[str, Any]]], Dict[str, Dict[str, Dict[str, Any]]]]:
+    """Build sample-level and file-level metric lookup maps.
+
+    Parameters
+    ----------
+    ds : Any
+        Dataset object with samples and file paths.
+    results : iterable
+        Analysis results aligned with ``ds.samples``.
+    marker_to_label : dict
+        Mapping from internal marker names to display labels.
+
+    Returns
+    -------
+    sample_combined_metrics_by_name : dict
+        Nested mapping from sample name to display population label to metrics.
+    file_metrics_by_key : dict
+        Nested mapping from normalized file path to display population label to
+        metrics.
+    """
     display_label = make_display_label_fn(marker_to_label)
 
     sample_combined_metrics_by_name: Dict[str, Dict[str, Dict[str, Any]]] = {}
@@ -189,14 +366,20 @@ def build_metrics_maps(
 
 
 def gate_mask_downsampled(entry: Dict[str, Any], gate: str) -> np.ndarray:
-    """
-    Downsampled mask for the selected end-gate.
+    """Return the downsampled mask for a selected gate.
 
-    Gate options include:
-      - All Cells
-      - Singlets
-      - Lymphocytes
-      - population labels
+    Parameters
+    ----------
+    entry : dict
+        Plot-cache entry containing masks and marker-positive arrays.
+    gate : str
+        Selected gate label.
+
+    Returns
+    -------
+    numpy.ndarray
+        Boolean mask for the selected gate. Unknown population gates fall back
+        to the lymphocyte mask.
     """
     n = len(entry["igg"])
     all_true = np.ones(n, dtype=bool)
@@ -213,6 +396,7 @@ def gate_mask_downsampled(entry: Dict[str, Any], gate: str) -> np.ndarray:
     if gate == "Singlets":
         if mask_sing is None:
             return mask_all
+
         return np.asarray(mask_sing, dtype=bool)
 
     if gate == "Lymphocytes":
@@ -245,6 +429,37 @@ def collect_plot_series(
     max_points_final: int,
     max_line_values: int,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Collect scatter and line-series data for a plot.
+
+    Parameters
+    ----------
+    plot_cache : dict
+        Cache of downsampled per-file plot data.
+    selected_key : str
+        Cache key for the selected file.
+    gate : str
+        Selected gate label.
+    role : str
+        Sample role used when aggregating across files.
+    label : str
+        Display label for the returned series.
+    color : str
+        Display color for the returned series.
+    only_selected : bool
+        If ``True``, use only ``selected_key``. If ``False``, combine all cache
+        entries with the requested role.
+    max_points_final : int
+        Maximum number of scatter points returned.
+    max_line_values : int
+        Maximum number of line values returned.
+
+    Returns
+    -------
+    scatter : dict
+        Scatter-series data with points and summary counts.
+    line : dict
+        Line-series data with IgG values and summary counts.
+    """
     if only_selected:
         keys = [selected_key]
     else:
@@ -338,6 +553,20 @@ def collect_plot_series(
 
 
 def population_x_label(pop_label: str, pop_to_marker: Dict[str, str]) -> str:
+    """Build an x-axis label for a population marker plot.
+
+    Parameters
+    ----------
+    pop_label : str
+        Display population label.
+    pop_to_marker : dict
+        Mapping from display population label to internal marker name.
+
+    Returns
+    -------
+    str
+        Marker label for the x-axis.
+    """
     pop_label = (pop_label or "").strip()
     marker = (pop_to_marker.get(pop_label) or "").strip()
 

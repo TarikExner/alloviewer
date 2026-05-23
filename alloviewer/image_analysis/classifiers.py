@@ -56,11 +56,6 @@ class ROIClassifier:
     The classifier labels an ROI as ``"pos"`` when its red/green ratio is
     greater than or equal to the threshold, and ``"neg"`` otherwise.
 
-    Notes
-    -----
-    This class overlaps with :class:`ROIClassifierMedianRG`. Keeping both may
-    be intentional for compatibility, but the duplicate logic is worth cleaning
-    up if no external code depends on both names.
     """
 
     def __init__(self, calib: Optional[Dict[str, Any]] = None):
