@@ -28,8 +28,6 @@ Documentation:
 
 [https://alloviewer.readthedocs.io](https://alloviewer.readthedocs.io)
 
-The documentation page is planned but may not yet be reachable.
-
 Video tutorials:
 
 [AlloViewer video tutorials](https://www.youtube.com/@AlloViewer)
