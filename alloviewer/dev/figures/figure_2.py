@@ -666,7 +666,7 @@ def _generate_main_figure(
 
         ax_img_c4 = fig.add_subplot(fig_sgs[0, 0])
         ax_img_c4.imshow(np.rot90(well_c4.image.transpose((1, 2, 0))))
-        ax_img_c4.set_title(f"Well {well_id_c4} image", fontsize=cfg.TITLE_SIZE)
+        ax_img_c4.set_title(f"Patient Sample Well", fontsize=cfg.TITLE_SIZE)
         ax_img_c4.set_xticks([])
         ax_img_c4.set_yticks([])
 

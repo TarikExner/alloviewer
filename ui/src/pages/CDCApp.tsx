@@ -17,7 +17,6 @@ import {
 import { runProcess, fetchProgress, type BackendProgress } from "../api/cdc";
 import { API_BASE } from "../App";
 import {
-  getUploadedFilename,
   normalizeSavedNames,
   sameFiles,
   sameStringArray,
@@ -243,11 +242,13 @@ export default function CDCApp() {
 
     const wellToFileAtRun = buildWellToFileMap(imageOrder, imageSavedNames);
 
-    if (!hlaLayoutUploadId) {
-      throw new Error("PRA requires a parsed HLA Excel layout before processing.");
-    }
 
     try {
+
+      if (!hlaLayoutUploadId) {
+        throw new Error("PRA requires a parsed HLA Excel layout before processing.");
+      }
+
       const { job_id } = await runProcess(wells, imageOrder, {
         templateFilename: null,
         imageFilenames: imageSavedNames,
