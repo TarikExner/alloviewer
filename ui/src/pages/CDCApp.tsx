@@ -14,7 +14,12 @@ import {
   type WellID,
   type WellMap,
 } from "../types";
-import { runProcess, fetchProgress, type BackendProgress } from "../api/cdc";
+import {
+  runProcess,
+  fetchProgress,
+  downloadCDCSummaryPdf,
+  type BackendProgress,
+} from "../api/cdc";
 import { API_BASE } from "../App";
 import {
   normalizeSavedNames,
@@ -43,7 +48,9 @@ export default function CDCApp() {
   const [flip, setFlip] = useState(true);
 
   const [layout, setLayout] = useState<any | null>(null);
-  const [hlaLayoutUploadId, setHlaLayoutUploadId] = useState<string | null>(null);
+  const [hlaLayoutUploadId, setHlaLayoutUploadId] = useState<string | null>(
+    null
+  );
 
   const [uploadResetKey, setUploadResetKey] = useState(0);
 
@@ -70,20 +77,24 @@ export default function CDCApp() {
   const [plateVisited, setPlateVisited] = useState(false);
   const [autoJumpedToPlate, setAutoJumpedToPlate] = useState(false);
 
+  const [processJobId, setProcessJobId] = useState<string | null>(null);
+  const [summaryBusy, setSummaryBusy] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+
   useEffect(() => {
     setWells(buildDefaultCDC());
   }, []);
 
   const handleLayoutUploaded = useCallback((saved: any[]) => {
     const first = saved?.[0] ?? null;
-  
+
     setLayout(first);
     setHlaLayoutUploadId(first?.upload_id ?? null);
-  
+
     setPlateVisited(false);
     setAutoJumpedToPlate(false);
   }, []);
-  
+
   const handleImagesPicked = useCallback((files: File[]) => {
     const validFiles = files.filter((file) => file.type.startsWith("image/"));
 
@@ -184,6 +195,9 @@ export default function CDCApp() {
     imageOrder.length > 0 &&
     missingImageCount === 0;
 
+  const canDownloadSummary =
+    jobStatus === "done" && !!processJobId && !summaryBusy;
+
   useEffect(() => {
     if (autoJumpedToPlate) return;
     if (!hasLayout) return;
@@ -226,6 +240,25 @@ export default function CDCApp() {
     setActiveStep(1);
     setPlateVisited(false);
     setAutoJumpedToPlate(false);
+
+    setProcessJobId(null);
+    setSummaryBusy(false);
+    setSummaryError(null);
+  }
+
+  async function onDownloadSummary() {
+    if (!processJobId) return;
+
+    setSummaryBusy(true);
+    setSummaryError(null);
+
+    try {
+      await downloadCDCSummaryPdf(processJobId);
+    } catch (err: any) {
+      setSummaryError(err?.message || "Could not download summary PDF.");
+    } finally {
+      setSummaryBusy(false);
+    }
   }
 
   async function onRun() {
@@ -240,13 +273,17 @@ export default function CDCApp() {
     setImageScores({});
     setJobStage(null);
 
+    setProcessJobId(null);
+    setSummaryBusy(false);
+    setSummaryError(null);
+
     const wellToFileAtRun = buildWellToFileMap(imageOrder, imageSavedNames);
 
-
     try {
-
       if (!hlaLayoutUploadId) {
-        throw new Error("PRA requires a parsed HLA Excel layout before processing.");
+        throw new Error(
+          "PRA requires a parsed HLA Excel layout before processing."
+        );
       }
 
       const { job_id } = await runProcess(wells, imageOrder, {
@@ -256,6 +293,8 @@ export default function CDCApp() {
         hlaLayoutUploadId,
         praPositivityThreshold: 20,
       });
+
+      setProcessJobId(job_id);
 
       const poll = async () => {
         try {
@@ -714,9 +753,32 @@ export default function CDCApp() {
 
             <div className="space-y-4">
               <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4">
-                <div className="font-medium mb-3">
-                  {t("cdc_app.summary_values.title")}
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div>
+                    <div className="font-medium">
+                      {t("cdc_app.summary_values.title")}
+                    </div>
+
+                    {summaryError ? (
+                      <div className="mt-1 text-xs text-red-600 dark:text-red-400">
+                        {summaryError}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={onDownloadSummary}
+                    disabled={!canDownloadSummary}
+                    className="shrink-0 rounded-xl border px-3 py-2 text-sm
+                               bg-white hover:bg-neutral-50 disabled:opacity-50
+                               dark:bg-neutral-900 dark:hover:bg-neutral-800
+                               dark:border-neutral-700 dark:text-neutral-200"
+                  >
+                    {summaryBusy ? "Preparing PDF..." : "Download Summary"}
+                  </button>
                 </div>
+
                 <PRASummaryGrid summary={summary} result={proc} />
               </div>
 

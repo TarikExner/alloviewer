@@ -19,7 +19,10 @@ from .utils import (
     save_segmented_preview,
     to_jsonable,
 )
-from .services.analysis import calculate_allele_reactivity_evidence, calculate_pra_reactivity_score
+from .services.analysis import (
+    calculate_allele_reactivity_evidence,
+    calculate_pra_reactivity_score
+)
 
 from app.models import IMAGE_JOB_PROGRESS, IMAGE_JOB_RESULTS
 
@@ -250,11 +253,15 @@ def run_image_analysis(
                 ),
             }
 
+        role_map = getattr(layout, "wells", {}) or {}
+
         result = {
+            "assay_type": assay_type,
             "calib": calib,
             "wells": {
                 wid: {
                     **wr.summary(),
+                    "role": role_map.get(wid),
                     "segmented_image_url": f"/api/process/{job_id}/segmented/{wid}.png",
                 }
                 for wid, wr in per_well.items()

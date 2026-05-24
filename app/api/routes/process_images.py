@@ -3,9 +3,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
-from alloviewer.image_analysis.pipeline import run_image_analysis
 
 from ...models import (
     IMAGE_JOB_PROGRESS,
@@ -18,6 +17,8 @@ from ...core.settings import settings
 from .plate_layouts import get_repo
 
 from alloviewer.image_analysis.storage.repo import LayoutRepo
+from alloviewer.image_analysis.pipeline import run_image_analysis
+from alloviewer.image_analysis.services.pdf_report import build_cdc_summary_pdf
 
 router = APIRouter(tags=["process"])
 
@@ -94,3 +95,33 @@ async def get_segmented_image(job_id: str, well_id: str):
         raise HTTPException(status_code=404, detail="Segmented image not found")
 
     return FileResponse(path, media_type="image/png")
+
+@router.get("/api/process/{job_id}/summary.pdf")
+async def get_cdc_summary_pdf(job_id: str):
+    progress = IMAGE_JOB_PROGRESS.get(job_id)
+
+    if progress is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if progress.get("status") != "done":
+        raise HTTPException(
+            status_code=409,
+            detail="Summary PDF is only available after the analysis is done.",
+        )
+
+    result = IMAGE_JOB_RESULTS.get(job_id)
+
+    if result is None:
+        raise HTTPException(status_code=404, detail="Result not found")
+
+    pdf = build_cdc_summary_pdf(result=result, job_id=job_id)
+
+    filename = f"cdc_summary_{job_id}.pdf"
+
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
