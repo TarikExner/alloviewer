@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Iterable
 
 import numpy as np
 
@@ -9,7 +9,7 @@ from ..structs import ParsedPlateLayout, WellResult
 
 
 @dataclass
-class AlleleReactivity:
+class AlleleReactivityEvidence:
     allele_key: str
     locus: str
     allele: str
@@ -44,12 +44,14 @@ def _allele_key(locus: str, allele: str) -> str:
     return f"{locus}:{allele}"
 
 
-def _well_positive_value(wr: WellResult) -> Optional[float]:
-    """Return the value used for PRA positivity.
+def _normalize_well_set(well_ids: Optional[Iterable[str]]) -> Optional[set[str]]:
+    if well_ids is None:
+        return None
 
-    Prefer corrected_frac_pos because the pipeline already calibrates each well
-    against positive and negative controls. If it is missing or NaN, return None.
-    """
+    return {str(well_id).upper() for well_id in well_ids}
+
+
+def _well_positive_value(wr: WellResult) -> Optional[float]:
     value = getattr(wr, "corrected_frac_pos", None)
 
     if value is None:
@@ -67,25 +69,23 @@ def calculate_allele_reactivity_evidence(
     per_well: Mapping[str, WellResult],
     hla_layout: ParsedPlateLayout,
     positivity_threshold: float,
+    include_well_ids: Optional[Iterable[str]] = None,
 ) -> list[dict[str, Any]]:
-    """Calculate per-allele PRA reactivity.
+    """Report per-allele PRA reactivity.
 
-    For each HLA allele in the parsed Excel layout, this counts:
-
-    positive wells containing allele / all wells containing allele
-
-    Example:
-        B:27 appears in 3 wells.
-        1 of those wells is positive.
-        Result: B:27 = 1/3.
-
-    This function does not claim antibody fidelity. It reports supporting
-    positive carrier wells and negative carrier wells.
+    Only wells in include_well_ids are considered when provided.
+    For CDC PRA, pass sample wells only. Positive and negative controls should
+    not contribute to allele evidence.
     """
+    included = _normalize_well_set(include_well_ids)
+
     allele_to_wells: dict[str, dict[str, Any]] = {}
 
     for well_id, well_layout in hla_layout.wells.items():
         normalized_well_id = well_id.upper()
+
+        if included is not None and normalized_well_id not in included:
+            continue
 
         for locus, alleles in well_layout.loci.data.items():
             for allele in alleles:
@@ -100,14 +100,12 @@ def calculate_allele_reactivity_evidence(
 
                 allele_to_wells[allele_key]["wells"].append(normalized_well_id)
 
-    evidence: list[AlleleReactivity] = []
-
-    # Normalize result well IDs once. The image pipeline and Excel parser should
-    # both use IDs like A1, B12, etc., but this avoids case errors.
     result_by_well = {
         well_id.upper(): wr
         for well_id, wr in per_well.items()
     }
+
+    evidence: list[AlleleReactivityEvidence] = []
 
     for allele_key, item in allele_to_wells.items():
         carrier_wells = sorted(set(item["wells"]))
@@ -146,7 +144,7 @@ def calculate_allele_reactivity_evidence(
         )
 
         evidence.append(
-            AlleleReactivity(
+            AlleleReactivityEvidence(
                 allele_key=allele_key,
                 locus=item["locus"],
                 allele=item["allele"],
@@ -178,19 +176,24 @@ def calculate_pra_reactivity_score(
     per_well: Mapping[str, WellResult],
     hla_layout: ParsedPlateLayout,
     positivity_threshold: float,
+    include_well_ids: Optional[Iterable[str]] = None,
 ) -> dict[str, Any]:
-    """Calculate a simple overall PRA reactivity score.
+    """Calculate temporary overall PRA reactivity.
 
-    This is intentionally simple for now:
+    Current rule:
 
-        positive tested HLA wells / all tested HLA wells
+        positive tested sample HLA wells / all tested sample HLA wells
 
-    Replace this later once the assay rule is clear.
+    Positive and negative controls are excluded when include_well_ids contains
+    sample wells only.
     """
+    included = _normalize_well_set(include_well_ids)
+
     hla_well_ids = {
         well_id.upper()
         for well_id, well_layout in hla_layout.wells.items()
         if well_layout.loci.data
+        and (included is None or well_id.upper() in included)
     }
 
     result_by_well = {
