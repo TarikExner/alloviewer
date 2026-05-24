@@ -1,157 +1,241 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from dataclasses import asdict, dataclass
+from typing import Any, Mapping, Optional
 
-from ..structs import (
-    AlleleEvidence,
-    AnalysisRequest,
-    AnalysisResult,
-    ParsedPlateLayout,
-    PositivityEntry,
-    Stringency,
-)
+import numpy as np
+
+from ..structs import ParsedPlateLayout, WellResult
+
+
+@dataclass
+class AlleleReactivity:
+    allele_key: str
+    locus: str
+    allele: str
+
+    positive_well_count: int
+    total_well_count: int
+    negative_well_count: int
+
+    positive_fraction: float
+    positive_ratio: str
+
+    positive_wells: list[str]
+    negative_wells: list[str]
+    missing_result_wells: list[str]
+
+    well_values: dict[str, Optional[float]]
+
+
+@dataclass
+class PraReactivityScore:
+    positive_well_count: int
+    total_well_count: int
+    positive_fraction: float
+    score_percent: float
+    threshold: float
+    positive_wells: list[str]
+    negative_wells: list[str]
+    missing_result_wells: list[str]
 
 
 def _allele_key(locus: str, allele: str) -> str:
-    """Create a stable allele key.
-
-    Parameters
-    ----------
-    locus : str
-        Locus name.
-    allele : str
-        Allele or marker name.
-
-    Returns
-    -------
-    str
-        Allele key in ``"{locus}:{allele}"`` format.
-    """
     return f"{locus}:{allele}"
 
 
-def analyze_culprit_alleles(
-    layout: ParsedPlateLayout,
-    positives: List[PositivityEntry],
-    req: AnalysisRequest,
-) -> AnalysisResult:
-    """Infer likely culprit alleles from positive well fractions.
+def _well_positive_value(wr: WellResult) -> Optional[float]:
+    """Return the value used for PRA positivity.
 
-    Parameters
-    ----------
-    layout : ParsedPlateLayout
-        Parsed plate layout containing well-to-locus assignments.
-    positives : list of PositivityEntry
-        Per-well positive fractions. Well IDs are matched case-insensitively by
-        converting these IDs to uppercase.
-    req : AnalysisRequest
-        Analysis request containing the positivity threshold and stringency
-        settings.
-
-    Returns
-    -------
-    AnalysisResult
-        Allele inference result containing retained positive allele evidence,
-        per-well echo data, and analysis notes.
-
-    Notes
-    -----
-    Each allele is scored from wells that carry that allele. Wells at or above
-    ``req.positivity_threshold`` count as full positive support. If relaxed
-    matching is enabled and ``min_alt_threshold`` is set, wells between the
-    relaxed threshold and the main threshold add half support. Negative carrier
-    wells reduce the final score through ``negative_penalty``.
+    Prefer corrected_frac_pos because the pipeline already calibrates each well
+    against positive and negative controls. If it is missing or NaN, return None.
     """
-    pos_map: Dict[str, float] = {
-        p.well_id.upper(): p.positive_fraction
-        for p in positives
-    }
+    value = getattr(wr, "corrected_frac_pos", None)
 
-    carrier_wells: Dict[str, List[str]] = {}
+    if value is None:
+        return None
 
-    for wid, w in layout.wells.items():
-        for locus, alleles in w.loci.data.items():
+    value = float(value)
+
+    if np.isnan(value):
+        return None
+
+    return value
+
+
+def calculate_allele_reactivity_evidence(
+    per_well: Mapping[str, WellResult],
+    hla_layout: ParsedPlateLayout,
+    positivity_threshold: float,
+) -> list[dict[str, Any]]:
+    """Calculate per-allele PRA reactivity.
+
+    For each HLA allele in the parsed Excel layout, this counts:
+
+    positive wells containing allele / all wells containing allele
+
+    Example:
+        B:27 appears in 3 wells.
+        1 of those wells is positive.
+        Result: B:27 = 1/3.
+
+    This function does not claim antibody fidelity. It reports supporting
+    positive carrier wells and negative carrier wells.
+    """
+    allele_to_wells: dict[str, dict[str, Any]] = {}
+
+    for well_id, well_layout in hla_layout.wells.items():
+        normalized_well_id = well_id.upper()
+
+        for locus, alleles in well_layout.loci.data.items():
             for allele in alleles:
-                carrier_wells.setdefault(
-                    _allele_key(locus, allele),
-                    [],
-                ).append(wid)
+                allele_key = _allele_key(locus, allele)
 
-    ev_list: List[AlleleEvidence] = []
-    s: Stringency = req.stringency
-    th = req.positivity_threshold
-    alt_th = s.min_alt_threshold if s.allow_relaxed else None
+                if allele_key not in allele_to_wells:
+                    allele_to_wells[allele_key] = {
+                        "locus": locus,
+                        "allele": allele,
+                        "wells": [],
+                    }
 
-    per_well_echo: Dict[str, Dict[str, Any]] = {
-        wid: {
-            "positive_fraction": pos_map.get(wid, 0.0),
-            "loci": w.loci.data,
-        }
-        for wid, w in layout.wells.items()
+                allele_to_wells[allele_key]["wells"].append(normalized_well_id)
+
+    evidence: list[AlleleReactivity] = []
+
+    # Normalize result well IDs once. The image pipeline and Excel parser should
+    # both use IDs like A1, B12, etc., but this avoids case errors.
+    result_by_well = {
+        well_id.upper(): wr
+        for well_id, wr in per_well.items()
     }
 
-    for allele_key, c_wells in carrier_wells.items():
-        total_with = len(c_wells)
-        pos_count = 0
-        neg_count = 0
-        weighted_support = 0.0
+    for allele_key, item in allele_to_wells.items():
+        carrier_wells = sorted(set(item["wells"]))
 
-        for wid in c_wells:
-            frac = pos_map.get(wid, 0.0)
+        positive_wells: list[str] = []
+        negative_wells: list[str] = []
+        missing_result_wells: list[str] = []
+        well_values: dict[str, Optional[float]] = {}
 
-            if frac >= th:
-                pos_count += 1
-                weighted_support += 1.0
-            elif alt_th is not None and frac >= alt_th:
-                weighted_support += 0.5
+        for well_id in carrier_wells:
+            wr = result_by_well.get(well_id)
+
+            if wr is None:
+                missing_result_wells.append(well_id)
+                well_values[well_id] = None
+                continue
+
+            value = _well_positive_value(wr)
+            well_values[well_id] = value
+
+            if value is None:
+                missing_result_wells.append(well_id)
+            elif value >= positivity_threshold:
+                positive_wells.append(well_id)
             else:
-                neg_count += 1
+                negative_wells.append(well_id)
 
-        positive_fraction = (pos_count / total_with) if total_with else 0.0
-        score = weighted_support - (s.negative_penalty * neg_count)
+        total_well_count = len(carrier_wells)
+        positive_well_count = len(positive_wells)
+        negative_well_count = len(negative_wells)
 
-        ev_list.append(
-            AlleleEvidence(
+        positive_fraction = (
+            positive_well_count / total_well_count
+            if total_well_count > 0
+            else 0.0
+        )
+
+        evidence.append(
+            AlleleReactivity(
                 allele_key=allele_key,
-                supports=pos_count,
-                supports_weighted=weighted_support,
-                total_with_allele=total_with,
-                positive_with_allele=pos_count,
-                negative_with_allele=neg_count,
+                locus=item["locus"],
+                allele=item["allele"],
+                positive_well_count=positive_well_count,
+                total_well_count=total_well_count,
+                negative_well_count=negative_well_count,
                 positive_fraction=positive_fraction,
-                score=score,
+                positive_ratio=f"{positive_well_count}/{total_well_count}",
+                positive_wells=positive_wells,
+                negative_wells=negative_wells,
+                missing_result_wells=missing_result_wells,
+                well_values=well_values,
             )
         )
 
-    kept = [
-        e
-        for e in ev_list
-        if e.supports >= s.min_positive_support
-        and e.positive_fraction >= s.min_positive_fraction
-        and e.score > 0
-    ]
-
-    kept.sort(
-        key=lambda e: (e.score, e.positive_fraction, e.supports),
+    evidence.sort(
+        key=lambda e: (
+            e.positive_well_count,
+            e.positive_fraction,
+            e.total_well_count,
+        ),
         reverse=True,
     )
 
-    notes = [
-        f"Threshold: {th:.2f}",
-        *(
-            [f"Relaxed threshold: {alt_th:.2f} (half weight)"]
-            if alt_th is not None
-            else []
-        ),
-        f"Min positive fraction: {s.min_positive_fraction:.2f}",
-        f"Min positive support: {s.min_positive_support}",
-        f"Negative penalty: {s.negative_penalty:.2f}",
-    ]
+    return [asdict(e) for e in evidence]
 
-    return AnalysisResult(
-        upload_id=layout.upload_id,
-        positivity_threshold=th,
-        inferred_positive_alleles=kept,
-        per_well=per_well_echo,
-        notes=notes,
+
+def calculate_pra_reactivity_score(
+    per_well: Mapping[str, WellResult],
+    hla_layout: ParsedPlateLayout,
+    positivity_threshold: float,
+) -> dict[str, Any]:
+    """Calculate a simple overall PRA reactivity score.
+
+    This is intentionally simple for now:
+
+        positive tested HLA wells / all tested HLA wells
+
+    Replace this later once the assay rule is clear.
+    """
+    hla_well_ids = {
+        well_id.upper()
+        for well_id, well_layout in hla_layout.wells.items()
+        if well_layout.loci.data
+    }
+
+    result_by_well = {
+        well_id.upper(): wr
+        for well_id, wr in per_well.items()
+    }
+
+    positive_wells: list[str] = []
+    negative_wells: list[str] = []
+    missing_result_wells: list[str] = []
+
+    for well_id in sorted(hla_well_ids):
+        wr = result_by_well.get(well_id)
+
+        if wr is None:
+            missing_result_wells.append(well_id)
+            continue
+
+        value = _well_positive_value(wr)
+
+        if value is None:
+            missing_result_wells.append(well_id)
+        elif value >= positivity_threshold:
+            positive_wells.append(well_id)
+        else:
+            negative_wells.append(well_id)
+
+    total_well_count = len(hla_well_ids)
+    positive_well_count = len(positive_wells)
+
+    positive_fraction = (
+        positive_well_count / total_well_count
+        if total_well_count > 0
+        else 0.0
     )
+
+    score = PraReactivityScore(
+        positive_well_count=positive_well_count,
+        total_well_count=total_well_count,
+        positive_fraction=positive_fraction,
+        score_percent=positive_fraction * 100.0,
+        threshold=positivity_threshold,
+        positive_wells=positive_wells,
+        negative_wells=negative_wells,
+        missing_result_wells=missing_result_wells,
+    )
+
+    return asdict(score)
