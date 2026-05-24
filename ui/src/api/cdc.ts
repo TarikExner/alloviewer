@@ -16,25 +16,41 @@ export type BackendProgress = {
   result?: any;
 };
 
+export type RunProcessOptions = {
+  templateFilename?: string | null;
+  imageFilenames: string[];
+  assayType?: "pra" | "crossmatch";
+
+  hlaLayoutUploadId?: string | null;
+  praPositivityThreshold?: number;
+};
+
 export async function runProcess(
   wells: WellMap,
   order: WellID[],
-  files: {
-    templateFilename: string | null;
-    imageFilenames: string[];
-    assayType?: "pra" | "crossmatch";
-  }
+  files: RunProcessOptions
 ): Promise<ProcessStartResponse> {
+  const assayType = files.assayType ?? "pra";
+
+  const body = {
+    layout: { wells },
+    image_order: order,
+    template_filename: files.templateFilename ?? null,
+    image_filenames: files.imageFilenames,
+    assay_type: assayType,
+
+    hla_layout_upload_id:
+      assayType === "pra" ? files.hlaLayoutUploadId ?? null : null,
+
+    pra_positivity_threshold: files.praPositivityThreshold ?? 20.0,
+  };
+
+  console.log("CDC process request", body);
+
   const res = await fetch(`${API_BASE}/api/process`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      layout: { wells },
-      image_order: order,
-      template_filename: files.templateFilename,
-      image_filenames: files.imageFilenames,
-      assay_type: "pra",
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {

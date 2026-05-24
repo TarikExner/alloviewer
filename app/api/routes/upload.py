@@ -1,4 +1,3 @@
-# api/routes/upload.py
 from pathlib import Path
 import posixpath
 from typing import List

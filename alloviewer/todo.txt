@@ -6,15 +6,14 @@
 
 After author-send:
     - create API code
-    - Create readthedocs
-    - Documentation for backend/api code
-    - Documentation for frontend
+    - Documentation for api code
     - refactoring frontend code
     - create API and document
     - youtube videos
     - test suite
     - ruff final check
     - job-dependent folder structure and data management in backend (memory, file deletion etc)
+    - Documentation for frontend
 
 08.03.2026:
     - Create Figures

@@ -17,7 +17,6 @@ import {
 import { runProcess, fetchProgress, type BackendProgress } from "../api/cdc";
 import { API_BASE } from "../App";
 import {
-  getUploadedFilename,
   normalizeSavedNames,
   sameFiles,
   sameStringArray,
@@ -44,7 +43,8 @@ export default function CDCApp() {
   const [flip, setFlip] = useState(true);
 
   const [layout, setLayout] = useState<any | null>(null);
-  const [uploadId, setUploadId] = useState<string | null>(null);
+  const [hlaLayoutUploadId, setHlaLayoutUploadId] = useState<string | null>(null);
+
   const [uploadResetKey, setUploadResetKey] = useState(0);
 
   const [imageFiles, setImageFiles] = useState<File[]>([]);
@@ -76,15 +76,14 @@ export default function CDCApp() {
 
   const handleLayoutUploaded = useCallback((saved: any[]) => {
     const first = saved?.[0] ?? null;
-    const filename = getUploadedFilename(first);
-
-    setUploadId(filename);
+  
     setLayout(first);
-
+    setHlaLayoutUploadId(first?.upload_id ?? null);
+  
     setPlateVisited(false);
     setAutoJumpedToPlate(false);
   }, []);
-
+  
   const handleImagesPicked = useCallback((files: File[]) => {
     const validFiles = files.filter((file) => file.type.startsWith("image/"));
 
@@ -116,7 +115,7 @@ export default function CDCApp() {
 
   const summary = computeSummary(proc);
 
-  const hasLayout = !!layout || !!uploadId;
+  const hasLayout = !!layout || !!hlaLayoutUploadId;
   const hasImages = imageSavedNames.length > 0;
   const hasOrder = imageOrder.length > 0;
 
@@ -207,7 +206,7 @@ export default function CDCApp() {
 
     setFlip(true);
     setLayout(null);
-    setUploadId(null);
+    setHlaLayoutUploadId(null);
 
     setImageFiles([]);
     setImageSavedNames([]);
@@ -243,11 +242,19 @@ export default function CDCApp() {
 
     const wellToFileAtRun = buildWellToFileMap(imageOrder, imageSavedNames);
 
+
     try {
+
+      if (!hlaLayoutUploadId) {
+        throw new Error("PRA requires a parsed HLA Excel layout before processing.");
+      }
+
       const { job_id } = await runProcess(wells, imageOrder, {
-        templateFilename: uploadId,
+        templateFilename: null,
         imageFilenames: imageSavedNames,
         assayType: "pra",
+        hlaLayoutUploadId,
+        praPositivityThreshold: 20,
       });
 
       const poll = async () => {
@@ -673,7 +680,7 @@ export default function CDCApp() {
                         {t("cdc_app.run_setup.template")}
                       </div>
                       <div className="mt-1 font-semibold truncate">
-                        {uploadId || t("cdc_app.run_setup.none")}
+                        {hlaLayoutUploadId || t("cdc_app.run_setup.none")}
                       </div>
                     </div>
                   </div>
@@ -710,7 +717,7 @@ export default function CDCApp() {
                 <div className="font-medium mb-3">
                   {t("cdc_app.summary_values.title")}
                 </div>
-                <PRASummaryGrid summary={summary} />
+                <PRASummaryGrid summary={summary} result={proc} />
               </div>
 
               <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4">

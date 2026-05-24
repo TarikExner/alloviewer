@@ -43,6 +43,9 @@ export type ProcessRequest = {
   template_filename?: string | null;
   image_filenames: string[];
   assay_type?: "pra" | "crossmatch";
+
+  hla_layout_upload_id?: string | null;
+  pra_positivity_threshold?: number;
 };
 
 export type WellSummary = {
@@ -61,6 +64,7 @@ export type ProcessResponse = {
   calib?: unknown;
   wells?: Partial<Record<WellID, WellSummary>>;
   summary?: CDCSummary;
+  pra_analysis?: PraAnalysis | null;
 };
 
 export type CDCControlStatus = "valid" | "warning" | "invalid";
@@ -118,4 +122,42 @@ export type CDCSummary = {
   run_validity: CDCRunValiditySummary;
   assay_result: CDCPRAResultSummary | CDCCrossmatchResultSummary;
   qc: CDCQCSummary;
+};
+
+export type AlleleReactivityEvidence = {
+  allele_key: string;
+  locus: string;
+  allele: string;
+
+  positive_well_count: number;
+  total_well_count: number;
+  negative_well_count: number;
+
+  positive_fraction: number;
+  positive_ratio: string;
+
+  positive_wells: string[];
+  negative_wells: string[];
+  missing_result_wells: string[];
+
+  well_values: Record<string, number | null>;
+};
+
+export type PraReactivityScore = {
+  positive_well_count: number;
+  total_well_count: number;
+  positive_fraction: number;
+  score_percent: number;
+  threshold: number;
+  positive_wells: string[];
+  negative_wells: string[];
+  missing_result_wells: string[];
+};
+
+export type PraAnalysis = {
+  positivity_threshold: number;
+  included_well_type?: string;
+  included_wells?: string[];
+  reactivity_score: PraReactivityScore;
+  alleles: AlleleReactivityEvidence[];
 };

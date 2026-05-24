@@ -1,11 +1,11 @@
 import copy
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 import numpy as np
 
 from . import load_images
-from .structs import PlateLayout, ROIResult, WellResult
+from .structs import PlateLayout, ROIResult, WellResult, ParsedPlateLayout
 from .segmenter import SegmenterUNetInference
 from .extractor import RGBExtractor
 from .calibrators import PCNCGaussian2DCalibrator
@@ -19,6 +19,7 @@ from .utils import (
     save_segmented_preview,
     to_jsonable,
 )
+from .services.analysis import calculate_allele_reactivity_evidence, calculate_pra_reactivity_score
 
 from app.models import IMAGE_JOB_PROGRESS, IMAGE_JOB_RESULTS
 
@@ -76,6 +77,8 @@ def run_image_analysis(
     unet_config: Optional[dict] = UNET_CONFIG,
     qc: bool = False,
     assay_type: str = "pra",
+    hla_layout: Optional[ParsedPlateLayout] = None,
+    pra_positivity_threshold: float = 20.0,
 ):
     if not job_id:
         job_id = "MY_JOB"
@@ -215,6 +218,38 @@ def run_image_analysis(
             assay_type=assay_type,
         )
 
+        pra_analysis = None
+
+        if assay_type == "pra":
+            if hla_layout is None:
+                raise ValueError(
+                    "PRA analysis requires hla_layout. "
+                    "Pass the parsed Excel layout into run_image_analysis."
+                )
+
+            sample_well_ids = {
+                w.well_id.upper()
+                for w in plate.get("sample")
+            }
+
+            pra_analysis = {
+                "positivity_threshold": pra_positivity_threshold,
+                "included_well_type": "sample",
+                "included_wells": sorted(sample_well_ids),
+                "reactivity_score": calculate_pra_reactivity_score(
+                    per_well=per_well,
+                    hla_layout=hla_layout,
+                    positivity_threshold=pra_positivity_threshold,
+                    include_well_ids=sample_well_ids,
+                ),
+                "alleles": calculate_allele_reactivity_evidence(
+                    per_well=per_well,
+                    hla_layout=hla_layout,
+                    positivity_threshold=pra_positivity_threshold,
+                    include_well_ids=sample_well_ids,
+                ),
+            }
+
         result = {
             "calib": calib,
             "wells": {
@@ -225,7 +260,10 @@ def run_image_analysis(
                 for wid, wr in per_well.items()
             },
             "summary": summary,
+            "pra_analysis": pra_analysis,
         }
+
+        print(result)
 
         IMAGE_JOB_RESULTS[job_id] = to_jsonable(result)
 

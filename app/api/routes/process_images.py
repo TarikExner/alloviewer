@@ -1,7 +1,8 @@
 import uuid
 from pathlib import Path
+from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from alloviewer.image_analysis.pipeline import run_image_analysis
@@ -14,13 +15,41 @@ from ...models import (
     ProgressResponse,
 )
 from ...core.settings import settings
+from .plate_layouts import get_repo
+
+from alloviewer.image_analysis.storage.repo import LayoutRepo
 
 router = APIRouter(tags=["process"])
 
 
 @router.post("/api/process", response_model=ProcessStartResponse)
-async def process(req: ProcessRequest, background_tasks: BackgroundTasks):
+async def process(
+    req: ProcessRequest,
+    background_tasks: BackgroundTasks,
+    repo: LayoutRepo = Depends(get_repo),
+):
     job_id = str(uuid.uuid4())
+
+    hla_layout = None
+
+    if req.assay_type == "pra":
+        if not req.hla_layout_upload_id:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "PRA analysis requires hla_layout_upload_id. "
+                    "Upload and parse the Excel layout first via /parse, then pass "
+                    "the returned upload_id to /api/process."
+                ),
+            )
+
+        hla_layout = repo.get_by_id(req.hla_layout_upload_id)
+
+        if hla_layout is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"HLA layout not found: {req.hla_layout_upload_id}",
+            )
 
     IMAGE_JOB_PROGRESS[job_id] = {
         "status": "queued",
@@ -39,6 +68,8 @@ async def process(req: ProcessRequest, background_tasks: BackgroundTasks):
         data_dir=str(settings.data_dir),
         template_filename=req.template_filename,
         assay_type=req.assay_type,
+        hla_layout=hla_layout,
+        pra_positivity_threshold=req.pra_positivity_threshold,
     )
 
     return {"job_id": job_id}

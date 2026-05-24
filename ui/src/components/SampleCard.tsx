@@ -1,12 +1,13 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 
 export type SampleType = "negative" | "positive" | "sample";
 
 export type SampleCardModel = {
   id: string;
   sampleType: SampleType;
-  title: string; // fallback label
-  name: string; // shown in the top input
+  title: string;
+  name: string;
   fcsFiles: string[];
 };
 
@@ -33,12 +34,9 @@ export function SampleCard({
 
   onRemoveFile: (fname: string) => void;
 
-  /**
-   * Maps the internal saved FCS filename to the label shown in the UI.
-   * The internal value remains fname, so backend calls stay stable.
-   */
   fileDisplayNames?: Record<string, string>;
 }) {
+  const { t } = useTranslation();
   const nameLocked = card.sampleType !== "sample";
 
   function displayNameForFcs(fname: string) {
@@ -58,9 +56,8 @@ export function SampleCard({
           ? "ring-2 ring-blue-500 border-blue-300 dark:border-blue-500"
           : "border-neutral-200",
       ].join(" ")}
-      title="Click to view results"
+      title={t("SampleCard.actions.view_results")}
     >
-      {/* Top row: Name input + optional Remove */}
       <div className="flex items-start gap-3">
         <div className="flex-1">
           <div
@@ -86,11 +83,12 @@ export function SampleCard({
                 nameLocked ? "cursor-default" : "cursor-text",
               ].join(" ")}
               placeholder={card.title}
+              aria-label={t("SampleCard.fields.sample_name")}
             />
           </div>
         </div>
 
-        {card.sampleType === "sample" && onRemoveCard && (
+        {card.sampleType === "sample" && onRemoveCard ? (
           <span
             onClick={(e) => {
               e.preventDefault();
@@ -100,9 +98,10 @@ export function SampleCard({
             className="text-xs px-2 py-1 rounded-lg border cursor-pointer whitespace-nowrap
                        bg-white hover:bg-neutral-50
                        dark:bg-neutral-900 dark:hover:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-200"
-            title="Remove sample"
+            title={t("SampleCard.actions.remove_sample")}
             role="button"
             tabIndex={0}
+            aria-label={t("SampleCard.actions.remove_sample")}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
@@ -111,15 +110,14 @@ export function SampleCard({
               }
             }}
           >
-            Remove
+            {t("SampleCard.actions.remove")}
           </span>
-        )}
+        ) : null}
       </div>
 
-      {/* FCS box */}
       <div className="mt-3">
         <div className="text-xs text-neutral-600 dark:text-neutral-400 mb-1">
-          FCS files:
+          {t("SampleCard.fields.fcs_files")}
         </div>
 
         <div
@@ -128,11 +126,11 @@ export function SampleCard({
           onDrop={onDropFile}
           className="rounded-xl border bg-white dark:bg-neutral-900 dark:border-neutral-700
                      px-3 py-2 min-h-[64px] max-h-[110px] overflow-auto"
-          title="Drag uploaded FCS files here"
+          title={t("SampleCard.actions.drag_uploaded_files")}
         >
           {card.fcsFiles.length === 0 ? (
             <div className="text-sm text-neutral-500 dark:text-neutral-400">
-              Drag FCS files here after uploading
+              {t("SampleCard.empty")}
             </div>
           ) : (
             <ul className="space-y-1">
@@ -162,7 +160,10 @@ export function SampleCard({
                       className="inline-flex shrink-0 items-center justify-center w-6 h-6 rounded-lg border
                                  bg-white hover:bg-neutral-50
                                  dark:bg-neutral-900 dark:hover:bg-neutral-800 dark:border-neutral-700"
-                      title="Remove file"
+                      title={t("SampleCard.actions.remove_file")}
+                      aria-label={t("SampleCard.actions.remove_file_named", {
+                        file: displayName,
+                      })}
                     >
                       ×
                     </button>
