@@ -2,7 +2,7 @@ import time
 import threading
 
 from typing import Dict, List, Literal, Optional, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 WellType = Literal["positive", "negative", "sample", "empty", "igm"]
 WellID = str
@@ -71,9 +71,13 @@ class PlateLayout(BaseModel):
 class ProcessRequest(BaseModel):
     layout: PlateLayout
     image_order: List[WellID]
+    image_filenames: list[str]
     template_filename: Optional[str] = None
-    image_filenames: List[str] = []
     assay_type: Literal["pra", "crossmatch"] = "pra"
+
+    hla_layout_upload_id: Optional[str] = None
+
+    pra_positivity_threshold: float = Field(default=20.0, ge=0.0, le=100.0)
 
 class ProcessStartResponse(BaseModel):
     job_id: str
