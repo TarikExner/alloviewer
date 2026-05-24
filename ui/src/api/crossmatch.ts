@@ -44,4 +44,23 @@ export async function fetchProgress(jobId: string): Promise<BackendProgress> {
   }
   return (await res.json()) as BackendProgress;
 }
+export async function downloadCDCSummaryPdf(jobId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/process/${jobId}/summary.pdf`);
 
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Server error (${res.status})`);
+  }
+
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `cdc_summary_${jobId}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  window.URL.revokeObjectURL(url);
+}

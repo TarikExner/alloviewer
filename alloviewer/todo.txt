@@ -2,7 +2,7 @@
 
     - Work through the whole paper including all figures
     - Create Summary Output CDC
-    - Create Pattern-HLA function and cross-check with Cassian
+    - Crosscheck Pattern-HLA function with Cassian
 
 After author-send:
     - create API code
