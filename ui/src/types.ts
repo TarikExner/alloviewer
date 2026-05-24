@@ -43,6 +43,9 @@ export type ProcessRequest = {
   template_filename?: string | null;
   image_filenames: string[];
   assay_type?: "pra" | "crossmatch";
+
+  hla_layout_upload_id?: string | null;
+  pra_positivity_threshold?: number;
 };
 
 export type WellSummary = {

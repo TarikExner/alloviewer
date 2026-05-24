@@ -1,5 +1,6 @@
-// src/components/plots.tsx
+// src/components/Plots.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 /**
  * Tweakables (top-level)
@@ -467,7 +468,7 @@ function histDensity(values: number[], bins: number, minV: number, maxV: number)
   }
 
   const n = Math.max(1, xs.length);
-  const dens = counts.map(c => c / (n * binW));
+  const dens = counts.map((c) => c / (n * binW));
   const maxY = Math.max(1e-12, ...dens);
   return { dens, maxY };
 }
@@ -498,7 +499,8 @@ export function LinePlot({
   height?: number;
   fixedWidth?: number;
   showLegend?: boolean;
-}) {  
+}) {
+  const { t } = useTranslation();
   const { ref: wrapRef, rect } = useResizeRect<HTMLDivElement>();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -506,8 +508,14 @@ export function LinePlot({
   const seriesList: Series1D[] = useMemo(() => {
     if (series && series.length) return series;
     const v = values || [];
-    return [{ label: "Series", color: lineColor, values: v }];
-  }, [series, values, lineColor]);
+    return [
+      {
+        label: t("Plots.linePlot.defaultSeriesLabel"),
+        color: lineColor,
+        values: v,
+      },
+    ];
+  }, [series, values, lineColor, t]);
 
   const global = useMemo(() => {
     const all = seriesList.flatMap((s) => clean1D(s.values));
@@ -611,7 +619,7 @@ export function LinePlot({
       ctx.fillStyle = PLOT_TEXT_COLOR;
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
-      ctx.fillText("No data", padL + 6, padT + 6);
+      ctx.fillText(t("Plots.linePlot.noData"), padL + 6, padT + 6);
       return;
     }
 
@@ -680,6 +688,7 @@ export function LinePlot({
     bins,
     height,
     activeSeriesKey,
+    t,
   ]);
 
   return (
@@ -708,10 +717,9 @@ export function LinePlot({
             </div>
           </div>
         ) : null}
-  
+
         <canvas ref={canvasRef} className="block w-full h-full select-none" />
       </div>
     </div>
   );
 }
-
