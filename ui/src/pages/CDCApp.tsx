@@ -716,7 +716,7 @@ export default function CDCApp() {
                 <div className="font-medium mb-3">
                   {t("cdc_app.summary_values.title")}
                 </div>
-                <PRASummaryGrid summary={summary} />
+                <PRASummaryGrid summary={summary} result={proc} />
               </div>
 
               <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4">
