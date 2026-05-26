@@ -984,9 +984,9 @@ def get_score_frame():
     TE 26.04.2026
     """
 
-    manual = pd.read_csv("../scripts/manual_df.csv", index_col = None)
-    imagej = pd.read_csv("../scripts/imagej_df.csv", index_col = None)
-    unet = pd.  read_csv("../scripts/unet_df.csv", index_col = None)
+    manual = pd.read_csv("../scripts/results/manual_df.csv", index_col = None)
+    imagej = pd.read_csv("../scripts/results/imagej_df.csv", index_col = None)
+    unet = pd.  read_csv("../scripts/results/unet_df.csv", index_col = None)
     df = concat_annotator_frames([manual, imagej, unet])
     df = df[~(df["Folder"] == "20251028_25720349_+DTT")]
     df["Annotator"] = df["Annotator"].astype(str)
