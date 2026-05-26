@@ -906,7 +906,7 @@ def _generate_main_figure(
             plot_ax,
             method="unet",
             experiment_col="Folder",
-            ylim=(0, 0.8),
+            ylim=(0, 0.87),
             show_significance=True,
         )
 
