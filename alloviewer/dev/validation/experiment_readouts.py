@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Type
 import numpy as np
 import pandas as pd
 
-from alloviewer.main import run_image_analysis
+from alloviewer.image_analysis.pipeline import run_image_analysis
 from alloviewer.image_analysis.calibrators import (
     PCNCMedianCalibrator,
     PCNCGaussianRGCalibrator,
