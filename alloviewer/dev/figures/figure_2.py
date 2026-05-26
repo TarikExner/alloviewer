@@ -15,8 +15,8 @@ from scipy.stats import wilcoxon
 
 from matplotlib.ticker import FuncFormatter
 
-from figures import figure_config as cfg
-from figures import figure_utils as utils
+from . import figure_config as cfg
+from . import figure_utils as utils
 
 from .figure_data_generation import get_score_frame
 

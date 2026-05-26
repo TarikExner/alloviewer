@@ -1,6 +1,7 @@
 from typing import Any, Callable
 
 from .figure_1 import figure_1_generation
+from .figure_2 import figure_2_generation
 
 from .figure_S1 import figure_S1_generation
 from .figure_S2 import figure_S2_generation
@@ -14,6 +15,8 @@ from .figure_SIM import figure_SIM_generation
 
 __all__ = [
     "figure_1_generation",
+    "figure_2_generation",
+
     "figure_S1_generation",
     "figure_S2_generation",
     "figure_S3_generation",
@@ -40,6 +43,7 @@ DIRECTORIES = {
 def generate_all_figures():
 
     figure_1_generation(**DIRECTORIES)
+    figure_2_generation(**DIRECTORIES)
 
     figure_S1_generation(**DIRECTORIES)
     figure_S2_generation(**DIRECTORIES)
