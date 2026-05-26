@@ -366,6 +366,56 @@ def compare_reference_and_human_consensus_estimate(
 
     return per_item, summary
 
+def _paired_wilcoxon_pvalue(
+    data: pd.DataFrame,
+    left_col: str,
+    right_col: str,
+    *,
+    alternative: str = "two-sided",
+    zero_method: str = "wilcox",
+) -> tuple[float, int, int]:
+    """
+    Run a paired Wilcoxon test safely.
+
+    Returns:
+        p_value
+        n_paired
+        n_nonzero_diff
+
+    Important:
+        This function forces both columns to real numeric arrays.
+        It does not silently label failed tests as non-significant.
+    """
+
+    paired = data[[left_col, right_col]].copy()
+
+    paired[left_col] = pd.to_numeric(paired[left_col], errors="coerce")
+    paired[right_col] = pd.to_numeric(paired[right_col], errors="coerce")
+
+    paired = paired.dropna()
+
+    n_paired = len(paired)
+
+    if n_paired < 3:
+        return np.nan, n_paired, 0
+
+    left = paired[left_col].to_numpy(dtype=float)
+    right = paired[right_col].to_numpy(dtype=float)
+
+    diff = right - left
+    n_nonzero = int(np.sum(~np.isclose(diff, 0)))
+
+    if n_nonzero == 0:
+        return np.nan, n_paired, n_nonzero
+
+    _, p = wilcoxon(
+        right,
+        left,
+        zero_method=zero_method,
+        alternative=alternative,
+    )
+
+    return float(p), n_paired, n_nonzero
 
 def plot_unet_reference_boxplot_on_ax(
     summary: pd.DataFrame,
@@ -414,6 +464,11 @@ def plot_unet_reference_boxplot_on_ax(
     missing = [col for col in plot_cols.values() if col not in data.columns]
     if missing:
         raise ValueError(f"Missing columns for boxplot: {missing}")
+
+    # Force plotted/tested values to real numeric dtype.
+    # This prevents SciPy's wilcoxon from failing on object dtype columns.
+    for col in plot_cols.values():
+        data[col] = pd.to_numeric(data[col], errors="coerce")
 
     plot_df = data[[experiment_col] + list(plot_cols.values())].melt(
         id_vars=experiment_col,
@@ -493,24 +548,21 @@ def plot_unet_reference_boxplot_on_ax(
             if len(paired) < 3:
                 continue
 
-                # try:
-                #     _, p = wilcoxon(
-                #         paired[right_col],
-                #         paired[left_col],
-                #         zero_method="wilcox",
-                #         alternative="two-sided",
-                #     )
-                # except ValueError:
-                #     p = np.nan
-
-            _, p = wilcoxon(
-                paired[right_col],
-                paired[left_col],
-                zero_method="wilcox",
+            p, n_paired, n_nonzero = _paired_wilcoxon_pvalue(
+                data,
+                left_col,
+                right_col,
                 alternative="two-sided",
+                zero_method="wilcox",
             )
-            if pd.isna(p):
-                label = "n.s."
+
+            if n_paired < 3:
+                continue
+
+            if n_nonzero == 0:
+                label = "all zero"
+            elif pd.isna(p):
+                label = "test error"
             elif p < 0.001:
                 label = "***"
             elif p < 0.01:
@@ -519,6 +571,11 @@ def plot_unet_reference_boxplot_on_ax(
                 label = "*"
             else:
                 label = "n.s."
+
+            print(
+                f"{comp}: {left_col} vs {right_col}; "
+                f"n={n_paired}, nonzero={n_nonzero}, p={p}"
+            )
 
             x1 = order.index(left_label)
             x2 = order.index(right_label)
