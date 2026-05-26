@@ -989,6 +989,7 @@ def get_score_frame():
     unet = pd.  read_csv("../scripts/results/unet_df.csv", index_col = None)
     df = concat_annotator_frames([manual, imagej, unet])
     df = df[~(df["Folder"] == "20251028_25720349_+DTT")]
+    df = df[~df["score"].isin([0,11])]
     df["Annotator"] = df["Annotator"].astype(str)
 
     df_filled, refs = fill_and_recalculate_frac_pos_from_scores_random(
