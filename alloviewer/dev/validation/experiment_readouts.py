@@ -543,6 +543,7 @@ def score_unet_folders(
             data_dir=str(image_storage_dir),
             unet_config=unet_config,
             qc=False,
+            assay_type="crossmatch"
         )
 
         well_res = res["wells"]
