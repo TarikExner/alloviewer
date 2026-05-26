@@ -601,6 +601,8 @@ def plot_unet_reference_boxplot_on_ax(
     ax.set_xlabel("")
     ax.set_ylabel("Error rate", fontsize=cfg.AXIS_LABEL_SIZE)
     ax.set_ylim(*ylim)
+    ymin, ymax = ax.get_ylim()
+    ax.set_ylim(ymin, ymax*1.1)
 
     ax.set_title(
         f"UNET scoring fidelity\nn = {data[experiment_col].nunique()} experiments",
@@ -906,7 +908,7 @@ def _generate_main_figure(
             plot_ax,
             method="unet",
             experiment_col="Folder",
-            ylim=(0, 0.87),
+            ylim=(0, 0.8),
             show_significance=True,
         )
 
