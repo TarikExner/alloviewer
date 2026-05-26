@@ -682,57 +682,67 @@ def build_total_result_dataframe(
 
     imagej_classifier_kwargs = imagej_classifier_kwargs or {}
 
-    manual_df = reshape_scores_with_images(
-        score_sheet_file_path,
-        sep=score_sheet_sep,
-        src_root=ext_image_root,
-        dst_root=experiment_image_root,
-        layout=layout,
-        image_order=image_order,
-        drop_missing_scores=drop_missing_manual_scores,
-        verbose=verbose,
-    )
+    if os.path.isfile(manual_df_path):
+        manual_df = pd.read_csv(manual_df_path, index_col = False)
+    else:
+        manual_df = reshape_scores_with_images(
+            score_sheet_file_path,
+            sep=score_sheet_sep,
+            src_root=ext_image_root,
+            dst_root=experiment_image_root,
+            layout=layout,
+            image_order=image_order,
+            drop_missing_scores=drop_missing_manual_scores,
+            verbose=verbose,
+        )
 
-    # we skip this folder as we do not know if thats a real folder
-    manual_df = manual_df.loc[~((manual_df["Folder"] == "20251021_25720338") & (manual_df["PRA"] == 3.0))]
+        # we skip this folder as we do not know if thats a real folder
+        manual_df = manual_df.loc[~((manual_df["Folder"] == "20251021_25720338") & (manual_df["PRA"] == 3.0))]
 
-    if output_csv_path is not None:
-        manual_df.to_csv(manual_df_path, index = False)
+        if output_csv_path is not None:
+            manual_df.to_csv(manual_df_path, index = False)
 
-    imagej_scored = score_imagej_rois(
-        imagej_csv_path,
-        sep=imagej_sep,
-        layout=layout,
-        image_order=image_order,
-        calibrator_cls=imagej_calibrator_cls,
-        classifier_cls=imagej_classifier_cls,
-        classifier_kwargs=imagej_classifier_kwargs,
-        verbose=verbose,
-    )
+    
+    if os.path.isfile(imagej_df_path):
+        imagej_df = pd.read_csv(imagej_df_path, index_col = False)
+    else:
+        imagej_scored = score_imagej_rois(
+            imagej_csv_path,
+            sep=imagej_sep,
+            layout=layout,
+            image_order=image_order,
+            calibrator_cls=imagej_calibrator_cls,
+            classifier_cls=imagej_classifier_cls,
+            classifier_kwargs=imagej_classifier_kwargs,
+            verbose=verbose,
+        )
 
-    imagej_df = imagej_scores_to_annotator_rows(
-        imagej_scored,
-        annotator_name=imagej_annotator_name,
-    )
+        imagej_df = imagej_scores_to_annotator_rows(
+            imagej_scored,
+            annotator_name=imagej_annotator_name,
+        )
 
-    if output_csv_path is not None:
-        imagej_df.to_csv(imagej_df_path, index = False)
+        if output_csv_path is not None:
+            imagej_df.to_csv(imagej_df_path, index = False)
 
-    mapping_df = concat_annotator_frames([manual_df, imagej_df])[
-        ["Folder", "well", "image_name", "role"]
-    ].drop_duplicates()
+    if os.path.isfile(unet_df_path):
+        unet_df = pd.read_csv(unet_df_path, index_col = False)
+    else:
+        mapping_df = concat_annotator_frames([manual_df, imagej_df])[
+            ["Folder", "well", "image_name", "role"]
+        ].drop_duplicates()
 
-    unet_df = score_unet_folders(
-        mapping_df,
-        image_base_path=str(experiment_image_root),
-        unet_config=unet_config,
-        layout=layout,
-        image_order=image_order,
-        annotator_name=unet_annotator_name,
-    )
+        unet_df = score_unet_folders(
+            mapping_df,
+            image_base_path=str(experiment_image_root),
+            unet_config=unet_config,
+            layout=layout,
+            image_order=image_order,
+            annotator_name=unet_annotator_name,
+        )
 
-    if output_csv_path is not None:
-        unet_df.to_csv(unet_df_path, index = False)
+        if output_csv_path is not None:
+            unet_df.to_csv(unet_df_path, index = False)
 
     total_df = concat_annotator_frames([manual_df, imagej_df, unet_df])
 
