@@ -1,0 +1,83 @@
+services:
+  redis:
+    image: redis:7
+    container_name: alloviewer_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  api:
+    build: .
+    container_name: alloviewer_api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      DATA_DIR: /data
+      REDIS_URL: redis://redis:6379/0
+      PLATE_LAYOUT_STORE: /data/plate_layouts
+    volumes:
+      - .:/app
+      - ./app/data:/data
+    depends_on:
+      - redis
+
+  worker_cpu:
+    build: .
+    container_name: alloviewer_worker_cpu
+    command: celery -A app.workers.celery_app.celery_app worker -Q cpu --loglevel=info
+    environment:
+      DATA_DIR: /data
+      REDIS_URL: redis://redis:6379/0
+      PLATE_LAYOUT_STORE: /data/plate_layouts
+    volumes:
+      - .:/app
+      - ./app/data:/data
+    depends_on:
+      - redis
+
+  worker_image:
+    build: .
+    container_name: alloviewer_worker_image
+    command: celery -A app.workers.celery_app.celery_app worker -Q image --loglevel=info
+    environment:
+      DATA_DIR: /data
+      REDIS_URL: redis://redis:6379/0
+      PLATE_LAYOUT_STORE: /data/plate_layouts
+    volumes:
+      - .:/app
+      - ./app/data:/data
+    depends_on:
+      - redis
+
+  worker_maintenance:
+    build: .
+    container_name: alloviewer_worker_maintenance
+    command: celery -A app.workers.celery_app.celery_app worker -Q maintenance --loglevel=info
+    environment:
+      DATA_DIR: /data
+      REDIS_URL: redis://redis:6379/0
+      PLATE_LAYOUT_STORE: /data/plate_layouts
+    volumes:
+      - .:/app
+      - ./app/data:/data
+    depends_on:
+      - redis
+
+  beat:
+    build: .
+    container_name: alloviewer_beat
+    command: celery -A app.workers.celery_app.celery_app beat --loglevel=info
+    environment:
+      DATA_DIR: /data
+      REDIS_URL: redis://redis:6379/0
+      PLATE_LAYOUT_STORE: /data/plate_layouts
+    volumes:
+      - .:/app
+      - ./app/data:/data
+    depends_on:
+      - redis
+
+volumes:
+  redis_data:

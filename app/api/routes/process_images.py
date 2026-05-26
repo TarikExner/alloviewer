@@ -2,13 +2,11 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, Response
-
+from fastapi.encoders import jsonable_encoder
 
 from ...models import (
-    IMAGE_JOB_PROGRESS,
-    IMAGE_JOB_RESULTS,
     ProcessRequest,
     ProcessStartResponse,
     ProgressResponse,
@@ -17,8 +15,22 @@ from ...core.settings import settings
 from .plate_layouts import get_repo
 
 from alloviewer.image_analysis.storage.repo import LayoutRepo
-from alloviewer.image_analysis.pipeline import run_image_analysis
 from alloviewer.image_analysis.services.pdf_report import build_cdc_summary_pdf
+from alloviewer.image_analysis.utils import to_jsonable
+
+from app.services.job_state import (
+    set_image_progress,
+    get_image_progress,
+    get_image_result,
+)
+from app.workers.tasks_image import run_image_analysis_task
+
+def to_celery_payload(value):
+    """
+    Convert Pydantic/dataclass/custom nested objects into JSON-safe data
+    before sending them through Celery.
+    """
+    return jsonable_encoder(value)
 
 router = APIRouter(tags=["process"])
 
@@ -26,7 +38,6 @@ router = APIRouter(tags=["process"])
 @router.post("/api/process", response_model=ProcessStartResponse)
 async def process(
     req: ProcessRequest,
-    background_tasks: BackgroundTasks,
     repo: LayoutRepo = Depends(get_repo),
 ):
     job_id = str(uuid.uuid4())
@@ -52,24 +63,30 @@ async def process(
                 detail=f"HLA layout not found: {req.hla_layout_upload_id}",
             )
 
-    IMAGE_JOB_PROGRESS[job_id] = {
-        "status": "queued",
-        "done": 0,
-        "total": 0,
-        "current_well": None,
-        "done_wells": [],
-    }
+    set_image_progress(
+        job_id,
+        {
+            "status": "queued",
+            "stage": "queued",
+            "done": 0,
+            "total": 0,
+            "current_well": None,
+            "done_wells": [],
+        },
+    )
 
-    background_tasks.add_task(
-        run_image_analysis,
+    layout_payload = to_celery_payload(req.layout)
+    hla_layout_payload = to_celery_payload(hla_layout)
+
+    run_image_analysis_task.delay(
         job_id=job_id,
-        layout=req.layout,
-        image_order=req.image_order,
-        image_filenames=req.image_filenames,
+        layout=layout_payload,
+        image_order=to_celery_payload(req.image_order),
+        image_filenames=to_celery_payload(req.image_filenames),
         data_dir=str(settings.data_dir),
         template_filename=req.template_filename,
         assay_type=req.assay_type,
-        hla_layout=hla_layout,
+        hla_layout=hla_layout_payload,
         pra_positivity_threshold=req.pra_positivity_threshold,
     )
 
@@ -78,11 +95,12 @@ async def process(
 
 @router.get("/api/process/{job_id}", response_model=ProgressResponse)
 async def get_process(job_id: str):
-    if job_id not in IMAGE_JOB_PROGRESS:
+    progress = get_image_progress(job_id)
+
+    if progress is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    progress = IMAGE_JOB_PROGRESS[job_id]
-    result = IMAGE_JOB_RESULTS.get(job_id)
+    result = get_image_result(job_id)
 
     return {**progress, "result": result}
 
@@ -98,7 +116,7 @@ async def get_segmented_image(job_id: str, well_id: str):
 
 @router.get("/api/process/{job_id}/summary.pdf")
 async def get_cdc_summary_pdf(job_id: str):
-    progress = IMAGE_JOB_PROGRESS.get(job_id)
+    progress = get_image_progress(job_id)
 
     if progress is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -109,7 +127,7 @@ async def get_cdc_summary_pdf(job_id: str):
             detail="Summary PDF is only available after the analysis is done.",
         )
 
-    result = IMAGE_JOB_RESULTS.get(job_id)
+    result = get_image_result(job_id)
 
     if result is None:
         raise HTTPException(status_code=404, detail="Result not found")

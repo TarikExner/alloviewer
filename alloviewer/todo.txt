@@ -1,8 +1,12 @@
 18.05.2026:
 
     - Work through the whole paper including all figures
-    - Create Summary Output CDC
     - Crosscheck Pattern-HLA function with Cassian
+    - HLA in PRA-table without colon
+    - put pos frac to positive and negative wells
+    - let user choose frac pos
+    - negative wells in well
+    - recheck summary readouts (clear cut labeling)
 
 After author-send:
     - create API code

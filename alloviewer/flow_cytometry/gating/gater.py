@@ -338,6 +338,10 @@ class Gater:
         if fcs is not None:
             event["file_name"] = fcs_display_name(fcs)
 
+            file_path = getattr(fcs, "path", None) or getattr(fcs, "file_path", None)
+            if file_path is not None:
+                event["file_path"] = str(file_path)
+
         if extra:
             event.update(extra)
 

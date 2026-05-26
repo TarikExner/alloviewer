@@ -58,7 +58,12 @@ dependencies = [
   "starlette>=0.37",
   "pydantic>=2.0",
   "uvicorn[standard]>=0.29",
-  "python-multipart>=0.0.9"
+  "python-multipart>=0.0.9",
+
+  # workers for hosting
+  "celery",
+  "redis",
+  "pydantic-settings"
 ]
 
 

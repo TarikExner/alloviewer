@@ -9,8 +9,10 @@ from alloviewer.flow_cytometry.gating import Gater, GatingConfig
 
 from .plots import make_results_payload
 
-from app.models import FCXM_JOB_PROGRESS
-
+from app.services.job_state import (
+    update_fcxm_progress,
+    get_fcxm_progress,
+)
 
 ProgressEvent = Dict[str, Any]
 ProgressCallback = Callable[[ProgressEvent], None]
@@ -103,24 +105,24 @@ def _make_progress_callback(
         if stage in counted_stages:
             done_work = min(done_work + 1, total_work)
 
+        # Only mark files as "done" after plot_cache, because at that point
+        # the file has passed through the full analysis + frontend cache build.
         if stage == "plot_cache" and file_name:
-            done_filenames.append(file_name)
+            if file_name not in done_filenames:
+                done_filenames.append(file_name)
 
-        previous = FCXM_JOB_PROGRESS.get(job_id, {})
-
-        FCXM_JOB_PROGRESS[job_id] = {
-            **previous,
-            "status": "running",
-            "message": _stage_message(stage),
-            "stage": stage,
-            "total_files": total_work,
-            "done_files": done_work,
-            "current_file": file_name,
-            "done_filenames": done_filenames,
-        }
+        update_fcxm_progress(
+            job_id,
+            status="running",
+            message=_stage_message(stage),
+            stage=stage,
+            total_files=total_work,
+            done_files=done_work,
+            current_file=file_name,
+            done_filenames=done_filenames,
+        )
 
     return progress
-
 
 def _init_progress(job_id: Optional[str], total_files: int) -> None:
     if not job_id:
@@ -128,50 +130,48 @@ def _init_progress(job_id: Optional[str], total_files: int) -> None:
 
     total_work = max(1, total_files * 5)
 
-    FCXM_JOB_PROGRESS[job_id] = {
-        **FCXM_JOB_PROGRESS.get(job_id, {}),
-        "status": "running",
-        "message": "Starting flow cytometry analysis.",
-        "stage": "starting",
-        "total_files": total_work,
-        "done_files": 0,
-        "current_file": None,
-        "done_filenames": [],
-    }
+    update_fcxm_progress(
+        job_id,
+        status="running",
+        message="Starting flow cytometry analysis.",
+        stage="starting",
+        total_files=total_work,
+        done_files=0,
+        current_file=None,
+        done_filenames=[],
+    )
 
 
 def _mark_done(job_id: Optional[str]) -> None:
     if not job_id:
         return
 
-    previous = FCXM_JOB_PROGRESS.get(job_id, {})
+    previous = get_fcxm_progress(job_id) or {}
     total = int(previous.get("total_files") or 1)
 
-    FCXM_JOB_PROGRESS[job_id] = {
-        **previous,
-        "status": "done",
-        "message": "Analysis done.",
-        "stage": "done",
-        "done_files": total,
-        "total_files": total,
-        "current_file": None,
-    }
+    update_fcxm_progress(
+        job_id,
+        status="done",
+        message="Analysis done.",
+        stage="done",
+        done_files=total,
+        total_files=total,
+        current_file=None,
+    )
 
 
 def _mark_error(job_id: Optional[str], error: Exception) -> None:
     if not job_id:
         return
 
-    previous = FCXM_JOB_PROGRESS.get(job_id, {})
-
-    FCXM_JOB_PROGRESS[job_id] = {
-        **previous,
-        "status": "error",
-        "message": "Analysis failed.",
-        "stage": "error",
-        "error": repr(error),
-        "current_file": None,
-    }
+    update_fcxm_progress(
+        job_id,
+        status="error",
+        message="Analysis failed.",
+        stage="error",
+        error=repr(error),
+        current_file=None,
+    )
 
 
 def _build_dataset(req_dict: Dict[str, Any]) -> Dataset:
