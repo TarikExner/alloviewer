@@ -493,16 +493,22 @@ def plot_unet_reference_boxplot_on_ax(
             if len(paired) < 3:
                 continue
 
-            try:
-                _, p = wilcoxon(
-                    paired[right_col],
-                    paired[left_col],
-                    zero_method="wilcox",
-                    alternative="two-sided",
-                )
-            except ValueError:
-                p = np.nan
+                # try:
+                #     _, p = wilcoxon(
+                #         paired[right_col],
+                #         paired[left_col],
+                #         zero_method="wilcox",
+                #         alternative="two-sided",
+                #     )
+                # except ValueError:
+                #     p = np.nan
 
+            _, p = wilcoxon(
+                paired[right_col],
+                paired[left_col],
+                zero_method="wilcox",
+                alternative="two-sided",
+            )
             if pd.isna(p):
                 label = "n.s."
             elif p < 0.001:
