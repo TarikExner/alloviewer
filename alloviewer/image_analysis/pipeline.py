@@ -270,8 +270,6 @@ def run_image_analysis(
             "pra_analysis": pra_analysis,
         }
 
-        print(result)
-
         IMAGE_JOB_RESULTS[job_id] = to_jsonable(result)
 
         IMAGE_JOB_PROGRESS[job_id]["status"] = "done"
