@@ -125,10 +125,12 @@ def compute_inner_boundary(inst_np: np.ndarray) -> np.ndarray:
     b[:,0]   &= (a[:,0]   != 0)
     return b.astype(np.uint8)
 
-def make_soft_boundary_from_instances(inst: np.ndarray,
-                                      ring_width: int = 1,
-                                      soft_band: int = 2,
-                                      sigma: float = 1.0) -> np.ndarray:
+def make_soft_boundary_from_instances(
+    inst: np.ndarray,
+    ring_width: int = 1,
+    soft_band: int = 2,
+    sigma: float = 1.0,
+) -> np.ndarray:
     """
     Soft inside/outside boundary ring around each instance.
 
@@ -137,8 +139,8 @@ def make_soft_boundary_from_instances(inst: np.ndarray,
       soft_band: outside width, in pixels
       sigma: Gaussian falloff in distance units
 
-    Unlike the old implementation, this does not set outside-cell pixels to inf.
-    The boundary is allowed to exist just outside the cell mask.
+    This version is faster than the naive full-image-per-instance approach.
+    It computes the soft ring only in a cropped region around each instance.
     """
     inst = np.asarray(inst)
     if inst.ndim != 2:
@@ -148,12 +150,34 @@ def make_soft_boundary_from_instances(inst: np.ndarray,
     outer_width = max(0.0, float(soft_band))
     sigma = max(1e-6, float(sigma))
 
+    if inst.size == 0:
+        return np.zeros(inst.shape, dtype=np.float32)
+
     out = np.zeros(inst.shape, dtype=np.float32)
+
     labels = np.unique(inst)
     labels = labels[labels != 0]
+    if labels.size == 0:
+        return out
+
+    # Margin around each object crop.
+    # Need enough space for the outside band and Gaussian decay.
+    pad = int(np.ceil(max(inner_width, outer_width) + 3.0 * sigma))
+
+    H, W = inst.shape
 
     for label_id in labels:
-        m = inst == label_id
+        ys, xs = np.where(inst == label_id)
+        if ys.size == 0:
+            continue
+
+        y0 = max(0, int(ys.min()) - pad)
+        y1 = min(H, int(ys.max()) + 1 + pad)
+        x0 = max(0, int(xs.min()) - pad)
+        x1 = min(W, int(xs.max()) + 1 + pad)
+
+        crop = inst[y0:y1, x0:x1]
+        m = crop == label_id
         if not np.any(m):
             continue
 
@@ -164,10 +188,14 @@ def make_soft_boundary_from_instances(inst: np.ndarray,
         signed_dist[m] = -dist_inside[m]
 
         band = (signed_dist >= -inner_width) & (signed_dist <= outer_width)
+        if not np.any(band):
+            continue
+
         soft = np.exp(-(signed_dist ** 2) / (2.0 * sigma ** 2)).astype(np.float32)
         soft[~band] = 0.0
 
-        out = np.maximum(out, soft)
+        out_crop = out[y0:y1, x0:x1]
+        np.maximum(out_crop, soft, out=out_crop)
 
     return np.clip(out, 0.0, 1.0).astype(np.float32)
 
