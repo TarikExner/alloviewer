@@ -129,24 +129,118 @@ def make_soft_boundary_from_instances(inst: np.ndarray,
                                       ring_width: int = 1,
                                       soft_band: int = 2,
                                       sigma: float = 1.0) -> np.ndarray:
-    ring = compute_inner_boundary(inst).astype(bool)
-    if ring_width > 1:
-        rad = max(1, int(ring_width // 2))
-        ring = ndi.binary_dilation(ring, structure=ndi.generate_binary_structure(2,1), iterations=rad)
-    cell = (inst > 0)
-    if soft_band > 0:
-        not_ring = ~ring
-        dist = ndi.distance_transform_edt(not_ring)
-        dist[~cell] = np.inf
-        soft = np.exp(-(dist**2) / (2.0 * (sigma**2)))
-        soft[dist > float(soft_band)] = 0.0
-        soft[~np.isfinite(soft)] = 0.0
-        m = soft.max()
-        if m > 0:
-            soft = soft / m
-        return soft.astype(np.float32)
-    else:
-        return ring.astype(np.float32)
+    """
+    Soft inside/outside boundary ring around each instance.
+
+    Parameters keep their old names for backward compatibility:
+      ring_width: inside width, in pixels
+      soft_band: outside width, in pixels
+      sigma: Gaussian falloff in distance units
+
+    Unlike the old implementation, this does not set outside-cell pixels to inf.
+    The boundary is allowed to exist just outside the cell mask.
+    """
+    inst = np.asarray(inst)
+    if inst.ndim != 2:
+        raise ValueError(f"Expected 2D instance map, got shape {inst.shape}")
+
+    inner_width = max(0.0, float(ring_width))
+    outer_width = max(0.0, float(soft_band))
+    sigma = max(1e-6, float(sigma))
+
+    out = np.zeros(inst.shape, dtype=np.float32)
+    labels = np.unique(inst)
+    labels = labels[labels != 0]
+
+    for label_id in labels:
+        m = inst == label_id
+        if not np.any(m):
+            continue
+
+        dist_inside = ndi.distance_transform_edt(m).astype(np.float32)
+        dist_outside = ndi.distance_transform_edt(~m).astype(np.float32)
+
+        signed_dist = dist_outside
+        signed_dist[m] = -dist_inside[m]
+
+        band = (signed_dist >= -inner_width) & (signed_dist <= outer_width)
+        soft = np.exp(-(signed_dist ** 2) / (2.0 * sigma ** 2)).astype(np.float32)
+        soft[~band] = 0.0
+
+        out = np.maximum(out, soft)
+
+    return np.clip(out, 0.0, 1.0).astype(np.float32)
+
+
+def normalize01(x: np.ndarray) -> np.ndarray:
+    """Normalize a numeric array to [0, 1] by its maximum value."""
+    x = np.asarray(x, dtype=np.float32)
+    m = float(x.max()) if x.size else 0.0
+    if m > 0:
+        x = x / m
+    return x.astype(np.float32, copy=False)
+
+
+def make_ellipse_mask(radius: int, ratio: float, angle: float):
+    """
+    Build a hard ellipse mask with approximately constant area.
+
+    Returns
+    -------
+    mask:
+        Boolean array with shape [2*r_box+1, 2*r_box+1].
+    r_box:
+        Integer half-size of the returned mask.
+    """
+    radius = max(1, int(radius))
+    ratio = max(1e-6, float(ratio))
+
+    s = float(np.sqrt(ratio))
+    a = float(radius) * s
+    b = float(radius) / s
+
+    r_box = int(np.ceil(max(a, b)))
+    yy_p, xx_p = np.mgrid[-r_box:r_box + 1, -r_box:r_box + 1].astype(np.float32)
+    ca, sa = np.cos(angle), np.sin(angle)
+    xr = ca * xx_p + sa * yy_p
+    yr = -sa * xx_p + ca * yy_p
+
+    mask = (xr * xr) / (a * a + 1e-8) + (yr * yr) / (b * b + 1e-8) <= 1.0
+    return mask, r_box
+
+
+def render_mask_derived_cell(
+    core_mask: np.ndarray,
+    sigma: float,
+    halo_weight: float = 0.20,
+    halo_sigma_factor: float = 2.25,
+    min_sigma: float = 0.10,
+) -> np.ndarray:
+    """
+    Create a soft visible cell from the exact hard instance mask.
+
+    The returned render map keeps the visible object tied to the label geometry.
+    A controlled halo is still present, but it is derived from the same mask.
+    """
+    core_mask = np.asarray(core_mask, dtype=np.float32)
+    if core_mask.max() <= 0:
+        return core_mask.astype(np.float32, copy=False)
+
+    sigma = max(float(sigma), float(min_sigma))
+    halo_weight = float(np.clip(halo_weight, 0.0, 1.0))
+    halo_sigma_factor = max(float(halo_sigma_factor), 1.0)
+
+    core = ndi.gaussian_filter(core_mask, sigma=sigma, mode="constant", cval=0.0)
+    halo = ndi.gaussian_filter(
+        core_mask,
+        sigma=sigma * halo_sigma_factor,
+        mode="constant",
+        cval=0.0,
+    )
+
+    render = (1.0 - halo_weight) * normalize01(core)
+    render += halo_weight * normalize01(halo)
+    return normalize01(render)
 
 def make_center_stem_from_centers(centers, shape):
     H, W = shape
