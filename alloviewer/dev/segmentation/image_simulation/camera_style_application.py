@@ -297,27 +297,7 @@ def apply_camera_style(
 
         img = np.clip(img, 0.0, 1.0).astype(np.float32)
 
-    # 19) JPEG
-    if rng.random() < params.jpeg_prob:
-        tmp = np.clip(img * 255.0, 0, 255).astype(np.uint8)
-        tmp_bgr = cv2.cvtColor(tmp, cv2.COLOR_RGB2BGR)
-
-        quality = int(
-            rng.integers(
-                params.jpeg_quality_range[0],
-                params.jpeg_quality_range[1] + 1,
-            )
-        )
-
-        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-        ok, enc = cv2.imencode(".jpg", tmp_bgr, encode_param)
-
-        if ok:
-            dec_bgr = cv2.imdecode(enc, cv2.IMREAD_COLOR)
-            img = cv2.cvtColor(dec_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-            img = np.clip(img, 0.0, 1.0)
-
-    # 20) soft histogram band match
+    # 19) soft histogram band match
     if (
         params.use_histogram_match
         and quantile_band_cache is not None
@@ -341,7 +321,7 @@ def apply_camera_style(
             )
             img = np.clip(img, 0.0, 1.0).astype(np.float32)
 
-    # 21) optional per-channel median correction
+    # 20) optional per-channel median correction
     if (
         params.use_histogram_match
         and params.use_median_match
@@ -365,6 +345,26 @@ def apply_camera_style(
                 strength=float(median_strength),
                 per_channel_strength=channel_strength,
             )
+            img = np.clip(img, 0.0, 1.0).astype(np.float32)
+
+    # 21) JPEG as final phone/output artifact
+    if rng.random() < params.jpeg_prob:
+        tmp = np.clip(img * 255.0, 0, 255).astype(np.uint8)
+        tmp_bgr = cv2.cvtColor(tmp, cv2.COLOR_RGB2BGR)
+
+        quality = int(
+            rng.integers(
+                params.jpeg_quality_range[0],
+                params.jpeg_quality_range[1] + 1,
+            )
+        )
+
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
+        ok, enc = cv2.imencode(".jpg", tmp_bgr, encode_param)
+
+        if ok:
+            dec_bgr = cv2.imdecode(enc, cv2.IMREAD_COLOR)
+            img = cv2.cvtColor(dec_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
             img = np.clip(img, 0.0, 1.0).astype(np.float32)
 
     return img.astype(np.float32)
