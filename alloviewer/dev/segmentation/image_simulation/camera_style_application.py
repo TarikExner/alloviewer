@@ -17,27 +17,13 @@ from .utils import (
     apply_s_curve,
     lift_shadows,
     compress_highlights,
+    sample_channel_values,
     apply_channel_median_match,
     apply_read_noise,
     apply_global_blur,
     apply_photon_noise,
+    apply_overexposure_halo
 )
-
-
-def _sample_channel_values(
-    rng: RNG,
-    ranges,
-    dtype=np.float32,
-) -> np.ndarray:
-    """
-    Sample one value per channel from ((r_lo, r_hi), (g_lo, g_hi), (b_lo, b_hi)).
-    """
-    vals = [
-        float(rng.uniform(float(lo), float(hi)))
-        for lo, hi in ranges
-    ]
-    return np.asarray(vals, dtype=dtype)
-
 
 def apply_camera_style(
     img: np.ndarray,
@@ -97,8 +83,8 @@ def apply_camera_style(
     img = np.clip(img * exposure, 0.0, 1.0)
 
     # 1b) channel-specific exposure / underillumination
-    channel_gains = _sample_channel_values(rng, params.channel_gain_range)
-    channel_shifts = _sample_channel_values(rng, params.channel_shift_range)
+    channel_gains = sample_channel_values(rng, params.channel_gain_range)
+    channel_shifts = sample_channel_values(rng, params.channel_shift_range)
     img = np.clip(
         img * channel_gains[None, None, :] + channel_shifts[None, None, :],
         0.0,
@@ -212,6 +198,24 @@ def apply_camera_style(
     gamma = rng.uniform(*params.gamma_range)
     img = np.clip(img, 1e-6, 1.0) ** gamma
     img = np.clip(img, 0.0, 1.0).astype(np.float32)
+
+    # 12b) local overexposure halo / bloom
+    if rng.random() < params.halo_prob:
+        halo_threshold = rng.uniform(*params.halo_threshold_range)
+        halo_sigma = rng.uniform(*params.halo_sigma_range)
+        halo_strength = rng.uniform(*params.halo_strength_range)
+        halo_wash_strength = rng.uniform(*params.halo_wash_strength_range)
+
+        img = apply_overexposure_halo(
+            img=img,
+            threshold=float(halo_threshold),
+            sigma=float(halo_sigma),
+            strength=float(halo_strength),
+            wash_strength=float(halo_wash_strength),
+            cell_mask=cell_mask,
+        )
+        img = np.clip(img, 0.0, 1.0).astype(np.float32)
+
 
     # 13) clean global blur
     global_blur_sigma = rng.uniform(*params.global_blur_sigma_range)

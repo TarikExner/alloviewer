@@ -74,6 +74,13 @@ class CameraStyleParams:
     median_match_strength: Tuple[float, float] = (0.0, 1.0)
     use_median_match: bool = True
 
+    # overexposure halo / bloom
+    halo_prob: float = 0.0
+    halo_threshold_range: Tuple[float, float] = (1.0, 1.0)
+    halo_sigma_range: Tuple[float, float] = (0.0, 0.0)
+    halo_strength_range: Tuple[float, float] = (0.0, 0.0)
+    halo_wash_strength_range: Tuple[float, float] = (0.0, 0.0)
+
 
 @dataclass
 class CameraStyleConfig:
@@ -191,6 +198,12 @@ IPHONE_STYLE = CameraStyleParams(
     green_magenta_shift_range=(-0.015, 0.015),
     blue_yellow_shift_range=(-0.015, 0.015),
 
+    halo_prob=0.70,
+    halo_threshold_range=(0.55, 0.82),
+    halo_sigma_range=(1.4, 3.8),
+    halo_strength_range=(0.10, 0.32),
+    halo_wash_strength_range=(0.04, 0.18),
+
     blur_sigma_range=(0.18, 0.45),
     sharpen_strength_range=(0.02, 0.08),
 
@@ -247,6 +260,12 @@ GOOGLEPIXEL_STYLE = CameraStyleParams(
     green_magenta_shift_range=(-0.04, 0.04),
     blue_yellow_shift_range=(-0.05, 0.05),
 
+    halo_prob=0.45,
+    halo_threshold_range=(0.60, 0.86),
+    halo_sigma_range=(1.0, 2.8),
+    halo_strength_range=(0.06, 0.22),
+    halo_wash_strength_range=(0.02, 0.10),
+
     blur_sigma_range=(0.35, 1.00),
     sharpen_strength_range=(0.12, 0.40),
 
@@ -273,7 +292,6 @@ GOOGLEPIXEL_STYLE = CameraStyleParams(
     median_match_strength=(0.0, 0.7),
     use_median_match=True,
 )
-
 
 MICROSCOPE_STYLE = CameraStyleParams(
     name="microscope",
