@@ -18,14 +18,22 @@ class CameraDimension:
     """
     Sample image dimensions by target megapixels.
 
-    This gives a much flatter area distribution than sampling width directly.
+    Megapixels are sampled log-uniformly by default, so the sampler covers
+    the full range but does not over-sample very large, slow images.
+
+    The aspect ratio is sampled independently, then H/W are derived from:
+        area = H * W
+        ratio = W / H
     """
     name: str = "Camera"
 
     # target image area in megapixels
     megapixels: Tuple[float, float] = (2.0, 14.0)
 
-    # optional fixed H/W override; normally leave both None
+    # sampling mode: "log_uniform" or "uniform"
+    megapixel_sampling: str = "log_uniform"
+
+    # optional fixed dimensions; if both are set, megapixel sampling is ignored
     W: Optional[int] = None
     H: Optional[int] = None
 
@@ -39,38 +47,60 @@ class CameraDimension:
     portrait_prob: float = 0.5
     size_multiple: int = 32
 
-    # safety lower bound
+    # keep both sides at least this large
     min_dim: int = 512
 
     def sample(self, rng: RNG) -> Dict[str, Any]:
+        # fixed dimensions override sampling
         if self.W is not None and self.H is not None:
-            H = int(self.H)
-            W = int(self.W)
-            return {"H": H, "W": W}
+            H = round_to_multiple(float(self.H), self.size_multiple)
+            W = round_to_multiple(float(self.W), self.size_multiple)
+            return {
+                "H": int(H),
+                "W": int(W),
+            }
 
         mp_lo, mp_hi = self.megapixels
-        area = float(rng.uniform(float(mp_lo), float(mp_hi))) * 1_000_000.0
+        mp_lo = max(float(mp_lo), 1e-6)
+        mp_hi = max(float(mp_hi), mp_lo)
 
-        ratio = choose_ratio(rng, self.aspect_ratios, self.portrait_prob)
+        if self.megapixel_sampling == "log_uniform":
+            mp = float(np.exp(rng.uniform(np.log(mp_lo), np.log(mp_hi))))
+        elif self.megapixel_sampling == "uniform":
+            mp = float(rng.uniform(mp_lo, mp_hi))
+        else:
+            raise ValueError(
+                f"Unknown megapixel_sampling={self.megapixel_sampling!r}. "
+                "Use 'log_uniform' or 'uniform'."
+            )
+
+        area = mp * 1_000_000.0
+
+        ratio = choose_ratio(
+            rng,
+            self.aspect_ratios,
+            self.portrait_prob,
+        )
         ratio = float(ratio)  # W / H
 
         # area = W * H
         # W = ratio * H
         # area = ratio * H^2
-        H = np.sqrt(area / ratio)
-        W = ratio * H
+        H = float(np.sqrt(area / ratio))
+        W = float(ratio * H)
 
-        # enforce minimum dimension while preserving aspect ratio
+        # enforce minimum side length while preserving aspect ratio
         short_side = min(H, W)
-        if short_side < self.min_dim:
+        if short_side < float(self.min_dim):
             scale = float(self.min_dim) / max(1.0, short_side)
             H *= scale
             W *= scale
 
+        # round to allowed multiple
         H = round_to_multiple(H, self.size_multiple)
         W = round_to_multiple(W, self.size_multiple)
 
-        # enforce again after rounding
+        # enforce again after rounding, using ceil-style behavior
         if H < self.min_dim:
             H = int(np.ceil(self.min_dim / self.size_multiple) * self.size_multiple)
         if W < self.min_dim:
