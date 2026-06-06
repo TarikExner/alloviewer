@@ -45,6 +45,13 @@ def simulate_image(
     n_cells=150,
     cell_diameter=20,
 
+    # Scale the sampled/base cell diameter with image resolution.
+    # A value of 1.0 for cell_diameter_size_exponent means linear scaling
+    # with the short image side; lower values keep more absolute-size control.
+    cell_diameter_reference_short_side=1620.0,
+    cell_diameter_size_exponent=0.75,
+    cell_diameter_scale_clip=(0.85, 2.0),
+
     large_cell_frac=0.0,              # fraction of inside-well cells that are "large"
     large_cell_diameter_factor=1.5,   # large size = factor * cell_diameter
 
@@ -139,7 +146,7 @@ def simulate_image(
       - Visible cells are rendered from the final instance mask, not from an
         independent Gaussian spot. This keeps the rendered cell body and label
         geometry coupled.
-      - The halo is still present, but it is mask-derived.
+      - The base render halo can be disabled; camera/acquisition halo may be added later.
       - Boundary target settings are internal constants, not user parameters.
       - focus_frac_in still affects sampled render sigmas, but the standard
         training targets include all true inside-well cells. The sigma-filtered
@@ -242,7 +249,23 @@ def simulate_image(
     large_cell_frac = float(np.clip(large_cell_frac, 0.0, 1.0))
     is_large = rng.random(n_cells) < large_cell_frac
 
-    diameters = np.full(n_cells, float(cell_diameter), dtype=np.float32)
+    short_side = float(min(H, W))
+    ref_short_side = max(1.0, float(cell_diameter_reference_short_side))
+    size_exponent = float(cell_diameter_size_exponent)
+
+    cell_diameter_size_scale = (short_side / ref_short_side) ** size_exponent
+
+    if cell_diameter_scale_clip is not None:
+        lo, hi = cell_diameter_scale_clip
+        cell_diameter_size_scale = float(
+            np.clip(cell_diameter_size_scale, float(lo), float(hi))
+        )
+    else:
+        cell_diameter_size_scale = float(cell_diameter_size_scale)
+
+    base_cell_diameter = float(cell_diameter) * cell_diameter_size_scale
+
+    diameters = np.full(n_cells, base_cell_diameter, dtype=np.float32)
     diameters[is_large] *= float(large_cell_diameter_factor)
 
     jitter = rng.normal(1.0, 0.10, size=n_cells).astype(np.float32)
@@ -419,7 +442,7 @@ def simulate_image(
         final_sigmas[zero_i] = sig
 
         d0 = float(diameters[zero_i])
-        # The patch is deliberately larger than the hard mask to allow a halo.
+        # The patch is kept larger than the hard mask so blur/edge softness is not clipped.
         render_radius = int(np.ceil(max(2, 0.5 * d0 + 3.0 * sig * _CELL_RENDER_HALO_SIGMA_FACTOR)))
 
         y0, y1 = y - render_radius, y + render_radius + 1
@@ -628,7 +651,7 @@ def simulate_image(
     } if return_targets else {}
 
     if min_cell_sep_px is None:
-        min_cell_sep_px = 0.9 * cell_diameter
+        min_cell_sep_px = 0.9 * base_cell_diameter
 
     all_params = capture_params(simulate_image, locals())
 
@@ -639,6 +662,11 @@ def simulate_image(
         "n_cells": n_cells,
         "well_center": (float(cy), float(cx)),
         "radius_px": float(R),
+        "base_cell_diameter": float(base_cell_diameter),
+        "cell_diameter_size_scale": float(cell_diameter_size_scale),
+        "cell_diameter_reference_short_side": float(cell_diameter_reference_short_side),
+        "cell_diameter_size_exponent": float(cell_diameter_size_exponent),
+        "cell_diameter_scale_clip": cell_diameter_scale_clip,
         "final_sigmas": final_sigmas,
         "target_keep_ids": keep_ids.astype(np.int32),
         "params": all_params,

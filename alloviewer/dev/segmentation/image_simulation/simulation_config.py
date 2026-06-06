@@ -44,7 +44,13 @@ class SimulatorConfig:
 
     # --- cells ---
     n_cells: Union[int, Tuple[int, int]] = (10, 2000)
-    cell_diameter: Union[float, Tuple[float, float]] = (2.0, 12.0)
+    cell_diameter: Union[float, Tuple[float, float]] = (7.0, 12.0)
+
+    # Scale cell diameter with image size while keeping direct control over
+    # cell_diameter. Scaling uses the short image side: min(H, W).
+    cell_diameter_reference_short_side: Union[float, Tuple[float, float]] = 1620.0
+    cell_diameter_size_exponent: Union[float, Tuple[float, float]] = 0.75
+    cell_diameter_scale_clip: Optional[Tuple[float, float]] = (0.85, 2.0)
 
     large_cell_frac: Union[float, Tuple[float, float]] = (0.0, 0.5)
     large_cell_diameter_factor: Union[float, Tuple[float, float]] = (1.2, 2.0)
@@ -167,6 +173,9 @@ class SimulatorConfig:
         # cells
         set_num("n_cells", integer=True)
         set_num("cell_diameter")
+        set_num("cell_diameter_reference_short_side")
+        set_num("cell_diameter_size_exponent")
+        set_passthrough("cell_diameter_scale_clip")
         set_num("cell_axis_jitter")
         set_passthrough("cell_intensity_range")
 
@@ -286,7 +295,10 @@ def test_scene() -> SimulatorConfig:
 
         # --- cells ---
         n_cells = (10, 2000),
-        cell_diameter = (6.0, 10.0),
+        cell_diameter = (7.0, 12.0),
+        cell_diameter_reference_short_side = 1620.0,
+        cell_diameter_size_exponent = 0.75,
+        cell_diameter_scale_clip = (0.85, 2.0),
         frac_positive = (0.0, 1.0),
         color_jitter = (0.0, 0.2),
         sigma_in = (0.9, 1.2),   # pass-through
