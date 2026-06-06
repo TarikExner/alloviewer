@@ -125,6 +125,7 @@ def compute_inner_boundary(inst_np: np.ndarray) -> np.ndarray:
     b[:,0]   &= (a[:,0]   != 0)
     return b.astype(np.uint8)
 
+
 def make_soft_boundary_from_instances(
     inst: np.ndarray,
     ring_width: int = 1,
@@ -132,52 +133,54 @@ def make_soft_boundary_from_instances(
     sigma: float = 1.0,
 ) -> np.ndarray:
     """
-    Soft inside/outside boundary ring around each instance.
+    Faster version of your current per-instance soft boundary.
 
-    Parameters keep their old names for backward compatibility:
-      ring_width: inside width, in pixels
-      soft_band: outside width, in pixels
-      sigma: Gaussian falloff in distance units
+    Main speed fix:
+    - Uses ndi.find_objects() to get all instance bounding boxes once.
+    - Avoids np.where(inst == label_id) over the full image for every label.
 
-    This version is faster than the naive full-image-per-instance approach.
-    It computes the soft ring only in a cropped region around each instance.
+    Still computes per-instance local distance transforms.
     """
     inst = np.asarray(inst)
     if inst.ndim != 2:
         raise ValueError(f"Expected 2D instance map, got shape {inst.shape}")
 
+    if inst.size == 0:
+        return np.zeros(inst.shape, dtype=np.float32)
+
+    max_label = int(inst.max())
+    if max_label <= 0:
+        return np.zeros(inst.shape, dtype=np.float32)
+
     inner_width = max(0.0, float(ring_width))
     outer_width = max(0.0, float(soft_band))
     sigma = max(1e-6, float(sigma))
 
-    if inst.size == 0:
-        return np.zeros(inst.shape, dtype=np.float32)
+    H, W = inst.shape
+    out = np.zeros((H, W), dtype=np.float32)
 
-    out = np.zeros(inst.shape, dtype=np.float32)
-
-    labels = np.unique(inst)
-    labels = labels[labels != 0]
-    if labels.size == 0:
-        return out
-
-    # Margin around each object crop.
-    # Need enough space for the outside band and Gaussian decay.
     pad = int(np.ceil(max(inner_width, outer_width) + 3.0 * sigma))
 
-    H, W = inst.shape
+    # One pass over the label image.
+    # Returns one slice tuple per label index 1..max_label.
+    objects = ndi.find_objects(inst)
 
-    for label_id in labels:
-        ys, xs = np.where(inst == label_id)
-        if ys.size == 0:
+    denom = np.float32(2.0 * sigma * sigma)
+
+    for label_idx, sl in enumerate(objects, start=1):
+        if sl is None:
             continue
 
-        y0 = max(0, int(ys.min()) - pad)
-        y1 = min(H, int(ys.max()) + 1 + pad)
-        x0 = max(0, int(xs.min()) - pad)
-        x1 = min(W, int(xs.max()) + 1 + pad)
+        ys, xs = sl
+
+        y0 = max(0, ys.start - pad)
+        y1 = min(H, ys.stop + pad)
+        x0 = max(0, xs.start - pad)
+        x1 = min(W, xs.stop + pad)
 
         crop = inst[y0:y1, x0:x1]
-        m = crop == label_id
+        m = crop == label_idx
+
         if not np.any(m):
             continue
 
@@ -191,7 +194,7 @@ def make_soft_boundary_from_instances(
         if not np.any(band):
             continue
 
-        soft = np.exp(-(signed_dist ** 2) / (2.0 * sigma ** 2)).astype(np.float32)
+        soft = np.exp(-(signed_dist * signed_dist) / denom).astype(np.float32)
         soft[~band] = 0.0
 
         out_crop = out[y0:y1, x0:x1]
