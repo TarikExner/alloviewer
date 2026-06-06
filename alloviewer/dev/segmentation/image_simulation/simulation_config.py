@@ -35,11 +35,11 @@ class SimulatorConfig:
 
     # --- multiplicative background texture inside the well ---
     background_texture_enable: Union[bool, float, Tuple[float, float]] = True
-    background_texture_sigma_fine: Union[float, Tuple[float, float]] = (0.5, 1.2)
-    background_texture_sigma_coarse: Union[float, Tuple[float, float]] = (2.5, 6.0)
-    background_texture_fine_weight: Union[float, Tuple[float, float]] = (0.75, 0.95)
-    background_texture_coarse_weight: Union[float, Tuple[float, float]] = (0.05, 0.25)
-    background_texture_strength: Union[float, Tuple[float, float]] = (0.03, 0.08)
+    background_texture_sigma_fine: Union[float, Tuple[float, float]] = (0.25, 0.8)
+    background_texture_sigma_coarse: Union[float, Tuple[float, float]] = (1.0, 2.5)
+    background_texture_fine_weight: Union[float, Tuple[float, float]] = (0.90, 1.0)
+    background_texture_coarse_weight: Union[float, Tuple[float, float]] = (0.0, 0.08)
+    background_texture_strength: Union[float, Tuple[float, float]] = (0.01, 0.04)
     background_texture_clip: Tuple[float, float] = (0.1, 1.6)
 
     # --- cells ---
@@ -277,11 +277,11 @@ def test_scene() -> SimulatorConfig:
 
         # --- multiplicative background texture inside the well ---
         background_texture_enable = True,
-        background_texture_sigma_fine = (0.5, 1.0),
-        background_texture_sigma_coarse = (2.5, 5.0),
-        background_texture_fine_weight = (0.80, 0.95),
-        background_texture_coarse_weight = (0.05, 0.20),
-        background_texture_strength = (0.03, 0.07),
+        background_texture_sigma_fine = (0.25, 0.8),
+        background_texture_sigma_coarse = (1.0, 2.5),
+        background_texture_fine_weight = (0.90, 1.0),
+        background_texture_coarse_weight = (0.0, 0.08),
+        background_texture_strength = (0.01, 0.04),
         background_texture_clip = (0.1, 1.6),
 
         # --- cells ---
