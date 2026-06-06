@@ -33,6 +33,15 @@ class SimulatorConfig:
     radial_gamma: Union[float, Tuple[float, float]] = 1.2
     vignette_strength: Union[float, Tuple[float, float]] = 0.20
 
+    # --- multiplicative background texture inside the well ---
+    background_texture_enable: Union[bool, float, Tuple[float, float]] = True
+    background_texture_sigma_fine: Union[float, Tuple[float, float]] = (0.5, 1.2)
+    background_texture_sigma_coarse: Union[float, Tuple[float, float]] = (2.5, 6.0)
+    background_texture_fine_weight: Union[float, Tuple[float, float]] = (0.75, 0.95)
+    background_texture_coarse_weight: Union[float, Tuple[float, float]] = (0.05, 0.25)
+    background_texture_strength: Union[float, Tuple[float, float]] = (0.03, 0.08)
+    background_texture_clip: Tuple[float, float] = (0.1, 1.6)
+
     # --- cells ---
     n_cells: Union[int, Tuple[int, int]] = (10, 2000)
     cell_diameter: Union[float, Tuple[float, float]] = (2.0, 12.0)
@@ -146,6 +155,15 @@ class SimulatorConfig:
         set_num("radial_gamma")
         set_num("vignette_strength")
 
+        # multiplicative background texture inside the well
+        set_bool("background_texture_enable")
+        set_num("background_texture_sigma_fine")
+        set_num("background_texture_sigma_coarse")
+        set_num("background_texture_fine_weight")
+        set_num("background_texture_coarse_weight")
+        set_num("background_texture_strength")
+        set_passthrough("background_texture_clip")
+
         # cells
         set_num("n_cells", integer=True)
         set_num("cell_diameter")
@@ -256,6 +274,15 @@ def test_scene() -> SimulatorConfig:
         edge_boost = (0, 0.5),
         radial_gamma = 1.2,
         vignette_strength= (0, 0.20),
+
+        # --- multiplicative background texture inside the well ---
+        background_texture_enable = True,
+        background_texture_sigma_fine = (0.5, 1.0),
+        background_texture_sigma_coarse = (2.5, 5.0),
+        background_texture_fine_weight = (0.80, 0.95),
+        background_texture_coarse_weight = (0.05, 0.20),
+        background_texture_strength = (0.03, 0.07),
+        background_texture_clip = (0.1, 1.6),
 
         # --- cells ---
         n_cells = (10, 2000),

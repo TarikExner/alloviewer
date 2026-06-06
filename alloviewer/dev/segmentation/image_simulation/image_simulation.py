@@ -32,6 +32,15 @@ def simulate_image(
     radial_gamma=1.2,
     vignette_strength=0.20,
 
+    # --- multiplicative background texture inside the well ---
+    background_texture_enable=True,
+    background_texture_sigma_fine=0.7,
+    background_texture_sigma_coarse=4.0,
+    background_texture_fine_weight=0.85,
+    background_texture_coarse_weight=0.15,
+    background_texture_strength=0.05,
+    background_texture_clip=(0.1, 1.6),
+
     # --- cells (sharp ones inside the well) ---
     n_cells=150,
     cell_diameter=20,
@@ -199,16 +208,31 @@ def simulate_image(
             rings += a * ring
         img += rings[..., None] * bg_color[None, None, :]
 
-    # small background texture inside the well
-    tex1 = rng.normal(0, 1.0, size=(H, W)).astype(np.float32)
-    tex2 = rng.normal(0, 1.0, size=(H, W)).astype(np.float32)
-    tex1 = blur(tex1, 2.0)
-    tex2 = blur(tex2, 12.0)
-    tex = 0.65 * tex1 + 0.35 * tex2
-    tex = (tex - tex.mean()) / (tex.std() + 1e-6)
-    tex_mul = 0.18
-    tex = np.clip(1.0 + tex_mul * tex, 0.1, 1.6).astype(np.float32)
-    img[inside] *= tex[inside, None]
+    # multiplicative background texture inside the well
+    if background_texture_enable and background_texture_strength > 0:
+        tex1 = rng.normal(0, 1.0, size=(H, W)).astype(np.float32)
+        tex2 = rng.normal(0, 1.0, size=(H, W)).astype(np.float32)
+
+        tex1 = blur(tex1, background_texture_sigma_fine)
+        tex2 = blur(tex2, background_texture_sigma_coarse)
+
+        fine_w = float(background_texture_fine_weight)
+        coarse_w = float(background_texture_coarse_weight)
+        denom_w = abs(fine_w) + abs(coarse_w)
+        if denom_w <= 1e-8:
+            fine_w, coarse_w, denom_w = 1.0, 0.0, 1.0
+
+        tex = (fine_w * tex1 + coarse_w * tex2) / denom_w
+        tex = (tex - tex.mean()) / (tex.std() + 1e-6)
+
+        lo, hi = background_texture_clip
+        tex = np.clip(
+            1.0 + float(background_texture_strength) * tex,
+            float(lo),
+            float(hi),
+        ).astype(np.float32)
+
+        img[inside] *= tex[inside, None]
 
     # ---------- place cells inside the well ----------
     n_pos = int(round(frac_positive * n_cells))
