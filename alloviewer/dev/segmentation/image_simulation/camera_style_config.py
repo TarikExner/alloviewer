@@ -198,7 +198,7 @@ IPHONE_STYLE = CameraStyleParams(
     green_magenta_shift_range=(-0.015, 0.015),
     blue_yellow_shift_range=(-0.015, 0.015),
 
-    halo_prob=0.0,
+    halo_prob=0.3,
     halo_threshold_range=(0.55, 0.82),
     halo_sigma_range=(1.4, 3.8),
     halo_strength_range=(0.10, 0.32),
@@ -260,7 +260,7 @@ GOOGLEPIXEL_STYLE = CameraStyleParams(
     green_magenta_shift_range=(-0.04, 0.04),
     blue_yellow_shift_range=(-0.05, 0.05),
 
-    halo_prob=0.0,
+    halo_prob=0.3,
     halo_threshold_range=(0.60, 0.86),
     halo_sigma_range=(1.0, 2.8),
     halo_strength_range=(0.06, 0.22),
@@ -328,6 +328,12 @@ MICROSCOPE_STYLE = CameraStyleParams(
     photon_level_range=(2000.0, 12000.0),
     read_noise_range=(0.0002, 0.005),
 
+    halo_prob=0.3,
+    halo_threshold_range=(0.60, 0.86),
+    halo_sigma_range=(1.0, 2.8),
+    halo_strength_range=(0.06, 0.22),
+    halo_wash_strength_range=(0.02, 0.10),
+
     vignette_amp_range=(0.00, 0.008),
     illum_amp_range=(0.00, 0.01),
 
@@ -386,6 +392,12 @@ MONOCHROME_GENERIC_STYLE = CameraStyleParams(
     global_blur_sigma_range=(0.0, 0.25),
     photon_level_range=(2000.0, 12000.0),
     read_noise_range=(0.0002, 0.006),
+
+    halo_prob=0.3,
+    halo_threshold_range=(0.60, 0.86),
+    halo_sigma_range=(1.0, 2.8),
+    halo_strength_range=(0.06, 0.22),
+    halo_wash_strength_range=(0.02, 0.10),
 
     vignette_amp_range=(0.00, 0.01),
     illum_amp_range=(0.00, 0.012),
@@ -446,6 +458,12 @@ MONOCHROME_REAL_STYLE = CameraStyleParams(
     global_blur_sigma_range=(0.0, 0.25),
     photon_level_range=(2000.0, 12000.0),
     read_noise_range=(0.0002, 0.006),
+    
+    halo_prob=0.3,
+    halo_threshold_range=(0.60, 0.86),
+    halo_sigma_range=(1.0, 2.8),
+    halo_strength_range=(0.06, 0.22),
+    halo_wash_strength_range=(0.02, 0.10),
 
     vignette_amp_range=(0.00, 0.01),
     illum_amp_range=(0.00, 0.012),
