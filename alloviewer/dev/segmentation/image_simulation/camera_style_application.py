@@ -22,7 +22,6 @@ from .utils import (
     apply_read_noise,
     apply_global_blur,
     apply_photon_noise,
-    apply_overexposure_halo
 )
 
 def apply_camera_style(
@@ -198,24 +197,6 @@ def apply_camera_style(
     gamma = rng.uniform(*params.gamma_range)
     img = np.clip(img, 1e-6, 1.0) ** gamma
     img = np.clip(img, 0.0, 1.0).astype(np.float32)
-
-    # 12b) local overexposure halo / bloom
-    if rng.random() < params.halo_prob:
-        halo_threshold = rng.uniform(*params.halo_threshold_range)
-        halo_sigma = rng.uniform(*params.halo_sigma_range)
-        halo_strength = rng.uniform(*params.halo_strength_range)
-        halo_wash_strength = rng.uniform(*params.halo_wash_strength_range)
-
-        img = apply_overexposure_halo(
-            img=img,
-            threshold=float(halo_threshold),
-            sigma=float(halo_sigma),
-            strength=float(halo_strength),
-            wash_strength=float(halo_wash_strength),
-            cell_mask=cell_mask,
-        )
-        img = np.clip(img, 0.0, 1.0).astype(np.float32)
-
 
     # 13) clean global blur
     global_blur_sigma = rng.uniform(*params.global_blur_sigma_range)

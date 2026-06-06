@@ -9,7 +9,7 @@ from skimage import filters, measure, morphology, exposure
 from skimage.segmentation import watershed
 from skimage.segmentation import relabel_sequential
 
-from typing import Union, List, Tuple 
+from typing import Union, List, Tuple, Optional
 import cv2
 
 
@@ -500,4 +500,91 @@ def crop_external_meta_to_tile(meta_full: dict, y0: int, x0: int, h: int, w: int
     return new_meta
 
 
+def apply_overexposure_halo(
+    img: np.ndarray,
+    *,
+    threshold: float,
+    sigma: float,
+    strength: float,
+    wash_strength: float = 0.0,
+    cell_mask: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """
+    Add a local overexposure halo around bright cell signal.
+
+    The effect is driven by bright pixels, optionally restricted by the
+    simulated cell mask. Nearby halos naturally overlap because the halo
+    field is built on the whole image at once.
+
+    Parameters
+    ----------
+    img:
+        RGB HWC float32 image in [0, 1].
+    threshold:
+        Only signal above this threshold contributes to the halo.
+    sigma:
+        Gaussian blur sigma for the halo spread.
+    strength:
+        Strength of the added halo field.
+    wash_strength:
+        Optional local contrast washout around the halo.
+    cell_mask:
+        Optional binary/float cell mask [H, W]. If given, the halo is focused
+        on cell regions.
+    """
+    if sigma <= 0.0 or strength <= 0.0:
+        return img
+
+    img = np.clip(img.astype(np.float32, copy=False), 0.0, 1.0)
+
+    bright = np.maximum(img - float(threshold), 0.0)
+
+    if cell_mask is not None:
+        mask = np.asarray(cell_mask, dtype=np.float32)
+        if mask.ndim != 2:
+            raise ValueError(f"cell_mask must be 2D, got shape {mask.shape}")
+
+        mask = np.clip(mask, 0.0, 1.0)
+
+        # soften the mask a bit so the halo can spill just beyond the cell body
+        mask_soft = cv2.GaussianBlur(
+            mask,
+            (0, 0),
+            sigmaX=max(0.5, float(sigma) * 0.75),
+            sigmaY=max(0.5, float(sigma) * 0.75),
+        )
+        mask_soft = np.clip(mask_soft, 0.0, 1.0)
+
+        bright = bright * mask_soft[..., None]
+
+    halo = cv2.GaussianBlur(
+        bright,
+        (0, 0),
+        sigmaX=float(sigma),
+        sigmaY=float(sigma),
+    ).astype(np.float32)
+
+    # Add the halo in a saturating way so overlap matters,
+    # but does not blow up too hard.
+    img = img + float(strength) * halo * (1.0 - img)
+    img = np.clip(img, 0.0, 1.0)
+
+    # Optional local washout: makes boundaries less crisp in bright regions.
+    if wash_strength > 0.0:
+        halo_map = halo.max(axis=2, keepdims=True)
+        halo_scale = float(halo_map.max()) + 1e-6
+        wash_mask = np.clip(halo_map / halo_scale, 0.0, 1.0)
+
+        local_blur = cv2.GaussianBlur(
+            img,
+            (0, 0),
+            sigmaX=float(sigma),
+            sigmaY=float(sigma),
+        ).astype(np.float32)
+
+        alpha = float(wash_strength) * wash_mask
+        img = (1.0 - alpha) * img + alpha * local_blur
+        img = np.clip(img, 0.0, 1.0)
+
+    return img.astype(np.float32)
 
