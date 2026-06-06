@@ -130,6 +130,7 @@ def simulate_image(
 
     seed=None,
     return_targets=True,
+    return_aux_targets=False
 ):
     """
     Returns:
@@ -742,38 +743,46 @@ def simulate_image(
     inst_all = inst.astype(np.int32)
     cell_mask_all = (inst_all > 0).astype(np.float32)
 
-    # Standard targets: all true inside-well cells.
-    # Ghosts outside the well never enter inst_all and remain image-only distractors.
-    boundary = make_soft_boundary_from_instances(
-        inst_all,
-        ring_width=_BOUNDARY_INNER_WIDTH,
-        soft_band=_BOUNDARY_OUTER_WIDTH,
-        sigma=_BOUNDARY_SIGMA,
-    ).astype(np.float32)
-
-    # Optional sigma-filtered debug view only. This is not used as the standard
-    # training target because current configs may sample sigma_in and sigma_out
-    # from very similar ranges.
+    # Keep sigma-filter metadata cheap. Do not build full-res filtered masks unless requested.
     if in_focus_sigma_thresh is None:
         in_focus_sigma_thresh = 1.15 * max(sigma_in)
 
     thr = float(in_focus_sigma_thresh)
-    keep_ids = np.flatnonzero(final_sigmas <= thr) + 1
-    inst_sigma_filtered = np.where(
-        np.isin(inst_all, keep_ids),
-        inst_all,
-        0,
-    ).astype(np.int32)
+    keep_ids = (np.flatnonzero(final_sigmas <= thr) + 1).astype(np.int32)
 
-    targets = {
-        "instance_labels": inst_all.astype(np.int32),
-        "cell_mask": cell_mask_all.astype(np.float32),
-        "boundary": boundary.astype(np.float32),
-        "instance_labels_sigma_filtered": inst_sigma_filtered.astype(np.int32),
-        "cell_mask_sigma_filtered": (inst_sigma_filtered > 0).astype(np.float32),
-        "final_sigmas": final_sigmas.astype(np.float32),
-        "focus_keep_ids": keep_ids.astype(np.int32),
-    } if return_targets else {}
+    targets = {}
+
+    if return_targets:
+        # Minimal targets needed by SimCellsDataset.
+        # Tile-level heads are rebuilt later in BaseCellsTilesDataset._finalize_tiles().
+        targets = {
+            "instance_labels": inst_all,
+            "cell_mask": cell_mask_all,
+        }
+
+        if return_aux_targets:
+            boundary = make_soft_boundary_from_instances(
+                inst_all,
+                ring_width=_BOUNDARY_INNER_WIDTH,
+                soft_band=_BOUNDARY_OUTER_WIDTH,
+                sigma=_BOUNDARY_SIGMA,
+            ).astype(np.float32)
+
+            inst_sigma_filtered = np.where(
+                np.isin(inst_all, keep_ids),
+                inst_all,
+                0,
+            ).astype(np.int32)
+
+            targets.update(
+                {
+                    "boundary": boundary,
+                    "instance_labels_sigma_filtered": inst_sigma_filtered,
+                    "cell_mask_sigma_filtered": (inst_sigma_filtered > 0).astype(np.float32),
+                    "final_sigmas": final_sigmas.astype(np.float32),
+                    "focus_keep_ids": keep_ids.astype(np.int32),
+                }
+            )
 
     if min_cell_sep_px is None:
         min_cell_sep_px = 0.9 * base_cell_diameter

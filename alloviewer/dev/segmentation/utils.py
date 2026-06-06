@@ -204,11 +204,14 @@ def make_soft_boundary_from_instances(
 
 
 def normalize01(x: np.ndarray) -> np.ndarray:
-    """Normalize a numeric array to [0, 1] by its maximum value."""
     x = np.asarray(x, dtype=np.float32)
-    m = float(x.max()) if x.size else 0.0
+    if x.size == 0:
+        return x.astype(np.float32, copy=False)
+
+    m = x.max()
     if m > 0:
-        x = x / m
+        x = x / np.float32(m)
+
     return x.astype(np.float32, copy=False)
 
 
@@ -250,27 +253,55 @@ def render_mask_derived_cell(
     """
     Create a soft visible cell from the exact hard instance mask.
 
-    The returned render map keeps the visible object tied to the label geometry.
-    A controlled halo is still present, but it is derived from the same mask.
+    Fast path:
+    - if halo_weight <= 0, compute only the core blur
+    - if sigma is effectively zero, return the hard mask
     """
     core_mask = np.asarray(core_mask, dtype=np.float32)
+
     if core_mask.max() <= 0:
         return core_mask.astype(np.float32, copy=False)
 
     sigma = max(float(sigma), float(min_sigma))
     halo_weight = float(np.clip(halo_weight, 0.0, 1.0))
+
+    # Fast path: no blur needed
+    if sigma <= 1e-6:
+        return core_mask.astype(np.float32, copy=False)
+
+    core = ndi.gaussian_filter(
+        core_mask,
+        sigma=sigma,
+        mode="constant",
+        cval=0.0,
+    ).astype(np.float32, copy=False)
+
+    core = normalize01(core)
+
+    # Fast path: halo disabled
+    if halo_weight <= 0.0:
+        return core
+
     halo_sigma_factor = max(float(halo_sigma_factor), 1.0)
 
-    core = ndi.gaussian_filter(core_mask, sigma=sigma, mode="constant", cval=0.0)
+    # If halo blur is effectively identical, avoid second filter
+    if abs(halo_sigma_factor - 1.0) < 1e-6:
+        return core
+
     halo = ndi.gaussian_filter(
         core_mask,
         sigma=sigma * halo_sigma_factor,
         mode="constant",
         cval=0.0,
-    )
+    ).astype(np.float32, copy=False)
 
-    render = (1.0 - halo_weight) * normalize01(core)
-    render += halo_weight * normalize01(halo)
+    halo = normalize01(halo)
+
+    render = (
+        np.float32(1.0 - halo_weight) * core
+        + np.float32(halo_weight) * halo
+    ).astype(np.float32)
+
     return normalize01(render)
 
 def make_center_stem_from_centers(centers, shape):

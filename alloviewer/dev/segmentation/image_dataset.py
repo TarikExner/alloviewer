@@ -615,6 +615,7 @@ class SimCellsDataset(BaseCellsTilesDataset):
         # build sim kwargs from configs
         sim_kwargs = self.scene_cfg.sample_kwargs(rng, camera=self.camera_cfg)
         sim_kwargs.setdefault("return_targets", True)
+        sim_kwargs.setdefault("return_aux_targets", False)
 
         # simulate
         img, meta, targets = simulate_image(**sim_kwargs)

@@ -1,3 +1,4 @@
+import numpy as np
 from dataclasses import dataclass
 from typing import Any, Tuple, Optional, Dict, Sequence
 
@@ -9,17 +10,15 @@ from .utils import (
 )
 
 
-from dataclasses import dataclass
-from typing import Optional, Sequence, Tuple, Dict, Any
-import numpy as np
-
 @dataclass
 class CameraDimension:
     """
     Sample image dimensions by target megapixels.
 
-    Megapixels are sampled log-uniformly by default, so the sampler covers
-    the full range but does not over-sample very large, slow images.
+    Sampling modes:
+      - "uniform":     uniform over megapixels
+      - "log_uniform": log-uniform over megapixels
+      - "mixed":       two uniform MP bands with configurable probability
 
     The aspect ratio is sampled independently, then H/W are derived from:
         area = H * W
@@ -27,13 +26,18 @@ class CameraDimension:
     """
     name: str = "Camera"
 
-    # target image area in megapixels
+    # Used by "uniform" and "log_uniform"
     megapixels: Tuple[float, float] = (2.0, 14.0)
 
-    # sampling mode: "log_uniform" or "uniform"
-    megapixel_sampling: str = "log_uniform"
+    # "uniform" | "log_uniform" | "mixed"
+    megapixel_sampling: str = "mixed"
 
-    # optional fixed dimensions; if both are set, megapixel sampling is ignored
+    # Used by "mixed"
+    mixed_low: Tuple[float, float] = (2.0, 6.0)
+    mixed_high: Tuple[float, float] = (6.0, 14.0)
+    mixed_high_prob: float = 0.5
+
+    # Optional fixed dimensions; if both are set, MP sampling is ignored
     W: Optional[int] = None
     H: Optional[int] = None
 
@@ -50,30 +54,48 @@ class CameraDimension:
     # keep both sides at least this large
     min_dim: int = 512
 
+    def _sample_megapixels(self, rng: RNG) -> float:
+        mode = str(self.megapixel_sampling)
+
+        if mode == "uniform":
+            mp_lo, mp_hi = self.megapixels
+            return float(rng.uniform(float(mp_lo), float(mp_hi)))
+
+        if mode == "log_uniform":
+            mp_lo, mp_hi = self.megapixels
+            mp_lo = max(float(mp_lo), 1e-6)
+            mp_hi = max(float(mp_hi), mp_lo)
+            return float(np.exp(rng.uniform(np.log(mp_lo), np.log(mp_hi))))
+
+        if mode == "mixed":
+            if rng.random() < float(self.mixed_high_prob):
+                mp_lo, mp_hi = self.mixed_high
+            else:
+                mp_lo, mp_hi = self.mixed_low
+            return float(rng.uniform(float(mp_lo), float(mp_hi)))
+
+        raise ValueError(
+            f"Unknown megapixel_sampling={self.megapixel_sampling!r}. "
+            "Use 'uniform', 'log_uniform', or 'mixed'."
+        )
+
     def sample(self, rng: RNG) -> Dict[str, Any]:
-        # fixed dimensions override sampling
+        # Fixed dimensions override sampling
         if self.W is not None and self.H is not None:
             H = round_to_multiple(float(self.H), self.size_multiple)
             W = round_to_multiple(float(self.W), self.size_multiple)
+
+            if H < self.min_dim:
+                H = int(np.ceil(self.min_dim / self.size_multiple) * self.size_multiple)
+            if W < self.min_dim:
+                W = int(np.ceil(self.min_dim / self.size_multiple) * self.size_multiple)
+
             return {
                 "H": int(H),
                 "W": int(W),
             }
 
-        mp_lo, mp_hi = self.megapixels
-        mp_lo = max(float(mp_lo), 1e-6)
-        mp_hi = max(float(mp_hi), mp_lo)
-
-        if self.megapixel_sampling == "log_uniform":
-            mp = float(np.exp(rng.uniform(np.log(mp_lo), np.log(mp_hi))))
-        elif self.megapixel_sampling == "uniform":
-            mp = float(rng.uniform(mp_lo, mp_hi))
-        else:
-            raise ValueError(
-                f"Unknown megapixel_sampling={self.megapixel_sampling!r}. "
-                "Use 'log_uniform' or 'uniform'."
-            )
-
+        mp = self._sample_megapixels(rng)
         area = mp * 1_000_000.0
 
         ratio = choose_ratio(
@@ -89,18 +111,18 @@ class CameraDimension:
         H = float(np.sqrt(area / ratio))
         W = float(ratio * H)
 
-        # enforce minimum side length while preserving aspect ratio
+        # Enforce minimum side length while preserving aspect ratio
         short_side = min(H, W)
         if short_side < float(self.min_dim):
             scale = float(self.min_dim) / max(1.0, short_side)
             H *= scale
             W *= scale
 
-        # round to allowed multiple
+        # Round to allowed multiple
         H = round_to_multiple(H, self.size_multiple)
         W = round_to_multiple(W, self.size_multiple)
 
-        # enforce again after rounding, using ceil-style behavior
+        # Enforce again after rounding, using ceil-style behavior
         if H < self.min_dim:
             H = int(np.ceil(self.min_dim / self.size_multiple) * self.size_multiple)
         if W < self.min_dim:
