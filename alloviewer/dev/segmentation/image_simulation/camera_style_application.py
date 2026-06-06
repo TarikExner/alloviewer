@@ -169,14 +169,30 @@ def apply_camera_style(
     vignette_amp = rng.uniform(*params.vignette_amp_range)
     if vignette_amp > 0:
         yy, xx = np.mgrid[0:H, 0:W]
-        cy, cx = H / 2.0, W / 2.0
-        rr = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2)
-        r_norm = rr / (0.72 * max(H, W))
+        yy = yy.astype(np.float32, copy=False)
+        xx = xx.astype(np.float32, copy=False)
 
-        vignette = 1.0 - vignette_amp * (r_norm ** 2)
-        vignette = np.clip(vignette, 1.0 - vignette_amp, 1.0)
+        cy = np.float32(0.5 * H)
+        cx = np.float32(0.5 * W)
 
-        img = np.clip(img * vignette[..., None], 0.0, 1.0)
+        dy = yy - cy
+        dx = xx - cx
+        rr = np.sqrt(dy * dy + dx * dx).astype(np.float32)
+
+        r_norm = (rr / np.float32(0.72 * max(H, W))).astype(np.float32)
+
+        vignette = (
+            np.float32(1.0)
+            - np.float32(vignette_amp) * (r_norm * r_norm)
+        ).astype(np.float32)
+
+        vignette = np.clip(
+            vignette,
+            np.float32(1.0 - vignette_amp),
+            np.float32(1.0),
+        ).astype(np.float32)
+
+        img = np.clip(img * vignette[..., None], 0.0, 1.0).astype(np.float32)
 
     # 9) S-curve / midtone contrast
     s = rng.uniform(*params.midtone_contrast_range)

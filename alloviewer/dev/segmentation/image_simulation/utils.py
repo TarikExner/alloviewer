@@ -112,34 +112,51 @@ def apply_s_curve(img: np.ndarray, strength: float) -> np.ndarray:
     if abs(strength) < 1e-8:
         return img
 
-    x = np.clip(img, 0.0, 1.0)
-    a = 1.0 + 8.0 * float(strength)
+    x = np.clip(img.astype(np.float32, copy=False), 0.0, 1.0)
+    a = np.float32(1.0 + 8.0 * float(strength))
 
-    y = 1.0 / (1.0 + np.exp(-a * (x - 0.5)))
-    y0 = 1.0 / (1.0 + np.exp(-a * (0.0 - 0.5)))
-    y1 = 1.0 / (1.0 + np.exp(-a * (1.0 - 0.5)))
-    y = (y - y0) / (y1 - y0 + 1e-8)
-    return np.clip(y, 0.0, 1.0)
+    y = np.float32(1.0) / (
+        np.float32(1.0) + np.exp(-a * (x - np.float32(0.5))).astype(np.float32)
+    )
+
+    y0 = np.float32(1.0) / (
+        np.float32(1.0) + np.exp(-a * (np.float32(0.0) - np.float32(0.5))).astype(np.float32)
+    )
+    y1 = np.float32(1.0) / (
+        np.float32(1.0) + np.exp(-a * (np.float32(1.0) - np.float32(0.5))).astype(np.float32)
+    )
+
+    y = (y - y0) / (y1 - y0 + np.float32(1e-8))
+    return np.clip(y, 0.0, 1.0).astype(np.float32)
 
 
 def lift_shadows(img: np.ndarray, amount: float) -> np.ndarray:
     if amount <= 0:
         return img
-    w = (1.0 - img) ** 2
-    out = img + amount * 0.35 * w
-    return np.clip(out, 0.0, 1.0)
 
+    img = img.astype(np.float32, copy=False)
+    amount32 = np.float32(amount)
+
+    w = (np.float32(1.0) - img) ** np.float32(2.0)
+    out = img + amount32 * np.float32(0.35) * w
+
+    return np.clip(out, 0.0, 1.0).astype(np.float32)
 
 def compress_highlights(img: np.ndarray, amount: float) -> np.ndarray:
     if amount <= 0:
         return img
-    thr = 0.72
-    out = img.copy()
+    thr = np.float32(0.72)
+    amount32 = np.float32(amount)
+    out = img.astype(np.float32, copy=True)
     mask = out > thr
     if np.any(mask):
-        x = out[mask] - thr
-        out[mask] = thr + (1.0 - np.exp(-x / (amount + 1e-6))) * (1.0 - thr)
-    return np.clip(out, 0.0, 1.0)
+        x = (out[mask] - thr).astype(np.float32, copy=False)
+        out[mask] = (
+            thr
+            + (np.float32(1.0) - np.exp(-x / (amount32 + np.float32(1e-6))).astype(np.float32))
+            * (np.float32(1.0) - thr)
+        )
+    return np.clip(out, 0.0, 1.0).astype(np.float32)
 
 def apply_channel_median_match(
     img: np.ndarray,
@@ -186,8 +203,9 @@ def apply_channel_median_match(
     else:
         per_channel_strength = np.asarray(per_channel_strength, dtype=np.float32)
 
-    shift = float(strength) * per_channel_strength * delta
-    out = img + shift.reshape(1, 1, 3)
+    strength32 = np.float32(strength)
+    shift = (strength32 * per_channel_strength * delta).astype(np.float32)
+    out = img.astype(np.float32, copy=False) + shift.reshape(1, 1, 3)
 
     return np.clip(out, 0.0, 1.0).astype(np.float32)
 

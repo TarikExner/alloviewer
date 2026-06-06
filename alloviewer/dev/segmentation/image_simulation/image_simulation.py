@@ -1,6 +1,8 @@
 import numpy as np
 from skimage import morphology
 from scipy import ndimage as ndi
+from scipy.spatial import cKDTree
+import cv2
 
 from .utils import capture_params
 from ..utils import (
@@ -40,6 +42,8 @@ def simulate_image(
     background_texture_coarse_weight=0.15,
     background_texture_strength=0.05,
     background_texture_clip=(0.1, 1.6),
+    background_texture_downsample = 4,
+    background_texture_fullres_fine_strength = 0.005,
 
     # --- cells (sharp ones inside the well) ---
     n_cells=150,
@@ -180,25 +184,42 @@ def simulate_image(
 
     # ---------- grids / well ----------
     yy, xx = np.mgrid[0:H, 0:W]
-    cy = H / 2 + rng.normal(0, well_center_jitter * min(H, W))
-    cx = W / 2 + rng.normal(0, well_center_jitter * min(H, W))
-    rr = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2)
-    R = well_radius_frac * min(H, W)
-    inside = rr <= R
-    r_norm = np.clip(rr / R, 0, 1)
+    yy = yy.astype(np.float32, copy=False)
+    xx = xx.astype(np.float32, copy=False)
 
-    illum = r_norm ** radial_gamma
+    cy = np.float32(0.5 * H + rng.normal(0, well_center_jitter * min(H, W)))
+    cx = np.float32(0.5 * W + rng.normal(0, well_center_jitter * min(H, W)))
+    R = np.float32(well_radius_frac * min(H, W))
+
+    dy = yy - cy
+    dx = xx - cx
+    rr = np.sqrt(dy * dy + dx * dx).astype(np.float32)
+
+    inside = rr <= R
+    r_norm = np.clip(rr / (R + np.float32(1e-8)), 0, 1).astype(np.float32)
+
+    illum = np.power(r_norm, np.float32(radial_gamma)).astype(np.float32)
+
     bg_inside = (background_level + edge_boost * illum).astype(np.float32)
     img = (bg_inside[..., None] * bg_color[None, None, :]).astype(np.float32)
 
     # vignette
-    ry = (yy - H / 2) / (0.5 * H)
-    rx = (xx - W / 2) / (0.5 * W)
-    v = np.sqrt(rx ** 2 + ry ** 2)
-    img *= (1.0 - vignette_strength * (v ** 2))[..., None].clip(0.15, 1.0).astype(np.float32)
+    ry = ((yy - np.float32(0.5 * H)) / np.float32(0.5 * H)).astype(np.float32)
+    rx = ((xx - np.float32(0.5 * W)) / np.float32(0.5 * W)).astype(np.float32)
+    v = np.sqrt(rx * rx + ry * ry).astype(np.float32)
+
+    vignette = (
+        np.float32(1.0)
+        - np.float32(vignette_strength) * (v * v)
+    ).astype(np.float32)
+
+    vignette = np.clip(vignette, np.float32(0.15), np.float32(1.0)).astype(np.float32)
+    img *= vignette[..., None]
 
     # soft wall glow (background only)
-    rim = np.exp(-((rr - R) ** 2) / (2 * (0.8) ** 2)).astype(np.float32)
+    rim = np.exp(
+        -((rr - R) * (rr - R)) / np.float32(2.0 * 0.8 * 0.8)
+    ).astype(np.float32)
     rim = blur(rim, wall_blur_sigma)
     rim = rim / (rim.max() + 1e-8)
     img += (0.06 * rim)[..., None] * bg_color[None, None, :]
@@ -209,7 +230,10 @@ def simulate_image(
             r_shift = rng.uniform(-0.04, 0.06) * R
             sig = rng.uniform(*ring_sigma_range)
             a = rng.uniform(*ring_alpha_range)
-            ring = np.exp(-((rr - (R + r_shift)) ** 2) / (2 * 1.0 ** 2))
+            r_center = np.float32(R + np.float32(r_shift))
+            ring = np.exp(
+                -((rr - r_center) * (rr - r_center)) / np.float32(2.0)
+            ).astype(np.float32)
             ring = blur(ring, sig)
             ring /= ring.max() + 1e-8
             rings += a * ring
@@ -217,26 +241,70 @@ def simulate_image(
 
     # multiplicative background texture inside the well
     if background_texture_enable and background_texture_strength > 0:
-        tex1 = rng.normal(0, 1.0, size=(H, W)).astype(np.float32)
-        tex2 = rng.normal(0, 1.0, size=(H, W)).astype(np.float32)
+        ds = int(max(1, background_texture_downsample))
 
-        tex1 = blur(tex1, background_texture_sigma_fine)
-        tex2 = blur(tex2, background_texture_sigma_coarse)
+        if ds > 1:
+            h_tex = max(8, int(np.ceil(H / ds)))
+            w_tex = max(8, int(np.ceil(W / ds)))
 
-        fine_w = float(background_texture_fine_weight)
-        coarse_w = float(background_texture_coarse_weight)
-        denom_w = abs(fine_w) + abs(coarse_w)
-        if denom_w <= 1e-8:
-            fine_w, coarse_w, denom_w = 1.0, 0.0, 1.0
+            tex1 = rng.normal(0, 1.0, size=(h_tex, w_tex)).astype(np.float32)
+            tex2 = rng.normal(0, 1.0, size=(h_tex, w_tex)).astype(np.float32)
 
-        tex = (fine_w * tex1 + coarse_w * tex2) / denom_w
-        tex = (tex - tex.mean()) / (tex.std() + 1e-6)
+            # Convert full-res sigma to low-res sigma.
+            sig_fine = max(0.0, float(background_texture_sigma_fine) / float(ds))
+            sig_coarse = max(0.0, float(background_texture_sigma_coarse) / float(ds))
+
+            tex1 = blur(tex1, sig_fine).astype(np.float32, copy=False)
+            tex2 = blur(tex2, sig_coarse).astype(np.float32, copy=False)
+
+            fine_w = np.float32(background_texture_fine_weight)
+            coarse_w = np.float32(background_texture_coarse_weight)
+            denom_w = np.float32(abs(float(fine_w)) + abs(float(coarse_w)))
+
+            if denom_w <= np.float32(1e-8):
+                fine_w = np.float32(1.0)
+                coarse_w = np.float32(0.0)
+                denom_w = np.float32(1.0)
+
+            tex_small = ((fine_w * tex1 + coarse_w * tex2) / denom_w).astype(np.float32)
+
+            tex = cv2.resize(
+                tex_small,
+                (W, H),
+                interpolation=cv2.INTER_CUBIC,
+            ).astype(np.float32)
+
+            # Optional tiny full-res fine irregularity.
+            # This is cheap compared with full-res Gaussian blur.
+            if background_texture_fullres_fine_strength > 0:
+                fine = rng.normal(0, 1.0, size=(H, W)).astype(np.float32)
+                tex = tex + np.float32(background_texture_fullres_fine_strength) * fine
+
+        else:
+            tex1 = rng.normal(0, 1.0, size=(H, W)).astype(np.float32)
+            tex2 = rng.normal(0, 1.0, size=(H, W)).astype(np.float32)
+
+            tex1 = blur(tex1, background_texture_sigma_fine).astype(np.float32, copy=False)
+            tex2 = blur(tex2, background_texture_sigma_coarse).astype(np.float32, copy=False)
+
+            fine_w = np.float32(background_texture_fine_weight)
+            coarse_w = np.float32(background_texture_coarse_weight)
+            denom_w = np.float32(abs(float(fine_w)) + abs(float(coarse_w)))
+
+            if denom_w <= np.float32(1e-8):
+                fine_w = np.float32(1.0)
+                coarse_w = np.float32(0.0)
+                denom_w = np.float32(1.0)
+
+            tex = ((fine_w * tex1 + coarse_w * tex2) / denom_w).astype(np.float32)
+
+        tex = (tex - np.float32(tex.mean())) / (np.float32(tex.std()) + np.float32(1e-6))
 
         lo, hi = background_texture_clip
         tex = np.clip(
-            1.0 + float(background_texture_strength) * tex,
-            float(lo),
-            float(hi),
+            np.float32(1.0) + np.float32(background_texture_strength) * tex,
+            np.float32(lo),
+            np.float32(hi),
         ).astype(np.float32)
 
         img[inside] *= tex[inside, None]
@@ -249,21 +317,23 @@ def simulate_image(
     large_cell_frac = float(np.clip(large_cell_frac, 0.0, 1.0))
     is_large = rng.random(n_cells) < large_cell_frac
 
-    short_side = float(min(H, W))
-    ref_short_side = max(1.0, float(cell_diameter_reference_short_side))
-    size_exponent = float(cell_diameter_size_exponent)
+    short_side = np.float32(min(H, W))
+    ref_short_side = np.float32(max(1.0, float(cell_diameter_reference_short_side)))
+    size_exponent = np.float32(cell_diameter_size_exponent)
 
-    cell_diameter_size_scale = (short_side / ref_short_side) ** size_exponent
+    cell_diameter_size_scale = np.float32(
+        (short_side / ref_short_side) ** size_exponent
+    )
 
     if cell_diameter_scale_clip is not None:
         lo, hi = cell_diameter_scale_clip
-        cell_diameter_size_scale = float(
-            np.clip(cell_diameter_size_scale, float(lo), float(hi))
+        cell_diameter_size_scale = np.float32(
+            np.clip(cell_diameter_size_scale, np.float32(lo), np.float32(hi))
         )
     else:
         cell_diameter_size_scale = float(cell_diameter_size_scale)
 
-    base_cell_diameter = float(cell_diameter) * cell_diameter_size_scale
+    base_cell_diameter = np.float32(cell_diameter) * cell_diameter_size_scale
 
     diameters = np.full(n_cells, base_cell_diameter, dtype=np.float32)
     diameters[is_large] *= float(large_cell_diameter_factor)
@@ -359,55 +429,77 @@ def simulate_image(
     r_px = radii.astype(np.float32) * np.sqrt(
         np.maximum(axis_ratio, 1.0 / axis_ratio)
     ).astype(np.float32)
-    eps = 1e-6
 
-    if min_cell_sep_px is None:
-        min_sep_mat = 0.9 * (r_px[:, None] + r_px[None, :])
-    else:
-        min_sep_scalar = float(min_cell_sep_px)
-
+    eps = np.float32(1e-6)
     cf = np.array(centers, dtype=np.float32)
-    N = cf.shape[0]
+    N = int(cf.shape[0])
 
-    for _ in range(int(pack_iters)):
-        v_pair = cf[:, None, :] - cf[None, :, :]
-        d = np.sqrt((v_pair ** 2).sum(axis=2))
-        np.fill_diagonal(d, np.inf)
-
+    if N > 1 and int(pack_iters) > 0:
         if min_cell_sep_px is None:
-            M = d < min_sep_mat
+            # Maximum possible interaction distance.
+            # Pair-specific separation is still checked below.
+            query_radius = np.float32(0.9 * 2.0 * float(np.max(r_px)))
         else:
-            M = d < min_sep_scalar
+            min_sep_scalar = np.float32(min_cell_sep_px)
+            query_radius = min_sep_scalar
 
-        if not M.any():
-            break
+        query_radius = np.float32(max(float(query_radius), 1.0))
 
-        u = v_pair / (d[..., None] + eps)
-        overlap = np.zeros_like(d, dtype=np.float32)
-        if min_cell_sep_px is None:
-            overlap[M] = (min_sep_mat[M] - d[M]).astype(np.float32)
-        else:
-            overlap[M] = (min_sep_scalar - d[M]).astype(np.float32)
+        for _ in range(int(pack_iters)):
+            tree = cKDTree(cf)
+            pairs = tree.query_pairs(r=float(query_radius), output_type="ndarray")
 
-        disp = (u * overlap[..., None]).sum(axis=1)
-        cf += (pack_strength * 0.5) * disp
+            if pairs.size == 0:
+                break
 
-        cf[:, 0] = np.clip(cf[:, 0], r_px + 1, H - r_px - 2)
-        cf[:, 1] = np.clip(cf[:, 1], r_px + 1, W - r_px - 2)
+            i = pairs[:, 0].astype(np.int32, copy=False)
+            j = pairs[:, 1].astype(np.int32, copy=False)
 
-        vy = cf[:, 0] - cy
-        vx = cf[:, 1] - cx
-        rr_c = np.sqrt(vy * vy + vx * vx) + eps
-        max_r_center = (R - wall_margin_px - r_px).astype(np.float32)
-        max_r_center = np.maximum(0.0, max_r_center)
-        too_far = rr_c > max_r_center
-        if np.any(too_far):
-            s = (max_r_center[too_far] / rr_c[too_far]).astype(np.float32)
-            cf[too_far, 0] = cy + vy[too_far] * s
-            cf[too_far, 1] = cx + vx[too_far] * s
+            v = cf[i] - cf[j]
+            d = np.sqrt((v * v).sum(axis=1)).astype(np.float32)
+
+            if min_cell_sep_px is None:
+                min_sep = (np.float32(0.9) * (r_px[i] + r_px[j])).astype(np.float32)
+            else:
+                min_sep = np.full_like(d, min_sep_scalar, dtype=np.float32)
+
+            M = d < min_sep
+            if not np.any(M):
+                break
+
+            i = i[M]
+            j = j[M]
+            v = v[M]
+            d = d[M]
+            min_sep = min_sep[M]
+
+            u = v / (d[:, None] + eps)
+            overlap = (min_sep - d).astype(np.float32)
+            step = np.float32(pack_strength * 0.5) * overlap[:, None] * u
+
+            disp = np.zeros_like(cf, dtype=np.float32)
+            np.add.at(disp, i, step)
+            np.add.at(disp, j, -step)
+
+            cf += disp
+
+            cf[:, 0] = np.clip(cf[:, 0], r_px + 1, H - r_px - 2)
+            cf[:, 1] = np.clip(cf[:, 1], r_px + 1, W - r_px - 2)
+
+            vy = (cf[:, 0] - cy).astype(np.float32, copy=False)
+            vx = (cf[:, 1] - cx).astype(np.float32, copy=False)
+            rr_c = np.sqrt(vy * vy + vx * vx).astype(np.float32) + eps
+
+            max_r_center = (R - np.float32(wall_margin_px) - r_px).astype(np.float32)
+            max_r_center = np.maximum(max_r_center, np.float32(0.0))
+
+            too_far = rr_c > max_r_center
+            if np.any(too_far):
+                s = (max_r_center[too_far] / rr_c[too_far]).astype(np.float32)
+                cf[too_far, 0] = cy + vy[too_far] * s
+                cf[too_far, 1] = cx + vx[too_far] * s
 
     centers = [(int(round(y)), int(round(x))) for (y, x) in cf]
-
     # ---------- instance map ----------
     # Build final labels first. Rendering later uses this final map, so visible
     # cells and labels share geometry even in overlap cases.
@@ -515,26 +607,56 @@ def simulate_image(
 
     # --- RADIAL REFLECTIONS (outside the well) ---
     if reflect_enable and reflect_n > 0:
-        ang = np.arctan2(yy - cy, xx - cx)
+        ang = np.arctan2(yy - cy, xx - cx).astype(np.float32)
 
         def angle_wrap(a):
-            return (a + np.pi) % (2 * np.pi) - np.pi
+            return ((a + np.float32(np.pi)) % np.float32(2.0 * np.pi) - np.float32(np.pi)).astype(np.float32)
 
         refl = np.zeros((H, W), dtype=np.float32)
         for _ in range(int(reflect_n)):
-            theta0 = rng.uniform(-np.pi, np.pi)
-            theta0 += rng.normal(0, reflect_wobble)
-            r_off = rng.uniform(*reflect_offset_range)
-            alpha = rng.uniform(*reflect_alpha_range)
-            radial_term = np.exp(-((rr - (R + r_off)) ** 2) / (2 * reflect_radial_sigma ** 2))
-            angular_term = np.exp(-(angle_wrap(ang - theta0) ** 2) / (2 * reflect_theta_sigma ** 2))
+
+            theta0 = np.float32(rng.uniform(-np.pi, np.pi))
+            theta0 = np.float32(theta0 + rng.normal(0, reflect_wobble))
+
+            r_off = np.float32(rng.uniform(*reflect_offset_range))
+            alpha = np.float32(rng.uniform(*reflect_alpha_range))
+
+            rad_sig = np.float32(reflect_radial_sigma)
+            theta_sig = np.float32(reflect_theta_sigma)
+            r_center = np.float32(R + r_off)
+
+            radial_term = np.exp(
+                -((rr - r_center) * (rr - r_center)) / np.float32(2.0 * rad_sig * rad_sig)
+            ).astype(np.float32)
+
+            dtheta = angle_wrap(ang - theta0)
+            angular_term = np.exp(
+                -(dtheta * dtheta) / np.float32(2.0 * theta_sig * theta_sig)
+            ).astype(np.float32)
+
             base = radial_term * angular_term
             comb = base.copy()
-            th_sig = reflect_theta_sigma
+            th_sig = np.float32(reflect_theta_sigma)
+            harm_decay = np.float32(reflect_harmonic_decay)
+
             for h in range(1, int(reflect_harmonics) + 1):
-                decay = reflect_harmonic_decay ** h
-                comb += decay * np.exp(-(angle_wrap(ang - (theta0 + h * th_sig * 2.0)) ** 2) / (2 * th_sig ** 2)) * radial_term
-                comb += decay * np.exp(-(angle_wrap(ang - (theta0 - h * th_sig * 2.0)) ** 2) / (2 * th_sig ** 2)) * radial_term
+                decay = np.float32(harm_decay ** h)
+                offset = np.float32(h) * th_sig * np.float32(2.0)
+
+                dtheta_p = angle_wrap(ang - (theta0 + offset))
+                dtheta_m = angle_wrap(ang - (theta0 - offset))
+
+                term_p = np.exp(
+                    -(dtheta_p * dtheta_p) / np.float32(2.0 * th_sig * th_sig)
+                ).astype(np.float32)
+
+                term_m = np.exp(
+                    -(dtheta_m * dtheta_m) / np.float32(2.0 * th_sig * th_sig)
+                ).astype(np.float32)
+
+                comb += (decay * term_p * radial_term).astype(np.float32)
+                comb += (decay * term_m * radial_term).astype(np.float32)
+
             refl += alpha * comb
 
         outside = rr > R
@@ -578,9 +700,12 @@ def simulate_image(
             blob = field > thr_blob
 
             yy_l, xx_l = np.mgrid[y0:y1, x0:x1]
-            dy = yy_l - ry_d
-            dx = xx_l - rx_d
+            yy_l = yy_l.astype(np.float32, copy=False)
+            xx_l = xx_l.astype(np.float32, copy=False)
+            dy = yy_l - np.float32(ry_d)
+            dx = xx_l - np.float32(rx_d)
             r2 = (dy * dy + dx * dx).astype(np.float32)
+
             mask_center = r2 <= (rad_d * rad_d * rng.uniform(0.9, 1.4))
             blob = np.logical_and(blob, mask_center)
 
