@@ -9,61 +9,72 @@ from .utils import (
 )
 
 
+from dataclasses import dataclass
+from typing import Optional, Sequence, Tuple, Dict, Any
+import numpy as np
+
 @dataclass
 class CameraDimension:
     """
-    Sample image dimensions.
+    Sample image dimensions by target megapixels.
 
-    Width is sampled first. If H is not fixed, height is computed from
-    a sampled aspect ratio.
-
-    min_dim ensures both sampled dimensions are at least this size after
-    aspect-ratio / portrait selection.
+    This gives a much flatter area distribution than sampling width directly.
     """
     name: str = "Camera"
 
-    # width / height
-    W: NumOrRange = (512, 2500)
+    # target image area in megapixels
+    megapixels: Tuple[float, float] = (2.0, 14.0)
+
+    # optional fixed H/W override; normally leave both None
+    W: Optional[int] = None
     H: Optional[int] = None
 
     # aspect ratios as (width, height)
-    aspect_ratios: Sequence[Tuple[int, int]] = ((16, 9), (16, 10), (3, 2), (4, 3))
+    aspect_ratios: Sequence[Tuple[int, int]] = (
+        (16, 9),
+        (16, 10),
+        (3, 2),
+        (4, 3),
+    )
     portrait_prob: float = 0.5
     size_multiple: int = 32
 
+    # safety lower bound
     min_dim: int = 512
 
     def sample(self, rng: RNG) -> Dict[str, Any]:
-        W = sample_number(rng, self.W, integer=True)
+        if self.W is not None and self.H is not None:
+            H = int(self.H)
+            W = int(self.W)
+            return {"H": H, "W": W}
 
-        if self.H is None:
-            ratio = choose_ratio(rng, self.aspect_ratios, self.portrait_prob)
-            H = W / ratio
-        else:
-            H = float(self.H)
+        mp_lo, mp_hi = self.megapixels
+        area = float(rng.uniform(float(mp_lo), float(mp_hi))) * 1_000_000.0
 
-        W = float(W)
-        H = float(H)
+        ratio = choose_ratio(rng, self.aspect_ratios, self.portrait_prob)
+        ratio = float(ratio)  # W / H
 
-        min_dim = float(self.min_dim)
+        # area = W * H
+        # W = ratio * H
+        # area = ratio * H^2
+        H = np.sqrt(area / ratio)
+        W = ratio * H
 
-        # If either side is too small, scale both dimensions up while
-        # preserving the sampled aspect ratio.
+        # enforce minimum dimension while preserving aspect ratio
         short_side = min(H, W)
-        if short_side < min_dim:
-            scale = min_dim / max(1.0, short_side)
+        if short_side < self.min_dim:
+            scale = float(self.min_dim) / max(1.0, short_side)
             H *= scale
             W *= scale
 
         H = round_to_multiple(H, self.size_multiple)
         W = round_to_multiple(W, self.size_multiple)
 
-        # Rounding can rarely push a side below min_dim if size_multiple is odd/large.
-        # Enforce again after rounding.
+        # enforce again after rounding
         if H < self.min_dim:
-            H = round_to_multiple(self.min_dim, self.size_multiple)
+            H = int(np.ceil(self.min_dim / self.size_multiple) * self.size_multiple)
         if W < self.min_dim:
-            W = round_to_multiple(self.min_dim, self.size_multiple)
+            W = int(np.ceil(self.min_dim / self.size_multiple) * self.size_multiple)
 
         return {
             "H": int(H),
