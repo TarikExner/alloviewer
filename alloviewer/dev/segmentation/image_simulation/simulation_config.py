@@ -295,10 +295,10 @@ def test_scene() -> SimulatorConfig:
 
         # --- cells ---
         n_cells = (10, 2000),
-        cell_diameter = (7.0, 12.0),
+        cell_diameter = (6.5, 13.5),
         cell_diameter_reference_short_side = 1620.0,
-        cell_diameter_size_exponent = 0.75,
-        cell_diameter_scale_clip = (0.85, 2.0),
+        cell_diameter_size_exponent = 0.95,
+        cell_diameter_scale_clip = (0.60, 2.20),
         frac_positive = (0.0, 1.0),
         color_jitter = (0.0, 0.2),
         sigma_in = (0.9, 1.2),   # pass-through
