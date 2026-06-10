@@ -90,35 +90,6 @@ def _subsample_xy(
     return x[idx], y[idx]
 
 
-def _resolve_panel_a_image_path(
-    sketch_dir: str,
-    panel_a_image_path: Optional[str] = None,
-) -> str:
-    if panel_a_image_path is not None:
-        if not os.path.isfile(panel_a_image_path):
-            raise FileNotFoundError(f"Panel A image not found: {panel_a_image_path}")
-        return panel_a_image_path
-
-    candidates = [
-        "flow_cytometry_scheme.png",
-        "flow_cytometry_workflow.png",
-        "flow_scheme.png",
-        "figure_3_scheme.png",
-        "Figure_3_scheme.png",
-    ]
-
-    for name in candidates:
-        path = os.path.join(sketch_dir, name)
-        if os.path.isfile(path):
-            return path
-
-    raise FileNotFoundError(
-        "Could not infer Panel A image path. Pass panel_a_image_path=... "
-        "or place one of these files in sketch_dir: "
-        + ", ".join(candidates)
-    )
-
-
 def _prepare_panel_a_image(panel_a_image_path: str) -> np.ndarray:
     return np.asarray(Image.open(panel_a_image_path))
 
@@ -854,29 +825,19 @@ def figure_3_generation(
       - place one of the expected scheme filenames in sketch_dir.
     """
 
-    panel_a_image_path = _resolve_panel_a_image_path(
-        sketch_dir=sketch_dir,
-        panel_a_image_path=kwargs.get("panel_a_image_path", None),
+    panel_a_image_path = kwargs.get(
+        "panel_a_image_path",
+        os.path.join(sketch_dir, "sketch_3A.jpg"),
     )
 
-    panel_b_experiment = kwargs.get("panel_b_experiment", "val_exp_15")
-    panel_b_sample_name = kwargs.get(
-        "panel_b_sample_name",
-        "Worklist_001_FCXM_Routine_V2 UD_26204459_004_20260310_125733.fcs",
-    )
+    panel_b_experiment = "val_exp_15"
+    panel_b_sample_name = "Worklist_001_FCXM_Routine_V2 UD_26204459_004_20260310_125733.fcs"
 
-    panel_b_algorithm = kwargs.get("panel_b_algorithm", "parc")
-    panel_b_resolution_parameter = float(
-        kwargs.get("panel_b_resolution_parameter", 4.0)
-    )
+    panel_b_algorithm = "parc"
+    panel_b_resolution_parameter = 4.0
 
     summary_path = os.path.join(validation_results_dir, "flow_validation_summary.csv")
     metrics_path = os.path.join(validation_results_dir, "flow_validation_metrics_long.csv")
-
-    if not os.path.isfile(summary_path):
-        raise FileNotFoundError(f"Missing validation summary file: {summary_path}")
-    if not os.path.isfile(metrics_path):
-        raise FileNotFoundError(f"Missing validation metrics file: {metrics_path}")
 
     panel_a_image = _prepare_panel_a_image(panel_a_image_path)
 
