@@ -104,7 +104,7 @@ def figure_S1_generation(
     **kwargs
 ):
     n_images = 8
-    indices = list(np.arange(n_images))
+    indices = list(np.arange(1, n_images+1))
 
     a_images = fetch_images(
         h5_path = os.path.join(h5_path, "pad_resize_val.h5"),

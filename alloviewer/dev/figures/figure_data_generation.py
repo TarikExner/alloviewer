@@ -215,7 +215,7 @@ def fetch_images(
     indices: Sequence[int],
     *,
     tile_idx: Optional[int] = None,
-    dataset_key: Optional[str] = "imgs",
+    dataset_key: str = "imgs",
     resize_to: Optional[Tuple[int, int]] = (240,240),
 ) -> List[np.ndarray]:
     """Fetch multiple images using `fetch_image` for convenience."""
