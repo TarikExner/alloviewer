@@ -132,21 +132,21 @@ def _generate_main_figure(
 
 def figure_S3_generation(
     h5_path: str,
-    figure_output_dir: str,
+    validation_results_dir: str,
     figure_data_dir: str,
     **kwargs
 ):
     crop_well_stats = get_dataset_statistics(
         h5_path = os.path.join(h5_path, "crop_well_resize_train.h5"),
-        output_dir = figure_data_dir
+        output_dir = validation_results_dir 
     )
     pad_stats = get_dataset_statistics(
         h5_path = os.path.join(h5_path, "pad_resize_train.h5"),
-        output_dir = figure_data_dir
+        output_dir = validation_results_dir
     )
     tile_stats = get_dataset_statistics(
         h5_path = os.path.join(h5_path, "tiles_train.h5"),
-        output_dir = figure_data_dir
+        output_dir = validation_results_dir
     )
 
     data = pd.concat([crop_well_stats, pad_stats, tile_stats], axis = 0)
