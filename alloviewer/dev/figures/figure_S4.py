@@ -22,14 +22,13 @@ def _generate_main_figure(
     """
 
     titles = ["image","cell mask","cell boundary","cell centers","energy"]
-    inset_centers=(260, 260)
+    inset_centers=(160, 160)
     inset_box_px=96
     inset_zoom=3.0
 
     fig = plt.figure(layout="constrained", figsize=(cfg.FIGURE_WIDTH_FULL, cfg.FIGURE_HEIGHT_FULL/4))
     gs = GridSpec(nrows=1, ncols=5, figure=fig, wspace=0.04, hspace=0.0)
 
-    # titles
     if titles is None:
         titles = ["image", "tgt0", "tgt1", "tgt2", "tgt3"]
     if len(titles) != 5:
