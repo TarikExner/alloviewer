@@ -133,7 +133,7 @@ def _generate_main_figure(
 def figure_S3_generation(
     h5_path: str,
     validation_results_dir: str,
-    figure_data_dir: str,
+    figure_output_dir: str,
     **kwargs
 ):
     crop_well_stats = get_dataset_statistics(
