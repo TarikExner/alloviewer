@@ -1,19 +1,68 @@
 import os
 import pandas as pd
+import seaborn as sns
+
 from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec, SubplotSpec
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
-import seaborn as sns
 
 from . import figure_utils as utils
 from . import figure_config as cfg
 
 
-def _select_best_settings_per_algorithm(summary_df: pd.DataFrame) -> pd.DataFrame:
-    focus_gates = ["lymphocytes", "t_cells", "b_cells"]
+GATE_DISPLAY_MAP = {
+    "edge_exclusion": "Edge exclusion",
+    "singlets": "Singlets",
+    "lymphocytes": "Lymphocytes",
+    "t_cells": "T cells",
+    "b_cells": "B cells",
+}
 
-    ranking_df = summary_df.loc[summary_df["gate"].isin(focus_gates)].copy()
+GATE_DISPLAY_ORDER = [
+    "Edge exclusion",
+    "Singlets",
+    "Lymphocytes",
+    "T cells",
+    "B cells",
+]
+
+GATE_KEY_ORDER = [
+    "edge_exclusion",
+    "singlets",
+    "lymphocytes",
+    "t_cells",
+    "b_cells",
+]
+
+FOCUS_GATES = [
+    "lymphocytes",
+    "t_cells",
+    "b_cells",
+]
+
+ALGO_DISPLAY_MAP = {
+    "parc": "PARC",
+    "flowsom": "FlowSOM",
+    "hdbscan": "HDBSCAN",
+}
+
+ALGO_ORDER = [
+    "PARC",
+    "FlowSOM",
+    "HDBSCAN",
+]
+
+ALGO_KEY_ORDER = [
+    "parc",
+    "flowsom",
+    "hdbscan",
+]
+
+
+def _select_best_settings_per_algorithm(summary_df: pd.DataFrame) -> pd.DataFrame:
+    ranking_df = summary_df.loc[summary_df["gate"].isin(FOCUS_GATES)].copy()
+
     ranking_df = (
         ranking_df.groupby(["algorithm", "algorithm_params_json"], as_index=False)
         .agg(score=("mean_f1", "mean"))
@@ -25,6 +74,7 @@ def _select_best_settings_per_algorithm(summary_df: pd.DataFrame) -> pd.DataFram
         .head(1)
         .copy()
     )
+
     return best_settings_df
 
 
@@ -36,23 +86,10 @@ def _prepare_figure_S11_data(summary_df: pd.DataFrame) -> pd.DataFrame:
         "gate",
         "mean_f1",
     }
+
     missing = required_cols - set(summary_df.columns)
     if missing:
         raise ValueError(f"summary_df is missing required columns: {missing}")
-
-    gate_display_map = {
-        "edge_exclusion": "Edge exclusion",
-        "singlets": "Singlets",
-        "lymphocytes": "Lymphocytes",
-        "t_cells": "T-cells",
-        "b_cells": "B-cells",
-    }
-
-    algo_display_map = {
-        "parc": "PARC",
-        "flowsom": "FlowSOM",
-        "hdbscan": "HDBSCAN",
-    }
 
     best_settings_df = _select_best_settings_per_algorithm(summary_df)
 
@@ -62,8 +99,29 @@ def _prepare_figure_S11_data(summary_df: pd.DataFrame) -> pd.DataFrame:
         how="inner",
     ).copy()
 
-    plot_df["gate_display"] = plot_df["gate"].map(gate_display_map).fillna(plot_df["gate"])
-    plot_df["algorithm_display"] = plot_df["algorithm"].map(algo_display_map).fillna(plot_df["algorithm"])
+    plot_df["gate_display"] = (
+        plot_df["gate"]
+        .map(GATE_DISPLAY_MAP)
+        .fillna(plot_df["gate"])
+    )
+
+    plot_df["gate_display"] = pd.Categorical(
+        plot_df["gate_display"],
+        categories=GATE_DISPLAY_ORDER,
+        ordered=True,
+    )
+
+    plot_df["algorithm_display"] = (
+        plot_df["algorithm"]
+        .map(ALGO_DISPLAY_MAP)
+        .fillna(plot_df["algorithm"])
+    )
+
+    plot_df["algorithm_display"] = pd.Categorical(
+        plot_df["algorithm_display"],
+        categories=ALGO_ORDER,
+        ordered=True,
+    )
 
     return plot_df
 
@@ -78,25 +136,8 @@ def _generate_subfigure_a(
     ax.axis("off")
     utils.figure_label(ax, subfigure_label, x=0)
 
-    gate_display_map = {
-        "edge_exclusion": "Edge exclusion",
-        "singlets": "Singlets",
-        "lymphocytes": "Lymphocytes",
-        "t_cells": "T-cells",
-        "b_cells": "B-cells",
-    }
+    ranking_df = summary_df.loc[summary_df["gate"].isin(FOCUS_GATES)].copy()
 
-    algo_display_map = {
-        "parc": "PARC",
-        "flowsom": "FlowSOM",
-        "hdbscan": "HDBSCAN",
-    }
-
-    algo_order = ["parc", "flowsom", "hdbscan"]
-    gate_order = ["edge_exclusion", "singlets", "lymphocytes", "t_cells", "b_cells"]
-    focus_gates = ["lymphocytes", "t_cells", "b_cells"]
-
-    ranking_df = summary_df.loc[summary_df["gate"].isin(focus_gates)].copy()
     ranking_df = (
         ranking_df.groupby(["algorithm", "algorithm_params_json"], as_index=False)
         .agg(score=("mean_f1", "mean"))
@@ -109,12 +150,13 @@ def _generate_subfigure_a(
         .copy()
     )
 
-    best_settings_df["row_label"] = best_settings_df["algorithm"].map(algo_display_map)
-    best_settings_df["algo_order"] = best_settings_df["algorithm"].map(
-        {a: i for i, a in enumerate(algo_order)}
-    )
-    best_settings_df = best_settings_df.sort_values("algo_order")
+    best_settings_df["row_label"] = best_settings_df["algorithm"].map(ALGO_DISPLAY_MAP)
 
+    best_settings_df["algo_order"] = best_settings_df["algorithm"].map(
+        {algo: i for i, algo in enumerate(ALGO_KEY_ORDER)}
+    )
+
+    best_settings_df = best_settings_df.sort_values("algo_order")
     row_order = best_settings_df["row_label"].tolist()
 
     best_summary_df = summary_df.merge(
@@ -123,8 +165,15 @@ def _generate_subfigure_a(
         how="inner",
     ).copy()
 
-    best_summary_df["gate_display"] = best_summary_df["gate"].map(gate_display_map).fillna(best_summary_df["gate"])
-    experiment_order = sorted(best_summary_df["experiment"].dropna().unique().tolist())
+    best_summary_df["gate_display"] = (
+        best_summary_df["gate"]
+        .map(GATE_DISPLAY_MAP)
+        .fillna(best_summary_df["gate"])
+    )
+
+    experiment_order = sorted(
+        best_summary_df["experiment"].dropna().unique().tolist()
+    )
 
     fig_sgs = gs.subgridspec(
         5,
@@ -138,8 +187,8 @@ def _generate_subfigure_a(
     cbar_ax = fig.add_subplot(fig_sgs[:, 1])
     first_hm = None
 
-    for i, gate in enumerate(gate_order):
-        gate_label = gate_display_map[gate]
+    for i, gate in enumerate(GATE_KEY_ORDER):
+        gate_label = GATE_DISPLAY_MAP[gate]
 
         gate_df = best_summary_df.loc[best_summary_df["gate"] == gate].copy()
 
@@ -172,7 +221,7 @@ def _generate_subfigure_a(
         if first_hm is None:
             first_hm = hm
             cbar = hm.collections[0].colorbar
-            cbar.set_label("F1-score", rotation=90)
+            cbar.set_label("F1 score", rotation=90)
             cbar.set_ticks([0.0, 1.0])
             cbar.set_ticklabels(["0", "1"])
 
@@ -180,7 +229,7 @@ def _generate_subfigure_a(
         heat_ax.set_xlabel("")
         heat_ax.set_ylabel("")
 
-        if i < len(gate_order) - 1:
+        if i < len(GATE_KEY_ORDER) - 1:
             heat_ax.set_xticklabels([])
             heat_ax.tick_params(axis="x", length=0)
         else:
@@ -199,16 +248,14 @@ def _generate_subfigure_b(
     ax.axis("off")
     utils.figure_label(ax, subfigure_label, x=0)
 
-    gate_order = ["Edge exclusion", "Singlets", "Lymphocytes", "T-cells", "B-cells"]
-    algo_order = ["PARC", "FlowSOM", "HDBSCAN"]
-
     fig_sgs = gs.subgridspec(1, 5, wspace=0)
 
-    for i, gate in enumerate(gate_order):
+    for i, gate in enumerate(GATE_DISPLAY_ORDER):
         gate_df = plot_df.loc[plot_df["gate_display"] == gate].copy()
+
         gate_df["algorithm_display"] = pd.Categorical(
             gate_df["algorithm_display"],
-            categories=algo_order,
+            categories=ALGO_ORDER,
             ordered=True,
         )
 
@@ -218,7 +265,7 @@ def _generate_subfigure_b(
             data=gate_df,
             x="algorithm_display",
             y="mean_f1",
-            order=algo_order,
+            order=ALGO_ORDER,
             ax=sub_ax,
             showcaps=True,
             fliersize=0,
@@ -229,7 +276,7 @@ def _generate_subfigure_b(
             data=gate_df,
             x="algorithm_display",
             y="mean_f1",
-            order=algo_order,
+            order=ALGO_ORDER,
             ax=sub_ax,
             dodge=False,
             size=3,
@@ -239,7 +286,10 @@ def _generate_subfigure_b(
 
         sub_ax.set_title(gate, fontsize=cfg.TITLE_SIZE)
         sub_ax.set_xlabel("")
-        sub_ax.set_ylabel("Mean F1-score" if i == 0 else "", fontsize = cfg.AXIS_LABEL_SIZE)
+        sub_ax.set_ylabel(
+            "Mean F1 score" if i == 0 else "",
+            fontsize=cfg.AXIS_LABEL_SIZE,
+        )
         sub_ax.set_ylim(0.80, 1.02)
         sub_ax.tick_params(axis="x", rotation=45)
         utils.adjust_fontsize_ticklabels(sub_ax, cfg.AXIS_LABEL_SIZE)
@@ -258,12 +308,9 @@ def _generate_subfigure_c(
     ax.axis("off")
     utils.figure_label(ax, subfigure_label, x=0)
 
-    gate_order = ["Edge exclusion", "Singlets", "Lymphocytes", "T-cells", "B-cells"]
-    algo_order = ["PARC", "FlowSOM", "HDBSCAN"]
-
     fig_sgs = gs.subgridspec(1, 5, wspace=0)
 
-    for i, gate in enumerate(gate_order):
+    for i, gate in enumerate(GATE_DISPLAY_ORDER):
         gate_df = plot_df.loc[plot_df["gate_display"] == gate].copy()
 
         pivot_df = (
@@ -273,7 +320,7 @@ def _generate_subfigure_c(
                 values="mean_f1",
                 aggfunc="mean",
             )
-            .reindex(columns=algo_order)
+            .reindex(columns=ALGO_ORDER)
             .sort_index()
         )
 
@@ -281,7 +328,8 @@ def _generate_subfigure_c(
 
         for _, row in pivot_df.iterrows():
             y = row.to_numpy(dtype=float)
-            x = range(len(algo_order))
+            x = range(len(ALGO_ORDER))
+
             sub_ax.plot(
                 x,
                 y,
@@ -293,9 +341,10 @@ def _generate_subfigure_c(
                 zorder=1,
             )
 
-        mean_vals = pivot_df.mean(axis=0).reindex(algo_order)
+        mean_vals = pivot_df.mean(axis=0).reindex(ALGO_ORDER)
+
         sub_ax.plot(
-            range(len(algo_order)),
+            range(len(ALGO_ORDER)),
             mean_vals.to_numpy(dtype=float),
             marker="o",
             linewidth=2.5,
@@ -306,11 +355,15 @@ def _generate_subfigure_c(
         )
 
         sub_ax.set_title(gate, fontsize=cfg.TITLE_SIZE)
-        sub_ax.set_xticks(range(len(algo_order)))
-        sub_ax.set_xticklabels(algo_order, rotation=45)
+        sub_ax.set_xticks(range(len(ALGO_ORDER)))
+        sub_ax.set_xticklabels(ALGO_ORDER, rotation=45)
         sub_ax.set_xlabel("")
-        sub_ax.set_ylabel("Mean F1-score" if i == 0 else "", fontsize = cfg.AXIS_LABEL_SIZE)
+        sub_ax.set_ylabel(
+            "Mean F1 score" if i == 0 else "",
+            fontsize=cfg.AXIS_LABEL_SIZE,
+        )
         sub_ax.set_ylim(0.8, 1.02)
+
         utils.adjust_fontsize_ticklabels(sub_ax, cfg.AXIS_LABEL_SIZE)
 
         if i > 0:
@@ -327,6 +380,7 @@ def _generate_main_figure(
         layout="constrained",
         figsize=(cfg.FIGURE_WIDTH_FULL, cfg.FIGURE_HEIGHT_FULL),
     )
+
     gs = GridSpec(
         ncols=1,
         nrows=3,
@@ -342,9 +396,29 @@ def _generate_main_figure(
     fig_b = fig.add_subplot(b_coords)
     fig_c = fig.add_subplot(c_coords)
 
-    _generate_subfigure_a(fig, fig_a, a_coords, "A", summary_df=summary_df)
-    _generate_subfigure_b(fig, fig_b, b_coords, "B", plot_df=plot_df)
-    _generate_subfigure_c(fig, fig_c, c_coords, "C", plot_df=plot_df)
+    _generate_subfigure_a(
+        fig=fig,
+        ax=fig_a,
+        gs=a_coords,
+        subfigure_label="A",
+        summary_df=summary_df,
+    )
+
+    _generate_subfigure_b(
+        fig=fig,
+        ax=fig_b,
+        gs=b_coords,
+        subfigure_label="B",
+        plot_df=plot_df,
+    )
+
+    _generate_subfigure_c(
+        fig=fig,
+        ax=fig_c,
+        gs=c_coords,
+        subfigure_label="C",
+        plot_df=plot_df,
+    )
 
     os.makedirs(figure_output_dir, exist_ok=True)
 
@@ -361,7 +435,12 @@ def figure_S11_generation(
     validation_results_dir: str,
     **kwargs,
 ):
-    summary_df = pd.read_csv(os.path.join(validation_results_dir, "flow_validation_summary.csv"))
+    summary_path = os.path.join(validation_results_dir, "flow_validation_summary.csv")
+
+    if not os.path.isfile(summary_path):
+        raise FileNotFoundError(f"Missing flow validation summary: {summary_path}")
+
+    summary_df = pd.read_csv(summary_path)
     plot_df = _prepare_figure_S11_data(summary_df)
 
     _generate_main_figure(
