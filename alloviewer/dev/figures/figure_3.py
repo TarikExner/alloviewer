@@ -835,7 +835,7 @@ def figure_3_generation(
     figure_output_dir: str,
     validation_results_dir: str,
     sketch_dir: str,
-    ext_images_dir: Optional[str] = None,
+    flow_data_dir: str,
     **kwargs,
 ) -> None:
     """
@@ -853,15 +853,6 @@ def figure_3_generation(
       - pass panel_a_image_path=..., or
       - place one of the expected scheme filenames in sketch_dir.
     """
-    flow_data_dir = kwargs.get("flow_data_dir", None)
-    if flow_data_dir is None:
-        flow_data_dir = ext_images_dir
-
-    if flow_data_dir is None:
-        raise ValueError(
-            "No flow data directory provided. Add flow_data_dir to DIRECTORIES "
-            "or pass ext_images_dir if that points to the flow data."
-        )
 
     panel_a_image_path = _resolve_panel_a_image_path(
         sketch_dir=sketch_dir,
