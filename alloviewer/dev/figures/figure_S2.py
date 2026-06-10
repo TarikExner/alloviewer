@@ -323,7 +323,7 @@ def _get_simulated_image():
         radial_gamma=1.2,
         vignette_strength=0.20,
 
-        n_cells=2000,
+        n_cells=1000,
         cell_diameter=10,
 
         large_cell_frac=0.0,
@@ -334,7 +334,7 @@ def _get_simulated_image():
         cell_random_rotation=True,
         cell_intensity_range=(0.70, 1.05),
 
-        frac_positive=0.01,
+        frac_positive=0.2,
         color_jitter=0.07,
         sigma_in=(0.5, 1.0),
         sigma_out=(1.6, 3.2),
@@ -342,12 +342,12 @@ def _get_simulated_image():
         in_focus_sigma_thresh=None,
         boundary_width=1,
 
-        rim_bias=0.85,
+        rim_bias=0.60,
         rim_band=0.2,
         edge_clamp=0.5,
 
         min_cell_sep_px=None,
-        rim_min_sep_px=12,
+        rim_min_sep_px=20,
         pack_iters=20,
         pack_strength=0.5,
         wall_margin_px=2.0,
@@ -517,22 +517,22 @@ def _generate_main_figure(
 
         mic_sim = fig.add_subplot(fig_sgs[0, 1])
         mic_sim.imshow(mic_adj)
-        mic_sim.set_title(f"Adjusted to\n{cfg.PHONE_DICT['Microscope']}", fontsize=cfg.TITLE_SIZE)
+        mic_sim.set_title(f"adjusted to\n{cfg.PHONE_DICT['Microscope']}", fontsize=cfg.TITLE_SIZE)
         utils.prep_image_axis(mic_sim)
 
         gp_sim = fig.add_subplot(fig_sgs[0, 2])
         gp_sim.imshow(gp_adj)
-        gp_sim.set_title(f"Adjusted to\n{cfg.PHONE_DICT['GooglePixel']}", fontsize=cfg.TITLE_SIZE)
+        gp_sim.set_title(f"adjusted to\n{cfg.PHONE_DICT['GooglePixel']}", fontsize=cfg.TITLE_SIZE)
         utils.prep_image_axis(gp_sim)
 
         iphone_sim = fig.add_subplot(fig_sgs[0, 3])
         iphone_sim.imshow(iphone_adj)
-        iphone_sim.set_title(f"Adjusted to\n{cfg.PHONE_DICT['iPhone']}", fontsize=cfg.TITLE_SIZE)
+        iphone_sim.set_title(f"adjusted to\n{cfg.PHONE_DICT['iPhone']}", fontsize=cfg.TITLE_SIZE)
         utils.prep_image_axis(iphone_sim)
 
         mono_sim = fig.add_subplot(fig_sgs[0, 4])
         mono_sim.imshow(mono_adj)
-        mono_sim.set_title(f"Adjusted to\n{cfg.PHONE_DICT['Monochrome']}", fontsize=cfg.TITLE_SIZE)
+        mono_sim.set_title(f"adjusted to\n{cfg.PHONE_DICT['Monochrome']}", fontsize=cfg.TITLE_SIZE)
         utils.prep_image_axis(mono_sim)
 
         orig_hist = fig.add_subplot(fig_sgs[1, 0])
