@@ -560,7 +560,7 @@ def figure_1_generation(
     comparison_images = kwargs.get("comparison_images", "tiles")
 
     image_cache_path = os.path.join(
-        figure_data_dir,
+        validation_results_dir,
         "figure_1_image_cache_fullres.npz",
     )
 
