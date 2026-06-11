@@ -42,7 +42,6 @@ INSET_BORDER_COLOR = "black"
 INSET_BORDER_LINEWIDTH = 2
 
 
-# Coordinates are in the 1024 x 1024 display space after prepare_image(...).
 INSET_COORDS = {
     "simulated_image": (250, 250),
     "simulated_segmentation": (250, 250),
@@ -580,6 +579,7 @@ def figure_1_generation(
         comparison_images=comparison_images,
         seg_method="inst_seg",
     )
+    unet_on_sim = unet_on_sim.sample(n=2000, replace = False)
 
     unet_on_human = get_validation_data(
         results_dir=validation_results_dir,
