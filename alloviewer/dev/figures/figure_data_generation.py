@@ -461,7 +461,11 @@ def get_validation_data(results_dir,
 
     if mode == "training":
         if crop_method == "combined":
-            in_file = os.path.join(results_dir, f"{mode}_val_combined.csv")
+            files = os.listdir(results_dir)
+            in_file = [
+                os.path.join(results_dir, file) for file in files
+                if "training_val_" in file
+            ]
         else:
             in_file = os.path.join(results_dir, f"{mode}_val_{unet_size}_{crop_method}.csv")
     elif mode == "testing":
@@ -473,7 +477,12 @@ def get_validation_data(results_dir,
     else:
         raise ValueError(f"Unknown mode {mode}")
 
-    data = pd.read_csv(in_file, index_col = None)
+    if isinstance(in_file, list):
+        data = pd.concat([pd.read_csv(file) for file in in_file], axis = 0)
+    elif isinstance(in_file, str):
+        data = pd.read_csv(in_file, index_col = None)
+    else:
+        raise TypeError("in_file must be str or list")
 
     if mode == "training":
         n_cells_key = "n_cells_per_img"
