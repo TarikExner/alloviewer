@@ -101,7 +101,7 @@ def _generate_main_figure(
         titles = ["image", "cell mask", "cell boundary", "cell centers", "energy"]
         pred_keys = ["cell", "bound", "center", "energy"]
 
-        inset_centers = (300, 120)
+        inset_centers = (300, 300)
         inset_box_px = 96
         inset_zoom = 3.0
 
@@ -281,8 +281,8 @@ def figure_S9_generation(
     data = pd.read_csv(imagewide_csv)
 
     # Keep tile display.
-    img_index = kwargs.get("img_index", 57)
-    tile_idx = kwargs.get("tile_idx", 5)
+    img_index = kwargs.get("img_index", 12)
+    tile_idx = kwargs.get("tile_idx", 7)
 
     gt_path = os.path.join(h5_path, "fullres_ground_truth.h5")
     gt_rgb, gt_tgts = fetch_image_with_targets(
