@@ -35,11 +35,14 @@ INSET_SIDE_LENGTH = 128
 INSET_LINEWIDTH = 2
 INSET_RECT_COLOR = "red"
 
-INSET_WIDTH = "50%"
-INSET_HEIGHT = "50%"
+INSET_WIDTH = "95%"
+INSET_HEIGHT = "95%"
 INSET_LOCATION = "upper right"
 INSET_BORDER_COLOR = "black"
 INSET_BORDER_LINEWIDTH = 2
+
+
+FIGURE_HEIGHT_REDUCTION_INCHES = 1.25
 
 
 INSET_COORDS = {
@@ -58,6 +61,7 @@ INSET_COORDS = {
     "monochrome_image": (140, 498),
     "monochrome_segmentation": (140, 498),
 }
+
 
 def _segmentation_white_background(
     image: np.ndarray,
@@ -83,6 +87,7 @@ def _segmentation_white_background(
     bg = np.all(out <= 1e-6, axis=-1)
     out[bg] = 1.0
     return out
+
 
 def _prepare_for_panel_e(
     image: np.ndarray,
@@ -125,6 +130,7 @@ def _prepare_for_panel_e(
 
     return image
 
+
 def _plot_identity_scatter(
     ax: Axes,
     data: pd.DataFrame,
@@ -139,18 +145,9 @@ def _plot_identity_scatter(
 ) -> None:
     plot_data = data.copy()
 
-    # Make sure seaborn sees numeric values.
     plot_data[x_col] = pd.to_numeric(plot_data[x_col], errors="coerce")
     plot_data[y_col] = pd.to_numeric(plot_data[y_col], errors="coerce")
-
-    before = len(plot_data)
     plot_data = plot_data.dropna(subset=[x_col, y_col])
-    after = len(plot_data)
-
-    print(f"\n{title}")
-    print(f"rows before/after dropna: {before} -> {after}")
-    print(f"{x_col}: {plot_data[x_col].min()} .. {plot_data[x_col].max()}")
-    print(f"{y_col}: {plot_data[y_col].min()} .. {plot_data[y_col].max()}")
 
     sns.scatterplot(
         data=plot_data,
@@ -161,20 +158,10 @@ def _plot_identity_scatter(
         **SCATTER_KWARGS,
     )
 
-    print("after seaborn:")
-    print("  xlim:", ax.get_xlim())
-    print("  ylim:", ax.get_ylim())
-    print("  collections:", len(ax.collections))
-    for i, coll in enumerate(ax.collections):
-        if hasattr(coll, "get_offsets"):
-            offsets = coll.get_offsets()
-            print(f"  collection {i}: offsets={offsets.shape}")
-
     ax.set_title(title, fontsize=cfg.TITLE_SIZE)
     ax.set_xlabel(xlabel, fontsize=cfg.AXIS_LABEL_SIZE)
     ax.set_ylabel(ylabel, fontsize=cfg.AXIS_LABEL_SIZE)
 
-    # Do NOT call utils.unify_axis_limits(ax) for now.
     xmin = float(plot_data[x_col].min())
     xmax = float(plot_data[x_col].max())
     ymin = float(plot_data[y_col].min())
@@ -191,9 +178,14 @@ def _plot_identity_scatter(
     ax.set_ylim(lo, hi)
 
     x = np.array([lo, hi])
-    ax.plot(x, x, linestyle="--", color="red", zorder=1)
+    ax.plot(
+        x,
+        x,
+        linestyle="--",
+        color="red",
+        zorder=1,
+    )
 
-    # Force scatter collections above identity line.
     for coll in ax.collections:
         coll.set_zorder(3)
 
@@ -210,6 +202,7 @@ def _plot_identity_scatter(
         )
     elif ax.get_legend() is not None:
         ax.get_legend().remove()
+
 
 def _clip_inset_coords(
     image: np.ndarray,
@@ -322,19 +315,39 @@ def _generate_subfigure_image_grid(
     mono_seg = _prepare_for_panel_e(monochrome_segmentation, is_segmentation=True)
 
     image_panels = [
-        (sim_img, inset_coords["simulated_image"], "Simulated"),
-        (micro_img, inset_coords["microscopy_image"], "Microscopy"),
-        (gpixel_img, inset_coords["googlepixel_image"], "Google Pixel"),
-        (iphone_img, inset_coords["iphone_image"], "iPhone"),
-        (mono_img, inset_coords["monochrome_image"], "Monochrome"),
+        (sim_img, inset_coords["simulated_image"], cfg.PHONE_DICT["Simulated"]),
+        (micro_img, inset_coords["microscopy_image"], cfg.PHONE_DICT["Microscope"]),
+        (gpixel_img, inset_coords["googlepixel_image"], cfg.PHONE_DICT["GooglePixel"]),
+        (iphone_img, inset_coords["iphone_image"], cfg.PHONE_DICT["iPhone"]),
+        (mono_img, inset_coords["monochrome_image"], cfg.PHONE_DICT["Monochrome"]),
     ]
 
     segmentation_panels = [
-        (sim_seg, inset_coords["simulated_segmentation"], "Simulated\nsegmentation"),
-        (micro_seg, inset_coords["microscopy_segmentation"], "Microscopy\nsegmentation"),
-        (gpixel_seg, inset_coords["googlepixel_segmentation"], "Google Pixel\nsegmentation"),
-        (iphone_seg, inset_coords["iphone_segmentation"], "iPhone\nsegmentation"),
-        (mono_seg, inset_coords["monochrome_segmentation"], "Monochrome\nsegmentation"),
+        (
+            sim_seg,
+            inset_coords["simulated_segmentation"],
+            f"{cfg.PHONE_DICT['Simulated']}\nsegmentation",
+        ),
+        (
+            micro_seg,
+            inset_coords["microscopy_segmentation"],
+            f"{cfg.PHONE_DICT['Microscope']}\nsegmentation",
+        ),
+        (
+            gpixel_seg,
+            inset_coords["googlepixel_segmentation"],
+            f"{cfg.PHONE_DICT['GooglePixel']}\nsegmentation",
+        ),
+        (
+            iphone_seg,
+            inset_coords["iphone_segmentation"],
+            f"{cfg.PHONE_DICT['iPhone']}\nsegmentation",
+        ),
+        (
+            mono_seg,
+            inset_coords["monochrome_segmentation"],
+            f"{cfg.PHONE_DICT['Monochrome']}\nsegmentation",
+        ),
     ]
 
     for col, (image, coords, title) in enumerate(image_panels):
@@ -514,7 +527,10 @@ def _generate_main_figure(
 
     fig = plt.figure(
         layout="constrained",
-        figsize=(cfg.FIGURE_WIDTH_FULL, cfg.FIGURE_HEIGHT_FULL),
+        figsize=(
+            cfg.FIGURE_WIDTH_FULL,
+            cfg.FIGURE_HEIGHT_FULL - FIGURE_HEIGHT_REDUCTION_INCHES,
+        ),
     )
 
     gs = GridSpec(
@@ -579,7 +595,13 @@ def figure_1_generation(
         comparison_images=comparison_images,
         seg_method="inst_seg",
     )
-    unet_on_sim = unet_on_sim.sample(n=2000, replace = False)
+
+    if len(unet_on_sim) > 2000:
+        unet_on_sim = unet_on_sim.sample(
+            n=2000,
+            replace=False,
+            random_state=42,
+        )
 
     unet_on_human = get_validation_data(
         results_dir=validation_results_dir,
