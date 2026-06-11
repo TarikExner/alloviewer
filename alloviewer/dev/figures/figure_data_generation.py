@@ -479,7 +479,7 @@ def get_validation_data(results_dir,
         raise ValueError(f"Unknown mode {mode}")
 
     if isinstance(in_file, list):
-        data = pd.concat([pd.read_csv(file) for file in in_file], axis = 0)
+        data = pd.concat([pd.read_csv(file) for file in in_file], axis = 0, ignore_index = True)
     elif isinstance(in_file, str):
         data = pd.read_csv(in_file, index_col = None)
     else:
