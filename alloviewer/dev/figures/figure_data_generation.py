@@ -465,6 +465,7 @@ def get_validation_data(results_dir,
             in_file = [
                 os.path.join(results_dir, file) for file in files
                 if "training_val_" in file
+                and file.endswith(".csv")
             ]
         else:
             in_file = os.path.join(results_dir, f"{mode}_val_{unet_size}_{crop_method}.csv")
