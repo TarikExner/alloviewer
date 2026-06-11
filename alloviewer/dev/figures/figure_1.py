@@ -546,7 +546,7 @@ def figure_1_generation(
     comparison_images = kwargs.get("comparison_images", "tiles")
 
     image_cache_path = os.path.join(
-        figure_data_dir,
+        validation_results_dir,
         "figure_1_image_cache_fullres.npz",
     )
 
@@ -581,6 +581,14 @@ def figure_1_generation(
         model_file=model_file,
         force_recompute=force_recompute,
     )
+    print(unet_on_sim.shape)
+    print(unet_on_sim[["n_cells_gt_instances", "n_cells_pred_instances"]].dropna().shape)
+
+    print(unet_on_human.shape)
+    print(unet_on_human[["human_roi_count", "unet_roi_count", "imageJ_roi_count"]].dropna().shape)
+
+    print(imageJ_on_sim.shape)
+    print(imageJ_on_sim[["n_cells_gt_instances", "n_cells_pred_instances", "dataset_mode"]].dropna().shape)
 
     _generate_main_figure(
         unet_on_human=unet_on_human,
