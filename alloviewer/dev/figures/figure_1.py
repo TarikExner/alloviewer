@@ -600,13 +600,7 @@ def figure_1_generation(
         comparison_images=comparison_images,
         seg_method="inst_seg",
     )
-
-    if len(unet_on_sim) > 2000:
-        unet_on_sim = unet_on_sim.sample(
-            n=2000,
-            replace=False,
-            random_state=42,
-        )
+    unet_on_sim = unet_on_sim.sample(n=2000, replace=False, random_state=187)
 
     unet_on_human = get_validation_data(
         results_dir=validation_results_dir,

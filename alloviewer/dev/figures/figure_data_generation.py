@@ -800,6 +800,7 @@ def load_or_create_figure_1_image_cache(
 
     unet_config = copy.deepcopy(UNET_CONFIG)
     unet_config["model_dir"] = model_dir
+    unet_config["unet_mode"] = "large" if "large" in model_file else "small"
     unet_config["model_file"] = model_file
     unet_config["instance_cfg"] = INSTANCE_CONFIG_DICT
     unet_config["thr_cell"] = 0.1
