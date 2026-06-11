@@ -498,6 +498,7 @@ def figure_S7_generation(
         comparison_images="tiles",
         seg_method="conventional",
     )
+    conv_data = conv_data.sample(n=2000, replace = False)
 
     inst_seg_data = get_validation_data(
         results_dir=validation_results_dir,
@@ -506,6 +507,7 @@ def figure_S7_generation(
         comparison_images="tiles",
         seg_method="inst_seg",
     )
+    inst_seg_data = inst_seg_data.sample(n=2000, replace = False)
 
     seg_out = {
         "probs": res["small"],
