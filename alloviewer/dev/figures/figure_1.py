@@ -39,7 +39,7 @@ INSET_RECT_COLOR = "red"
 INSET_WIDTH = "50%"
 INSET_HEIGHT = "50%"
 INSET_LOCATION = "upper right"
-INSET_BORDER_COLOR = "white"
+INSET_BORDER_COLOR = "black"
 INSET_BORDER_LINEWIDTH = 2
 
 
@@ -60,56 +60,6 @@ INSET_COORDS = {
     "monochrome_image": (140, 498),
     "monochrome_segmentation": (140, 498),
 }
-
-def _segmentation_white_background_black_outlines(
-    image: np.ndarray,
-) -> np.ndarray:
-    """
-    Convert RGB instance segmentation display image to:
-        - white background
-        - black outlines around instances and between touching instances
-
-    Assumes the cached segmentation RGB image uses black background.
-    """
-    image = np.asarray(image)
-
-    if image.ndim != 3 or image.shape[-1] != 3:
-        return image
-
-    is_uint8 = image.dtype == np.uint8
-
-    if is_uint8:
-        img = image.copy()
-        bg = np.all(img == 0, axis=-1)
-    else:
-        img = image.astype(np.float32, copy=True)
-        bg = np.all(img <= 1e-6, axis=-1)
-
-    fg = ~bg
-
-    # Detect RGB changes to neighboring pixels.
-    # This marks both object-background borders and object-object borders.
-    boundary = np.zeros(fg.shape, dtype=bool)
-
-    diff_y = np.any(img[1:, :, :] != img[:-1, :, :], axis=-1)
-    diff_x = np.any(img[:, 1:, :] != img[:, :-1, :], axis=-1)
-
-    fg_y = fg[1:, :] | fg[:-1, :]
-    fg_x = fg[:, 1:] | fg[:, :-1]
-
-    boundary[1:, :] |= diff_y & fg_y
-    boundary[:-1, :] |= diff_y & fg_y
-    boundary[:, 1:] |= diff_x & fg_x
-    boundary[:, :-1] |= diff_x & fg_x
-
-    if is_uint8:
-        img[bg] = 255
-        img[boundary] = 0
-    else:
-        img[bg] = 1.0
-        img[boundary] = 0.0
-
-    return img
 
 def _prepare_for_panel_e(
     image: np.ndarray,
@@ -141,8 +91,6 @@ def _prepare_for_panel_e(
         raise ValueError(f"Unsupported image shape for panel E: {image.shape}")
 
     if image.dtype == np.uint8:
-        if is_segmentation:
-            image = _segmentation_white_background_black_outlines(image)
         return image
 
     image = image.astype(np.float32, copy=False)
@@ -150,12 +98,8 @@ def _prepare_for_panel_e(
     if image.max() > 1.0:
         image = image / image.max()
 
-    image = np.clip(image, 0.0, 1.0)
+    return np.clip(image, 0.0, 1.0)
 
-    if is_segmentation:
-        image = _segmentation_white_background_black_outlines(image)
-
-    return image
 
 def _plot_identity_scatter(
     ax: Axes,
@@ -553,7 +497,6 @@ def figure_1_generation(
     sketch_dir: str,
     figure_output_dir: str,
     model_output_dir: str,
-    figure_data_dir: str,
     **kwargs,
 ) -> None:
     unet_size = kwargs.get("unet_size", "small")
