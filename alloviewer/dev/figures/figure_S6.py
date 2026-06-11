@@ -1,16 +1,15 @@
 import os
+import copy
+from typing import Any
+
+import numpy as np
 import pandas as pd
-from matplotlib import pyplot as plt
-from matplotlib.gridspec import GridSpec, SubplotSpec
-
-from matplotlib.figure import Figure
-from matplotlib.axes import Axes
-
 import seaborn as sns
 
-import copy
-
-from typing import Any
+from matplotlib import pyplot as plt
+from matplotlib.gridspec import GridSpec, SubplotSpec
+from matplotlib.figure import Figure
+from matplotlib.axes import Axes
 
 from .figure_data_generation import get_validation_data, generate_unet_comparison
 
@@ -21,128 +20,318 @@ from . import figure_config as cfg
 from . import figure_utils as utils
 
 
+DATASET_ORDER = [
+    "pad_resize",
+    "crop_well_resize",
+    "tiles",
+]
+
+DATASET_DISPLAY_MAP = {
+    "pad_resize": "Pad + resize",
+    "crop_well_resize": "Crop well + resize",
+    "tiles": "Tiling",
+}
+
+UNET_ORDER = [
+    "small",
+    "medium",
+    "large",
+]
+
+UNET_DISPLAY_MAP = {
+    "small": "Small",
+    "medium": "Medium",
+    "large": "Large",
+}
+
+PROB_HEADS = [
+    "cell",
+    "bound",
+    "center",
+    "energy",
+]
+
+PROB_HEAD_DISPLAY_MAP = {
+    "cell": "Cell",
+    "bound": "Boundary",
+    "center": "Center",
+    "energy": "Energy",
+}
+
+
+def _prepare_training_plot_data(data: pd.DataFrame) -> pd.DataFrame:
+    data = data.copy().reset_index(drop=True)
+
+    if "dataset_mode" not in data.columns:
+        raise ValueError("Expected column 'dataset_mode' in training validation data.")
+
+    if "unet_mode" not in data.columns:
+        raise ValueError("Expected column 'unet_mode' in training validation data.")
+
+    data["dataset_mode"] = data["dataset_mode"].replace(
+        {
+            "tiling": "tiles",
+            "tile": "tiles",
+        }
+    )
+
+    data["dataset_display"] = (
+        data["dataset_mode"]
+        .map(DATASET_DISPLAY_MAP)
+        .fillna(data["dataset_mode"])
+    )
+
+    data["dataset_display"] = pd.Categorical(
+        data["dataset_display"],
+        categories=[DATASET_DISPLAY_MAP[x] for x in DATASET_ORDER],
+        ordered=True,
+    )
+
+    data["unet_display"] = (
+        data["unet_mode"]
+        .map(UNET_DISPLAY_MAP)
+        .fillna(data["unet_mode"])
+    )
+
+    data["unet_display"] = pd.Categorical(
+        data["unet_display"],
+        categories=[UNET_DISPLAY_MAP[x] for x in UNET_ORDER],
+        ordered=True,
+    )
+
+    return data
+
+
+def _get_prob_for_display(prob: Any) -> np.ndarray:
+    prob = np.asarray(prob)
+
+    if prob.ndim == 2:
+        return prob
+
+    if prob.ndim == 3:
+        return prob[0]
+
+    raise ValueError(f"Expected 2D or 3D probability map, got shape {prob.shape}.")
+
+
+def _format_unet_key(unet_mode: str) -> str:
+    if unet_mode == "medium":
+        return "med"
+    return unet_mode
+
+
+def _plot_metric_boxplot(
+    ax: Axes,
+    data: pd.DataFrame,
+    metric: str,
+    title: str,
+    ylabel: str,
+    *,
+    use_violin: bool = False,
+) -> None:
+    plot_params = {
+        "data": data,
+        "x": "dataset_display",
+        "order": [DATASET_DISPLAY_MAP[x] for x in DATASET_ORDER],
+        "hue": "unet_display",
+        "hue_order": [UNET_DISPLAY_MAP[x] for x in UNET_ORDER],
+    }
+
+    if use_violin:
+        sns.violinplot(
+            **plot_params,
+            y=metric,
+            ax=ax,
+            inner=None,
+        )
+    else:
+        sns.boxplot(
+            **plot_params,
+            y=metric,
+            ax=ax,
+            whis=(0, 100),
+        )
+
+    ax.legend(
+        bbox_to_anchor=(0.5, -0.25),
+        loc="upper center",
+        title="UNet size",
+        fontsize=cfg.AXIS_LABEL_SIZE,
+        title_fontsize=cfg.AXIS_LABEL_SIZE,
+        ncols=3,
+        frameon=False,
+    )
+
+    ax.set_xlabel("")
+    ax.set_title(title, fontsize=cfg.TITLE_SIZE)
+    ax.set_ylabel(ylabel, fontsize=cfg.AXIS_LABEL_SIZE)
+    ax.tick_params(**cfg.TICKPARAMS_PARAMS)
+
+
 def _generate_main_figure(
     data: pd.DataFrame,
     res: dict,
     figure_output_dir: str = "",
     figure_name: str = "",
-):
-
-    plot_params = {
-        "data": data,
-        "x": "dataset_mode",
-        "order": ["pad_resize", "crop_well_resize", "tiling"],
-        "hue": "unet_mode",
-        "whis": (0,100)
-    }
+) -> None:
+    data = _prepare_training_plot_data(data)
 
     def generate_subfigure_a(
-        fig: Figure, ax: Axes, gs: SubplotSpec, subfigure_label
+        fig: Figure,
+        ax: Axes,
+        gs: SubplotSpec,
+        subfigure_label: str,
     ) -> None:
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
+
         fig_sgs = gs.subgridspec(1, 1)
-        accuracy_plot = fig.add_subplot(fig_sgs[0])
-        sns.boxplot(**plot_params, y = "mask_iou", ax = accuracy_plot)
+        plot_ax = fig.add_subplot(fig_sgs[0])
 
-        accuracy_plot.legend(bbox_to_anchor = (0.5, -0.25), loc = "upper center",
-                             title = "UNET size", fontsize = cfg.AXIS_LABEL_SIZE,
-                             title_fontsize = cfg.AXIS_LABEL_SIZE, ncols = 3)
-        accuracy_plot.set_xlabel("")
-        accuracy_plot.set_title("Mask prediction", fontsize = cfg.TITLE_SIZE)
-        accuracy_plot.set_ylabel("jaccard score", fontsize = cfg.AXIS_LABEL_SIZE)
-
-        accuracy_plot.tick_params(**cfg.TICKPARAMS_PARAMS)
-
+        _plot_metric_boxplot(
+            ax=plot_ax,
+            data=data,
+            metric="mask_iou",
+            title="Mask prediction",
+            ylabel="Jaccard score",
+        )
 
     def generate_subfigure_b(
-        fig: Figure, ax: Axes, gs: SubplotSpec, subfigure_label
+        fig: Figure,
+        ax: Axes,
+        gs: SubplotSpec,
+        subfigure_label: str,
     ) -> None:
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
+
         fig_sgs = gs.subgridspec(1, 1)
-        accuracy_plot = fig.add_subplot(fig_sgs[0])
+        plot_ax = fig.add_subplot(fig_sgs[0])
 
-        p_params = plot_params.copy()
-        p_params.pop("whis")
-        sns.violinplot(**p_params, y = "boundary_f1", ax = accuracy_plot, inner = None)
+        _plot_metric_boxplot(
+            ax=plot_ax,
+            data=data,
+            metric="boundary_f1",
+            title="Boundary prediction",
+            ylabel="F1 score",
+            use_violin=True,
+        )
 
-        accuracy_plot.legend(bbox_to_anchor = (0.5, -0.25), loc = "upper center",
-                             title = "UNET size", fontsize = cfg.AXIS_LABEL_SIZE,
-                             title_fontsize = cfg.AXIS_LABEL_SIZE, ncols = 3)
-        accuracy_plot.set_xlabel("")
-        accuracy_plot.set_title("Boundary prediction", fontsize = cfg.TITLE_SIZE)
-        accuracy_plot.set_ylabel("F1 score", fontsize = cfg.AXIS_LABEL_SIZE)
-
-        accuracy_plot.tick_params(**cfg.TICKPARAMS_PARAMS)
     def generate_subfigure_c(
-        fig: Figure, ax: Axes, gs: SubplotSpec, subfigure_label
+        fig: Figure,
+        ax: Axes,
+        gs: SubplotSpec,
+        subfigure_label: str,
     ) -> None:
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
+
         fig_sgs = gs.subgridspec(1, 1)
-        accuracy_plot = fig.add_subplot(fig_sgs[0])
-        sns.boxplot(**plot_params, y = "center_f1", ax = accuracy_plot)
+        plot_ax = fig.add_subplot(fig_sgs[0])
 
-        accuracy_plot.legend(bbox_to_anchor = (0.5, -0.25), loc = "upper center",
-                             title = "UNET size", fontsize = cfg.AXIS_LABEL_SIZE,
-                             title_fontsize = cfg.AXIS_LABEL_SIZE, ncols = 3)
-        accuracy_plot.set_xlabel("")
-        accuracy_plot.set_title("Center prediction", fontsize = cfg.TITLE_SIZE)
-        accuracy_plot.set_ylabel("F1 score", fontsize = cfg.AXIS_LABEL_SIZE)
+        _plot_metric_boxplot(
+            ax=plot_ax,
+            data=data,
+            metric="center_f1",
+            title="Center prediction",
+            ylabel="F1 score",
+        )
 
-        accuracy_plot.tick_params(**cfg.TICKPARAMS_PARAMS)
-        
     def generate_subfigure_d(
-        fig: Figure, ax: Axes, gs: SubplotSpec, subfigure_label
+        fig: Figure,
+        ax: Axes,
+        gs: SubplotSpec,
+        subfigure_label: str,
     ) -> None:
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
-        fig_sgs = gs.subgridspec(1, 1, wspace = 0, hspace = 0)
-        accuracy_plot = fig.add_subplot(fig_sgs[0])
-        sns.boxplot(**plot_params, y = "energy_ssim", ax = accuracy_plot)
 
-        accuracy_plot.legend(bbox_to_anchor = (0.5, -0.25), loc = "upper center",
-                             title = "UNET size", fontsize = cfg.AXIS_LABEL_SIZE,
-                             title_fontsize = cfg.AXIS_LABEL_SIZE, ncols = 3)
-        accuracy_plot.set_xlabel("")
-        accuracy_plot.set_title("Energy prediction", fontsize = cfg.TITLE_SIZE)
-        accuracy_plot.set_ylabel("SSIM score", fontsize = cfg.AXIS_LABEL_SIZE)
+        fig_sgs = gs.subgridspec(1, 1)
+        plot_ax = fig.add_subplot(fig_sgs[0])
 
-        accuracy_plot.tick_params(**cfg.TICKPARAMS_PARAMS)
+        _plot_metric_boxplot(
+            ax=plot_ax,
+            data=data,
+            metric="energy_ssim",
+            title="Energy prediction",
+            ylabel="SSIM score",
+        )
 
     def generate_subfigure_e(
-        fig: Figure, ax: Axes, gs: SubplotSpec, subfigure_label
+        fig: Figure,
+        ax: Axes,
+        gs: SubplotSpec,
+        subfigure_label: str,
     ) -> None:
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
-        fig_sgs = gs.subgridspec(3, 4)
-        sub_axes = fig_sgs.subplots()  # shape: (3, 4)
-        for i, unet_mode in enumerate(["small", "med", "large"]):
-            for j, img_type in enumerate(["cell", "bound", "center", "energy"]):
-                ax_img = sub_axes[i, j]
-                ax_img.imshow(res[unet_mode][img_type][0])
+
+        fig_sgs = gs.subgridspec(
+            nrows=3,
+            ncols=4,
+            wspace=0.02,
+            hspace=0.08,
+        )
+
+        for i, unet_mode in enumerate(UNET_ORDER):
+            res_key = _format_unet_key(unet_mode)
+
+            if res_key not in res:
+                raise KeyError(
+                    f"Missing key '{res_key}' in UNet comparison result. "
+                    f"Available keys: {list(res.keys())}"
+                )
+
+            for j, head in enumerate(PROB_HEADS):
+                ax_img = fig.add_subplot(fig_sgs[i, j])
+
+                if head not in res[res_key]:
+                    raise KeyError(
+                        f"Missing probability head '{head}' in res['{res_key}']. "
+                        f"Available keys: {list(res[res_key].keys())}"
+                    )
+
+                prob = _get_prob_for_display(res[res_key][head])
+
+                ax_img.imshow(
+                    prob,
+                    vmin=0.0,
+                    vmax=1.0,
+                )
+
                 ax_img.set_xticks([])
                 ax_img.set_yticks([])
+
                 for spine in ax_img.spines.values():
                     spine.set_visible(False)
-                # column labels (top row)
+
                 if i == 0:
-                    ax_img.set_title(img_type, fontsize=cfg.TITLE_SIZE, pad=4)
-    
-                # row labels (left-most column)
+                    ax_img.set_title(
+                        PROB_HEAD_DISPLAY_MAP[head],
+                        fontsize=cfg.TITLE_SIZE,
+                        pad=4,
+                    )
+
                 if j == 0:
                     ax_img.set_ylabel(
-                        f"UNET size: {unet_mode}",
+                        UNET_DISPLAY_MAP[unet_mode],
                         fontsize=cfg.TITLE_SIZE,
                         rotation=90,
                         color="black",
                     )
-    
+
     fig = plt.figure(
-        layout="constrained", figsize=(cfg.FIGURE_WIDTH_FULL, cfg.FIGURE_HEIGHT_FULL)
+        layout="constrained",
+        figsize=(cfg.FIGURE_WIDTH_FULL, cfg.FIGURE_HEIGHT_FULL),
     )
-    gs = GridSpec(ncols=6, nrows=3, figure=fig, height_ratios=[1,1,2.5])
+
+    gs = GridSpec(
+        ncols=6,
+        nrows=3,
+        figure=fig,
+        height_ratios=[1, 1, 2.5],
+    )
+
     a_coords = gs[0, :3]
     b_coords = gs[0, 3:]
     c_coords = gs[1, :3]
@@ -168,6 +357,7 @@ def _generate_main_figure(
 
     plt.savefig(pdf_path, dpi=300, bbox_inches="tight")
     plt.savefig(png_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
 
 def figure_S6_generation(
@@ -176,24 +366,29 @@ def figure_S6_generation(
     ext_images_dir: str,
     validation_results_dir: str,
     figure_data_dir: str,
-    h5_path: str,
-    **kwargs
-):
-
+    **kwargs,
+) -> None:
     unet_base_config = copy.deepcopy(UNET_CONFIG)
-
     segmenter_class = SegmenterUNet
 
-    data = get_validation_data(validation_results_dir,
-                               mode = "training")
-    res = generate_unet_comparison(models_dir = model_output_dir,
-                                   ext_images_dir = ext_images_dir,
-                                   unet_base_config = unet_base_config,
-                                   segmenter_class = segmenter_class,
-                                   output_dir = validation_results_dir)
+    data = get_validation_data(
+        results_dir=validation_results_dir,
+        mode="training",
+    ).reset_index(drop=True)
+
+    res = generate_unet_comparison(
+        models_dir=model_output_dir,
+        ext_images_dir=ext_images_dir,
+        unet_base_config=unet_base_config,
+        segmenter_class=segmenter_class,
+        output_dir=figure_data_dir,
+        output_filename="unet_segmentation_comparison",
+        redo_analysis=kwargs.get("redo_analysis", False),
+    )
+
     _generate_main_figure(
         figure_output_dir=figure_output_dir,
         figure_name="Figure_S6",
-        data = data,
-        res = res,
+        data=data,
+        res=res,
     )
