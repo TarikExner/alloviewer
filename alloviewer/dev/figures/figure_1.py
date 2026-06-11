@@ -540,7 +540,6 @@ def figure_1_generation(
     figure_output_dir: str,
     model_output_dir: str,
     figure_data_dir: str,
-    ext_images_dir: str,
     **kwargs,
 ) -> None:
     unet_size = kwargs.get("unet_size", "small")
@@ -580,7 +579,6 @@ def figure_1_generation(
         cache_path=image_cache_path,
         model_dir=model_output_dir,
         model_file=model_file,
-        ext_images_dir=ext_images_dir,
         force_recompute=force_recompute,
     )
 
