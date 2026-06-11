@@ -14,13 +14,11 @@ from alloviewer.dev.figures.figure_data_generation import get_validation_data
 from alloviewer.dev.figures import figure_config as cfg
 from alloviewer.dev.figures import figure_utils as utils
 
-
 from .figure_data_generation import (
     load_or_create_figure_1_image_cache,
     _read_rgb_image,
     crop_square,
     _prepare_segmentation_for_display,
-    _prepare_image
 )
 
 
@@ -42,16 +40,64 @@ INSET_LOCATION = "upper right"
 INSET_BORDER_COLOR = "white"
 INSET_BORDER_LINEWIDTH = 2
 
+
+# Coordinates are in the displayed/cached cropped image coordinate system.
+# Existing coordinates were scaled from the old 1024x1024 display crops to
+# the native square crop sizes used for full-resolution UNet inference.
 INSET_COORDS = {
-    "simulated_image": (250, 250),
-    "simulated_segmentation": (250, 250),
-    "microscopy_image": (150, 150),
-    "microscopy_segmentation": (150, 150),
-    "googlepixel_image": (70, 280),
-    "googlepixel_segmentation": (70, 280),
-    "iphone_image": (220, 120),
-    "iphone_segmentation": (220, 120),
+    "simulated_image": (293, 293),
+    "simulated_segmentation": (293, 293),
+
+    "microscopy_image": (212, 212),
+    "microscopy_segmentation": (212, 212),
+
+    "googlepixel_image": (185, 738),
+    "googlepixel_segmentation": (185, 738),
+
+    "iphone_image": (537, 293),
+    "iphone_segmentation": (537, 293),
+
+    "monochrome_image": (100, 700),
+    "monochrome_segmentation": (100, 700),
 }
+
+
+def _prepare_image_for_display(image: np.ndarray) -> np.ndarray:
+    image = np.asarray(image)
+
+    if image.ndim == 2:
+        out = np.repeat(image[..., None], 3, axis=-1)
+    elif image.ndim == 3 and image.shape[-1] == 1:
+        out = np.repeat(image, 3, axis=-1)
+    elif image.ndim == 3 and image.shape[-1] in (3, 4):
+        out = image[..., :3]
+    else:
+        raise ValueError(f"Unsupported image shape for display: {image.shape}")
+
+    if out.dtype == np.uint8:
+        return out
+
+    out = out.astype(np.float32, copy=False)
+
+    if out.max() > 1.0:
+        out = out / out.max()
+
+    return np.clip(out, 0.0, 1.0)
+
+
+def _prepare_segmentation_display_no_resize(segmentation: np.ndarray) -> np.ndarray:
+    seg = np.asarray(segmentation)
+
+    if seg.ndim == 3 and seg.shape[-1] == 3:
+        if seg.dtype != np.uint8:
+            seg = np.clip(seg, 0, 255).astype(np.uint8)
+        return seg
+
+    if seg.ndim == 2:
+        return _prepare_segmentation_for_display(seg)
+
+    raise ValueError(f"Unsupported segmentation shape: {seg.shape}")
+
 
 def _plot_identity_scatter(
     ax: Axes,
@@ -66,7 +112,7 @@ def _plot_identity_scatter(
     legend_fontsize: int | None = None,
 ) -> None:
     sns.scatterplot(
-        data=data,
+        data=data.reset_index(drop=True),
         x=x_col,
         y=y_col,
         hue=hue_col,
@@ -79,6 +125,7 @@ def _plot_identity_scatter(
     ax.set_ylabel(ylabel, fontsize=cfg.AXIS_LABEL_SIZE)
 
     utils.unify_axis_limits(ax)
+
     lims = [
         min(ax.get_xlim()[0], ax.get_ylim()[0]),
         max(ax.get_xlim()[1], ax.get_ylim()[1]),
@@ -86,7 +133,13 @@ def _plot_identity_scatter(
     x = np.array(lims)
     ax.plot(x, x, linestyle="--", color="red")
 
-    utils.adjust_fontsize_ticklabels(ax, cfg.AXIS_LABEL_SIZE)
+    ax.tick_params(axis="both", which="major", labelsize=cfg.AXIS_LABEL_SIZE)
+
+    for tick_label in ax.get_xticklabels():
+        tick_label.set_fontsize(cfg.AXIS_LABEL_SIZE)
+
+    for tick_label in ax.get_yticklabels():
+        tick_label.set_fontsize(cfg.AXIS_LABEL_SIZE)
 
     if legend:
         handles, labels = ax.get_legend_handles_labels()
@@ -101,6 +154,20 @@ def _plot_identity_scatter(
         ax.get_legend().remove()
 
 
+def _clip_inset_coords(
+    image: np.ndarray,
+    inset_coords: tuple[int, int],
+    inset_side_length: int,
+) -> tuple[int, int]:
+    h, w = image.shape[:2]
+    x, y = inset_coords
+
+    x = int(max(0, min(x, w - inset_side_length)))
+    y = int(max(0, min(y, h - inset_side_length)))
+
+    return x, y
+
+
 def _add_inset_overlay(
     ax: Axes,
     image: np.ndarray,
@@ -108,8 +175,15 @@ def _add_inset_overlay(
     inset_side_length: int,
     title: str | None = None,
 ) -> None:
+    image = _prepare_image_for_display(image)
+
+    x, y = _clip_inset_coords(
+        image=image,
+        inset_coords=inset_coords,
+        inset_side_length=inset_side_length,
+    )
+
     ax.imshow(image)
-    x, y = inset_coords
 
     rect = Rectangle(
         (x, y),
@@ -121,7 +195,12 @@ def _add_inset_overlay(
     )
     ax.add_patch(rect)
 
-    inset_img = crop_square(image, x=x, y=y, length=inset_side_length)
+    inset_img = crop_square(
+        image,
+        x=x,
+        y=y,
+        length=inset_side_length,
+    )
 
     axins = inset_axes(
         ax,
@@ -158,94 +237,106 @@ def _generate_subfigure_image_grid(
     googlepixel_segmentation: np.ndarray,
     iphone_image: np.ndarray,
     iphone_segmentation: np.ndarray,
+    monochrome_image: np.ndarray,
+    monochrome_segmentation: np.ndarray,
 ) -> None:
     ax.axis("off")
     utils.figure_label(ax, subfigure_label, x=0)
 
-    fig_sgs = gs.subgridspec(2, 4)
-
-    sim_img = _prepare_image(simulated_image, is_segmentation=False)
-    micro_img = _prepare_image(microscopy_image, is_segmentation=False)
-    gpixel_img = _prepare_image(googlepixel_image, is_segmentation=False)
-    iphone_img = _prepare_image(iphone_image, is_segmentation=False)
-
-    sim_seg = _prepare_segmentation_for_display(simulated_segmentation)
-    micro_seg = _prepare_segmentation_for_display(microscopy_segmentation)
-    gpixel_seg = _prepare_segmentation_for_display(googlepixel_segmentation)
-    iphone_seg = _prepare_segmentation_for_display(iphone_segmentation)
-
-    ax_sim_img = fig.add_subplot(fig_sgs[0, 0])
-    _add_inset_overlay(
-        ax=ax_sim_img,
-        image=sim_img,
-        inset_coords=INSET_COORDS["simulated_image"],
-        inset_side_length=INSET_SIDE_LENGTH,
-        title="Simulated",
+    fig_sgs = gs.subgridspec(
+        2,
+        5,
+        wspace=0.03,
+        hspace=0.12,
     )
 
-    ax_micro_img = fig.add_subplot(fig_sgs[0, 1])
-    _add_inset_overlay(
-        ax=ax_micro_img,
-        image=micro_img,
-        inset_coords=INSET_COORDS["microscopy_image"],
-        inset_side_length=INSET_SIDE_LENGTH,
-        title="Microscopy",
-    )
+    sim_img = _prepare_image_for_display(simulated_image)
+    micro_img = _prepare_image_for_display(microscopy_image)
+    gpixel_img = _prepare_image_for_display(googlepixel_image)
+    iphone_img = _prepare_image_for_display(iphone_image)
+    mono_img = _prepare_image_for_display(monochrome_image)
 
-    ax_gpixel_img = fig.add_subplot(fig_sgs[0, 2])
-    _add_inset_overlay(
-        ax=ax_gpixel_img,
-        image=gpixel_img,
-        inset_coords=INSET_COORDS["googlepixel_image"],
-        inset_side_length=INSET_SIDE_LENGTH,
-        title="Google Pixel",
-    )
+    sim_seg = _prepare_segmentation_display_no_resize(simulated_segmentation)
+    micro_seg = _prepare_segmentation_display_no_resize(microscopy_segmentation)
+    gpixel_seg = _prepare_segmentation_display_no_resize(googlepixel_segmentation)
+    iphone_seg = _prepare_segmentation_display_no_resize(iphone_segmentation)
+    mono_seg = _prepare_segmentation_display_no_resize(monochrome_segmentation)
 
-    ax_iphone_img = fig.add_subplot(fig_sgs[0, 3])
-    _add_inset_overlay(
-        ax=ax_iphone_img,
-        image=iphone_img,
-        inset_coords=INSET_COORDS["iphone_image"],
-        inset_side_length=INSET_SIDE_LENGTH,
-        title="iPhone",
-    )
+    image_panels = [
+        (
+            sim_img,
+            INSET_COORDS["simulated_image"],
+            "Simulated",
+        ),
+        (
+            micro_img,
+            INSET_COORDS["microscopy_image"],
+            "Microscopy",
+        ),
+        (
+            gpixel_img,
+            INSET_COORDS["googlepixel_image"],
+            "Google Pixel",
+        ),
+        (
+            iphone_img,
+            INSET_COORDS["iphone_image"],
+            "iPhone",
+        ),
+        (
+            mono_img,
+            INSET_COORDS["monochrome_image"],
+            "Monochrome",
+        ),
+    ]
 
-    # Row 2: segmentation results
-    ax_sim_seg = fig.add_subplot(fig_sgs[1, 0])
-    _add_inset_overlay(
-        ax=ax_sim_seg,
-        image=sim_seg,
-        inset_coords=INSET_COORDS["simulated_segmentation"],
-        inset_side_length=INSET_SIDE_LENGTH,
-        title="Simulated\nsegmentation",
-    )
+    segmentation_panels = [
+        (
+            sim_seg,
+            INSET_COORDS["simulated_segmentation"],
+            "Simulated\nsegmentation",
+        ),
+        (
+            micro_seg,
+            INSET_COORDS["microscopy_segmentation"],
+            "Microscopy\nsegmentation",
+        ),
+        (
+            gpixel_seg,
+            INSET_COORDS["googlepixel_segmentation"],
+            "Google Pixel\nsegmentation",
+        ),
+        (
+            iphone_seg,
+            INSET_COORDS["iphone_segmentation"],
+            "iPhone\nsegmentation",
+        ),
+        (
+            mono_seg,
+            INSET_COORDS["monochrome_segmentation"],
+            "Monochrome\nsegmentation",
+        ),
+    ]
 
-    ax_micro_seg = fig.add_subplot(fig_sgs[1, 1])
-    _add_inset_overlay(
-        ax=ax_micro_seg,
-        image=micro_seg,
-        inset_coords=INSET_COORDS["microscopy_segmentation"],
-        inset_side_length=INSET_SIDE_LENGTH,
-        title="Microscopy\nsegmentation",
-    )
+    for col, (image, inset_coords, title) in enumerate(image_panels):
+        panel_ax = fig.add_subplot(fig_sgs[0, col])
+        _add_inset_overlay(
+            ax=panel_ax,
+            image=image,
+            inset_coords=inset_coords,
+            inset_side_length=INSET_SIDE_LENGTH,
+            title=title,
+        )
 
-    ax_gpixel_seg = fig.add_subplot(fig_sgs[1, 2])
-    _add_inset_overlay(
-        ax=ax_gpixel_seg,
-        image=gpixel_seg,
-        inset_coords=INSET_COORDS["googlepixel_segmentation"],
-        inset_side_length=INSET_SIDE_LENGTH,
-        title="Google Pixel\nsegmentation",
-    )
-
-    ax_iphone_seg = fig.add_subplot(fig_sgs[1, 3])
-    _add_inset_overlay(
-        ax=ax_iphone_seg,
-        image=iphone_seg,
-        inset_coords=INSET_COORDS["iphone_segmentation"],
-        inset_side_length=INSET_SIDE_LENGTH,
-        title="iPhone\nsegmentation",
-    )
+    for col, (image, inset_coords, title) in enumerate(segmentation_panels):
+        panel_ax = fig.add_subplot(fig_sgs[1, col])
+        _add_inset_overlay(
+            ax=panel_ax,
+            image=image,
+            inset_coords=inset_coords,
+            inset_side_length=INSET_SIDE_LENGTH,
+            title=title,
+        )
 
 
 def _generate_main_figure(
@@ -260,6 +351,8 @@ def _generate_main_figure(
     googlepixel_segmentation: np.ndarray,
     iphone_image: np.ndarray,
     iphone_segmentation: np.ndarray,
+    monochrome_image: np.ndarray,
+    monochrome_segmentation: np.ndarray,
     sketch_dir: str,
     figure_output_dir: str,
     figure_name: str,
@@ -304,7 +397,6 @@ def _generate_main_figure(
             ylabel="n_cells predicted",
         )
 
-
     def generate_subfigure_c(
         fig: Figure,
         ax: Axes,
@@ -317,7 +409,7 @@ def _generate_main_figure(
         fig_sgs = gs.subgridspec(1, 1)
         plot_ax = fig.add_subplot(fig_sgs[0])
 
-        plot_df = unet_on_human.copy()
+        plot_df = unet_on_human.copy().reset_index(drop=True)
 
         plot_df = plot_df.melt(
             id_vars=["Folder", "image_name", "human_roi_count"],
@@ -358,9 +450,12 @@ def _generate_main_figure(
         fig_sgs = gs.subgridspec(1, 1)
         plot_ax = fig.add_subplot(fig_sgs[0])
 
-        plot_df = imageJ_on_sim.copy()
+        plot_df = imageJ_on_sim.copy().reset_index(drop=True)
         plot_df["dataset_mode"] = plot_df["dataset_mode"].map(
-            {"UNet": "UNet", "imageJ": "NCISP"}
+            {
+                "UNet": "UNet",
+                "imageJ": "NCISP",
+            }
         )
 
         _plot_identity_scatter(
@@ -395,6 +490,8 @@ def _generate_main_figure(
             googlepixel_segmentation=googlepixel_segmentation,
             iphone_image=iphone_image,
             iphone_segmentation=iphone_segmentation,
+            monochrome_image=monochrome_image,
+            monochrome_segmentation=monochrome_segmentation,
         )
 
     fig = plt.figure(
@@ -406,7 +503,7 @@ def _generate_main_figure(
         ncols=3,
         nrows=3,
         figure=fig,
-        height_ratios=[1.0, 0.7, 1],
+        height_ratios=[1.0, 0.7, 1.05],
     )
 
     a_coords = gs[0, :]
@@ -431,24 +528,35 @@ def _generate_main_figure(
 
     pdf_path = os.path.join(figure_output_dir, f"{figure_name}.pdf")
     png_path = os.path.join(figure_output_dir, f"{figure_name}.png")
+
     plt.savefig(pdf_path, dpi=300, bbox_inches="tight")
     plt.savefig(png_path, dpi=300, bbox_inches="tight")
-        
-    return
+    plt.close(fig)
 
-def figure_1_generation(validation_results_dir: str,
-                        sketch_dir: str,
-                        figure_output_dir: str,
-                        model_output_dir: str,
-                        figure_data_dir,
 
-                        **kwargs) -> None:
-
+def figure_1_generation(
+    validation_results_dir: str,
+    sketch_dir: str,
+    figure_output_dir: str,
+    model_output_dir: str,
+    figure_data_dir: str,
+    ext_images_dir: str,
+    **kwargs,
+) -> None:
     unet_size = kwargs.get("unet_size", "small")
     comparison_images = kwargs.get("comparison_images", "tiles")
 
-    image_cache_path = os.path.join(validation_results_dir, "figure_1_image_cache.npz")
-    model_file = kwargs.get("model_file", "best_small_tiles_S512_seed187.pth")
+    image_cache_path = os.path.join(
+        figure_data_dir,
+        "figure_1_image_cache_fullres.npz",
+    )
+
+    model_file = kwargs.get(
+        "model_file",
+        "best_small_tiles_S512_seed187.pth",
+    )
+
+    force_recompute = kwargs.get("redo_analysis", False)
 
     unet_on_sim = get_validation_data(
         results_dir=validation_results_dir,
@@ -456,23 +564,24 @@ def figure_1_generation(validation_results_dir: str,
         unet_size=unet_size,
         comparison_images=comparison_images,
         seg_method="inst_seg",
-    )
+    ).reset_index(drop=True)
 
     unet_on_human = get_validation_data(
         results_dir=validation_results_dir,
         mode="human",
-    )
+    ).reset_index(drop=True)
 
     imageJ_on_sim = get_validation_data(
         results_dir=validation_results_dir,
         mode="imageJ",
-    )
+    ).reset_index(drop=True)
 
     image_data = load_or_create_figure_1_image_cache(
         cache_path=image_cache_path,
         model_dir=model_output_dir,
         model_file=model_file,
-        force_recompute=False,
+        ext_images_dir=ext_images_dir,
+        force_recompute=force_recompute,
     )
 
     _generate_main_figure(
@@ -482,15 +591,20 @@ def figure_1_generation(validation_results_dir: str,
 
         simulated_image=image_data["simulated_image"],
         simulated_segmentation=image_data["simulated_segmentation"],
+
         microscopy_image=image_data["microscopy_image"],
         microscopy_segmentation=image_data["microscopy_segmentation"],
+
         googlepixel_image=image_data["googlepixel_image"],
         googlepixel_segmentation=image_data["googlepixel_segmentation"],
+
         iphone_image=image_data["iphone_image"],
         iphone_segmentation=image_data["iphone_segmentation"],
+
+        monochrome_image=image_data["monochrome_image"],
+        monochrome_segmentation=image_data["monochrome_segmentation"],
 
         sketch_dir=sketch_dir,
         figure_output_dir=figure_output_dir,
         figure_name="Figure_1",
     )
-

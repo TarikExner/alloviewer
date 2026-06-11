@@ -782,7 +782,7 @@ def _load_crop_resize_image(
     image, _ = load_image(file_name, base_dir=base_dir, scale=scale, as_chw=False)
     x, y, length = crop_params
     image = crop_square(image, x=x, y=y, length=length)
-    image = _prepare_image(image, is_segmentation=False)
+    # image = _prepare_image(image, is_segmentation=False)
     return image
 
 def load_or_create_figure_1_image_cache(
@@ -835,15 +835,24 @@ def load_or_create_figure_1_image_cache(
         scale=True,
     )
 
+    monochrome_img = _load_crop_resize_image(
+        file_name="xm1_+dtt_1b.tif",
+        base_dir="../scripts/ext_images/20260507_XM1_+DTT_mono_rgb/",
+        crop_params=(0, 0, 1440),
+        scale=True,
+    )
+
     sim_seg_labels = seg(sim_img)["instance_labels"]
     mic_seg_labels = seg(mic_img)["instance_labels"]
     gp_seg_labels = seg(gp_img)["instance_labels"]
     iphone_seg_labels = seg(iphone_img)["instance_labels"]
+    monochrome_seg_labels = seg(monochrome_img)["instance_labels"]
 
     sim_seg_rgb = instance_labels_to_rgb(sim_seg_labels)
     mic_seg_rgb = instance_labels_to_rgb(mic_seg_labels)
     gp_seg_rgb = instance_labels_to_rgb(gp_seg_labels)
     iphone_seg_rgb = instance_labels_to_rgb(iphone_seg_labels)
+    monochrome_seg_rgb = instance_labels_to_rgb(monochrome_seg_labels)
 
     data = {
         "simulated_image": sim_img,
@@ -854,6 +863,8 @@ def load_or_create_figure_1_image_cache(
         "googlepixel_segmentation": gp_seg_rgb,
         "iphone_image": iphone_img,
         "iphone_segmentation": iphone_seg_rgb,
+        "monochrome_image": monochrome_img,
+        "monochrome_segmentation": monochrome_seg_rgb,
     }
 
     np.savez_compressed(cache_path, **data)
