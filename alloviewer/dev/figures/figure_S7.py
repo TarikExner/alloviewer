@@ -420,13 +420,19 @@ def _generate_main_figure(
         left_plot.plot([lo, hi], [lo, hi], linestyle="--", color="red", linewidth=1)
         right_plot.plot([lo, hi], [lo, hi], linestyle="--", color="red", linewidth=1)
 
-        left_plot.set_xlabel("n_cells ground truth")
-        left_plot.set_ylabel("n_cells predicted")
-        right_plot.set_xlabel("n_cells ground truth")
-        right_plot.set_ylabel("n_cells predicted")
+        left_plot.set_xlabel("n_cells ground truth", fontsize=cfg.AXIS_LABEL_SIZE)
+        left_plot.set_ylabel("n_cells predicted", fontsize=cfg.AXIS_LABEL_SIZE)
+        right_plot.set_xlabel("n_cells ground truth", fontsize=cfg.AXIS_LABEL_SIZE)
+        right_plot.set_ylabel("n_cells predicted", fontsize=cfg.AXIS_LABEL_SIZE)
 
-        utils.adjust_fontsize_ticklabels(left_plot, cfg.AXIS_LABEL_SIZE)
-        utils.adjust_fontsize_ticklabels(right_plot, cfg.AXIS_LABEL_SIZE)
+        for plot_ax in [left_plot, right_plot]:
+            plot_ax.tick_params(axis="both", which="major", labelsize=cfg.AXIS_LABEL_SIZE)
+
+            for tick_label in plot_ax.get_xticklabels():
+                tick_label.set_fontsize(cfg.AXIS_LABEL_SIZE)
+
+            for tick_label in plot_ax.get_yticklabels():
+                tick_label.set_fontsize(cfg.AXIS_LABEL_SIZE)
 
     fig = plt.figure(
         layout="constrained",
