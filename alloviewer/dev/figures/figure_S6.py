@@ -189,7 +189,7 @@ def figure_S6_generation(
                                    h5_path = h5_path,
                                    unet_base_config = unet_base_config,
                                    segmenter_class = segmenter_class,
-                                   output_dir = figure_data_dir)
+                                   output_dir = validation_results_dir)
     _generate_main_figure(
         figure_output_dir=figure_output_dir,
         figure_name="Figure_S6",
