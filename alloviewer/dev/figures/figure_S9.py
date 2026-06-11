@@ -1,5 +1,6 @@
 import os
 from typing import Any
+import copy
 
 import numpy as np
 import pandas as pd
@@ -10,6 +11,9 @@ from matplotlib.axes import Axes
 
 import seaborn as sns
 from mpl_toolkits.axes_grid1.inset_locator import zoomed_inset_axes
+
+from alloviewer.image_analysis.config import UNET_CONFIG
+from alloviewer.image_analysis.segmenter import SegmenterUNet
 
 from .figure_data_generation import (
     fetch_image_with_targets,
@@ -246,8 +250,6 @@ def figure_S9_generation(
     validation_results_dir: str,
     figure_data_dir: str,
     h5_path: str,
-    unet_base_config: Any,
-    segmenter_class: Any,
     **kwargs,
 ):
     """
@@ -259,6 +261,9 @@ def figure_S9_generation(
     Panel B:
         tile-wise visual example for readability.
     """
+    unet_base_config = copy.deepcopy(UNET_CONFIG)
+    segmenter_class = SegmenterUNet
+
     unet_size = kwargs.get("unet_size", "small")
     seg_method = kwargs.get("seg_method", "inst_seg")
 
