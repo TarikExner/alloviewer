@@ -61,16 +61,36 @@ INSET_COORDS = {
     "monochrome_segmentation": (140, 498),
 }
 
+def _segmentation_white_background(
+    image: np.ndarray,
+) -> np.ndarray:
+    """
+    Convert RGB instance segmentation display image to a white background.
+
+    Assumes the cached segmentation RGB image uses black background.
+    Does not add object outlines.
+    """
+    image = np.asarray(image)
+
+    if image.ndim != 3 or image.shape[-1] != 3:
+        return image
+
+    if image.dtype == np.uint8:
+        out = image.copy()
+        bg = np.all(out == 0, axis=-1)
+        out[bg] = 255
+        return out
+
+    out = image.astype(np.float32, copy=True)
+    bg = np.all(out <= 1e-6, axis=-1)
+    out[bg] = 1.0
+    return out
+
 def _prepare_for_panel_e(
     image: np.ndarray,
     *,
     is_segmentation: bool,
 ) -> np.ndarray:
-    """
-    Prepare cached full-resolution images or segmentations for panel E display.
-
-    This resizes only for plotting. It does not affect cached data or UNet output.
-    """
     image = prepare_image(
         image,
         is_segmentation=is_segmentation,
@@ -91,6 +111,8 @@ def _prepare_for_panel_e(
         raise ValueError(f"Unsupported image shape for panel E: {image.shape}")
 
     if image.dtype == np.uint8:
+        if is_segmentation:
+            image = _segmentation_white_background(image)
         return image
 
     image = image.astype(np.float32, copy=False)
@@ -98,8 +120,12 @@ def _prepare_for_panel_e(
     if image.max() > 1.0:
         image = image / image.max()
 
-    return np.clip(image, 0.0, 1.0)
+    image = np.clip(image, 0.0, 1.0)
 
+    if is_segmentation:
+        image = _segmentation_white_background(image)
+
+    return image
 
 def _plot_identity_scatter(
     ax: Axes,
@@ -113,8 +139,23 @@ def _plot_identity_scatter(
     legend: bool = False,
     legend_fontsize: int | None = None,
 ) -> None:
+    plot_data = data.copy()
+
+    # Make sure seaborn sees numeric values.
+    plot_data[x_col] = pd.to_numeric(plot_data[x_col], errors="coerce")
+    plot_data[y_col] = pd.to_numeric(plot_data[y_col], errors="coerce")
+
+    before = len(plot_data)
+    plot_data = plot_data.dropna(subset=[x_col, y_col])
+    after = len(plot_data)
+
+    print(f"\n{title}")
+    print(f"rows before/after dropna: {before} -> {after}")
+    print(f"{x_col}: {plot_data[x_col].min()} .. {plot_data[x_col].max()}")
+    print(f"{y_col}: {plot_data[y_col].min()} .. {plot_data[y_col].max()}")
+
     sns.scatterplot(
-        data=data,
+        data=plot_data,
         x=x_col,
         y=y_col,
         hue=hue_col,
@@ -122,19 +163,41 @@ def _plot_identity_scatter(
         **SCATTER_KWARGS,
     )
 
+    print("after seaborn:")
+    print("  xlim:", ax.get_xlim())
+    print("  ylim:", ax.get_ylim())
+    print("  collections:", len(ax.collections))
+    for i, coll in enumerate(ax.collections):
+        if hasattr(coll, "get_offsets"):
+            offsets = coll.get_offsets()
+            print(f"  collection {i}: offsets={offsets.shape}")
+
     ax.set_title(title, fontsize=cfg.TITLE_SIZE)
     ax.set_xlabel(xlabel, fontsize=cfg.AXIS_LABEL_SIZE)
     ax.set_ylabel(ylabel, fontsize=cfg.AXIS_LABEL_SIZE)
 
-    utils.unify_axis_limits(ax)
+    # Do NOT call utils.unify_axis_limits(ax) for now.
+    xmin = float(plot_data[x_col].min())
+    xmax = float(plot_data[x_col].max())
+    ymin = float(plot_data[y_col].min())
+    ymax = float(plot_data[y_col].max())
 
-    lims = [
-        min(ax.get_xlim()[0], ax.get_ylim()[0]),
-        max(ax.get_xlim()[1], ax.get_ylim()[1]),
-    ]
+    lo = min(xmin, ymin)
+    hi = max(xmax, ymax)
 
-    x = np.array(lims)
-    ax.plot(x, x, linestyle="--", color="red")
+    pad = 0.05 * (hi - lo) if hi > lo else 1.0
+    lo -= pad
+    hi += pad
+
+    ax.set_xlim(lo, hi)
+    ax.set_ylim(lo, hi)
+
+    x = np.array([lo, hi])
+    ax.plot(x, x, linestyle="--", color="red", zorder=1)
+
+    # Force scatter collections above identity line.
+    for coll in ax.collections:
+        coll.set_zorder(3)
 
     utils.adjust_fontsize_ticklabels(ax, cfg.AXIS_LABEL_SIZE)
 
@@ -149,7 +212,6 @@ def _plot_identity_scatter(
         )
     elif ax.get_legend() is not None:
         ax.get_legend().remove()
-
 
 def _clip_inset_coords(
     image: np.ndarray,
