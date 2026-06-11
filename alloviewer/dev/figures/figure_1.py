@@ -28,7 +28,6 @@ SCATTER_KWARGS = {
     "s": 4,
     "edgecolor": "black",
     "linewidth": 0.3,
-    "rasterized": True,
 }
 
 
