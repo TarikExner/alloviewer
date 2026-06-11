@@ -759,7 +759,7 @@ def resize_square_image(
 
 
 def _prepare_image(image: np.ndarray, is_segmentation: bool = False) -> np.ndarray:
-    interpolation = cv2.INTER_NEAREST if is_segmentation else cv2.INTER_LINEAR
+    interpolation = cv2.INTER_NEAREST if is_segmentation else cv2.INTER_CUBIC
     return resize_square_image(image, interpolation=interpolation)
 
 def crop_square(image: np.ndarray, x: int, y: int, length: int) -> np.ndarray:
@@ -786,7 +786,7 @@ def _load_crop_resize_image(
     return image
 
 def load_or_create_figure_1_image_cache(
-    cache_path: str = "./figure_data/figure_1_image_cache.npz",
+    cache_path: str,
     model_dir: str = "../scripts/models",
     model_file: str = "best_small_tiles_S512_seed187.pth",
     force_recompute: bool = False,
@@ -798,9 +798,6 @@ def load_or_create_figure_1_image_cache(
 
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
 
-    # -------------------------
-    # Build segmenter
-    # -------------------------
     unet_config = copy.deepcopy(UNET_CONFIG)
     unet_config["model_dir"] = model_dir
     unet_config["model_file"] = model_file
@@ -810,9 +807,6 @@ def load_or_create_figure_1_image_cache(
 
     seg = SegmenterUNetInference.from_config(unet_config)
 
-    # -------------------------
-    # Hardcoded image loading
-    # -------------------------
     sim_img = _load_crop_resize_image(
         file_name="000006.tif",
         base_dir="../scripts/image_datasets/imgs",
@@ -841,17 +835,11 @@ def load_or_create_figure_1_image_cache(
         scale=True,
     )
 
-    # -------------------------
-    # Expensive part: inference
-    # -------------------------
     sim_seg_labels = seg(sim_img)["instance_labels"]
     mic_seg_labels = seg(mic_img)["instance_labels"]
     gp_seg_labels = seg(gp_img)["instance_labels"]
     iphone_seg_labels = seg(iphone_img)["instance_labels"]
 
-    # -------------------------
-    # Convert labels to display RGB
-    # -------------------------
     sim_seg_rgb = instance_labels_to_rgb(sim_seg_labels)
     mic_seg_rgb = instance_labels_to_rgb(mic_seg_labels)
     gp_seg_rgb = instance_labels_to_rgb(gp_seg_labels)

@@ -447,7 +447,7 @@ def figure_1_generation(validation_results_dir: str,
     unet_size = kwargs.get("unet_size", "small")
     comparison_images = kwargs.get("comparison_images", "tiles")
 
-    image_cache_path = os.path.join(figure_data_dir, "figure_1_image_cache.npz")
+    image_cache_path = os.path.join(validation_results_dir, "figure_1_image_cache.npz")
     model_file = kwargs.get("model_file", "best_small_tiles_S512_seed187.pth")
 
     unet_on_sim = get_validation_data(

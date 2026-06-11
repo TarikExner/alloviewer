@@ -412,6 +412,7 @@ def _generate_main_figure(
 def figure_S7_generation(
     figure_output_dir: str,
     model_output_dir: str,
+    ext_images_dir: str,
     figure_data_dir: str,
     validation_results_dir: str,
     h5_path: str,
@@ -425,11 +426,15 @@ def figure_S7_generation(
     
     seg_out = {}
     seg_out["probs"] = {}
-    res = generate_unet_comparison(models_dir = model_output_dir,
-                                   h5_path = h5_path,
-                                   unet_base_config = unet_base_config,
-                                   segmenter_class = segmenter_class,
-                                   output_dir = figure_data_dir)
+    res = generate_unet_comparison(
+        models_dir=model_output_dir,
+        ext_images_dir=ext_images_dir,
+        unet_base_config=unet_base_config,
+        segmenter_class=segmenter_class,
+        output_dir=validation_results_dir,
+        output_filename="unet_segmentation_comparison",
+        redo_analysis=kwargs.get("redo_analysis", False),
+    )
 
     conv_data = get_validation_data(results_dir = validation_results_dir,
                                     mode = "testing",
