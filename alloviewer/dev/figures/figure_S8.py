@@ -228,7 +228,7 @@ def figure_S8_generation(
         target_key="tgts",
         resize_to=(512,512),
         target_resize_to=None,
-        return_channel_last=True,   # -> (H, W, C)
+        return_channel_last=True,
     )
 
     unet_base_config = UNET_CONFIG

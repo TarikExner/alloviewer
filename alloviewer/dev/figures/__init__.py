@@ -12,7 +12,7 @@ from .figure_S5 import figure_S5_generation
 from .figure_S6 import figure_S6_generation
 from .figure_S7 import figure_S7_generation
 from .figure_S8 import figure_S8_generation
-
+from .figure_S9 import figure_S9_generation
 from .figure_S10 import figure_S10_generation
 from .figure_S11 import figure_S11_generation
 from .figure_SIM import figure_SIM_generation
@@ -30,7 +30,7 @@ __all__ = [
     "figure_S6_generation",
     "figure_S7_generation",
     "figure_S8_generation",
-
+    "figure_S9_generation",
     "figure_S10_generation",
     "figure_S11_generation",
 
@@ -64,7 +64,7 @@ def generate_all_figures():
     figure_S6_generation(**DIRECTORIES)
     figure_S7_generation(**DIRECTORIES)
     figure_S8_generation(**DIRECTORIES)
-
+    figure_S9_generation(**DIRECTORIES)
     figure_S10_generation(**DIRECTORIES)
     figure_S11_generation(**DIRECTORIES)
 

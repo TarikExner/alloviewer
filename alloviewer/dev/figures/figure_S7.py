@@ -513,7 +513,7 @@ def figure_S7_generation(
 
     img = res["original"]
 
-    inset_start = kwargs.get("inset_start", (400, 200))
+    inset_start = kwargs.get("inset_start", (210, 200))
     inset_size = kwargs.get("inset_size", 100)
 
     _generate_main_figure(
