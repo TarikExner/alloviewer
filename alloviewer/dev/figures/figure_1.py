@@ -35,14 +35,12 @@ INSET_SIDE_LENGTH = 128
 INSET_LINEWIDTH = 2
 INSET_RECT_COLOR = "red"
 
-INSET_WIDTH = "95%"
-INSET_HEIGHT = "95%"
+INSET_WIDTH = "50%"
+INSET_HEIGHT = "50%"
 INSET_LOCATION = "upper right"
 INSET_BORDER_COLOR = "black"
 INSET_BORDER_LINEWIDTH = 2
-
-
-FIGURE_HEIGHT_REDUCTION_INCHES = 1.25
+INSET_ANCHOR_BOX = (0.0, 0.0, 0.95, 0.95)
 
 
 INSET_COORDS = {
@@ -255,6 +253,13 @@ def _add_inset_overlay(
         width=INSET_WIDTH,
         height=INSET_HEIGHT,
         loc=INSET_LOCATION,
+        bbox_to_anchor=(
+            0.0,
+            0.0,
+            0.95,
+            0.95,
+        ),
+        bbox_transform=ax.transAxes,
         borderpad=0.0,
     )
     axins.imshow(inset_img)
@@ -529,7 +534,7 @@ def _generate_main_figure(
         layout="constrained",
         figsize=(
             cfg.FIGURE_WIDTH_FULL,
-            cfg.FIGURE_HEIGHT_FULL - FIGURE_HEIGHT_REDUCTION_INCHES,
+            cfg.FIGURE_HEIGHT_FULL,
         ),
     )
 
