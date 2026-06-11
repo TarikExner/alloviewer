@@ -758,7 +758,7 @@ def resize_square_image(
     return cv2.resize(image, target_size, interpolation=interpolation)
 
 
-def _prepare_image(image: np.ndarray, is_segmentation: bool = False) -> np.ndarray:
+def prepare_image(image: np.ndarray, is_segmentation: bool = False) -> np.ndarray:
     interpolation = cv2.INTER_NEAREST if is_segmentation else cv2.INTER_CUBIC
     return resize_square_image(image, interpolation=interpolation)
 
