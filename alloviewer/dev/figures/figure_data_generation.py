@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import pickle
+from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple, Literal, Iterable
 from typing import Mapping, Any, Dict
 
@@ -25,6 +26,7 @@ from alloviewer.image_analysis.config import UNET_CONFIG, INSTANCE_CONFIG_DICT
 from alloviewer.image_analysis.io import load_image
 from alloviewer.dev.segmentation.image_simulation import simulate_image
 import copy
+
 
 _LOG_RE = re.compile(
     r"log_(?P<unet_mode>small|medium|large)_(?P<tag>(pad_resize|crop_well_resize|tiles)_S(?P<target>\d+)_seed(?P<seed>\d+))\.jsonl$"
@@ -482,53 +484,205 @@ def get_validation_data(results_dir,
 def _prep_config_for_unet_comparison(
     cfg: dict,
     models_dir: str,
-    unet_mode: Literal["large", "medium", "small"]
+    unet_mode: Literal["large", "medium", "small"],
 ) -> dict:
+    cfg = copy.deepcopy(cfg)
     cfg["model_dir"] = models_dir
     cfg["unet_mode"] = unet_mode
     cfg["model_file"] = f"best_{unet_mode}_tiles_S512_seed187.pth"
+    cfg["input_is_tiles"] = False
+    cfg["normalize"] = True
     return cfg
 
-def generate_unet_comparison(models_dir: str,
-                             h5_path: str,
-                             unet_base_config: Any,
-                             segmenter_class: Any,
-                             output_dir: str,
-                             output_filename: str = "unet_segmentation_comparison",
-                             redo_analysis: bool = False) -> dict:
+
+@dataclass(frozen=True)
+class Inset:
+    """
+    Square crop region.
+
+    Coordinates use image-array convention:
+        x = column index
+        y = row index
+
+    Crop:
+        image[y : y + size, x : x + size]
+    """
+    x: int
+    y: int
+    size: int
+
+
+MICROSCOPY_IMAGE_CONFIG = {
+    "base_dir": "20251014_25719852",
+    "image_path": "Bild_323.tif",
+    "inset": Inset(x=1200, y=100, size=512),
+}
+
+
+def _crop_inset_array(arr: np.ndarray, inset: Inset) -> np.ndarray:
+    arr = np.asarray(arr)
+
+    if arr.ndim not in (2, 3):
+        raise ValueError(f"Expected 2D or HWC image array, got shape {arr.shape}.")
+
+    h, w = arr.shape[:2]
+
+    x0 = int(inset.x)
+    y0 = int(inset.y)
+    x1 = x0 + int(inset.size)
+    y1 = y0 + int(inset.size)
+
+    if inset.size <= 0:
+        raise ValueError(f"inset.size must be positive, got {inset.size}.")
+
+    if x0 < 0 or y0 < 0:
+        raise ValueError(f"Inset starts outside image: x={x0}, y={y0}.")
+
+    if x1 > w or y1 > h:
+        raise ValueError(
+            f"Inset exceeds image bounds. "
+            f"Inset x=[{x0}, {x1}), y=[{y0}, {y1}); "
+            f"image width={w}, height={h}."
+        )
+
+    return arr[y0:y1, x0:x1, ...] if arr.ndim == 3 else arr[y0:y1, x0:x1]
+
+
+def _load_real_life_unet_input_tile(
+    *,
+    ext_images_dir: str,
+    image_config: dict[str, Any],
+    page: int = 0,
+    max_mp: Optional[float] = 200.0,
+) -> dict[str, Any]:
+    """
+    Load a real-life microscopy image and crop the selected UNet input tile.
+
+    Returns:
+        full_image: HWC float32 image in [0, 1]
+        tile: HWC float32 512x512 crop in [0, 1]
+        load_report: loader metadata
+    """
+    base_dir = os.path.join(ext_images_dir, image_config["base_dir"])
+    image_path = image_config["image_path"]
+    inset = image_config["inset"]
+
+    full_image, load_report = load_image(
+        image_path,
+        page=page,
+        base_dir=base_dir,
+        max_mp=max_mp,
+        as_chw=False,
+        scale=True,
+    )
+
+    full_image = np.asarray(full_image, dtype=np.float32)
+
+    tile = _crop_inset_array(full_image, inset).astype(np.float32, copy=False)
+
+    if tile.ndim == 2:
+        tile = np.repeat(tile[..., None], 3, axis=-1)
+
+    if tile.ndim != 3:
+        raise ValueError(f"Expected cropped tile to be HWC, got shape {tile.shape}.")
+
+    if tile.shape[0] != inset.size or tile.shape[1] != inset.size:
+        raise ValueError(
+            f"Unexpected tile shape {tile.shape}; expected "
+            f"({inset.size}, {inset.size}, C)."
+        )
+
+    if tile.shape[-1] == 1:
+        tile = np.repeat(tile, 3, axis=-1)
+
+    if tile.shape[-1] > 3:
+        tile = tile[..., :3]
+
+    if tile.shape[-1] != 3:
+        raise ValueError(f"Expected 3-channel tile, got shape {tile.shape}.")
+
+    return {
+        "full_image": full_image,
+        "tile": tile,
+        "inset": inset,
+        "base_dir": base_dir,
+        "image_path": image_path,
+        "load_report": load_report,
+    }
+
+
+def generate_unet_comparison(
+    models_dir: str,
+    ext_images_dir: str,
+    unet_base_config: Any,
+    segmenter_class: Any,
+    output_dir: str,
+    output_filename: str = "unet_segmentation_comparison",
+    redo_analysis: bool = False,
+    image_config: Optional[dict[str, Any]] = None,
+) -> dict:
+    """
+    Compare small, medium, and large UNets on a real-life microscopy crop.
+
+    The image is loaded with scale=True, so the input tile is float32 in [0, 1].
+    Further UNet normalization is handled by SegmenterUNet according to the
+    model config.
+    """
+    os.makedirs(output_dir, exist_ok=True)
 
     output_file = os.path.join(output_dir, f"{output_filename}.dict")
+
     existing_file = check_for_file(output_file)
     if existing_file is not None and not redo_analysis:
         assert isinstance(existing_file, dict)
         return existing_file
 
-    large_cfg = _prep_config_for_unet_comparison(unet_base_config, models_dir, "large")
-    med_cfg = _prep_config_for_unet_comparison(unet_base_config, models_dir, "medium")
-    small_cfg = _prep_config_for_unet_comparison(unet_base_config, models_dir, "small")
+    if image_config is None:
+        image_config = MICROSCOPY_IMAGE_CONFIG
+
+    large_cfg = _prep_config_for_unet_comparison(
+        unet_base_config,
+        models_dir,
+        "large",
+    )
+    med_cfg = _prep_config_for_unet_comparison(
+        unet_base_config,
+        models_dir,
+        "medium",
+    )
+    small_cfg = _prep_config_for_unet_comparison(
+        unet_base_config,
+        models_dir,
+        "small",
+    )
 
     large_seg = segmenter_class.from_config(large_cfg)
     med_seg = segmenter_class.from_config(med_cfg)
     small_seg = segmenter_class.from_config(small_cfg)
 
-    img_idx = 47
+    image_payload = _load_real_life_unet_input_tile(
+        ext_images_dir=ext_images_dir,
+        image_config=image_config,
+    )
 
-    h5file = os.path.join(h5_path, "tiles_train.h5")
-    with h5py.File(h5file, "r") as f:
-        img = np.asarray(f["imgs"][img_idx])
+    img = image_payload["tile"]
 
-
-    large_pred = large_seg(img)["probs"]
-    med_pred = med_seg(img)["probs"]
-    small_pred = small_seg(img)["probs"]
+    small_out = small_seg(img)
+    med_out = med_seg(img)
+    large_out = large_seg(img)
 
     res = {
         "original": img,
-        "small": small_pred,
-        "med": med_pred,
-        "large": large_pred
+        "full_image": image_payload["full_image"],
+        "inset": image_payload["inset"],
+        "image_path": image_payload["image_path"],
+        "base_dir": image_payload["base_dir"],
+        "load_report": image_payload["load_report"],
+        "small": small_out["probs"],
+        "med": med_out["probs"],
+        "large": large_out["probs"],
     }
-    
+
     with open(output_file, "wb") as file:
         pickle.dump(res, file)
 
