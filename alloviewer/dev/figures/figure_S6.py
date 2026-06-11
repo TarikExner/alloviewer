@@ -381,7 +381,7 @@ def figure_S6_generation(
         ext_images_dir=ext_images_dir,
         unet_base_config=unet_base_config,
         segmenter_class=segmenter_class,
-        output_dir=figure_data_dir,
+        output_dir=validation_results_dir,
         output_filename="unet_segmentation_comparison",
         redo_analysis=kwargs.get("redo_analysis", False),
     )
