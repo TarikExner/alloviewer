@@ -808,7 +808,7 @@ def load_or_create_figure_1_image_cache(
     seg = SegmenterUNetInference.from_config(unet_config)
 
     sim_img = _load_crop_resize_image(
-        file_name="000006.tif",
+        file_name="000008.tif",
         base_dir="../scripts/image_datasets/imgs",
         crop_params=(500, 200, 1200),
         scale=True,
