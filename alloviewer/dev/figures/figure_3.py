@@ -1,866 +1,1010 @@
 import os
+import copy
 from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import matplotlib.pyplot as plt
 
-from PIL import Image
+from scipy import ndimage as ndi
+from skimage import measure, morphology
+
+from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec, SubplotSpec
-from matplotlib.ticker import FuncFormatter, MaxNLocator
+from matplotlib.patches import Rectangle
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
-from alloviewer.flow_cytometry.fcs_file import FCSFile
-from alloviewer.flow_cytometry.gating.clusterers import default_clusterer_factory
-from alloviewer.flow_cytometry.gating.clustering import fit_clustering, predict_file_in_mask
-from alloviewer.flow_cytometry.gating.config import GatingConfig, PARCConfig
-from alloviewer.flow_cytometry.gating.labeling import label_clusters
-from alloviewer.flow_cytometry.panel import Panel
-
-from alloviewer.dev.validation.flow_validation import (
-    _read_csv,
-    _compute_qc_and_lymphocyte_metrics,
+from alloviewer.image_analysis.config import UNET_CONFIG, INSTANCE_CONFIG
+from alloviewer.image_analysis.segmenter import (
+    SegmenterUNet,
+    InstanceSegmenter,
+    InstanceSegmenterConfig,
+)
+from alloviewer.image_analysis.utils import (
+    as_contiguous_f32,
+    hysteresis_mask,
+    make_markers,
+    smooth01,
 )
 
-from . import figure_config as cfg
-from . import figure_utils as utils
+from alloviewer.dev.figures import figure_config as cfg
+from alloviewer.dev.figures import figure_utils as utils
 
-
-EDGE_GATE_CSV = "root/edge_exclusion"
-SINGLET_GATE_CSV = "root/edge_exclusion/singlets"
-LYMPHOCYTES_GATE_CSV = "root/edge_exclusion/singlets/lymphocytes"
-CD3_GATE_CSV = "root/edge_exclusion/singlets/lymphocytes/CD3+"
-CD19_GATE_CSV = "root/edge_exclusion/singlets/lymphocytes/CD19+"
-
-PANEL = Panel(
-    fsc_a="FSC-A",
-    fsc_h="FSC-H",
-    ssc_a="SSC-A",
-    igg="FITC-A",
-    markers={
-        "CD3 PerCP-A": "PerCP-A",
-        "CD19 APC-Cy7-A": "APC-Cy7-A",
-    },
+from alloviewer.dev.figures.figure_data_generation import (
+    get_validation_data,
+    generate_unet_comparison,
+    load_or_create_figure_1_image_cache as load_or_create_multimodal_image_cache,
+    crop_square,
+    prepare_image,
 )
 
 
-def _events_to_dataframe(events: Any, fcs: FCSFile) -> pd.DataFrame:
-    if isinstance(events, pd.DataFrame):
-        return events.copy()
-
-    if not isinstance(events, np.ndarray):
-        raise TypeError(f"Unsupported events type: {type(events)}")
-
-    if events.ndim != 2:
-        raise ValueError(f"Expected 2D events array, got shape {events.shape}")
-
-    channel_names = list(fcs.channels.index)
-
-    if events.shape[1] != len(channel_names):
-        raise ValueError(
-            f"Mismatch between event columns and FCS channels: "
-            f"{events.shape[1]} vs {len(channel_names)}"
-        )
-
-    return pd.DataFrame(events, columns=channel_names)
+SCATTER_KWARGS = {
+    "s": 4,
+    "edgecolor": "black",
+    "linewidth": 0.3,
+}
 
 
-def _k_formatter(x, pos):
-    if abs(x) < 1e-12:
-        return "0"
-    if abs(x) >= 1000:
-        if float(x) % 1000 == 0:
-            return f"{int(x / 1000)}k"
-        return f"{x / 1000:.1f}k"
-    return f"{int(x)}"
+INSET_SIDE_LENGTH = 128
+INSET_LINEWIDTH = 2
+INSET_RECT_COLOR = "red"
+
+INSET_WIDTH = "50%"
+INSET_HEIGHT = "50%"
+INSET_LOCATION = "upper right"
+INSET_BORDER_COLOR = "black"
+INSET_BORDER_LINEWIDTH = 2
 
 
-def _subsample_xy(
-    x: np.ndarray,
-    y: np.ndarray,
-    n_max: int,
-    rng: np.random.Generator,
-) -> tuple[np.ndarray, np.ndarray]:
-    if x.size <= n_max:
-        return x, y
+INSET_COORDS = {
+    "simulated_image": (250, 250),
+    "simulated_segmentation": (250, 250),
 
-    idx = rng.choice(x.size, size=n_max, replace=False)
-    return x[idx], y[idx]
+    "microscopy_image": (150, 150),
+    "microscopy_segmentation": (150, 150),
 
+    "googlepixel_image": (70, 200),
+    "googlepixel_segmentation": (70, 200),
 
-def _prepare_panel_a_image(panel_a_image_path: str) -> np.ndarray:
-    return np.asarray(Image.open(panel_a_image_path))
+    "iphone_image": (60, 650),
+    "iphone_segmentation": (60, 650),
 
-
-def _select_best_setting_overall_from_summary(summary_df: pd.DataFrame) -> pd.DataFrame:
-    required_cols = {
-        "algorithm",
-        "algorithm_params_json",
-        "gate",
-        "mean_f1",
-    }
-    missing = required_cols - set(summary_df.columns)
-    if missing:
-        raise ValueError(f"summary_df is missing required columns: {missing}")
-
-    focus_gates = ["lymphocytes", "t_cells", "b_cells"]
-
-    ranking_df = summary_df.loc[summary_df["gate"].isin(focus_gates)].copy()
-    if ranking_df.empty:
-        raise ValueError(
-            "No rows found for focus gates lymphocytes/t_cells/b_cells in summary_df."
-        )
-
-    ranking_df = (
-        ranking_df
-        .groupby(["algorithm", "algorithm_params_json"], as_index=False)
-        .agg(score=("mean_f1", "mean"))
-        .sort_values("score", ascending=False)
-    )
-
-    return ranking_df.iloc[[0]].copy()
+    "monochrome_image": (140, 498),
+    "monochrome_segmentation": (140, 498),
+}
 
 
-def _prepare_panel_c_data(
-    metrics_df: pd.DataFrame,
-    summary_df: pd.DataFrame,
-) -> pd.DataFrame:
-    required_metric_cols = {
-        "experiment",
-        "algorithm",
-        "algorithm_params_json",
-        "file_name",
-        "gate",
-        "f1",
-    }
-    missing_metrics = required_metric_cols - set(metrics_df.columns)
-    if missing_metrics:
-        raise ValueError(f"metrics_df is missing required columns: {missing_metrics}")
+def _as_instance_cfg(cfg_inst: Any) -> Any:
+    if isinstance(cfg_inst, InstanceSegmenterConfig):
+        return cfg_inst
 
-    best_df = _select_best_setting_overall_from_summary(summary_df)
+    if isinstance(cfg_inst, dict):
+        return InstanceSegmenterConfig.from_dict(cfg_inst)
 
-    gate_display_map = {
-        "edge_exclusion": "Edge exclusion",
-        "singlets": "Singlets",
-        "lymphocytes": "Lymphocytes",
-        "t_cells": "T cells",
-        "b_cells": "B cells",
+    return cfg_inst
+
+
+def _as_2d_prob(x: np.ndarray, name: str) -> np.ndarray:
+    x = as_contiguous_f32(np.asarray(x))
+
+    if x.ndim == 2:
+        return x
+
+    if x.ndim == 3 and x.shape[0] == 1:
+        return as_contiguous_f32(x[0])
+
+    raise ValueError(f"Expected {name} as [H,W], got shape {x.shape}.")
+
+
+def _make_seg_out_from_probs(probs: dict[str, np.ndarray]) -> dict[str, Any]:
+    return {
+        "probs": {
+            "cell": _as_2d_prob(probs["cell"], "cell"),
+            "bound": _as_2d_prob(probs["bound"], "bound"),
+            "center": _as_2d_prob(probs["center"], "center"),
+            "energy": _as_2d_prob(probs["energy"], "energy"),
+        },
+        "cell_mask": None,
+        "boundary": None,
+        "instance_labels": None,
+        "meta": {},
     }
 
-    gate_order = [
-        "Edge exclusion",
-        "Singlets",
-        "Lymphocytes",
-        "T cells",
-        "B cells",
-    ]
 
-    plot_df = metrics_df.merge(
-        best_df[["algorithm", "algorithm_params_json"]],
-        on=["algorithm", "algorithm_params_json"],
-        how="inner",
-    ).copy()
+def compute_instance_steps(
+    seg_out: dict[str, Any],
+    cfg_inst: Any,
+) -> dict[str, np.ndarray]:
+    cfg_inst = _as_instance_cfg(cfg_inst)
 
-    if plot_df.empty:
-        raise ValueError(
-            "Panel C data is empty after selecting the best algorithm setting."
+    p_cell = _as_2d_prob(seg_out["probs"]["cell"], "cell")
+    p_bound = _as_2d_prob(seg_out["probs"]["bound"], "bound")
+    p_center = _as_2d_prob(seg_out["probs"]["center"], "center")
+    p_energy = _as_2d_prob(seg_out["probs"]["energy"], "energy")
+
+    close_selem = (
+        morphology.disk(int(cfg_inst.mask_close_radius))
+        if int(cfg_inst.mask_close_radius) > 0
+        else None
+    )
+
+    mask = hysteresis_mask(
+        p_cell=p_cell,
+        low_thr=cfg_inst.cell_mask_low_thr,
+        high_thr=cfg_inst.cell_mask_high_thr,
+        close_selem=close_selem,
+        min_hole_area=cfg_inst.min_hole_area,
+        min_object_area=cfg_inst.min_object_area,
+    )
+
+    dist = ndi.distance_transform_edt(mask).astype(np.float32)
+
+    if cfg_inst.distance_smooth_sigma > 0:
+        ndi.gaussian_filter(
+            dist,
+            float(cfg_inst.distance_smooth_sigma),
+            output=dist,
         )
 
-    plot_df["gate_display"] = (
-        plot_df["gate"]
-        .map(gate_display_map)
-        .fillna(plot_df["gate"])
-    )
-    plot_df["gate_display"] = pd.Categorical(
-        plot_df["gate_display"],
-        categories=gate_order,
-        ordered=True,
-    )
+    dist_s = dist
 
-    return plot_df
+    height, width = p_cell.shape
+    elevation = np.zeros((height, width), dtype=np.float32)
+    tmp = np.empty_like(elevation, dtype=np.float32)
 
+    if cfg_inst.distance_weight != 0:
+        dmax = dist_s.max()
+        if dmax > 1e-6:
+            np.divide(dist_s, dmax, out=tmp)
+            elevation -= cfg_inst.distance_weight * tmp
 
-def _prepare_panel_b_data(
-    *,
-    data_dir: str,
-    experiment: str,
-    sample_name: str,
-    algorithm: str = "parc",
-    resolution_parameter: float = 4.0,
-) -> dict[str, Any]:
-    config = GatingConfig(
-        clusterer=PARCConfig(resolution_parameter=resolution_parameter)
-    )
+    if cfg_inst.use_boundary and p_bound is not None:
+        b = smooth01(p_bound, cfg_inst.smooth_boundary_sigma)
+        elevation += cfg_inst.gamma_boundary * b
 
-    ground_truth_df = _read_csv(data_dir, experiment)
-
-    (
-        file_records,
-        _metric_rows,
-        _stage_times,
-        marker_cofactors,
-        marker_thresholds,
-    ) = _compute_qc_and_lymphocyte_metrics(
-        data_dir=data_dir,
-        experiment=experiment,
-        config=config,
-        algorithm=algorithm,
-        algorithm_params={"resolution_parameter": resolution_parameter},
-    )
-
-    marker_names = list(PANEL.markers.keys())
-    rng = np.random.default_rng(int(config.random_state))
-    clusterer = default_clusterer_factory(config.clusterer)
-
-    (
-        feature_scaler,
-        clusterer,
-        outlier_thr,
-        X_train_scatter,
-        T_train,
-        y_train,
-    ) = fit_clustering(
-        transform_cfg=config.transform,
-        feature_scaling_cfg=config.feature_scaling,
-        cluster_sampling_cfg=config.cluster_sampling,
-        prediction_cfg=config.prediction,
-        panel=PANEL,
-        file_records=file_records,
-        marker_cofactors=marker_cofactors,
-        clusterer=clusterer,
-        rng=rng,
-    )
-
-    cluster_to_type = label_clusters(
-        debris_cfg=config.debris_cluster_label,
-        cluster_label_cfg=config.cluster_label,
-        X_scatter=X_train_scatter,
-        T_markers=T_train,
-        y_train=y_train,
-        marker_names=marker_names,
-        marker_thresholds=marker_thresholds,
-    )
-
-    rec = None
-    for r in file_records:
-        if r["sample"].name == sample_name:
-            rec = r
-            break
-
-    if rec is None:
-        available = [r["sample"].name for r in file_records[:10]]
-        raise ValueError(
-            f"Sample '{sample_name}' not found in {experiment}. "
-            f"First available samples: {available}"
+    if cfg_inst.use_edge_term and cfg_inst.edge_weight != 0:
+        g = ndi.gaussian_gradient_magnitude(
+            p_cell,
+            sigma=float(cfg_inst.edge_sigma),
         )
+        gmax = g.max()
+        if gmax > 1e-6:
+            np.divide(g, gmax, out=g)
+            elevation += cfg_inst.edge_weight * g
 
-    events = rec["events"]
-    fcs = rec["fcs"]
+    if cfg_inst.use_energy and p_energy is not None and cfg_inst.energy_weight != 0:
+        e = smooth01(p_energy, cfg_inst.energy_smooth_sigma)
+        elevation -= cfg_inst.energy_weight * e
 
-    gt_df = ground_truth_df.loc[
-        ground_truth_df["file_name"] == sample_name,
-        :,
-    ].copy()
-
-    if gt_df.shape[0] == 0:
-        raise ValueError(f"No ground-truth rows found for sample '{sample_name}'")
-
-    if gt_df.shape[0] != events.shape[0]:
-        raise ValueError(
-            f"Event count mismatch for '{sample_name}': "
-            f"{gt_df.shape[0]} rows in CSV vs {events.shape[0]} events"
-        )
-
-    events_df = _events_to_dataframe(events, fcs)
-
-    mask_edge = np.asarray(rec["mask_edge"], dtype=bool)
-    mask_sing = np.asarray(rec["mask_sing"], dtype=bool)
-    mask_lymph = np.asarray(rec["mask_lymph"], dtype=bool)
-
-    pred = predict_file_in_mask(
-        transform_cfg=config.transform,
-        prediction_cfg=config.prediction,
-        panel=PANEL,
-        fcs=fcs,
-        events=events,
-        mask_in=mask_lymph,
-        marker_cofactors=marker_cofactors,
-        clusterer=clusterer,
-        feature_scaler=feature_scaler,
-        outlier_thr=float(outlier_thr),
-        cluster_to_type=cluster_to_type,
-        marker_names=marker_names,
+    markers = make_markers(
+        mask=mask,
+        p_center=p_center,
+        dist_s=dist_s,
+        use_centers=cfg_inst.use_centers,
+        center_seed_method=cfg_inst.center_seed_method,
+        center_min_distance=cfg_inst.center_min_distance,
+        center_thr=cfg_inst.center_thr,
     )
 
-    mask_t = np.asarray(pred.mask_by_marker["CD3 PerCP-A"], dtype=bool)
-    mask_b = np.asarray(pred.mask_by_marker["CD19 APC-Cy7-A"], dtype=bool)
-
-    n_events = events.shape[0]
-    mask_all = np.ones(n_events, dtype=bool)
-
-    panels = [
-        {
-            "name": "edge_exclusion",
-            "title": "Edge exclusion",
-            "x": events_df[PANEL.fsc_a].to_numpy(),
-            "y": events_df[PANEL.ssc_a].to_numpy(),
-            "x_label": PANEL.fsc_a,
-            "y_label": PANEL.ssc_a,
-            "parent_mask": mask_all,
-            "gt_mask": gt_df[EDGE_GATE_CSV].astype(bool).to_numpy(),
-            "pred_mask": mask_edge,
-        },
-        {
-            "name": "singlets",
-            "title": "Singlets",
-            "x": events_df[PANEL.fsc_a].to_numpy(),
-            "y": events_df[PANEL.fsc_h].to_numpy(),
-            "x_label": PANEL.fsc_a,
-            "y_label": PANEL.fsc_h,
-            "parent_mask": mask_edge,
-            "gt_mask": gt_df[SINGLET_GATE_CSV].astype(bool).to_numpy(),
-            "pred_mask": mask_sing,
-        },
-        {
-            "name": "lymphocytes",
-            "title": "Lymphocytes",
-            "x": events_df[PANEL.fsc_a].to_numpy(),
-            "y": events_df[PANEL.ssc_a].to_numpy(),
-            "x_label": PANEL.fsc_a,
-            "y_label": PANEL.ssc_a,
-            "parent_mask": mask_sing,
-            "gt_mask": gt_df[LYMPHOCYTES_GATE_CSV].astype(bool).to_numpy(),
-            "pred_mask": mask_lymph,
-        },
-        {
-            "name": "t_cells",
-            "title": "T cells",
-            "x": events_df["PerCP-A"].to_numpy(),
-            "y": events_df[PANEL.ssc_a].to_numpy(),
-            "x_label": "CD3 PerCP-A",
-            "y_label": PANEL.ssc_a,
-            "parent_mask": mask_lymph,
-            "gt_mask": gt_df[CD3_GATE_CSV].astype(bool).to_numpy(),
-            "pred_mask": mask_t,
-        },
-        {
-            "name": "b_cells",
-            "title": "B cells",
-            "x": events_df["APC-Cy7-A"].to_numpy(),
-            "y": events_df[PANEL.ssc_a].to_numpy(),
-            "x_label": "CD19 APC-Cy7-A",
-            "y_label": PANEL.ssc_a,
-            "parent_mask": mask_lymph,
-            "gt_mask": gt_df[CD19_GATE_CSV].astype(bool).to_numpy(),
-            "pred_mask": mask_b,
-        },
-    ]
-
-    for panel in panels:
-        parent_mask = np.asarray(panel["parent_mask"], dtype=bool)
-        gt_mask = np.asarray(panel["gt_mask"], dtype=bool) & parent_mask
-        pred_mask = np.asarray(panel["pred_mask"], dtype=bool) & parent_mask
-
-        panel["gt_mask"] = gt_mask
-        panel["pred_mask"] = pred_mask
-        panel["nongated_mask"] = parent_mask & (~pred_mask)
+    instance_segmenter = InstanceSegmenter(cfg_inst)
+    inst_out = instance_segmenter(
+        _make_seg_out_from_probs(
+            {
+                "cell": p_cell,
+                "bound": p_bound,
+                "center": p_center,
+                "energy": p_energy,
+            }
+        ),
+        update_cell_mask=True,
+    )
 
     return {
-        "experiment": experiment,
-        "sample_name": sample_name,
-        "config": config,
-        "panels": panels,
-        "igg_all": events_df[PANEL.igg].to_numpy(),
+        "p_cell": p_cell,
+        "p_bound": p_bound,
+        "p_center": p_center,
+        "p_energy": p_energy,
+        "mask": inst_out.get("cell_mask", mask),
+        "dist": dist,
+        "dist_s": dist_s,
+        "elevation": elevation,
+        "markers": markers,
+        "instances": inst_out["instance_labels"],
     }
 
 
-def _generate_subfigure_a(
-    fig: Figure,
+def random_instance_colors(
+    instances: np.ndarray,
+    background_label: int = 0,
+    seed: int = 0,
+) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+
+    instances = np.asarray(instances)
+    labels = np.unique(instances)
+    labels = labels[labels != background_label]
+
+    h, w = instances.shape
+    out = np.zeros((h, w, 3), dtype=np.float32)
+
+    for lab in labels:
+        color = rng.uniform(0.2, 1.0, size=3)
+        out[instances == lab] = color
+
+    return out
+
+
+def show_panel(
     ax: Axes,
-    gs: SubplotSpec,
-    subfigure_label: str,
-    panel_a_image: np.ndarray,
-) -> None:
-    ax.axis("off")
-    utils.figure_label(ax, subfigure_label, x=0)
+    img: np.ndarray,
+    title: str | None = None,
+    cmap: str = "gray",
+    vmin: float | None = None,
+    vmax: float | None = None,
+):
+    im = ax.imshow(
+        img,
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        interpolation="nearest",
+    )
+    ax.set_xticks([])
+    ax.set_yticks([])
 
-    fig_sgs = gs.subgridspec(1, 1)
-    sub_ax = fig.add_subplot(fig_sgs[0, 0])
+    if title:
+        ax.set_title(title, fontsize=cfg.TITLE_SIZE)
 
-    utils.prep_image_axis(sub_ax)
-    sub_ax.imshow(panel_a_image)
+    return im
 
 
-def _generate_subfigure_b(
-    fig: Figure,
-    ax: Axes,
-    gs: SubplotSpec,
-    subfigure_label: str,
-    plot_data: dict[str, Any],
+def _crop_array(
+    a: np.ndarray | None,
+    sy: int,
+    sx: int,
+    size: int,
+) -> np.ndarray | None:
+    if a is None:
+        return None
+
+    a = np.asarray(a)
+
+    if a.ndim == 2:
+        return a[sy:sy + size, sx:sx + size]
+
+    if a.ndim == 3:
+        return a[sy:sy + size, sx:sx + size, :]
+
+    raise ValueError(f"Cannot crop array with shape {a.shape}.")
+
+
+def _prepare_image_for_display(img: np.ndarray) -> np.ndarray:
+    img = np.asarray(img, dtype=np.float32)
+
+    if img.ndim == 2:
+        pass
+    elif img.ndim == 3 and img.shape[-1] in (1, 3, 4):
+        pass
+    else:
+        raise ValueError(f"Expected image [H,W] or [H,W,C], got shape {img.shape}.")
+
+    if img.max() > 1.0:
+        img = img / img.max()
+
+    return img
+
+
+def _segmentation_white_background(image: np.ndarray) -> np.ndarray:
+    image = np.asarray(image)
+
+    if image.ndim != 3 or image.shape[-1] != 3:
+        return image
+
+    if image.dtype == np.uint8:
+        out = image.copy()
+        bg = np.all(out == 0, axis=-1)
+        out[bg] = 255
+        return out
+
+    out = image.astype(np.float32, copy=True)
+    bg = np.all(out <= 1e-6, axis=-1)
+    out[bg] = 1.0
+    return out
+
+
+def _prepare_for_image_grid(
+    image: np.ndarray,
     *,
-    black_dot_size: float = 3.5,
-    black_dot_alpha: float = 0.35,
-    gt_point_size: float = 4.0,
-    pred_point_size: float = 4.0,
-    gt_point_alpha: float = 0.35,
-    pred_point_alpha: float = 0.35,
-    kde_levels: int = 6,
-    kde_thresh: float = 0.1,
-    kde_bw_adjust: float = 1.0,
-    kde_linewidth: float = 1.0,
-    biex_linthresh: float = 100.0,
-    max_points_per_layer: int = 500,
-    random_state: int = 42,
-) -> None:
-    ax.axis("off")
-    utils.figure_label(ax, subfigure_label, x=0)
-
-    rng = np.random.default_rng(random_state)
-    panels = plot_data["panels"]
-    igg_all = np.asarray(plot_data["igg_all"])
-
-    fig_sgs = gs.subgridspec(2, 4, wspace=0.08, hspace=0.10)
-    axes = np.asarray(
-        [[fig.add_subplot(fig_sgs[r, c]) for c in range(4)] for r in range(2)]
+    is_segmentation: bool,
+) -> np.ndarray:
+    image = prepare_image(
+        image,
+        is_segmentation=is_segmentation,
     )
 
-    scatter_axes = [
-        axes[0, 0],
-        axes[0, 1],
-        axes[0, 2],
-        axes[1, 0],
-        axes[1, 1],
-    ]
-    ax_legend = axes[0, 3]
-    ax_igg = axes[1, 2]
-    ax_medians = axes[1, 3]
+    image = np.asarray(image)
 
-    for sub_ax, panel in zip(scatter_axes, panels):
-        x = np.asarray(panel["x"])
-        y = np.asarray(panel["y"])
-        mask_gt = np.asarray(panel["gt_mask"], dtype=bool)
-        mask_pred = np.asarray(panel["pred_mask"], dtype=bool)
-        mask_nongated = np.asarray(panel["nongated_mask"], dtype=bool)
+    if image.ndim == 2:
+        image = np.repeat(image[..., None], 3, axis=-1)
 
-        valid = np.isfinite(x) & np.isfinite(y)
-        x = x[valid]
-        y = y[valid]
-        mask_gt = mask_gt[valid]
-        mask_pred = mask_pred[valid]
-        mask_nongated = mask_nongated[valid]
+    elif image.ndim == 3 and image.shape[-1] == 1:
+        image = np.repeat(image, 3, axis=-1)
 
-        is_marker_panel = panel["name"] in {"t_cells", "b_cells"}
+    elif image.ndim == 3 and image.shape[-1] in (3, 4):
+        image = image[..., :3]
 
-        if x.size > 0:
-            xmin, xmax = np.nanpercentile(x, [0.5, 99.5])
-            ymin, ymax = np.nanpercentile(y, [0.5, 99.5])
+    else:
+        raise ValueError(f"Unsupported image shape for image grid: {image.shape}")
 
-            if xmin == xmax:
-                xmin, xmax = x.min(), x.max()
-            if ymin == ymax:
-                ymin, ymax = y.min(), y.max()
+    if image.dtype == np.uint8:
+        if is_segmentation:
+            image = _segmentation_white_background(image)
+        return image
 
-            ymin = 0.0
+    image = image.astype(np.float32, copy=False)
 
-            if not is_marker_panel:
-                xmin = 0.0
-                if panel["x_label"] == PANEL.fsc_a:
-                    xmax = min(xmax, 150000.0)
+    if image.max() > 1.0:
+        image = image / image.max()
 
-            if panel["y_label"] == PANEL.ssc_a:
-                ymax = min(ymax, 75000.0)
+    image = np.clip(image, 0.0, 1.0)
 
-            sub_ax.set_xlim(xmin, xmax)
-            sub_ax.set_ylim(ymin, ymax)
+    if is_segmentation:
+        image = _segmentation_white_background(image)
 
-        if np.any(mask_nongated):
-            x_ng, y_ng = _subsample_xy(
-                x[mask_nongated],
-                y[mask_nongated],
-                max_points_per_layer,
-                rng,
-            )
-            sub_ax.scatter(
-                x_ng,
-                y_ng,
-                s=black_dot_size,
-                c="black",
-                alpha=black_dot_alpha,
-                linewidths=0,
-                rasterized=False,
-                zorder=1,
-            )
-
-        if np.any(mask_gt):
-            x_gt, y_gt = _subsample_xy(
-                x[mask_gt],
-                y[mask_gt],
-                max_points_per_layer,
-                rng,
-            )
-            sub_ax.scatter(
-                x_gt,
-                y_gt,
-                s=gt_point_size,
-                c="red",
-                alpha=gt_point_alpha,
-                linewidths=0,
-                rasterized=False,
-                zorder=2,
-            )
-
-        if np.any(mask_pred):
-            x_pred, y_pred = _subsample_xy(
-                x[mask_pred],
-                y[mask_pred],
-                max_points_per_layer,
-                rng,
-            )
-            sub_ax.scatter(
-                x_pred,
-                y_pred,
-                s=pred_point_size,
-                c="blue",
-                alpha=pred_point_alpha,
-                linewidths=0,
-                rasterized=False,
-                zorder=3,
-            )
-
-        if np.sum(mask_gt) > 10:
-            x_gt, y_gt = _subsample_xy(
-                x[mask_gt],
-                y[mask_gt],
-                max_points_per_layer,
-                rng,
-            )
-            if x_gt.size > 10:
-                sns.kdeplot(
-                    x=x_gt,
-                    y=y_gt,
-                    ax=sub_ax,
-                    fill=False,
-                    color="red",
-                    levels=kde_levels,
-                    thresh=kde_thresh,
-                    bw_adjust=kde_bw_adjust,
-                    linewidths=kde_linewidth,
-                    warn_singular=False,
-                    zorder=4,
-                )
-
-        if np.sum(mask_pred) > 10:
-            x_pred, y_pred = _subsample_xy(
-                x[mask_pred],
-                y[mask_pred],
-                max_points_per_layer,
-                rng,
-            )
-            if x_pred.size > 10:
-                sns.kdeplot(
-                    x=x_pred,
-                    y=y_pred,
-                    ax=sub_ax,
-                    fill=False,
-                    color="blue",
-                    levels=kde_levels,
-                    thresh=kde_thresh,
-                    bw_adjust=kde_bw_adjust,
-                    linewidths=kde_linewidth,
-                    warn_singular=False,
-                    zorder=5,
-                )
-
-        if is_marker_panel:
-            sub_ax.set_xscale("symlog", linthresh=biex_linthresh)
-            sub_ax.set_yscale("linear")
-        else:
-            sub_ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
-            sub_ax.xaxis.set_major_formatter(FuncFormatter(_k_formatter))
-
-        sub_ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
-        sub_ax.yaxis.set_major_formatter(FuncFormatter(_k_formatter))
-
-        sub_ax.set_title(panel["title"], fontsize=cfg.TITLE_SIZE, pad=2)
-        sub_ax.set_xlabel(panel["x_label"], fontsize=cfg.AXIS_LABEL_SIZE, labelpad=1)
-        sub_ax.set_ylabel(panel["y_label"], fontsize=cfg.AXIS_LABEL_SIZE, labelpad=1)
-        sub_ax.tick_params(
-            axis="both",
-            which="major",
-            labelsize=cfg.AXIS_LABEL_SIZE,
-            pad=1,
-            length=2,
-        )
-
-    ax_legend.axis("off")
-    ax_legend.plot([], [], color="red", linewidth=1.5, label="Manual gate")
-    ax_legend.plot([], [], color="blue", linewidth=1.5, label="Automated gate")
-    ax_legend.scatter([], [], c="black", s=20, alpha=0.35, label="Parent population")
-    ax_legend.legend(
-        loc="center",
-        frameon=False,
-        fontsize=max(cfg.AXIS_LABEL_SIZE, 7),
-    )
-    ax_legend.set_title("Legend", fontsize=cfg.TITLE_SIZE, pad=2)
-
-    t_panel = next(p for p in panels if p["name"] == "t_cells")
-    t_gt_mask = np.asarray(t_panel["gt_mask"], dtype=bool)
-    t_pred_mask = np.asarray(t_panel["pred_mask"], dtype=bool)
-
-    igg_valid = np.isfinite(igg_all)
-    t_gt_igg = igg_all[igg_valid & t_gt_mask]
-    t_pred_igg = igg_all[igg_valid & t_pred_mask]
-
-    if t_gt_igg.size > 5:
-        sns.kdeplot(
-            x=t_gt_igg,
-            ax=ax_igg,
-            color="red",
-            fill=False,
-            linewidth=1.5,
-            bw_adjust=1.0,
-            warn_singular=False,
-        )
-
-    if t_pred_igg.size > 5:
-        sns.kdeplot(
-            x=t_pred_igg,
-            ax=ax_igg,
-            color="blue",
-            fill=False,
-            linewidth=1.5,
-            bw_adjust=1.0,
-            warn_singular=False,
-        )
-
-    med_gt = float(np.median(t_gt_igg)) if t_gt_igg.size > 0 else np.nan
-    med_pred = float(np.median(t_pred_igg)) if t_pred_igg.size > 0 else np.nan
-
-    if np.isfinite(med_gt):
-        ax_igg.axvline(med_gt, color="red", linestyle="--", linewidth=1.0)
-    if np.isfinite(med_pred):
-        ax_igg.axvline(med_pred, color="blue", linestyle="--", linewidth=1.0)
-
-    ax_igg.set_title("T cell IgG", fontsize=cfg.TITLE_SIZE, pad=2)
-    ax_igg.set_xlabel("FITC-A", fontsize=cfg.AXIS_LABEL_SIZE, labelpad=1)
-    ax_igg.set_ylabel("Density", fontsize=cfg.AXIS_LABEL_SIZE, labelpad=1)
-    ax_igg.set_xscale("symlog", linthresh=biex_linthresh)
-    ax_igg.tick_params(
-        axis="both",
-        which="major",
-        labelsize=cfg.AXIS_LABEL_SIZE,
-        pad=1,
-        length=2,
-    )
-    ax_igg.tick_params(axis="y", labelleft=False)
-    ax_igg.yaxis.set_major_locator(MaxNLocator(nbins=4))
-
-    ax_medians.axis("off")
-    median_text = (
-        "T cell IgG medians\n\n"
-        f"Manual: {med_gt:.0f}\n"
-        f"Automated: {med_pred:.0f}"
-    )
-    ax_medians.text(
-        0.5,
-        0.5,
-        median_text,
-        ha="center",
-        va="center",
-        fontsize=max(cfg.AXIS_LABEL_SIZE + 1, 8),
-        bbox=dict(
-            boxstyle="round,pad=0.4",
-            facecolor="white",
-            alpha=0.9,
-            edgecolor="black",
-        ),
-        transform=ax_medians.transAxes,
-    )
+    return image
 
 
-def _generate_subfigure_c(
-    fig: Figure,
+def _clip_inset_coords(
+    image: np.ndarray,
+    inset_coords: tuple[int, int],
+    inset_side_length: int,
+) -> tuple[int, int]:
+    h, w = image.shape[:2]
+    x, y = inset_coords
+
+    x = int(max(0, min(x, w - inset_side_length)))
+    y = int(max(0, min(y, h - inset_side_length)))
+
+    return x, y
+
+
+def _add_inset_overlay(
     ax: Axes,
-    gs: SubplotSpec,
-    subfigure_label: str,
-    plot_df: pd.DataFrame,
+    image: np.ndarray,
+    inset_coords: tuple[int, int],
+    inset_side_length: int,
+    title: str | None = None,
 ) -> None:
-    ax.axis("off")
-    utils.figure_label(ax, subfigure_label, x=0)
+    ax.imshow(image)
 
-    gate_order = [
-        "Edge exclusion",
-        "Singlets",
-        "Lymphocytes",
-        "T cells",
-        "B cells",
-    ]
-
-    fig_sgs = gs.subgridspec(1, 1)
-    sub_ax = fig.add_subplot(fig_sgs[0, 0])
-
-    sns.boxplot(
-        data=plot_df,
-        x="gate_display",
-        y="f1",
-        order=gate_order,
-        ax=sub_ax,
-        showcaps=True,
-        fliersize=0,
-        width=0.65,
-        boxprops=dict(facecolor="white"),
+    x, y = _clip_inset_coords(
+        image=image,
+        inset_coords=inset_coords,
+        inset_side_length=inset_side_length,
     )
 
-    sns.stripplot(
-        data=plot_df,
-        x="gate_display",
-        y="f1",
-        order=gate_order,
-        ax=sub_ax,
-        size=3,
-        linewidth=0.5,
-        edgecolor="black",
+    rect = Rectangle(
+        (x, y),
+        inset_side_length,
+        inset_side_length,
+        fill=False,
+        edgecolor=INSET_RECT_COLOR,
+        linewidth=INSET_LINEWIDTH,
+    )
+    ax.add_patch(rect)
+
+    inset_img = crop_square(
+        image,
+        x=x,
+        y=y,
+        length=inset_side_length,
     )
 
-    sub_ax.set_xlabel("")
-    sub_ax.set_ylabel("F1 score across files", fontsize=cfg.AXIS_LABEL_SIZE)
-    sub_ax.set_ylim(0.2, 1.02)
-    sub_ax.set_title(
-        "Overall performance of the selected final pipeline",
-        fontsize=cfg.TITLE_SIZE,
+    axins = inset_axes(
+        ax,
+        width=INSET_WIDTH,
+        height=INSET_HEIGHT,
+        loc=INSET_LOCATION,
+        bbox_to_anchor=(
+            0.0,
+            0.0,
+            0.95,
+            0.95,
+        ),
+        bbox_transform=ax.transAxes,
+        borderpad=0.0,
     )
-    sub_ax.tick_params(
-        axis="both",
-        which="major",
-        labelsize=cfg.AXIS_LABEL_SIZE,
+    axins.imshow(inset_img)
+    axins.set_xticks([])
+    axins.set_yticks([])
+
+    for spine in axins.spines.values():
+        spine.set_edgecolor(INSET_BORDER_COLOR)
+        spine.set_linewidth(INSET_BORDER_LINEWIDTH)
+
+    if title is not None:
+        ax.set_title(title, fontsize=cfg.TITLE_SIZE)
+
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+
+def _plot_identity_scatter(
+    ax: Axes,
+    data: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    hue_col: str | None = None,
+    legend: bool = False,
+    legend_fontsize: int | None = None,
+) -> None:
+    plot_data = data.copy()
+
+    plot_data[x_col] = pd.to_numeric(plot_data[x_col], errors="coerce")
+    plot_data[y_col] = pd.to_numeric(plot_data[y_col], errors="coerce")
+    plot_data = plot_data.dropna(subset=[x_col, y_col])
+
+    sns.scatterplot(
+        data=plot_data,
+        x=x_col,
+        y=y_col,
+        hue=hue_col,
+        ax=ax,
+        **SCATTER_KWARGS,
     )
+
+    ax.set_title(title, fontsize=cfg.TITLE_SIZE)
+    ax.set_xlabel(xlabel, fontsize=cfg.AXIS_LABEL_SIZE)
+    ax.set_ylabel(ylabel, fontsize=cfg.AXIS_LABEL_SIZE)
+
+    xmin = float(plot_data[x_col].min())
+    xmax = float(plot_data[x_col].max())
+    ymin = float(plot_data[y_col].min())
+    ymax = float(plot_data[y_col].max())
+
+    lo = min(xmin, ymin)
+    hi = max(xmax, ymax)
+
+    pad = 0.05 * (hi - lo) if hi > lo else 1.0
+    lo -= pad
+    hi += pad
+
+    ax.set_xlim(lo, hi)
+    ax.set_ylim(lo, hi)
+
+    x = np.array([lo, hi])
+    ax.plot(
+        x,
+        x,
+        linestyle="--",
+        color="red",
+        zorder=1,
+    )
+
+    for coll in ax.collections:
+        coll.set_zorder(3)
+
+    utils.adjust_fontsize_ticklabels(ax, cfg.AXIS_LABEL_SIZE)
+
+    if legend:
+        handles, labels = ax.get_legend_handles_labels()
+        ax.legend(
+            handles,
+            labels,
+            markerscale=4,
+            title="",
+            fontsize=legend_fontsize if legend_fontsize is not None else cfg.TITLE_SIZE,
+        )
+    elif ax.get_legend() is not None:
+        ax.get_legend().remove()
+
+
+def prepare_instance_segmentation_panel_data(
+    model_output_dir: str,
+    ext_images_dir: str,
+    validation_results_dir: str,
+    *,
+    redo_analysis: bool = False,
+    inset_start: tuple[int, int] = (210, 200),
+    inset_size: int = 100,
+) -> dict[str, Any]:
+    unet_base_config = copy.deepcopy(UNET_CONFIG)
+    instance_seg_config = _as_instance_cfg(INSTANCE_CONFIG)
+
+    res = generate_unet_comparison(
+        models_dir=model_output_dir,
+        ext_images_dir=ext_images_dir,
+        unet_base_config=unet_base_config,
+        segmenter_class=SegmenterUNet,
+        output_dir=validation_results_dir,
+        output_filename="figure_3_unet_segmentation_comparison",
+        redo_analysis=redo_analysis,
+    )
+
+    seg_out = {"probs": res["small"]}
+    img_disp = _prepare_image_for_display(res["original"])
+
+    cell_prob = _as_2d_prob(seg_out["probs"]["cell"], "cell")
+    cell_mask = (cell_prob > 0.5).astype(np.uint8)
+    instances_baseline = measure.label(cell_mask, connectivity=1).astype(np.int32)
+
+    steps = compute_instance_steps(seg_out, instance_seg_config)
+
+    inst_baseline_rgb_full = random_instance_colors(
+        instances_baseline,
+        background_label=0,
+        seed=1,
+    )
+    inst_instance_segmenter_rgb_full = random_instance_colors(
+        steps["instances"],
+        background_label=0,
+        seed=2,
+    )
+
+    if inset_start is not None:
+        y0, x0 = inset_start
+        h, w = steps["p_cell"].shape
+
+        y0 = max(0, min(int(y0), h - 1))
+        x0 = max(0, min(int(x0), w - 1))
+
+        if y0 + inset_size > h:
+            y0 = max(0, h - inset_size)
+
+        if x0 + inset_size > w:
+            x0 = max(0, w - inset_size)
+
+        img_disp = _crop_array(img_disp, y0, x0, inset_size)
+
+        for key in list(steps.keys()):
+            steps[key] = _crop_array(steps[key], y0, x0, inset_size)
+
+        inst_baseline_rgb = _crop_array(
+            inst_baseline_rgb_full,
+            y0,
+            x0,
+            inset_size,
+        )
+        inst_instance_segmenter_rgb = _crop_array(
+            inst_instance_segmenter_rgb_full,
+            y0,
+            x0,
+            inset_size,
+        )
+    else:
+        inst_baseline_rgb = inst_baseline_rgb_full
+        inst_instance_segmenter_rgb = inst_instance_segmenter_rgb_full
+
+    return {
+        "img_disp": img_disp,
+        "steps": steps,
+        "inst_baseline_rgb": inst_baseline_rgb,
+        "inst_instance_segmenter_rgb": inst_instance_segmenter_rgb,
+    }
+
+
+def prepare_model_evaluation_panel_data(
+    validation_results_dir: str,
+    model_output_dir: str,
+    *,
+    model_file: str = "best_small_tiles_S512_seed187.pth",
+    unet_size: str = "small",
+    comparison_images: str = "tiles",
+    redo_analysis: bool = False,
+) -> dict[str, Any]:
+    image_cache_path = os.path.join(
+        validation_results_dir,
+        "figure_3_image_cache_fullres.npz",
+    )
+
+    unet_on_sim = get_validation_data(
+        results_dir=validation_results_dir,
+        mode="testing",
+        unet_size=unet_size,
+        comparison_images=comparison_images,
+        seg_method="inst_seg",
+    )
+    unet_on_sim = unet_on_sim.sample(n=2000, replace=False, random_state=187)
+
+    unet_on_human = get_validation_data(
+        results_dir=validation_results_dir,
+        mode="human",
+    )
+
+    imagej_on_sim = get_validation_data(
+        results_dir=validation_results_dir,
+        mode="imageJ",
+    )
+
+    image_data = load_or_create_multimodal_image_cache(
+        cache_path=image_cache_path,
+        model_dir=model_output_dir,
+        model_file=model_file,
+        force_recompute=redo_analysis,
+    )
+
+    return {
+        "unet_on_sim": unet_on_sim,
+        "unet_on_human": unet_on_human,
+        "imagej_on_sim": imagej_on_sim,
+        "image_data": image_data,
+    }
+
+
+def prepare_figure_3_data(
+    validation_results_dir: str,
+    model_output_dir: str,
+    ext_images_dir: str,
+) -> dict[str, Any]:
+    return {
+        "instance_segmentation": prepare_instance_segmentation_panel_data(
+            model_output_dir=model_output_dir,
+            ext_images_dir=ext_images_dir,
+            validation_results_dir=validation_results_dir,
+            redo_analysis=False,
+            inset_start=(210, 200),
+            inset_size=100,
+        ),
+        "model_evaluation": prepare_model_evaluation_panel_data(
+            validation_results_dir=validation_results_dir,
+            model_output_dir=model_output_dir,
+            redo_analysis=False,
+        ),
+    }
 
 
 def _generate_main_figure(
+    figure_data: dict[str, Any],
     figure_output_dir: str,
     figure_name: str,
-    *,
-    panel_a_image: np.ndarray,
-    panel_b_plot_data: dict[str, Any],
-    panel_c_plot_df: pd.DataFrame,
+    inset_coords: Optional[dict[str, tuple[int, int]]] = None,
 ) -> None:
+    if inset_coords is None:
+        inset_coords = INSET_COORDS
+
+    instance_data = figure_data["instance_segmentation"]
+    evaluation_data = figure_data["model_evaluation"]
+
+    img_disp = instance_data["img_disp"]
+    steps = instance_data["steps"]
+    inst_baseline_rgb = instance_data["inst_baseline_rgb"]
+    inst_instance_segmenter_rgb = instance_data["inst_instance_segmenter_rgb"]
+
+    unet_on_sim = evaluation_data["unet_on_sim"]
+    unet_on_human = evaluation_data["unet_on_human"]
+    imagej_on_sim = evaluation_data["imagej_on_sim"]
+    image_data = evaluation_data["image_data"]
+
+    def generate_subfigure_a(
+        fig: Figure,
+        ax: Axes,
+        gs: SubplotSpec,
+        subfigure_label: str,
+    ) -> None:
+        ax.axis("off")
+        utils.figure_label(ax, subfigure_label, x=0)
+
+        fig_sgs = gs.subgridspec(2, 4)
+        axes_a = fig_sgs.subplots()
+
+        show_panel(axes_a[0, 0], img_disp, "Original")
+        show_panel(axes_a[0, 1], steps["p_cell"], "Cell prob. $p_{cell}$", cmap="viridis")
+        show_panel(axes_a[0, 2], steps["mask"], "Hysteresis mask", cmap="gray")
+        show_panel(axes_a[0, 3], steps["dist_s"], "Distance", cmap="magma")
+
+        show_panel(axes_a[1, 0], steps["p_bound"], "Boundary prob.", cmap="viridis")
+        show_panel(axes_a[1, 1], steps["elevation"], "Elevation map", cmap="magma")
+        show_panel(axes_a[1, 2], steps["markers"], "Markers", cmap="jet")
+
+        axes_a[1, 3].imshow(img_disp, cmap="gray", interpolation="nearest")
+        axes_a[1, 3].imshow(
+            random_instance_colors(steps["instances"]),
+            alpha=0.7,
+            interpolation="nearest",
+        )
+        axes_a[1, 3].set_title("Instances", fontsize=cfg.TITLE_SIZE)
+        axes_a[1, 3].set_xticks([])
+        axes_a[1, 3].set_yticks([])
+
+    def generate_subfigure_b(
+        fig: Figure,
+        ax: Axes,
+        gs: SubplotSpec,
+        subfigure_label: str,
+    ) -> None:
+        ax.axis("off")
+        utils.figure_label(ax, subfigure_label, x=0)
+
+        fig_sgs = gs.subgridspec(1, 3)
+        axes_b = fig_sgs.subplots()
+
+        show_panel(axes_b[0], img_disp, "Original")
+
+        axes_b[1].imshow(inst_baseline_rgb)
+        axes_b[1].set_title(
+            "Conventional mask segmentation",
+            fontsize=cfg.TITLE_SIZE,
+        )
+        axes_b[1].set_xticks([])
+        axes_b[1].set_yticks([])
+
+        axes_b[2].imshow(inst_instance_segmenter_rgb)
+        axes_b[2].set_title(
+            "InstanceSegmenter mask segmentation",
+            fontsize=cfg.TITLE_SIZE,
+        )
+        axes_b[2].set_xticks([])
+        axes_b[2].set_yticks([])
+
+    def generate_subfigure_c(
+        fig: Figure,
+        ax: Axes,
+        gs: SubplotSpec,
+        subfigure_label: str,
+    ) -> None:
+        ax.axis("off")
+        utils.figure_label(ax, subfigure_label, x=0)
+
+        fig_sgs = gs.subgridspec(1, 1)
+        plot_ax = fig.add_subplot(fig_sgs[0])
+
+        _plot_identity_scatter(
+            ax=plot_ax,
+            data=unet_on_sim,
+            x_col="n_cells_gt_instances",
+            y_col="n_cells_pred_instances",
+            title="UNet performance on\nsimulated images",
+            xlabel="n_cells ground truth",
+            ylabel="n_cells predicted",
+        )
+
+    def generate_subfigure_d(
+        fig: Figure,
+        ax: Axes,
+        gs: SubplotSpec,
+        subfigure_label: str,
+    ) -> None:
+        ax.axis("off")
+        utils.figure_label(ax, subfigure_label, x=0)
+
+        fig_sgs = gs.subgridspec(1, 1)
+        plot_ax = fig.add_subplot(fig_sgs[0])
+
+        plot_df = unet_on_human.copy()
+
+        plot_df = plot_df.melt(
+            id_vars=["Folder", "image_name", "human_roi_count"],
+            value_vars=["unet_roi_count", "imageJ_roi_count"],
+            var_name="method",
+            value_name="predicted_roi_count",
+        )
+
+        plot_df["method"] = plot_df["method"].map(
+            {
+                "unet_roi_count": "UNet",
+                "imageJ_roi_count": "NCISP",
+            }
+        )
+
+        _plot_identity_scatter(
+            ax=plot_ax,
+            data=plot_df,
+            x_col="human_roi_count",
+            y_col="predicted_roi_count",
+            title="UNet and NCISP performance on\nhuman annotated images",
+            xlabel="Human ROI count",
+            ylabel="Predicted ROI count",
+            hue_col="method",
+            legend=True,
+            legend_fontsize=cfg.TITLE_SIZE,
+        )
+
+    def generate_subfigure_e(
+        fig: Figure,
+        ax: Axes,
+        gs: SubplotSpec,
+        subfigure_label: str,
+    ) -> None:
+        ax.axis("off")
+        utils.figure_label(ax, subfigure_label, x=0)
+
+        fig_sgs = gs.subgridspec(1, 1)
+        plot_ax = fig.add_subplot(fig_sgs[0])
+
+        plot_df = imagej_on_sim.copy()
+        plot_df["dataset_mode"] = plot_df["dataset_mode"].map(
+            {"UNet": "UNet", "imageJ": "NCISP"}
+        )
+
+        _plot_identity_scatter(
+            ax=plot_ax,
+            data=plot_df,
+            x_col="n_cells_gt_instances",
+            y_col="n_cells_pred_instances",
+            title="UNet comparison to NCISP on\nsimulated images",
+            xlabel="n_cells ground truth",
+            ylabel="n_cells predicted",
+            hue_col="dataset_mode",
+            legend=True,
+            legend_fontsize=cfg.TITLE_SIZE,
+        )
+
+    def generate_subfigure_f(
+        fig: Figure,
+        ax: Axes,
+        gs: SubplotSpec,
+        subfigure_label: str,
+    ) -> None:
+        ax.axis("off")
+        utils.figure_label(ax, subfigure_label, x=0)
+
+        fig_sgs = gs.subgridspec(2, 5)
+
+        sim_img = _prepare_for_image_grid(
+            image_data["simulated_image"],
+            is_segmentation=False,
+        )
+        micro_img = _prepare_for_image_grid(
+            image_data["microscopy_image"],
+            is_segmentation=False,
+        )
+        gpixel_img = _prepare_for_image_grid(
+            image_data["googlepixel_image"],
+            is_segmentation=False,
+        )
+        iphone_img = _prepare_for_image_grid(
+            image_data["iphone_image"],
+            is_segmentation=False,
+        )
+        mono_img = _prepare_for_image_grid(
+            image_data["monochrome_image"],
+            is_segmentation=False,
+        )
+
+        sim_seg = _prepare_for_image_grid(
+            image_data["simulated_segmentation"],
+            is_segmentation=True,
+        )
+        micro_seg = _prepare_for_image_grid(
+            image_data["microscopy_segmentation"],
+            is_segmentation=True,
+        )
+        gpixel_seg = _prepare_for_image_grid(
+            image_data["googlepixel_segmentation"],
+            is_segmentation=True,
+        )
+        iphone_seg = _prepare_for_image_grid(
+            image_data["iphone_segmentation"],
+            is_segmentation=True,
+        )
+        mono_seg = _prepare_for_image_grid(
+            image_data["monochrome_segmentation"],
+            is_segmentation=True,
+        )
+
+        image_panels = [
+            (sim_img, inset_coords["simulated_image"], cfg.PHONE_DICT["Simulated"]),
+            (micro_img, inset_coords["microscopy_image"], cfg.PHONE_DICT["Microscope"]),
+            (gpixel_img, inset_coords["googlepixel_image"], cfg.PHONE_DICT["GooglePixel"]),
+            (iphone_img, inset_coords["iphone_image"], cfg.PHONE_DICT["iPhone"]),
+            (mono_img, inset_coords["monochrome_image"], cfg.PHONE_DICT["Monochrome"]),
+        ]
+
+        segmentation_panels = [
+            (
+                sim_seg,
+                inset_coords["simulated_segmentation"],
+                f"{cfg.PHONE_DICT['Simulated']}\nsegmentation",
+            ),
+            (
+                micro_seg,
+                inset_coords["microscopy_segmentation"],
+                f"{cfg.PHONE_DICT['Microscope']}\nsegmentation",
+            ),
+            (
+                gpixel_seg,
+                inset_coords["googlepixel_segmentation"],
+                f"{cfg.PHONE_DICT['GooglePixel']}\nsegmentation",
+            ),
+            (
+                iphone_seg,
+                inset_coords["iphone_segmentation"],
+                f"{cfg.PHONE_DICT['iPhone']}\nsegmentation",
+            ),
+            (
+                mono_seg,
+                inset_coords["monochrome_segmentation"],
+                f"{cfg.PHONE_DICT['Monochrome']}\nsegmentation",
+            ),
+        ]
+
+        for col, (image, coords, title) in enumerate(image_panels):
+            panel_ax = fig.add_subplot(fig_sgs[0, col])
+            _add_inset_overlay(
+                ax=panel_ax,
+                image=image,
+                inset_coords=coords,
+                inset_side_length=INSET_SIDE_LENGTH,
+                title=title,
+            )
+
+        for col, (image, coords, title) in enumerate(segmentation_panels):
+            panel_ax = fig.add_subplot(fig_sgs[1, col])
+            _add_inset_overlay(
+                ax=panel_ax,
+                image=image,
+                inset_coords=coords,
+                inset_side_length=INSET_SIDE_LENGTH,
+                title=title,
+            )
+
     fig = plt.figure(
         layout="constrained",
-        figsize=(cfg.FIGURE_WIDTH_FULL, cfg.FIGURE_HEIGHT_FULL),
+        figsize=(
+            cfg.FIGURE_WIDTH_FULL,
+            cfg.FIGURE_HEIGHT_FULL,
+        ),
     )
 
     gs = GridSpec(
-        ncols=1,
-        nrows=3,
+        ncols=3,
+        nrows=4,
         figure=fig,
-        height_ratios=[1.1, 1.6, 0.9],
+        height_ratios=[1.2, 0.85, 0.7, 1.25],
     )
 
-    a_coords = gs[0, 0]
-    b_coords = gs[1, 0]
+    a_coords = gs[0, :]
+    b_coords = gs[1, :]
     c_coords = gs[2, 0]
+    d_coords = gs[2, 1]
+    e_coords = gs[2, 2]
+    f_coords = gs[3, :]
 
     fig_a = fig.add_subplot(a_coords)
     fig_b = fig.add_subplot(b_coords)
     fig_c = fig.add_subplot(c_coords)
+    fig_d = fig.add_subplot(d_coords)
+    fig_e = fig.add_subplot(e_coords)
+    fig_f = fig.add_subplot(f_coords)
 
-    _generate_subfigure_a(
-        fig=fig,
-        ax=fig_a,
-        gs=a_coords,
-        subfigure_label="A",
-        panel_a_image=panel_a_image,
-    )
-
-    _generate_subfigure_b(
-        fig=fig,
-        ax=fig_b,
-        gs=b_coords,
-        subfigure_label="B",
-        plot_data=panel_b_plot_data,
-    )
-
-    _generate_subfigure_c(
-        fig=fig,
-        ax=fig_c,
-        gs=c_coords,
-        subfigure_label="C",
-        plot_df=panel_c_plot_df,
-    )
+    generate_subfigure_a(fig, fig_a, a_coords, "A")
+    generate_subfigure_b(fig, fig_b, b_coords, "B")
+    generate_subfigure_c(fig, fig_c, c_coords, "C")
+    generate_subfigure_d(fig, fig_d, d_coords, "D")
+    generate_subfigure_e(fig, fig_e, e_coords, "E")
+    generate_subfigure_f(fig, fig_f, f_coords, "F")
 
     os.makedirs(figure_output_dir, exist_ok=True)
 
     pdf_path = os.path.join(figure_output_dir, f"{figure_name}.pdf")
     png_path = os.path.join(figure_output_dir, f"{figure_name}.png")
 
-    plt.savefig(pdf_path, dpi=300, bbox_inches="tight")
-    plt.savefig(png_path, dpi=300, bbox_inches="tight")
+    fig.savefig(pdf_path, dpi=300, bbox_inches="tight")
+    fig.savefig(png_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
     return
 
 
 def figure_3_generation(
-    figure_output_dir: str,
     validation_results_dir: str,
-    sketch_dir: str,
-    flow_data_dir: str,
-    **kwargs,
+    figure_output_dir: str,
+    model_output_dir: str,
+    ext_images_dir: str,
+    **kwargs
 ) -> None:
-    """
-    Generate Figure 3: flow cytometry gating validation.
-
-    Required files in validation_results_dir:
-      - flow_validation_summary.csv
-      - flow_validation_metrics_long.csv
-
-    Flow data directory:
-      - pass flow_data_dir=... in kwargs, or
-      - provide ext_images_dir via DIRECTORIES and use that as the flow data path.
-
-    Panel A image:
-      - pass panel_a_image_path=..., or
-      - place one of the expected scheme filenames in sketch_dir.
-    """
-
-    panel_a_image_path = kwargs.get(
-        "panel_a_image_path",
-        os.path.join(sketch_dir, "sketch_3A.jpg"),
-    )
-
-    panel_b_experiment = "val_exp_15"
-    panel_b_sample_name = "Worklist_001_FCXM_Routine_V2 UD_26204459_004_20260310_125733.fcs"
-
-    panel_b_algorithm = "parc"
-    panel_b_resolution_parameter = 4.0
-
-    summary_path = os.path.join(validation_results_dir, "flow_validation_summary.csv")
-    metrics_path = os.path.join(validation_results_dir, "flow_validation_metrics_long.csv")
-
-    panel_a_image = _prepare_panel_a_image(panel_a_image_path)
-
-    summary_df = pd.read_csv(summary_path)
-    metrics_df = pd.read_csv(metrics_path)
-
-    panel_b_plot_data = _prepare_panel_b_data(
-        data_dir=flow_data_dir,
-        experiment=panel_b_experiment,
-        sample_name=panel_b_sample_name,
-        algorithm=panel_b_algorithm,
-        resolution_parameter=panel_b_resolution_parameter,
-    )
-
-    panel_c_plot_df = _prepare_panel_c_data(
-        metrics_df=metrics_df,
-        summary_df=summary_df,
-    )
-
     _generate_main_figure(
+        figure_data=prepare_figure_3_data(
+            validation_results_dir=validation_results_dir,
+            model_output_dir=model_output_dir,
+            ext_images_dir=ext_images_dir,
+        ),
         figure_output_dir=figure_output_dir,
         figure_name="Figure_3",
-        panel_a_image=panel_a_image,
-        panel_b_plot_data=panel_b_plot_data,
-        panel_c_plot_df=panel_c_plot_df,
     )

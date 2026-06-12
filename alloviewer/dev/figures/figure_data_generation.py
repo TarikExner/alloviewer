@@ -24,13 +24,380 @@ from .figure_data_utils import (
 from alloviewer.image_analysis.segmenter import SegmenterUNetInference
 from alloviewer.image_analysis.config import UNET_CONFIG, INSTANCE_CONFIG_DICT
 from alloviewer.image_analysis.io import load_image
-from alloviewer.dev.segmentation.image_simulation import simulate_image
+from alloviewer.dev.segmentation.image_simulation import (
+    simulate_image, img_export_scene
+)
 import copy
 
+SIMULATION_IMAGE_SIZE = 512
+SIMULATION_TILE_SIZE = 128
+SIMULATION_SEED = 42
+SIMULATION_LABEL_Y_OFFSET = 8
 
 _LOG_RE = re.compile(
     r"log_(?P<unet_mode>small|medium|large)_(?P<tag>(pad_resize|crop_well_resize|tiles)_S(?P<target>\d+)_seed(?P<seed>\d+))\.jsonl$"
 )
+
+
+def make_simulation_parameter_mosaic(
+    H: int = SIMULATION_IMAGE_SIZE,
+    W: int = SIMULATION_IMAGE_SIZE,
+    crop_size: int = SIMULATION_TILE_SIZE,
+    seed: int = SIMULATION_SEED,
+    same_seed_per_tile: bool = True,
+) -> tuple[np.ndarray, list[dict[str, Any]]]:
+    """
+    Create a 4 x 4 simulation showcase mosaic.
+
+    Each tile is generated from a full simulation image, but the crop position
+    matches the tile position in the final mosaic.
+
+    Example:
+        source image tile (row=2, col=3) -> mosaic tile (row=2, col=3)
+
+    This keeps the well ring spatially aligned across all tiles.
+    """
+    if H != W:
+        raise ValueError("This function expects H == W.")
+
+    if H != 4 * crop_size:
+        raise ValueError("Use H = W = 4 * crop_size.")
+
+    rng = np.random.default_rng(seed)
+
+    base_cfg = img_export_scene()
+    base_params = base_cfg.sample_kwargs(rng)
+
+    base_params.update(
+        dict(
+            H=H,
+            W=W,
+            return_targets=False,
+            return_aux_targets=False,
+
+            # Fixed geometry. Do not vary these between panels.
+            well_radius_frac=0.46,
+            well_center_jitter=0.0,
+
+            # Baseline well appearance.
+            background_level=0.08,
+            edge_boost=0.25,
+            radial_gamma=1.2,
+            vignette_strength=0.20,
+
+            background_texture_enable=True,
+            background_texture_sigma_fine=0.6,
+            background_texture_sigma_coarse=2.0,
+            background_texture_fine_weight=0.95,
+            background_texture_coarse_weight=0.04,
+            background_texture_strength=0.03,
+            background_texture_clip=(0.1, 1.6),
+
+            # Baseline cells.
+            n_cells=900,
+            cell_diameter=10.5,
+
+            cell_diameter_reference_short_side=1620.0,
+            cell_diameter_size_exponent=0.95,
+            cell_diameter_scale_clip=(0.60, 2.20),
+
+            large_cell_frac=0.10,
+            large_cell_diameter_factor=1.5,
+
+            cell_ellipse_enable=True,
+            cell_axis_jitter=0.12,
+            cell_random_rotation=True,
+            cell_intensity_range=(0.70, 1.05),
+
+            frac_positive=0.5,
+            color_jitter=0.08,
+
+            sigma_in=(0.9, 1.2),
+            sigma_out=(0.9, 1.2),
+            focus_frac_in=1.0,
+            in_focus_sigma_thresh=None,
+
+            # Baseline placement.
+            rim_bias=0.70,
+            rim_band=0.20,
+            edge_clamp=0.30,
+
+            min_cell_sep_px=None,
+            rim_min_sep_px=8,
+            pack_iters=15,
+            pack_strength=0.45,
+            wall_margin_px=5.0,
+
+            side_bias_enable=False,
+            side_bias_theta=0.0,
+            side_bias_strength=0.70,
+            side_bias_kappa=5.0,
+            side_bias_inner_frac=0.5,
+
+            # Baseline wall / artifacts.
+            wall_blur_sigma=12.0,
+            ring_artifacts=1,
+            ring_sigma_range=(6.0, 18.0),
+            ring_alpha_range=(0.01, 0.10),
+
+            ghost_enable=True,
+            ghost_density=0.25,
+            ghost_offset_px=25.0,
+            ghost_offset_jitter=5.0,
+            ghost_sigma=(2.5, 6.0),
+            ghost_dilate=1.0,
+            ghost_intensity=(0.02, 0.08),
+            ghost_stretch=1.5,
+            ghost_trail=2,
+            ghost_trail_decay=0.6,
+
+            dirt_density=0.00002,
+            dirt_size=(4, 12),
+            dirt_sigma=(0.0, 2.0),
+            dirt_alpha=(0.1, 1.0),
+
+            reflect_enable=True,
+            reflect_n=4,
+            reflect_theta_sigma=0.12,
+            reflect_radial_sigma=10.0,
+            reflect_offset_range=(10.0, 70.0),
+            reflect_alpha_range=(0.05, 0.16),
+            reflect_wobble=0.4,
+            reflect_harmonics=2,
+            reflect_harmonic_decay=0.55,
+        )
+    )
+
+    tile_specs = [
+        # Row 0
+        dict(
+            label="ghost artifacts",
+            params=dict(
+                ghost_enable=True,
+                ghost_density=1.0,
+                ghost_offset_px=35.0,
+                ghost_offset_jitter=8.0,
+                ghost_intensity=(0.12, 0.30),
+                ghost_stretch=3.0,
+                ghost_trail=3,
+            ),
+        ),
+        dict(
+            label="wall reflections",
+            params=dict(
+                n_cells=700,
+                reflect_enable=True,
+                reflect_n=18,
+                reflect_theta_sigma=0.24,
+                reflect_radial_sigma=20.0,
+                reflect_offset_range=(6.0, 45.0),
+                reflect_alpha_range=(0.25, 0.45),
+                reflect_wobble=0.9,
+                reflect_harmonics=4,
+                reflect_harmonic_decay=0.75,
+                ghost_density=0.05,
+                ring_artifacts=0,
+            ),
+        ),
+        dict(
+            label="wall artifacts",
+            params=dict(
+                n_cells=750,
+                wall_blur_sigma=24.0,
+                ring_artifacts=7,
+                ring_sigma_range=(4.0, 14.0),
+                ring_alpha_range=(0.16, 0.30),
+                reflect_n=2,
+                ghost_density=0.05,
+            ),
+        ),
+        dict(
+            label="illumination falloff",
+            params=dict(
+                background_level=0.035,
+                edge_boost=0.15,
+                radial_gamma=1.8,
+                vignette_strength=0.80,
+                n_cells=450,
+            ),
+        ),
+
+        # Row 1
+        dict(
+            label="side bias",
+            params=dict(
+                side_bias_enable=True,
+                side_bias_theta=np.pi,
+                side_bias_strength=0.90,
+                side_bias_kappa=8.0,
+                side_bias_inner_frac=0.45,
+                rim_bias=0.90,
+                rim_band=0.25,
+                n_cells=1100,
+            ),
+        ),
+        dict(
+            label="cell diameter",
+            params=dict(
+                n_cells=280,
+                cell_diameter=18.0,
+                large_cell_frac=0.0,
+                rim_bias=0.35,
+                pack_iters=20,
+            ),
+        ),
+        dict(
+            label="cell count",
+            params=dict(
+                n_cells=2000,
+                cell_diameter=7.0,
+                large_cell_frac=0.0,
+                rim_bias=0.55,
+                rim_band=0.20,
+                edge_clamp=0.25,
+                pack_iters=20,
+            ),
+        ),
+        dict(
+            label="rim bias",
+            params=dict(
+                n_cells=1200,
+                rim_bias=0.95,
+                rim_band=0.45,
+                edge_clamp=0.65,
+            ),
+        ),
+
+        # Row 2
+        dict(
+            label="class ratio",
+            params=dict(
+                n_cells=700,
+                frac_positive=0.98,
+                color_jitter=0.03,
+                large_cell_frac=0.0,
+                rim_bias=0.45,
+            ),
+        ),
+        dict(
+            label="cell focus",
+            params=dict(
+                n_cells=800,
+                focus_frac_in=0.35,
+                sigma_in=(0.5, 1.0),
+                sigma_out=(2.5, 5.0),
+                rim_bias=0.50,
+            ),
+        ),
+        dict(
+            label="large cells",
+            params=dict(
+                n_cells=650,
+                cell_diameter=10.5,
+                large_cell_frac=0.45,
+                large_cell_diameter_factor=2.0,
+                rim_bias=0.50,
+            ),
+        ),
+        dict(
+            label="debris",
+            params=dict(
+                n_cells=250,
+                dirt_density=0.0012,
+                dirt_size=(4, 14),
+                dirt_sigma=(0.4, 1.6),
+                dirt_alpha=(0.75, 1.0),
+                rim_bias=0.25,
+                background_texture_strength=0.015,
+            ),
+        ),
+
+        # Row 3
+        dict(
+            label="texture",
+            params=dict(
+                n_cells=180,
+                background_texture_enable=True,
+                background_texture_sigma_fine=0.8,
+                background_texture_sigma_coarse=4.0,
+                background_texture_fine_weight=0.55,
+                background_texture_coarse_weight=0.45,
+                background_texture_strength=0.18,
+                background_texture_clip=(0.05, 2.0),
+                rim_bias=0.20,
+            ),
+        ),
+        dict(
+            label="radial brightness",
+            params=dict(
+                n_cells=600,
+                background_level=0.04,
+                edge_boost=0.50,
+                radial_gamma=0.75,
+            ),
+        ),
+        dict(
+            label="cell shape",
+            params=dict(
+                n_cells=420,
+                cell_diameter=15.0,
+                cell_ellipse_enable=True,
+                cell_axis_jitter=0.65,
+                cell_random_rotation=True,
+                large_cell_frac=0.0,
+                rim_bias=0.35,
+                pack_iters=20,
+            ),
+        ),
+        dict(
+            label="baseline",
+            params=dict(),
+        ),
+    ]
+
+    n_rows = 4
+    n_cols = 4
+
+    mosaic = np.zeros((H, W, 3), dtype=np.float32)
+    tile_info: list[dict[str, Any]] = []
+
+    for i, spec in enumerate(tile_specs):
+        row = i // n_cols
+        col = i % n_cols
+
+        params = base_params.copy()
+        params.update(spec["params"])
+
+        if same_seed_per_tile:
+            params["seed"] = seed
+        else:
+            params["seed"] = seed + i * 1009
+
+        img, meta, _ = simulate_image(**params)
+        img = np.asarray(img, dtype=np.float32)
+        img = np.clip(img, 0.0, 1.0)
+
+        y0 = row * crop_size
+        y1 = y0 + crop_size
+        x0 = col * crop_size
+        x1 = x0 + crop_size
+
+        crop = img[y0:y1, x0:x1]
+        mosaic[y0:y1, x0:x1] = crop
+
+        tile_info.append(
+            dict(
+                label=spec["label"],
+                row=row,
+                col=col,
+                source_crop=(y0, y1, x0, x1),
+                params=spec["params"],
+                meta=meta,
+            )
+        )
+
+    return mosaic, tile_info
+
 
 def _postprocess_to_rgb(img: np.ndarray,
                         tile_idx: Optional[int]) -> np.ndarray:
