@@ -18,8 +18,15 @@ from alloviewer.dev.segmentation import UNET_MEAN, UNET_STD
 from alloviewer.dev.segmentation.image_simulation.histogram_capture import (
     STYLE_CACHE_PATH,
     EXT_IMAGES_FOLDERS,
+    DEFAULT_ANNOTATION_DIR,
+    LABEL_IGNORE,
+    LABEL_BACKGROUND,
+    LABEL_FOREGROUND,
+    LABEL_OUTSIDE_WELL,
     _find_device_label,
     _collect_image_paths,
+    _annotation_paths_for_image,
+    _annotation_is_complete,
 )
 
 
@@ -33,10 +40,211 @@ DEFAULT_DEVICE_ORDER = (
     "synthetic",
 )
 
+FEATURE_CACHE_VERSION = 2
+FEATURE_CACHE_TYPE = "reviewed_valid_pixels"
+FEATURE_REGION_NAME = "foreground_and_background_inside_well"
 
-# -----------------------------------------------------------------------------
-# normalization helpers
-# -----------------------------------------------------------------------------
+
+def _load_reviewed_valid_mask(
+    image_path: str | Path,
+    annotation_dir: str | Path = DEFAULT_ANNOTATION_DIR,
+) -> tuple[np.ndarray, dict]:
+    """
+    Load the reviewed valid-pixel mask for one real image.
+
+    Used pixels are exactly:
+      - inside the saved well mask
+      - class 1 (background) or class 2 (foreground)
+
+    Ignored pixels and outside-well pixels are excluded.
+    """
+    image_path = Path(image_path)
+    paths = _annotation_paths_for_image(
+        image_path,
+        annotation_dir=annotation_dir,
+    )
+
+    labels = np.load(paths["regions"]).astype(np.uint8, copy=False)
+    well_mask = np.load(paths["well_mask"]).astype(bool, copy=False)
+
+    if labels.ndim != 2:
+        raise ValueError(
+            f"Expected a 2D reviewed mask for {image_path}, got {labels.shape}."
+        )
+
+    if well_mask.shape != labels.shape:
+        raise ValueError(
+            f"Well-mask shape {well_mask.shape} does not match "
+            f"region-mask shape {labels.shape} for {image_path}."
+        )
+
+    valid_mask = (
+        well_mask
+        & (
+            (labels == LABEL_BACKGROUND)
+            | (labels == LABEL_FOREGROUND)
+        )
+        & (labels != LABEL_IGNORE)
+        & (labels != LABEL_OUTSIDE_WELL)
+    )
+
+    if not valid_mask.any():
+        raise ValueError(
+            f"No reviewed foreground/background pixels remain for {image_path}."
+        )
+
+    metadata = {
+        "regions_path": str(paths["regions"]),
+        "well_mask_path": str(paths["well_mask"]),
+        "metadata_path": str(paths["metadata"]),
+        "n_valid_pixels": int(valid_mask.sum()),
+        "valid_fraction": float(valid_mask.mean()),
+    }
+
+    return valid_mask, metadata
+
+
+def _build_feature_source_inventory(
+    image_paths: Sequence[Path],
+    annotation_dir: str | Path,
+    use_reviewed_regions: bool,
+    require_annotations: bool,
+) -> dict:
+    """
+    Build a stable inventory used to decide whether a feature cache is stale.
+    """
+    entries = []
+    latest_mtime = 0.0
+
+    for image_path in image_paths:
+        annotation_complete = _annotation_is_complete(
+            image_path,
+            annotation_dir=annotation_dir,
+        )
+
+        if (
+            use_reviewed_regions
+            and require_annotations
+            and not annotation_complete
+        ):
+            continue
+
+        entry = {
+            "image_path": str(image_path),
+        }
+
+        try:
+            image_mtime = float(image_path.stat().st_mtime)
+        except OSError:
+            image_mtime = 0.0
+
+        entry["image_mtime"] = image_mtime
+        latest_mtime = max(latest_mtime, image_mtime)
+
+        if use_reviewed_regions and annotation_complete:
+            paths = _annotation_paths_for_image(
+                image_path,
+                annotation_dir=annotation_dir,
+            )
+
+            annotation_mtimes = {}
+
+            for key in ("regions", "well_mask", "metadata"):
+                try:
+                    value = float(paths[key].stat().st_mtime)
+                except OSError:
+                    value = 0.0
+
+                annotation_mtimes[key] = value
+                latest_mtime = max(latest_mtime, value)
+
+            entry["annotation_mtimes"] = annotation_mtimes
+
+        entries.append(entry)
+
+    return {
+        "n_images": int(len(entries)),
+        "entries": entries,
+        "latest_mtime": float(latest_mtime),
+    }
+
+
+def _feature_cache_is_current(
+    payload: dict,
+    *,
+    final_cache_path: Path,
+    image_paths: Sequence[Path],
+    annotation_dir: str | Path,
+    normalize_imgs: bool,
+    use_reviewed_regions: bool,
+    require_annotations: bool,
+    hist_bins: int,
+    percentiles: Sequence[float],
+    sample_pixels: Optional[int],
+    normalized_hist_range: Tuple[float, float],
+) -> bool:
+    """
+    Check cache version, settings, source list, and modification times.
+    """
+    if not isinstance(payload, dict):
+        return False
+
+    if payload.get("cache_version") != FEATURE_CACHE_VERSION:
+        return False
+
+    if payload.get("cache_type") != FEATURE_CACHE_TYPE:
+        return False
+
+    expected = {
+        "normalize_imgs": bool(normalize_imgs),
+        "use_reviewed_regions": bool(use_reviewed_regions),
+        "require_annotations": bool(require_annotations),
+        "hist_bins": int(hist_bins),
+        "percentiles": tuple(float(p) for p in percentiles),
+        "sample_pixels": sample_pixels,
+        "normalized_hist_range": tuple(float(v) for v in normalized_hist_range),
+        "annotation_dir": str(Path(annotation_dir)),
+    }
+
+    for key, value in expected.items():
+        cached_value = payload.get(key)
+
+        if key in {"percentiles", "normalized_hist_range"}:
+            cached_value = tuple(cached_value)
+
+        if cached_value != value:
+            return False
+
+    current_inventory = _build_feature_source_inventory(
+        image_paths,
+        annotation_dir=annotation_dir,
+        use_reviewed_regions=use_reviewed_regions,
+        require_annotations=require_annotations,
+    )
+    cached_inventory = payload.get("source_inventory", {})
+
+    current_paths = tuple(
+        entry["image_path"]
+        for entry in current_inventory["entries"]
+    )
+    cached_paths = tuple(
+        entry.get("image_path")
+        for entry in cached_inventory.get("entries", [])
+    )
+
+    if current_paths != cached_paths:
+        return False
+
+    try:
+        cache_mtime = float(final_cache_path.stat().st_mtime)
+    except OSError:
+        return False
+
+    if current_inventory["latest_mtime"] > cache_mtime:
+        return False
+
+    return True
+
 
 def _unet_mean_std_numpy() -> tuple[np.ndarray, np.ndarray]:
     mean = np.asarray(UNET_MEAN, dtype=np.float32).reshape(1, 1, 3)
@@ -121,10 +329,6 @@ def _ensure_tile_tensor(imgs_t: torch.Tensor) -> torch.Tensor:
     raise ValueError(f"Expected [3,H,W] or [T,3,H,W], got {tuple(imgs_t.shape)}")
 
 
-# -----------------------------------------------------------------------------
-# feature extraction
-# -----------------------------------------------------------------------------
-
 def _safe_skew(x: np.ndarray) -> float:
     x = np.asarray(x, dtype=np.float32)
     if x.size == 0:
@@ -194,6 +398,7 @@ def extract_feature_row_from_rgb_image(
     dark_threshold: Optional[float] = 0.02,
     bright_threshold: Optional[float] = 0.98,
     clip_input: bool = True,
+    pixel_mask: Optional[np.ndarray] = None,
 ) -> dict:
     """
     Extract one feature row from one RGB image.
@@ -201,6 +406,9 @@ def extract_feature_row_from_rgb_image(
     Supports:
       - HWC [H,W,3]
       - CHW [3,H,W]
+
+    If ``pixel_mask`` is provided, all statistics and histograms are calculated
+    only from True pixels. The mask must match the original H x W image shape.
     """
     if rng is None:
         rng = np.random.default_rng(0)
@@ -228,7 +436,21 @@ def extract_feature_row_from_rgb_image(
         h /= (h.sum() + 1e-8)
         return h
 
-    pixels = img.reshape(-1, 3)
+    if pixel_mask is None:
+        pixels = img.reshape(-1, 3)
+    else:
+        mask = np.asarray(pixel_mask, dtype=bool)
+
+        if mask.shape != (H, W):
+            raise ValueError(
+                f"pixel_mask shape {mask.shape} does not match image shape {(H, W)}."
+            )
+
+        if not mask.any():
+            raise ValueError("pixel_mask contains no True pixels.")
+
+        pixels = img[mask]
+
     n_total = pixels.shape[0]
 
     if sample_pixels is not None and n_total > sample_pixels:
@@ -259,6 +481,8 @@ def extract_feature_row_from_rgb_image(
         "width": int(W),
         "aspect_ratio": float(W / max(H, 1)),
         "n_pixels_used": int(pixels_use.shape[0]),
+        "n_pixels_available": int(n_total),
+        "pixel_fraction_available": float(n_total / max(H * W, 1)),
     }
 
     for ch_name, x in zip(("r", "g", "b"), (r, g, b)):
@@ -310,10 +534,6 @@ def extract_feature_row_from_rgb_image(
     return row
 
 
-# -----------------------------------------------------------------------------
-# cache path helpers
-# -----------------------------------------------------------------------------
-
 def get_feature_cache_path(
     cache_path: str | Path = STYLE_CACHE_PATH,
     normalized: bool = False,
@@ -323,10 +543,6 @@ def get_feature_cache_path(
         return cache_path.with_name(f"{cache_path.stem}_normalized{cache_path.suffix}")
     return cache_path
 
-
-# -----------------------------------------------------------------------------
-# real-image feature tables
-# -----------------------------------------------------------------------------
 
 def extract_real_image_feature_table(
     folders: Optional[Sequence[str | Path]] = None,
@@ -341,31 +557,69 @@ def extract_real_image_feature_table(
     normalize_imgs: bool = False,
     normalized_hist_range: Tuple[float, float] = (-3.0, 3.0),
     rng_seed: int = 0,
+    annotation_dir: str | Path = DEFAULT_ANNOTATION_DIR,
+    use_reviewed_regions: bool = True,
+    require_annotations: bool = True,
 ):
     """
-    Build and cache feature stats from real images.
+    Build and cache feature statistics from real images.
+
+    The default input folders are exactly ``EXT_IMAGES_FOLDERS`` imported from
+    ``histogram_capture``.
+
+    When ``use_reviewed_regions=True`` (recommended), statistics are calculated
+    only from pixels that are:
+      - inside the saved well mask
+      - labelled background (1) or foreground (2)
+
+    Ignore pixels (0) and outside-well pixels (3) are excluded.
 
     Two separate caches are supported:
-      - normalize_imgs=False : image-space features
-      - normalize_imgs=True  : normalized-space features
+      - normalize_imgs=False: image-space features
+      - normalize_imgs=True: UNet-normalized image-space features
+
+    In normalized mode, the image is normalized first and then the same reviewed
+    spatial mask is applied. This matches the pixels presented to the model while
+    avoiding the dark phone area outside the well.
     """
     final_cache_path = get_feature_cache_path(
         cache_path=cache_path,
         normalized=normalize_imgs,
     )
 
-    if final_cache_path.exists() and not force_recompute:
-        with open(final_cache_path, "rb") as f:
-            payload = pickle.load(f)
-        return payload["rows"], payload["feature_names"], payload["X"]
-
-    rng = np.random.default_rng(rng_seed)
+    annotation_dir = Path(annotation_dir)
     percentiles = tuple(float(p) for p in percentiles)
+
     image_paths = _collect_image_paths(
         folders=folders,
         exts=exts,
         recursive=recursive,
     )
+
+    if final_cache_path.exists() and not force_recompute:
+        try:
+            with open(final_cache_path, "rb") as handle:
+                payload = pickle.load(handle)
+        except Exception:
+            payload = None
+
+        if payload is not None and _feature_cache_is_current(
+            payload,
+            final_cache_path=final_cache_path,
+            image_paths=image_paths,
+            annotation_dir=annotation_dir,
+            normalize_imgs=normalize_imgs,
+            use_reviewed_regions=use_reviewed_regions,
+            require_annotations=require_annotations,
+            hist_bins=hist_bins,
+            percentiles=percentiles,
+            sample_pixels=sample_pixels,
+            normalized_hist_range=normalized_hist_range,
+        ):
+            return payload["rows"], payload["feature_names"], payload["X"]
+
+    rng = np.random.default_rng(rng_seed)
+
     feature_names = _build_feature_names(
         hist_bins=hist_bins,
         percentiles=percentiles,
@@ -373,36 +627,100 @@ def extract_real_image_feature_table(
 
     rows = []
     skipped: list[dict] = []
+    n_missing_annotations = 0
 
-    for path in tqdm(image_paths, desc="Extracting real-image features"):
+    for path in tqdm(
+        image_paths,
+        desc=(
+            "Extracting normalized reviewed-image features"
+            if normalize_imgs
+            else "Extracting reviewed-image features"
+        ),
+    ):
+        valid_mask = None
+        annotation_metadata = None
+
+        if use_reviewed_regions:
+            if not _annotation_is_complete(
+                path,
+                annotation_dir=annotation_dir,
+            ):
+                n_missing_annotations += 1
+
+                if require_annotations:
+                    skipped.append({
+                        "path": str(path),
+                        "reason": "missing reviewed annotation",
+                    })
+                    continue
+            else:
+                try:
+                    valid_mask, annotation_metadata = _load_reviewed_valid_mask(
+                        path,
+                        annotation_dir=annotation_dir,
+                    )
+                except Exception as error:
+                    if ignore_failures:
+                        skipped.append({
+                            "path": str(path),
+                            "reason": f"annotation load failed: {error!r}",
+                        })
+                        continue
+                    raise
+
         try:
-            file_name = os.path.basename(path)
-            folder = os.path.dirname(path)
-
             img, _ = load_image(
-                file_name,
-                base_dir=folder,
+                path.name,
+                base_dir=path.parent,
                 as_chw=False,
                 scale=True,
                 fast_scale=True,
             )
-        except Exception as e:
+        except Exception as error:
             if ignore_failures:
-                skipped.append({"path": str(path), "reason": repr(e)})
+                skipped.append({
+                    "path": str(path),
+                    "reason": f"image load failed: {error!r}",
+                })
                 continue
             raise
 
+        img = np.asarray(img, dtype=np.float32)
+
         if img.ndim != 3 or img.shape[2] != 3:
-            msg = f"Bad image shape: {path} -> {img.shape}"
+            message = f"Bad image shape: {path} -> {img.shape}"
+
             if ignore_failures:
-                skipped.append({"path": str(path), "reason": msg})
+                skipped.append({
+                    "path": str(path),
+                    "reason": message,
+                })
                 continue
-            raise RuntimeError(msg)
+
+            raise RuntimeError(message)
+
+        if valid_mask is not None and valid_mask.shape != img.shape[:2]:
+            message = (
+                f"Reviewed mask shape {valid_mask.shape} does not match "
+                f"image shape {img.shape[:2]} for {path}."
+            )
+
+            if ignore_failures:
+                skipped.append({
+                    "path": str(path),
+                    "reason": message,
+                })
+                continue
+
+            raise RuntimeError(message)
 
         device_label = _find_device_label(path)
 
         if normalize_imgs:
-            img_work = normalize_rgb_image_with_unet(img)
+            img_work = normalize_rgb_image_with_unet(
+                np.clip(img, 0.0, 1.0)
+            )
+
             row = extract_feature_row_from_rgb_image(
                 img=img_work,
                 hist_bins=hist_bins,
@@ -415,9 +733,15 @@ def extract_real_image_feature_table(
                 dark_threshold=None,
                 bright_threshold=None,
                 clip_input=True,
+                pixel_mask=valid_mask,
             )
         else:
-            img_work = np.clip(img.astype(np.float32, copy=False), 0.0, 1.0)
+            img_work = np.clip(
+                img.astype(np.float32, copy=False),
+                0.0,
+                1.0,
+            )
+
             row = extract_feature_row_from_rgb_image(
                 img=img_work,
                 hist_bins=hist_bins,
@@ -430,38 +754,87 @@ def extract_real_image_feature_table(
                 dark_threshold=0.02,
                 bright_threshold=0.98,
                 clip_input=True,
+                pixel_mask=valid_mask,
             )
 
         row["filename"] = path.name
+        row["feature_region"] = (
+            FEATURE_REGION_NAME
+            if valid_mask is not None
+            else "full_image"
+        )
+        row["annotation_used"] = bool(valid_mask is not None)
+
+        if annotation_metadata is not None:
+            row.update(annotation_metadata)
+
         rows.append(row)
 
     if not rows:
-        raise RuntimeError("No usable images were processed.")
+        raise RuntimeError("No usable real images were processed.")
 
     X = np.array(
-        [[row[name] for name in feature_names] for row in rows],
+        [
+            [row[name] for name in feature_names]
+            for row in rows
+        ],
         dtype=np.float32,
     )
 
-    final_cache_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(final_cache_path, "wb") as f:
+    source_inventory = _build_feature_source_inventory(
+        image_paths,
+        annotation_dir=annotation_dir,
+        use_reviewed_regions=use_reviewed_regions,
+        require_annotations=require_annotations,
+    )
+
+    payload = {
+        "cache_version": FEATURE_CACHE_VERSION,
+        "cache_type": FEATURE_CACHE_TYPE,
+        "feature_region": (
+            FEATURE_REGION_NAME
+            if use_reviewed_regions
+            else "full_image"
+        ),
+        "rows": rows,
+        "feature_names": feature_names,
+        "X": X,
+        "folders": [
+            str(folder)
+            for folder in (
+                folders
+                if folders is not None
+                else EXT_IMAGES_FOLDERS
+            )
+        ],
+        "annotation_dir": str(annotation_dir),
+        "use_reviewed_regions": bool(use_reviewed_regions),
+        "require_annotations": bool(require_annotations),
+        "hist_bins": int(hist_bins),
+        "percentiles": percentiles,
+        "sample_pixels": sample_pixels,
+        "normalize_imgs": bool(normalize_imgs),
+        "normalized_hist_range": tuple(
+            float(value)
+            for value in normalized_hist_range
+        ),
+        "source_inventory": source_inventory,
+        "n_source_images": int(len(image_paths)),
+        "n_processed_images": int(len(rows)),
+        "n_missing_annotations": int(n_missing_annotations),
+        "skipped": skipped,
+    }
+
+    final_cache_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    with open(final_cache_path, "wb") as handle:
         pickle.dump(
-            {
-                "rows": rows,
-                "feature_names": feature_names,
-                "X": X,
-                "folders": [
-                    str(f)
-                    for f in (folders if folders is not None else EXT_IMAGES_FOLDERS)
-                ],
-                "hist_bins": hist_bins,
-                "percentiles": percentiles,
-                "sample_pixels": sample_pixels,
-                "normalize_imgs": normalize_imgs,
-                "normalized_hist_range": normalized_hist_range,
-                "skipped": skipped,
-            },
-            f,
+            payload,
+            handle,
+            protocol=pickle.HIGHEST_PROTOCOL,
         )
 
     return rows, feature_names, X
@@ -476,6 +849,9 @@ def rebuild_style_feature_cache(
     sample_pixels: Optional[int] = 300_000,
     normalize_imgs: bool = False,
     normalized_hist_range: Tuple[float, float] = (-3.0, 3.0),
+    annotation_dir: str | Path = DEFAULT_ANNOTATION_DIR,
+    use_reviewed_regions: bool = True,
+    require_annotations: bool = True,
 ):
     """
     Force-rebuild one of the two caches.
@@ -490,12 +866,11 @@ def rebuild_style_feature_cache(
         force_recompute=True,
         normalize_imgs=normalize_imgs,
         normalized_hist_range=normalized_hist_range,
+        annotation_dir=annotation_dir,
+        use_reviewed_regions=use_reviewed_regions,
+        require_annotations=require_annotations,
     )
 
-
-# -----------------------------------------------------------------------------
-# summaries / mismatch tables
-# -----------------------------------------------------------------------------
 
 def summarize_features_by_phone(
     rows: list[dict],
@@ -631,10 +1006,6 @@ def compare_real_and_synthetic_feature_tables(
     return out
 
 
-# -----------------------------------------------------------------------------
-# dataset helpers
-# -----------------------------------------------------------------------------
-
 def _extract_style_name_from_extras(extras: Dict[str, Any]) -> str:
     if not isinstance(extras, dict):
         return "synthetic"
@@ -759,10 +1130,6 @@ def collect_synthetic_feature_rows_from_dataset(
     return rows
 
 
-# -----------------------------------------------------------------------------
-# PCA plotting
-# -----------------------------------------------------------------------------
-
 def _ordered_labels_present(labels: Sequence[str]) -> list[str]:
     labels_set = {str(x).lower() for x in labels}
 
@@ -813,6 +1180,9 @@ def plot_real_and_synthetic_pca(
     normalized_hist_range: Tuple[float, float] = (-3.0, 3.0),
     title: Optional[str] = None,
     force_recompute_real_cache: bool = False,
+    annotation_dir: str | Path = DEFAULT_ANNOTATION_DIR,
+    use_reviewed_regions: bool = True,
+    require_annotations: bool = True,
 ):
     """
     PCA comparison between real images and dataset images.
@@ -835,6 +1205,9 @@ def plot_real_and_synthetic_pca(
         normalize_imgs=normalized,
         normalized_hist_range=normalized_hist_range,
         rng_seed=rng_seed,
+        annotation_dir=annotation_dir,
+        use_reviewed_regions=use_reviewed_regions,
+        require_annotations=require_annotations,
     )
 
     feature_names_used = _select_pca_features(
@@ -984,6 +1357,9 @@ def plot_real_image_pca(
     rng_seed: int = 0,
     normalized_hist_range: Tuple[float, float] = (-3.0, 3.0),
     force_recompute_real_cache: bool = False,
+    annotation_dir: str | Path = DEFAULT_ANNOTATION_DIR,
+    use_reviewed_regions: bool = True,
+    require_annotations: bool = True,
     title: Optional[str] = None,
     point_size: float = 28,
     alpha: float = 0.75,
@@ -1001,6 +1377,9 @@ def plot_real_image_pca(
         normalize_imgs=normalized,
         normalized_hist_range=normalized_hist_range,
         rng_seed=rng_seed,
+        annotation_dir=annotation_dir,
+        use_reviewed_regions=use_reviewed_regions,
+        require_annotations=require_annotations,
     )
 
     feature_names_used = _select_pca_features(
