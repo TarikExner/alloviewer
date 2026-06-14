@@ -1,5 +1,3 @@
-from typing import Any, Callable
-
 from .figure_1 import figure_1_generation
 from .figure_2 import figure_2_generation
 from .figure_3 import figure_3_generation
@@ -69,4 +67,3 @@ def generate_all_figures():
     figure_S9_generation(**DIRECTORIES)
 
     figure_SIM_generation(**DIRECTORIES)
-

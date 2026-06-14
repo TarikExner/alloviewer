@@ -11,6 +11,7 @@ from .camera_style_config import (
 
 from .histogram_capture import (
     apply_device_quantile_band_match,
+    cache_uses_paired_image_sampling,
 )
 
 from .utils import (
@@ -294,6 +295,8 @@ def apply_camera_style(
 
         img = np.clip(img, 0.0, 1.0).astype(np.float32)
 
+    paired_image_histogram_applied = False
+
     # 19) soft histogram band match
     if (
         params.use_histogram_match
@@ -318,12 +321,25 @@ def apply_camera_style(
             )
             img = np.clip(img, 0.0, 1.0).astype(np.float32)
 
+            paired_image_histogram_applied = (
+                cache_uses_paired_image_sampling(
+                    quantile_band_cache
+                )
+                and params.histogram_match_mode
+                in {
+                    "sample_real_curve",
+                    "sample_real_image",
+                    "paired_real_image",
+                }
+            )
+
     # 20) optional per-channel median correction
     if (
         params.use_histogram_match
         and params.use_median_match
         and quantile_band_cache is not None
         and style_name in quantile_band_cache.get("devices", {})
+        and not paired_image_histogram_applied
     ):
         median_strength = rng.uniform(*params.median_match_strength)
 

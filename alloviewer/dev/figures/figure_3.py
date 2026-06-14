@@ -693,14 +693,14 @@ def _generate_main_figure(
         fig_sgs = gs.subgridspec(2, 4)
         axes_a = fig_sgs.subplots()
 
-        show_panel(axes_a[0, 0], img_disp, "Original")
-        show_panel(axes_a[0, 1], steps["p_cell"], "Cell prob. $p_{cell}$", cmap="viridis")
-        show_panel(axes_a[0, 2], steps["mask"], "Hysteresis mask", cmap="gray")
-        show_panel(axes_a[0, 3], steps["dist_s"], "Distance", cmap="magma")
+        show_panel(axes_a[0, 0], img_disp, "original")
+        show_panel(axes_a[0, 1], steps["p_cell"], "cell prob. $p_{cell}$", cmap="viridis")
+        show_panel(axes_a[0, 2], steps["mask"], "hysteresis mask", cmap="gray")
+        show_panel(axes_a[0, 3], steps["dist_s"], "distance", cmap="magma")
 
-        show_panel(axes_a[1, 0], steps["p_bound"], "Boundary prob.", cmap="viridis")
-        show_panel(axes_a[1, 1], steps["elevation"], "Elevation map", cmap="magma")
-        show_panel(axes_a[1, 2], steps["markers"], "Markers", cmap="jet")
+        show_panel(axes_a[1, 0], steps["p_bound"], "boundary prob.", cmap="viridis")
+        show_panel(axes_a[1, 1], steps["elevation"], "elevation map", cmap="magma")
+        show_panel(axes_a[1, 2], steps["markers"], "markers", cmap="jet")
 
         axes_a[1, 3].imshow(img_disp, cmap="gray", interpolation="nearest")
         axes_a[1, 3].imshow(
@@ -708,7 +708,7 @@ def _generate_main_figure(
             alpha=0.7,
             interpolation="nearest",
         )
-        axes_a[1, 3].set_title("Instances", fontsize=cfg.TITLE_SIZE)
+        axes_a[1, 3].set_title("instances", fontsize=cfg.TITLE_SIZE)
         axes_a[1, 3].set_xticks([])
         axes_a[1, 3].set_yticks([])
 
@@ -724,11 +724,11 @@ def _generate_main_figure(
         fig_sgs = gs.subgridspec(1, 3)
         axes_b = fig_sgs.subplots()
 
-        show_panel(axes_b[0], img_disp, "Original")
+        show_panel(axes_b[0], img_disp, "original")
 
         axes_b[1].imshow(inst_baseline_rgb)
         axes_b[1].set_title(
-            "Conventional mask segmentation",
+            "conventional mask segmentation",
             fontsize=cfg.TITLE_SIZE,
         )
         axes_b[1].set_xticks([])
@@ -736,7 +736,7 @@ def _generate_main_figure(
 
         axes_b[2].imshow(inst_instance_segmenter_rgb)
         axes_b[2].set_title(
-            "InstanceSegmenter mask segmentation",
+            "instanceSegmenter mask segmentation",
             fontsize=cfg.TITLE_SIZE,
         )
         axes_b[2].set_xticks([])

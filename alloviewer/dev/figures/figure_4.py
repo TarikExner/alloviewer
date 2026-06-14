@@ -605,7 +605,7 @@ def plot_unet_reference_boxplot_on_ax(
     ax.set_ylim(ymin, ymax*1.1)
 
     ax.set_title(
-        f"UNET scoring fidelity\nn = {data[experiment_col].nunique()} experiments",
+        f"UNet scoring fidelity\nn = {data[experiment_col].nunique()} experiments",
         fontsize=cfg.TITLE_SIZE,
     )
 
@@ -838,9 +838,9 @@ def _generate_main_figure(
             cm,
             cm_ax,
             fig=fig,
-            title="UNET vs NCISP",
+            title="UNet vs NCISP",
             xlabel="NCISP",
-            ylabel="UNET",
+            ylabel="UNet",
             normalize=True,
             cmap="Reds",
             show_colorbar=True,
@@ -872,9 +872,9 @@ def _generate_main_figure(
             cm,
             cm_ax,
             fig=fig,
-            title="UNET vs Annotator 2",
+            title="UNet vs Annotator 2",
             xlabel="Annotator 2",
-            ylabel="UNET",
+            ylabel="UNet",
             normalize=True,
             cmap="Reds",
             show_colorbar=True,

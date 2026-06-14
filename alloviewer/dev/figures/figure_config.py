@@ -34,8 +34,8 @@ TWO_COL_LEGEND = {
 PHONE_DICT = {
     "iPhone": "smartphone\nbrand 2",
     "GooglePixel": "smartphone\nbrand 1",
-    "Microscope": "microscope camera\nrgb",
-    "Monochrome": "microscope camera\nmonochrome",
+    "Microscope": "color camera\n",
+    "Monochrome": "monochrome camera\n",
     "Generic": "generic\n",
     "Simulated": "simulated\n"
 }
