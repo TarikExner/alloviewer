@@ -1029,7 +1029,7 @@ def load_or_build_quantile_band_cache(
     annotation_dir: str | Path = DEFAULT_ANNOTATION_DIR,
     cache_path: str | Path = STYLE_QUANTILE_CACHE_PATH,
     force_recompute: bool = False,
-    rebuild_if_annotations_newer: bool = True,
+    rebuild_if_annotations_newer: bool = False,
     sample_pixels_per_image: Optional[int] = 100_000,
     n_quantiles: int = 1024,
     q_band_lo: float = 0.025,
