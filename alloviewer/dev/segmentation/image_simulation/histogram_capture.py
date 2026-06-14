@@ -15,10 +15,6 @@ from tqdm import tqdm
 from alloviewer.image_analysis.io import load_image
 
 
-# ---------------------------------------------------------------------------
-# Paths and labels
-# ---------------------------------------------------------------------------
-
 EXT_IMAGES_FOLDERS = [
     "./ext_images/20251106_25065441_iPhone_XR_JPEG",
     "./ext_images/20251106_25722169_iPhone_XR_JPEG",
@@ -60,9 +56,8 @@ LABEL_BACKGROUND = np.uint8(1)
 LABEL_FOREGROUND = np.uint8(2)
 LABEL_OUTSIDE_WELL = np.uint8(3)
 
-# "all" means all reviewed foreground and background pixels inside the well.
 REGION_NAMES = (
-    "all",
+    "all", # "all" means all reviewed foreground and background pixels inside the well.
     "foreground",
     "background",
     "local_background",
@@ -91,10 +86,6 @@ PAIRED_CACHE_VERSION = 3
 PAIRED_CACHE_TYPE = "manual_annotations_per_image"
 PAIRED_REFERENCE_SAMPLING = "paired_per_image"
 
-
-# ---------------------------------------------------------------------------
-# General helpers
-# ---------------------------------------------------------------------------
 
 def _find_device_label(file_path: str | Path) -> str:
     text = str(file_path).lower()
@@ -385,9 +376,6 @@ def make_foreground_background_masks(
     }
 
 
-# ---------------------------------------------------------------------------
-# Annotation-derived regions
-# ---------------------------------------------------------------------------
 
 def _load_reviewed_regions(
     image_path: Path,
@@ -503,11 +491,6 @@ def _load_reviewed_regions(
     }
 
     return masks, info
-
-
-# ---------------------------------------------------------------------------
-# Quantile helpers
-# ---------------------------------------------------------------------------
 
 def _sample_pixels_from_masked_region(
     img_hwc: np.ndarray,
@@ -650,10 +633,6 @@ def _region_minimum_pixels(
 
     return int(min_region_pixels)
 
-
-# ---------------------------------------------------------------------------
-# Cache construction
-# ---------------------------------------------------------------------------
 
 def build_annotated_quantile_cache(
     folders: Optional[Sequence[str | Path]] = None,
@@ -1169,10 +1148,6 @@ def build_target_quantile_band_cache(
         **kwargs,
     )
 
-
-# ---------------------------------------------------------------------------
-# Histogram matching
-# ---------------------------------------------------------------------------
 
 def _compute_image_channel_quantiles(
     channel: np.ndarray,

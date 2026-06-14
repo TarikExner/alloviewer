@@ -636,6 +636,7 @@ def figure_2_generation(
 
     q_band_cache = load_or_build_quantile_band_cache(
         folders=_build_quantile_folders(ext_images_dir),
+        annotations_dir="../scripts/region_annotations",
         cache_path=os.path.join(validation_results_dir, "camera_quantile_band_cache.pkl"),
     )
 
