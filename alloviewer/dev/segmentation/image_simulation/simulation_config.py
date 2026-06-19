@@ -19,6 +19,8 @@ INT_KEYS: Tuple[str, ...] = (
     "reflect_n",
     "ring_artifacts",
     "reflect_harmonics",
+    "cluster_seed_tries",
+    "cluster_member_tries",
 )
 
 @dataclass
@@ -44,6 +46,22 @@ class SimulatorConfig:
 
     # --- cells ---
     n_cells: Union[int, Tuple[int, int]] = (10, 2000)
+
+    # Image-size-calibrated core-diameter model. Each row is:
+    #   (image short side in px, minimum core diameter, maximum core diameter)
+    # Values outside the measured image-size interval are clamped.
+    cell_diameter_bounds_by_short_side: Optional[
+        Tuple[Tuple[float, float, float], ...]
+    ] = (
+        (1620.0, 5.0, 8.0),
+        (3024.0, 11.0, 14.0),
+    )
+    cell_diameter_center_margin_frac: Union[float, Tuple[float, float]] = 0.20
+    cell_diameter_sigma_frac: Union[float, Tuple[float, float]] = 0.18
+    cell_diameter_min_sigma_px: Union[float, Tuple[float, float]] = 0.25
+
+    # Legacy diameter model. It is used only when
+    # cell_diameter_bounds_by_short_side is None.
     cell_diameter: Union[float, Tuple[float, float]] = (7.0, 12.0)
 
     # Scale cell diameter with image size while keeping direct control over
@@ -52,18 +70,18 @@ class SimulatorConfig:
     cell_diameter_size_exponent: Union[float, Tuple[float, float]] = 0.75
     cell_diameter_scale_clip: Optional[Tuple[float, float]] = (0.85, 2.0)
 
-    large_cell_frac: Union[float, Tuple[float, float]] = (0.0, 0.5)
-    large_cell_diameter_factor: Union[float, Tuple[float, float]] = (1.2, 2.0)
+    large_cell_frac: Union[float, Tuple[float, float]] = (0.0, 0.2)
+    large_cell_diameter_factor: Union[float, Tuple[float, float]] = (1.15, 1.5)
 
-    cell_ellipse_enable=True
-    cell_axis_jitter=(0.0,0.2)          # ±20% axis ratio
-    cell_random_rotation=True,      # random rotation angle
-    cell_intensity_range=(0.70, 1.05)  # per-cell brightness multiplier (was ~0.9..1.1)
+    cell_ellipse_enable: Union[bool, float, Tuple[float, float]] = True
+    cell_axis_jitter = (0.0,0.5)          # ±50% axis ratio
+    cell_random_rotation: Union[bool, float, Tuple[float, float]] = True
+    cell_intensity_range = (0.70, 1.05)  # per-cell brightness multiplier
 
     frac_positive: Union[float, Tuple[float, float]] = (0.0, 1.0)
     color_jitter: Union[float, Tuple[float, float]] = (0.0, 0.2)
-    sigma_in: Union[Tuple[float, float], Tuple[float, float]] = (0.5, 1.5)   # pass-through
-    sigma_out: Union[Tuple[float, float], Tuple[float, float]] = (0.5, 1.5) # pass-through
+    sigma_in: Union[Tuple[float, float], Tuple[float, float]] = (0.6, 1.2)
+    sigma_out: Union[Tuple[float, float], Tuple[float, float]] = (1.8, 4.0)
     focus_frac_in: Union[float, Tuple[float, float]] = (0.0, 1.0)
     in_focus_sigma_thresh: Optional[Union[float, Tuple[float, float]]] = None
 
@@ -73,6 +91,18 @@ class SimulatorConfig:
     rim_bias: Union[float, Tuple[float, float]] = (0.5, 0.95)
     rim_band: Union[float, Tuple[float, float]] = (0.1, 0.5)
     edge_clamp: Union[float, Tuple[float, float]] = (0.1, 0.65)
+
+    # --- clustering ---
+    cluster_enable: Union[bool, float, Tuple[float, float]] = True
+    clustered_cell_frac: Union[float, Tuple[float, float]] = 0.35
+    cluster_size_range: Tuple[int, int] = (2, 8)
+    cluster_contact_factor_range: Tuple[float, float] = (0.95, 1.08)
+    cluster_core_min_sep_factor: Union[float, Tuple[float, float]] = 0.80
+    cluster_chain_probability: Union[float, Tuple[float, float]] = 0.70
+    cluster_angle_jitter: Union[float, Tuple[float, float]] = 0.65
+    cluster_seed_tries: Union[int, Tuple[int, int]] = 120
+    cluster_member_tries: Union[int, Tuple[int, int]] = 24
+    cluster_pack_min_sep_factor: Union[float, Tuple[float, float]] = 0.84
 
     # --- collision / packing ---
     min_cell_sep_px: Optional[Union[float, Tuple[float, float]]] = None    # if None -> 0.9 * cell_diameter
@@ -172,11 +202,17 @@ class SimulatorConfig:
 
         # cells
         set_num("n_cells", integer=True)
+        set_passthrough("cell_diameter_bounds_by_short_side")
+        set_num("cell_diameter_center_margin_frac")
+        set_num("cell_diameter_sigma_frac")
+        set_num("cell_diameter_min_sigma_px")
         set_num("cell_diameter")
         set_num("cell_diameter_reference_short_side")
         set_num("cell_diameter_size_exponent")
         set_passthrough("cell_diameter_scale_clip")
+        set_bool("cell_ellipse_enable")
         set_num("cell_axis_jitter")
+        set_bool("cell_random_rotation")
         set_passthrough("cell_intensity_range")
 
         set_num("large_cell_frac")
@@ -196,6 +232,18 @@ class SimulatorConfig:
         set_num("rim_bias")
         set_num("rim_band")
         set_num("edge_clamp")
+
+        # clustering
+        set_bool("cluster_enable")
+        set_num("clustered_cell_frac")
+        set_passthrough("cluster_size_range")
+        set_passthrough("cluster_contact_factor_range")
+        set_num("cluster_core_min_sep_factor")
+        set_num("cluster_chain_probability")
+        set_num("cluster_angle_jitter")
+        set_num("cluster_seed_tries", integer=True)
+        set_num("cluster_member_tries", integer=True)
+        set_num("cluster_pack_min_sep_factor")
 
         # collision / packing
         if self.min_cell_sep_px is None:
@@ -301,8 +349,8 @@ def test_scene() -> SimulatorConfig:
         cell_diameter_scale_clip = (0.60, 2.20),
         frac_positive = (0.0, 1.0),
         color_jitter = (0.0, 0.2),
-        sigma_in = (0.9, 1.2),   # pass-through
-        sigma_out = (0.9, 1.2), # pass-through
+        sigma_in = (0.6, 1.2),   # pass-through
+        sigma_out = (1.8, 4.0), # pass-through
         focus_frac_in = (0.0, 1.0),
         in_focus_sigma_thresh = None,
 

@@ -4,7 +4,12 @@ from scipy import ndimage as ndi
 from scipy.spatial import cKDTree
 import cv2
 
-from .utils import capture_params
+from .utils import (
+    assign_cluster_ids,
+    capture_params,
+    place_clustered_centers,
+    sample_calibrated_cell_diameters,
+)
 from ..utils import (
     make_ellipse_mask,
     make_soft_boundary_from_instances,
@@ -47,17 +52,29 @@ def simulate_image(
 
     # --- cells (sharp ones inside the well) ---
     n_cells=150,
-    cell_diameter=20,
 
-    # Scale the sampled/base cell diameter with image resolution.
-    # A value of 1.0 for cell_diameter_size_exponent means linear scaling
-    # with the short image side; lower values keep more absolute-size control.
+    # Image-size-calibrated core-diameter model. Each row is:
+    #   (image short side in px, minimum core diameter, maximum core diameter)
+    # Values outside the measured image-size interval are clamped.
+    cell_diameter_bounds_by_short_side=(
+        (1620.0, 5.0, 8.0),
+        (3024.0, 11.0, 14.0),
+    ),
+    cell_diameter_center_margin_frac=0.20,
+    cell_diameter_sigma_frac=0.18,
+    cell_diameter_min_sigma_px=0.25,
+
+    # Legacy diameter model, used only when
+    # cell_diameter_bounds_by_short_side is None.
+    cell_diameter=20,
     cell_diameter_reference_short_side=1620.0,
     cell_diameter_size_exponent=0.75,
     cell_diameter_scale_clip=(0.85, 2.0),
 
-    large_cell_frac=0.0,              # fraction of inside-well cells that are "large"
-    large_cell_diameter_factor=1.5,   # large size = factor * cell_diameter
+    # In calibrated mode, large cells are sampled from the upper part of the
+    # valid diameter interval. They never exceed the image-specific limit.
+    large_cell_frac=0.0,
+    large_cell_diameter_factor=1.5,  # legacy mode only
 
     # --- cells: shape + brightness ---
     cell_ellipse_enable=True,
@@ -78,8 +95,20 @@ def simulate_image(
     rim_band=0.12,
     edge_clamp=0.65,
 
+    # --- clustering ---
+    cluster_enable=True,
+    clustered_cell_frac=0.35,
+    cluster_size_range=(2, 8),
+    cluster_contact_factor_range=(0.95, 1.08),
+    cluster_core_min_sep_factor=0.80,
+    cluster_chain_probability=0.70,
+    cluster_angle_jitter=0.65,
+    cluster_seed_tries=120,
+    cluster_member_tries=24,
+    cluster_pack_min_sep_factor=0.84,
+
     # --- collision / packing control ---
-    min_cell_sep_px=None,   # if None -> 0.9 * cell_diameter
+    min_cell_sep_px=None,   # if None -> pair-specific radius-based separation
     rim_min_sep_px=4,
     pack_iters=20,
     pack_strength=0.45,
@@ -151,6 +180,10 @@ def simulate_image(
       - Visible cells are rendered from the final instance mask, not from an
         independent Gaussian spot. This keeps the rendered cell body and label
         geometry coupled.
+      - Core diameters are sampled from image-size-dependent measured bounds.
+        The old power-law scaling remains available only as a fallback.
+      - Cluster placement is linear in the number of cells apart from small
+        within-cluster checks. Global overlap resolution still uses a KD-tree.
       - The base render halo can be disabled; camera/acquisition halo may be added later.
       - Boundary target settings are internal constants, not user parameters.
       - focus_frac_in still affects sampled render sigmas, but the standard
@@ -310,38 +343,57 @@ def simulate_image(
 
         img[inside] *= tex[inside, None]
 
-    # ---------- place cells inside the well ----------
+    # ---------- sample cell labels and calibrated core diameters ----------
     n_pos = int(round(frac_positive * n_cells))
     labels = np.array([1] * n_pos + [0] * (n_cells - n_pos), dtype=np.int32)
     rng.shuffle(labels)
 
-    large_cell_frac = float(np.clip(large_cell_frac, 0.0, 1.0))
-    is_large = rng.random(n_cells) < large_cell_frac
-
     short_side = np.float32(min(H, W))
-    ref_short_side = np.float32(max(1.0, float(cell_diameter_reference_short_side)))
-    size_exponent = np.float32(cell_diameter_size_exponent)
+    large_cell_frac = float(np.clip(large_cell_frac, 0.0, 1.0))
 
-    cell_diameter_size_scale = np.float32(
-        (short_side / ref_short_side) ** size_exponent
-    )
-
-    if cell_diameter_scale_clip is not None:
-        lo, hi = cell_diameter_scale_clip
-        cell_diameter_size_scale = np.float32(
-            np.clip(cell_diameter_size_scale, np.float32(lo), np.float32(hi))
+    if cell_diameter_bounds_by_short_side is not None:
+        diameters, base_cell_diameter, diameter_bounds, is_large = (
+            sample_calibrated_cell_diameters(
+                rng=rng,
+                n_cells=n_cells,
+                short_side=float(short_side),
+                anchors=cell_diameter_bounds_by_short_side,
+                center_margin_frac=cell_diameter_center_margin_frac,
+                cell_sigma_frac=cell_diameter_sigma_frac,
+                min_sigma_px=cell_diameter_min_sigma_px,
+                large_cell_frac=large_cell_frac,
+            )
         )
+        cell_diameter_mode = "calibrated_bounds"
+        cell_diameter_size_scale = None
     else:
-        cell_diameter_size_scale = float(cell_diameter_size_scale)
+        # Backward-compatible power-law scaling. Final values are not bounded
+        # unless calibrated anchors are supplied.
+        ref_short_side = np.float32(
+            max(1.0, float(cell_diameter_reference_short_side))
+        )
+        size_exponent = np.float32(cell_diameter_size_exponent)
+        cell_diameter_size_scale = np.float32(
+            (short_side / ref_short_side) ** size_exponent
+        )
 
-    base_cell_diameter = np.float32(cell_diameter) * cell_diameter_size_scale
+        if cell_diameter_scale_clip is not None:
+            lo, hi = cell_diameter_scale_clip
+            cell_diameter_size_scale = np.float32(
+                np.clip(cell_diameter_size_scale, np.float32(lo), np.float32(hi))
+            )
 
-    diameters = np.full(n_cells, base_cell_diameter, dtype=np.float32)
-    diameters[is_large] *= float(large_cell_diameter_factor)
+        base_cell_diameter = np.float32(cell_diameter) * cell_diameter_size_scale
+        is_large = rng.random(n_cells) < large_cell_frac
+        diameters = np.full(n_cells, base_cell_diameter, dtype=np.float32)
+        diameters[is_large] *= float(large_cell_diameter_factor)
 
-    jitter = rng.normal(1.0, 0.10, size=n_cells).astype(np.float32)
-    jitter = np.clip(jitter, 0.8, 1.2)
-    diameters *= jitter
+        jitter = rng.normal(1.0, 0.10, size=n_cells).astype(np.float32)
+        jitter = np.clip(jitter, 0.8, 1.2)
+        diameters *= jitter
+
+        diameter_bounds = (float(diameters.min()), float(diameters.max()))
+        cell_diameter_mode = "legacy_power_law"
 
     radii = np.maximum(2, np.round(diameters / 2.0).astype(np.int32))
 
@@ -352,7 +404,11 @@ def simulate_image(
             1.0 + cell_axis_jitter,
             size=n_cells,
         ).astype(np.float32)
-        axis_ratio = np.clip(axis_ratio, 1.0 - cell_axis_jitter, 1.0 + cell_axis_jitter)
+        axis_ratio = np.clip(
+            axis_ratio,
+            1.0 - cell_axis_jitter,
+            1.0 + cell_axis_jitter,
+        )
         if cell_random_rotation:
             theta = rng.uniform(0.0, 2.0 * np.pi, size=n_cells).astype(np.float32)
         else:
@@ -360,6 +416,11 @@ def simulate_image(
     else:
         axis_ratio = np.ones(n_cells, dtype=np.float32)
         theta = np.zeros(n_cells, dtype=np.float32)
+
+    # Conservative radius used only for placement and collision checks.
+    r_px = radii.astype(np.float32) * np.sqrt(
+        np.maximum(axis_ratio, 1.0 / axis_ratio)
+    ).astype(np.float32)
 
     def sample_radius():
         a = (1.0 - rim_band) * R
@@ -385,64 +446,64 @@ def simulate_image(
             return rng.vonmises(side_bias_theta, kappa)
         return rng.uniform(-np.pi, np.pi)
 
-    centers = []
-    is_rim = []
-    tries, max_tries = 0, 400 * n_cells
-    while len(centers) < n_cells and tries < max_tries:
-        tries += 1
-        r_s = sample_radius()
-        th = sample_theta(r_s)
-        y = int(round(cy + r_s * np.sin(th)))
-        x = int(round(cx + r_s * np.cos(th)))
-        i = len(centers)
-        ri = int(radii[i])
+    # ---------- cluster assignment and initial placement ----------
+    if cluster_enable and n_cells > 1 and clustered_cell_frac > 0:
+        cluster_ids = assign_cluster_ids(
+            rng=rng,
+            n_cells=n_cells,
+            clustered_fraction=clustered_cell_frac,
+            cluster_size_range=cluster_size_range,
+        )
+    else:
+        cluster_ids = np.full(n_cells, -1, dtype=np.int32)
 
-        if not (ri < y < H - ri - 1 and ri < x < W - ri - 1):
-            continue
+    cf, cluster_ids, cluster_edges = place_clustered_centers(
+        rng=rng,
+        cluster_ids=cluster_ids,
+        r_px=r_px,
+        H=H,
+        W=W,
+        cy=float(cy),
+        cx=float(cx),
+        R=float(R),
+        wall_margin_px=float(wall_margin_px),
+        rim_band=float(rim_band),
+        rim_min_sep_px=float(rim_min_sep_px),
+        sample_radius=sample_radius,
+        sample_theta=sample_theta,
+        contact_factor_range=cluster_contact_factor_range,
+        core_min_sep_factor=cluster_core_min_sep_factor,
+        chain_probability=cluster_chain_probability,
+        angle_jitter=cluster_angle_jitter,
+        seed_tries=cluster_seed_tries,
+        member_tries=cluster_member_tries,
+    )
 
-        rim_inner = (1.0 - rim_band) * R
-        is_this_rim = r_s >= rim_inner
-        ok = True
-        if is_this_rim and rim_min_sep_px > 0:
-            for (py, px), rim_flag in zip(centers[-200:], is_rim[-200:]):
-                if rim_flag and (py - y) ** 2 + (px - x) ** 2 < rim_min_sep_px ** 2:
-                    ok = False
-                    break
-        if ok:
-            centers.append((y, x))
-            is_rim.append(is_this_rim)
-
-    while len(centers) < n_cells:
-        i = len(centers)
-        ri = int(radii[i])
-        for _ in range(2000):
-            y = int(rng.integers(ri + 1, H - ri - 1))
-            x = int(rng.integers(ri + 1, W - ri - 1))
-            if np.sqrt((y - cy) ** 2 + (x - cx) ** 2) <= (R - wall_margin_px - ri):
-                centers.append((y, x))
-                is_rim.append(False)
-                break
-        else:
-            centers.append((y, x))
-            is_rim.append(False)
-
-    # ---------- resolve overlaps: push-apart circle packing ----------
-    r_px = radii.astype(np.float32) * np.sqrt(
-        np.maximum(axis_ratio, 1.0 / axis_ratio)
-    ).astype(np.float32)
-
+    # ---------- resolve overlaps: cluster-aware KD-tree packing ----------
     eps = np.float32(1e-6)
-    cf = np.array(centers, dtype=np.float32)
     N = int(cf.shape[0])
+    regular_pack_min_sep_factor = np.float32(0.90)
+    cluster_pack_min_sep_factor = np.float32(
+        np.clip(cluster_pack_min_sep_factor, 0.0, 0.90)
+    )
 
     if N > 1 and int(pack_iters) > 0:
         if min_cell_sep_px is None:
-            # Maximum possible interaction distance.
-            # Pair-specific separation is still checked below.
-            query_radius = np.float32(0.9 * 2.0 * float(np.max(r_px)))
+            query_factor = max(
+                float(regular_pack_min_sep_factor),
+                float(cluster_pack_min_sep_factor),
+            )
+            query_radius = np.float32(
+                query_factor * 2.0 * float(np.max(r_px))
+            )
         else:
             min_sep_scalar = np.float32(min_cell_sep_px)
-            query_radius = min_sep_scalar
+            query_radius = np.float32(
+                max(
+                    float(min_sep_scalar),
+                    2.0 * float(cluster_pack_min_sep_factor) * float(np.max(r_px)),
+                )
+            )
 
         query_radius = np.float32(max(float(query_radius), 1.0))
 
@@ -458,21 +519,36 @@ def simulate_image(
 
             v = cf[i] - cf[j]
             d = np.sqrt((v * v).sum(axis=1)).astype(np.float32)
+            pair_radius = (r_px[i] + r_px[j]).astype(np.float32)
+            same_cluster = (
+                (cluster_ids[i] >= 0)
+                & (cluster_ids[i] == cluster_ids[j])
+            )
 
             if min_cell_sep_px is None:
-                min_sep = (np.float32(0.9) * (r_px[i] + r_px[j])).astype(np.float32)
+                separation_factor = np.where(
+                    same_cluster,
+                    cluster_pack_min_sep_factor,
+                    regular_pack_min_sep_factor,
+                ).astype(np.float32)
+                min_sep = separation_factor * pair_radius
             else:
                 min_sep = np.full_like(d, min_sep_scalar, dtype=np.float32)
+                if np.any(same_cluster):
+                    min_sep[same_cluster] = np.minimum(
+                        min_sep[same_cluster],
+                        cluster_pack_min_sep_factor * pair_radius[same_cluster],
+                    )
 
-            M = d < min_sep
-            if not np.any(M):
+            overlap_mask = d < min_sep
+            if not np.any(overlap_mask):
                 break
 
-            i = i[M]
-            j = j[M]
-            v = v[M]
-            d = d[M]
-            min_sep = min_sep[M]
+            i = i[overlap_mask]
+            j = j[overlap_mask]
+            v = v[overlap_mask]
+            d = d[overlap_mask]
+            min_sep = min_sep[overlap_mask]
 
             u = v / (d[:, None] + eps)
             overlap = (min_sep - d).astype(np.float32)
@@ -481,7 +557,6 @@ def simulate_image(
             disp = np.zeros_like(cf, dtype=np.float32)
             np.add.at(disp, i, step)
             np.add.at(disp, j, -step)
-
             cf += disp
 
             cf[:, 0] = np.clip(cf[:, 0], r_px + 1, H - r_px - 2)
@@ -491,24 +566,41 @@ def simulate_image(
             vx = (cf[:, 1] - cx).astype(np.float32, copy=False)
             rr_c = np.sqrt(vy * vy + vx * vx).astype(np.float32) + eps
 
-            max_r_center = (R - np.float32(wall_margin_px) - r_px).astype(np.float32)
+            max_r_center = (
+                R - np.float32(wall_margin_px) - r_px
+            ).astype(np.float32)
             max_r_center = np.maximum(max_r_center, np.float32(0.0))
 
             too_far = rr_c > max_r_center
             if np.any(too_far):
-                s = (max_r_center[too_far] / rr_c[too_far]).astype(np.float32)
-                cf[too_far, 0] = cy + vy[too_far] * s
-                cf[too_far, 1] = cx + vx[too_far] * s
+                scale = (
+                    max_r_center[too_far] / rr_c[too_far]
+                ).astype(np.float32)
+                cf[too_far, 0] = cy + vy[too_far] * scale
+                cf[too_far, 1] = cx + vx[too_far] * scale
 
-    centers = [(int(round(y)), int(round(x))) for (y, x) in cf]
+    centers = [(int(round(y)), int(round(x))) for y, x in cf]
+    radial_centers = np.sqrt(
+        (cf[:, 0] - cy) ** 2 + (cf[:, 1] - cx) ** 2
+    )
+    is_rim = (radial_centers >= (1.0 - rim_band) * R).tolist()
+
     # ---------- instance map ----------
     # Build final labels first. Rendering later uses this final map, so visible
     # cells and labels share geometry even in overlap cases.
     inst = np.zeros((H, W), dtype=np.int32)
+    realized_equivalent_diameters = np.zeros(n_cells, dtype=np.float32)
 
     for k_id, (y, x) in enumerate(centers, start=1):
         r = int(radii[k_id - 1])
-        m, r_box = make_ellipse_mask(r, float(axis_ratio[k_id - 1]), float(theta[k_id - 1]))
+        m, r_box = make_ellipse_mask(
+            r,
+            float(axis_ratio[k_id - 1]),
+            float(theta[k_id - 1]),
+        )
+        realized_equivalent_diameters[k_id - 1] = np.float32(
+            2.0 * np.sqrt(float(m.sum()) / np.pi)
+        )
 
         y0, y1 = y - r_box, y + r_box + 1
         x0, x1 = x - r_box, x + r_box + 1
@@ -797,10 +889,23 @@ def simulate_image(
         "well_center": (float(cy), float(cx)),
         "radius_px": float(R),
         "base_cell_diameter": float(base_cell_diameter),
-        "cell_diameter_size_scale": float(cell_diameter_size_scale),
+        "cell_diameter_mode": cell_diameter_mode,
+        "cell_diameter_bounds": tuple(float(v) for v in diameter_bounds),
+        "requested_diameters": diameters.astype(np.float32),
+        "realized_equivalent_diameters": realized_equivalent_diameters,
+        "is_large": is_large.astype(bool),
+        "cell_diameter_size_scale": (
+            None
+            if cell_diameter_size_scale is None
+            else float(cell_diameter_size_scale)
+        ),
         "cell_diameter_reference_short_side": float(cell_diameter_reference_short_side),
         "cell_diameter_size_exponent": float(cell_diameter_size_exponent),
         "cell_diameter_scale_clip": cell_diameter_scale_clip,
+        "cluster_ids": cluster_ids.astype(np.int32),
+        "cluster_edges": cluster_edges,
+        "n_clusters": int(np.unique(cluster_ids[cluster_ids >= 0]).size),
+        "n_clustered_cells": int(np.sum(cluster_ids >= 0)),
         "final_sigmas": final_sigmas,
         "target_keep_ids": keep_ids.astype(np.int32),
         "params": all_params,
