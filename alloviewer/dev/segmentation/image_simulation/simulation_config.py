@@ -82,8 +82,8 @@ class SimulatorConfig:
 
     frac_positive: Union[float, Tuple[float, float]] = (0.0, 1.0)
     color_jitter: Union[float, Tuple[float, float]] = (0.0, 0.2)
-    sigma_in: Union[Tuple[float, float], Tuple[float, float]] = (0.6, 1.2)
-    sigma_out: Union[Tuple[float, float], Tuple[float, float]] = (1.2, 1.8)
+    sigma_in: Union[Tuple[float, float], Tuple[float, float]] = (0.06, 0.1)
+    sigma_out: Union[Tuple[float, float], Tuple[float, float]] = (0.08, 0.16)
     focus_frac_in: Union[float, Tuple[float, float]] = (0.0, 1.0)
     in_focus_sigma_thresh: Optional[Union[float, Tuple[float, float]]] = None
 
@@ -99,7 +99,7 @@ class SimulatorConfig:
     clustered_cell_frac: Union[float, Tuple[float, float]] = (0.30, 0.80)
     cluster_size_range: Tuple[int, int] = (2, 35)
     cluster_contact_factor_range: Tuple[float, float] = (0.90, 1.05)
-    cluster_core_min_sep_factor: Union[float, Tuple[float, float]] = (0.82, 0.88)
+    cluster_core_min_sep_factor: Union[float, Tuple[float, float]] = (0.90, 0.94)
     cluster_chain_probability: Union[float, Tuple[float, float]] = (0.25, 0.75)
     cluster_angle_jitter: Union[float, Tuple[float, float]] = (0.55, 1.10)
 
@@ -120,7 +120,7 @@ class SimulatorConfig:
 
     cluster_seed_tries: Union[int, Tuple[int, int]] = 120
     cluster_member_tries: Union[int, Tuple[int, int]] = 32
-    cluster_pack_min_sep_factor: Union[float, Tuple[float, float]] = (0.82, 0.86)
+    cluster_pack_min_sep_factor: Union[float, Tuple[float, float]] = (0.90, 0.94)
 
     # --- collision / packing ---
     min_cell_sep_px: Optional[Union[float, Tuple[float, float]]] = None    # if None -> 0.9 * cell_diameter
@@ -374,8 +374,8 @@ def test_scene() -> SimulatorConfig:
         cell_diameter_scale_clip = (0.60, 2.20),
         frac_positive = (0.0, 1.0),
         color_jitter = (0.0, 0.2),
-        sigma_in = (0.6, 1.2),   # pass-through
-        sigma_out = (1.2, 1.8), # pass-through
+        sigma_in = (0.06, 0.1),   # pass-through
+        sigma_out = (0.08, 0.16), # pass-through
         focus_frac_in = (0.0, 1.0),
         in_focus_sigma_thresh = None,
 

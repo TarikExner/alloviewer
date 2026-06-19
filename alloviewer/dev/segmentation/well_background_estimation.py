@@ -7,6 +7,23 @@ from alloviewer.image_analysis.io import load_image
 from IPython.display import clear_output
 import os
 
+BCG_IMAGES_FOLDERS = [
+    "./ext_images/20251106_25065441_iPhone_XR_JPEG",
+    "./ext_images/20251106_25722169_iPhone_XR_JPEG",
+    "./ext_images/20251106_25722269_iPhone_XR_JPEG",
+    "./ext_images/20251107_25065521_GooglePixel",
+    "./ext_images/20251107_25722332_GooglePixel",
+    "./ext_images/20251014_25719960",
+    "./ext_images/20251014_25720084",
+    "./ext_images/20251107_25065521",
+    "./ext_images/20251107_25722332",
+    "./ext_images/20251210_25066239_XM",
+    "./ext_images/20251210_25066239_XM_+DTT",
+    "./ext_images/20260120_26700788_LCT_RV",
+    "./ext_images/20260120_26700790_LCT_RV",
+    "./ext_images/20260121_26700790_LCT_RV_DTT",
+]
+
 def show_rectangle(
     img: np.ndarray,
     x: int,
