@@ -315,15 +315,30 @@ def _get_simulated_image():
     sim_img, _, targets = simulate_image(
         H=1024,
         W=1300,
+
         well_radius_frac=0.42,
         well_center_jitter=0.02,
 
         background_level=0.08,
-        edge_boost=0.25,
+        edge_boost=0.22,
         radial_gamma=1.2,
-        vignette_strength=0.20,
+        vignette_strength=0.12,
 
-        n_cells=1000,
+        # cell count
+        n_cells=900,
+
+        # use the calibrated diameter model, not the old fixed diameter
+        cell_diameter_bounds_by_short_side=(
+            (1024.0, 7.0, 10.0),
+            (1620.0, 7.0, 11.0),
+            (3024.0, 11.0, 15.0),
+        ),
+        cell_diameter_center_margin_frac=0.20,
+        cell_diameter_sigma_frac=0.18,
+        cell_diameter_min_sigma_px=0.25,
+
+        # legacy diameter fields are ignored when bounds are given,
+        # but keep them harmless
         cell_diameter=10,
 
         large_cell_frac=0.0,
@@ -336,15 +351,42 @@ def _get_simulated_image():
 
         frac_positive=0.2,
         color_jitter=0.07,
-        sigma_in=(0.5, 1.0),
-        sigma_out=(1.6, 3.2),
-        focus_frac_in=1.0,
+
+        # these are fractions of the core diameter
+        sigma_in=(0.06, 0.10),
+        sigma_out=(0.08, 0.16),
+        focus_frac_in=0.90,
         in_focus_sigma_thresh=None,
+
         boundary_width=1,
 
         rim_bias=0.60,
         rim_band=0.2,
-        edge_clamp=0.5,
+        edge_clamp=0.35,
+
+        # clustering
+        cluster_enable=True,
+        clustered_cell_frac=0.55,
+        cluster_size_range=(2, 24),
+
+        # slightly spaced, but still packed enough
+        cluster_contact_factor_range=(1.00, 1.12),
+        cluster_core_min_sep_factor=0.95,
+        cluster_chain_probability=0.50,
+        cluster_angle_jitter=0.85,
+
+        # mix of packed and lengthy clusters
+        cluster_packed_probability=0.55,
+        cluster_packed_size_bias_range=(3, 15),
+        cluster_packed_contact_factor_range=(0.98, 1.08),
+        cluster_packed_candidate_count=8,
+        cluster_packed_contact_bonus=1.5,
+        cluster_packed_region_join_probability=0.25,
+        cluster_packed_region_contact_factor_range=(1.00, 1.10),
+
+        cluster_seed_tries=120,
+        cluster_member_tries=32,
+        cluster_pack_min_sep_factor=0.95,
 
         min_cell_sep_px=None,
         rim_min_sep_px=20,
@@ -358,35 +400,37 @@ def _get_simulated_image():
         side_bias_kappa=5.0,
         side_bias_inner_frac=0.55,
 
-        wall_blur_sigma=12.0,
+        wall_blur_sigma=10.0,
         ring_artifacts=0,
-        ring_sigma_range=(6.0, 18.0),
-        ring_alpha_range=(0.03, 0.12),
+        ring_sigma_range=(6.0, 14.0),
+        ring_alpha_range=(0.02, 0.08),
 
+        # keep ghosts, but make them less aggressive
         ghost_enable=True,
-        ghost_density=0.10,
-        ghost_offset_px=25.0,
-        ghost_offset_jitter=6.0,
-        ghost_sigma=(2.5, 6.0),
+        ghost_density=0.03,
+        ghost_offset_px=20.0,
+        ghost_offset_jitter=4.0,
+        ghost_sigma=(2.5, 5.0),
         ghost_dilate=1.0,
-        ghost_intensity=(0.1, 0.1),
-
-        ghost_stretch=3.0,
-        ghost_trail=3,
+        ghost_intensity=(0.03, 0.08),
+        ghost_stretch=2.0,
+        ghost_trail=2,
         ghost_trail_decay=0.6,
 
-        dirt_density=0.0007,
+        # keep dirt subtle
+        dirt_density=0.00015,
         dirt_size=(2, 4),
-        dirt_sigma=(1.2, 2.0),
-        dirt_alpha=(0.01, 0.04),
+        dirt_sigma=(0.8, 1.4),
+        dirt_alpha=(0.01, 0.035),
 
+        # reflections toned down
         reflect_enable=True,
-        reflect_n=6,
-        reflect_theta_sigma=0.10,
-        reflect_radial_sigma=8.0,
-        reflect_offset_range=(6.0, 24.0),
-        reflect_alpha_range=(0.05, 0.20),
-        reflect_wobble=0.35,
+        reflect_n=3,
+        reflect_theta_sigma=0.08,
+        reflect_radial_sigma=7.0,
+        reflect_offset_range=(6.0, 18.0),
+        reflect_alpha_range=(0.02, 0.08),
+        reflect_wobble=0.25,
         reflect_harmonics=2,
         reflect_harmonic_decay=0.55,
 
