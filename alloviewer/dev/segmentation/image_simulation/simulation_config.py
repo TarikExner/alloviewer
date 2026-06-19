@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple, Union
 
 from .types import RNG
@@ -55,8 +54,8 @@ class SimulatorConfig:
     cell_diameter_bounds_by_short_side: Optional[
         Tuple[Tuple[float, float, float], ...]
     ] = (
-        (1620.0, 6.0, 9.0),
-        (3024.0, 11.0, 16.0),
+        (1620.0, 7.0, 11.0),
+        (3024.0, 11.0, 15.0),
     )
     cell_diameter_center_margin_frac: Union[float, Tuple[float, float]] = 0.20
     cell_diameter_sigma_frac: Union[float, Tuple[float, float]] = 0.18
@@ -98,7 +97,7 @@ class SimulatorConfig:
     cluster_enable: Union[bool, float, Tuple[float, float]] = True
     clustered_cell_frac: Union[float, Tuple[float, float]] = (0.30, 0.80)
     cluster_size_range: Tuple[int, int] = (2, 35)
-    cluster_contact_factor_range: Tuple[float, float] = (0.90, 1.05)
+    cluster_contact_factor_range: Tuple[float, float] = (1.02, 1.5)
     cluster_core_min_sep_factor: Union[float, Tuple[float, float]] = (0.90, 0.94)
     cluster_chain_probability: Union[float, Tuple[float, float]] = (0.25, 0.75)
     cluster_angle_jitter: Union[float, Tuple[float, float]] = (0.55, 1.10)
@@ -107,7 +106,7 @@ class SimulatorConfig:
     # usually lengthy; larger clusters approach cluster_packed_probability.
     cluster_packed_probability: Union[float, Tuple[float, float]] = (0.35, 0.70)
     cluster_packed_size_bias_range: Tuple[int, int] = (3, 15)
-    cluster_packed_contact_factor_range: Tuple[float, float] = (0.88, 1.02)
+    cluster_packed_contact_factor_range: Tuple[float, float] = (1.02, 1.5)
     cluster_packed_candidate_count: Union[int, Tuple[int, int]] = (6, 12)
     cluster_packed_contact_bonus: Union[float, Tuple[float, float]] = (1.0, 2.0)
 
