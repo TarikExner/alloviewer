@@ -310,16 +310,46 @@ def review_dataset_and_save(
     tile_size=512,
     step=128,
     reuse_last_rectangle=True,
+    skip_existing=True,
 ):
     """
-    Loop through images like a manual dataloader.
+    Loop through images for manual review.
+
+    Images whose output file already exists are skipped automatically.
+    They still count toward the displayed progress counter.
     """
+    image_paths = list(image_paths)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     results = []
 
     cur_x, cur_y, cur_w, cur_h = x, y, width, height
 
     for i, img_path in enumerate(image_paths, start=1):
+        img_path = Path(img_path)
+
+        out_name = make_output_name(img_path)
+        out_path = out_dir / out_name
+
         print(f"\n===== [{i}/{len(image_paths)}] {img_path} =====")
+
+        # Skip images that have already been processed.
+        if skip_existing and out_path.exists():
+            print(f"Already processed, skipping: {out_path}")
+
+            results.append({
+                "image_path": str(img_path),
+                "output_path": str(out_path),
+                "status": "already_exists",
+                "x": None,
+                "y": None,
+                "width": None,
+                "height": None,
+            })
+
+            clear_output(wait=True)
+            continue
 
         status, rect = review_and_save_one_image(
             img_path,
@@ -335,6 +365,7 @@ def review_dataset_and_save(
 
         results.append({
             "image_path": str(img_path),
+            "output_path": str(out_path),
             "status": status,
             "x": rect[0],
             "y": rect[1],
