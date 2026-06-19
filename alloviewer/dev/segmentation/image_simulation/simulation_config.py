@@ -55,8 +55,8 @@ class SimulatorConfig:
     cell_diameter_bounds_by_short_side: Optional[
         Tuple[Tuple[float, float, float], ...]
     ] = (
-        (1620.0, 5.0, 8.0),
-        (3024.0, 11.0, 14.0),
+        (1620.0, 6.0, 9.0),
+        (3024.0, 11.0, 16.0),
     )
     cell_diameter_center_margin_frac: Union[float, Tuple[float, float]] = 0.20
     cell_diameter_sigma_frac: Union[float, Tuple[float, float]] = 0.18

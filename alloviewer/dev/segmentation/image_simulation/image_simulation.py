@@ -649,27 +649,60 @@ def simulate_image(
 
     # ---------- render cells from final instance masks ----------
     final_sigmas = np.zeros(n_cells, dtype=np.float32)
+    final_sigma_fractions = np.zeros(n_cells, dtype=np.float32)
 
     for zero_i, (y, x) in enumerate(centers):
         k_id = zero_i + 1
-        base_col = base_orange if labels[zero_i] == 1 else base_green
+
+        base_col = (
+            base_orange
+            if labels[zero_i] == 1
+            else base_green
+        )
         col = jitter_color(base_col)
-        sig = rng.uniform(*sigma_in) if rng.random() < focus_frac_in else rng.uniform(*sigma_out)
-        final_sigmas[zero_i] = sig
 
         d0 = float(diameters[zero_i])
-        # The patch is kept larger than the hard mask so blur/edge softness is not clipped.
-        render_radius = int(np.ceil(max(2, 0.5 * d0 + 3.0 * sig * _CELL_RENDER_HALO_SIGMA_FACTOR)))
+
+        # sigma_in and sigma_out are fractions of cell-core diameter.
+        if rng.random() < focus_frac_in:
+            sigma_fraction = float(rng.uniform(*sigma_in))
+        else:
+            sigma_fraction = float(rng.uniform(*sigma_out))
+
+        sig = max(
+            _CELL_RENDER_MIN_SIGMA,
+            d0 * sigma_fraction,
+        )
+
+        final_sigma_fractions[zero_i] = sigma_fraction
+        final_sigmas[zero_i] = sig
+
+        render_radius = int(
+            np.ceil(
+                max(
+                    2,
+                    0.5 * d0
+                    + 3.0 * sig * _CELL_RENDER_HALO_SIGMA_FACTOR,
+                )
+            )
+        )
 
         y0, y1 = y - render_radius, y + render_radius + 1
         x0, x1 = x - render_radius, x + render_radius + 1
+
         y0c, y1c = max(0, y0), min(H, y1)
         x0c, x1c = max(0, x0), min(W, x1)
+
         if y1c <= y0c or x1c <= x0c:
             continue
 
-        sl = (slice(y0c, y1c), slice(x0c, x1c))
+        sl = (
+            slice(y0c, y1c),
+            slice(x0c, x1c),
+        )
+
         core_mask = inst[sl] == k_id
+
         if not np.any(core_mask):
             continue
 
@@ -680,8 +713,14 @@ def simulate_image(
             halo_sigma_factor=_CELL_RENDER_HALO_SIGMA_FACTOR,
             min_sigma=_CELL_RENDER_MIN_SIGMA,
         )
+
         amp = float(rng.uniform(*cell_intensity_range))
-        img[sl + (slice(None),)] += amp * render[..., None] * col[None, None, :]
+
+        img[sl + (slice(None),)] += (
+            amp
+            * render[..., None]
+            * col[None, None, :]
+        )
 
     # ---------- elongated ghosts OUTSIDE the wall (not in masks) ----------
     def draw_elliptical_gaussian(dst, gy, gx, sig_minor, stretch, angle_rad, amp, col, ref_diameter):
