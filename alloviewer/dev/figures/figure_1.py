@@ -11,7 +11,11 @@ from matplotlib.gridspec import GridSpec, SubplotSpec
 from . import figure_config as cfg
 from . import figure_utils as utils
 
-from .figure_data_generation import _read_rgb_image, make_simulation_parameter_mosaic
+from .figure_data_generation import (
+    _read_rgb_image,
+    make_simulation_parameter_mosaic,
+    SIMULATION_LABEL_Y_OFFSET
+)
 
 
 def _generate_main_figure(
