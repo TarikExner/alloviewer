@@ -47,15 +47,18 @@ def make_simulation_parameter_mosaic(
     same_seed_per_tile: bool = True,
 ) -> tuple[np.ndarray, list[dict[str, Any]]]:
     """
-    Create a 4 x 4 simulation showcase mosaic.
+    Create a 4 x 4 simulation parameter mosaic.
 
-    Each tile is generated from a full simulation image, but the crop position
-    matches the tile position in the final mosaic.
+    Each panel is generated from a full simulated image. The crop position
+    matches the panel position in the final mosaic, keeping the well ring
+    aligned between panels.
 
-    Example:
-        source image tile (row=2, col=3) -> mosaic tile (row=2, col=3)
-
-    This keeps the well ring spatially aligned across all tiles.
+    Notes
+    -----
+    - Clustering is disabled for all panels.
+    - The calibrated diameter model is disabled because several panels
+      directly test `cell_diameter`.
+    - sigma_in and sigma_out are interpreted as fractions of cell diameter.
     """
     if H != W:
         raise ValueError("This function expects H == W.")
@@ -75,11 +78,15 @@ def make_simulation_parameter_mosaic(
             return_targets=False,
             return_aux_targets=False,
 
-            # Fixed geometry. Do not vary these between panels.
+            # -------------------------------------------------------------
+            # Fixed geometry
+            # -------------------------------------------------------------
             well_radius_frac=0.46,
             well_center_jitter=0.0,
 
-            # Baseline well appearance.
+            # -------------------------------------------------------------
+            # Baseline well appearance
+            # -------------------------------------------------------------
             background_level=0.08,
             edge_boost=0.25,
             radial_gamma=1.2,
@@ -93,10 +100,16 @@ def make_simulation_parameter_mosaic(
             background_texture_strength=0.03,
             background_texture_clip=(0.1, 1.6),
 
-            # Baseline cells.
+            # -------------------------------------------------------------
+            # Baseline cells
+            # -------------------------------------------------------------
             n_cells=900,
-            cell_diameter=10.5,
 
+            # Disable calibrated bounds because some panels directly vary
+            # cell_diameter and large_cell_diameter_factor.
+            cell_diameter_bounds_by_short_side=None,
+
+            cell_diameter=10.5,
             cell_diameter_reference_short_side=1620.0,
             cell_diameter_size_exponent=0.95,
             cell_diameter_scale_clip=(0.60, 2.20),
@@ -112,16 +125,21 @@ def make_simulation_parameter_mosaic(
             frac_positive=0.5,
             color_jitter=0.08,
 
-            sigma_in=(0.9, 1.2),
-            sigma_out=(0.9, 1.2),
+            # Fractions of cell-core diameter.
+            sigma_in=(0.06, 0.10),
+            sigma_out=(0.08, 0.16),
             focus_frac_in=1.0,
             in_focus_sigma_thresh=None,
 
-            # Disable all cluster placement for this mosaic.
+            # -------------------------------------------------------------
+            # Disable clustering
+            # -------------------------------------------------------------
             cluster_enable=False,
             clustered_cell_frac=0.0,
 
-            # Baseline placement.
+            # -------------------------------------------------------------
+            # Baseline placement
+            # -------------------------------------------------------------
             rim_bias=0.70,
             rim_band=0.20,
             edge_clamp=0.30,
@@ -138,7 +156,9 @@ def make_simulation_parameter_mosaic(
             side_bias_kappa=5.0,
             side_bias_inner_frac=0.5,
 
-            # Baseline wall / artifacts.
+            # -------------------------------------------------------------
+            # Baseline wall and artifacts
+            # -------------------------------------------------------------
             wall_blur_sigma=12.0,
             ring_artifacts=1,
             ring_sigma_range=(6.0, 18.0),
@@ -173,7 +193,9 @@ def make_simulation_parameter_mosaic(
     )
 
     tile_specs = [
+        # =============================================================
         # Row 0
+        # =============================================================
         dict(
             label="ghost artifacts",
             params=dict(
@@ -226,7 +248,9 @@ def make_simulation_parameter_mosaic(
             ),
         ),
 
+        # =============================================================
         # Row 1
+        # =============================================================
         dict(
             label="side bias",
             params=dict(
@@ -272,7 +296,9 @@ def make_simulation_parameter_mosaic(
             ),
         ),
 
+        # =============================================================
         # Row 2
+        # =============================================================
         dict(
             label="class ratio",
             params=dict(
@@ -288,8 +314,11 @@ def make_simulation_parameter_mosaic(
             params=dict(
                 n_cells=800,
                 focus_frac_in=0.35,
-                sigma_in=(0.5, 1.0),
-                sigma_out=(2.5, 5.0),
+
+                # Fractions of cell diameter.
+                sigma_in=(0.05, 0.09),
+                sigma_out=(0.16, 0.30),
+
                 rim_bias=0.50,
             ),
         ),
@@ -316,7 +345,9 @@ def make_simulation_parameter_mosaic(
             ),
         ),
 
+        # =============================================================
         # Row 3
+        # =============================================================
         dict(
             label="texture",
             params=dict(
@@ -362,6 +393,12 @@ def make_simulation_parameter_mosaic(
     n_rows = 4
     n_cols = 4
 
+    if len(tile_specs) != n_rows * n_cols:
+        raise RuntimeError(
+            f"Expected {n_rows * n_cols} tile specifications, "
+            f"got {len(tile_specs)}."
+        )
+
     mosaic = np.zeros((H, W, 3), dtype=np.float32)
     tile_info: list[dict[str, Any]] = []
 
@@ -372,12 +409,17 @@ def make_simulation_parameter_mosaic(
         params = base_params.copy()
         params.update(spec["params"])
 
+        # Enforce no clusters even if a panel is edited later.
+        params["cluster_enable"] = False
+        params["clustered_cell_frac"] = 0.0
+
         if same_seed_per_tile:
             params["seed"] = seed
         else:
             params["seed"] = seed + i * 1009
 
         img, meta, _ = simulate_image(**params)
+
         img = np.asarray(img, dtype=np.float32)
         img = np.clip(img, 0.0, 1.0)
 
@@ -387,6 +429,14 @@ def make_simulation_parameter_mosaic(
         x1 = x0 + crop_size
 
         crop = img[y0:y1, x0:x1]
+
+        expected_shape = (crop_size, crop_size, 3)
+        if crop.shape != expected_shape:
+            raise RuntimeError(
+                f"Panel {spec['label']!r} produced crop shape "
+                f"{crop.shape}, expected {expected_shape}."
+            )
+
         mosaic[y0:y1, x0:x1] = crop
 
         tile_info.append(
@@ -395,7 +445,8 @@ def make_simulation_parameter_mosaic(
                 row=row,
                 col=col,
                 source_crop=(y0, y1, x0, x1),
-                params=spec["params"],
+                params=dict(params),
+                changed_params=dict(spec["params"]),
                 meta=meta,
             )
         )
