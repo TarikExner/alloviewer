@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple, Union
 
 from .types import RNG
@@ -21,6 +22,7 @@ INT_KEYS: Tuple[str, ...] = (
     "reflect_harmonics",
     "cluster_seed_tries",
     "cluster_member_tries",
+    "cluster_packed_candidate_count",
 )
 
 @dataclass
@@ -100,6 +102,22 @@ class SimulatorConfig:
     cluster_core_min_sep_factor: Union[float, Tuple[float, float]] = (0.82, 0.88)
     cluster_chain_probability: Union[float, Tuple[float, float]] = (0.25, 0.75)
     cluster_angle_jitter: Union[float, Tuple[float, float]] = (0.55, 1.10)
+
+    # Explicit lengthy-versus-packed cluster geometry. Small clusters are
+    # usually lengthy; larger clusters approach cluster_packed_probability.
+    cluster_packed_probability: Union[float, Tuple[float, float]] = (0.35, 0.70)
+    cluster_packed_size_bias_range: Tuple[int, int] = (3, 15)
+    cluster_packed_contact_factor_range: Tuple[float, float] = (0.88, 1.02)
+    cluster_packed_candidate_count: Union[int, Tuple[int, int]] = (6, 12)
+    cluster_packed_contact_bonus: Union[float, Tuple[float, float]] = (1.0, 2.0)
+
+    # A packed cluster can seed beside an earlier packed cluster. Different
+    # cluster IDs may then appear as one larger packed region.
+    cluster_packed_region_join_probability: Union[
+        float, Tuple[float, float]
+    ] = (0.20, 0.45)
+    cluster_packed_region_contact_factor_range: Tuple[float, float] = (0.95, 1.12)
+
     cluster_seed_tries: Union[int, Tuple[int, int]] = 120
     cluster_member_tries: Union[int, Tuple[int, int]] = 32
     cluster_pack_min_sep_factor: Union[float, Tuple[float, float]] = (0.82, 0.86)
@@ -140,7 +158,7 @@ class SimulatorConfig:
 
     # --- debris (inside well) ---
     dirt_density: Union[float, Tuple[float, float]] = (0.0, 0.00005)
-    dirt_size: Union[Tuple[int, int], Tuple[int, int]] = (4, 12)  # pass-through (discrete range)
+    dirt_size: Union[Tuple[int, int], Tuple[int, int]] = (1, 8)  # pass-through (discrete range)
     dirt_sigma: Union[Tuple[float, float], Tuple[float, float]] = (0.0, 2.0)  # pass-through
     dirt_alpha: Union[Tuple[float, float], Tuple[float, float]] = (0.1, 1.0) # pass-through
 
@@ -241,6 +259,13 @@ class SimulatorConfig:
         set_num("cluster_core_min_sep_factor")
         set_num("cluster_chain_probability")
         set_num("cluster_angle_jitter")
+        set_num("cluster_packed_probability")
+        set_passthrough("cluster_packed_size_bias_range")
+        set_passthrough("cluster_packed_contact_factor_range")
+        set_num("cluster_packed_candidate_count", integer=True)
+        set_num("cluster_packed_contact_bonus")
+        set_num("cluster_packed_region_join_probability")
+        set_passthrough("cluster_packed_region_contact_factor_range")
         set_num("cluster_seed_tries", integer=True)
         set_num("cluster_member_tries", integer=True)
         set_num("cluster_pack_min_sep_factor")

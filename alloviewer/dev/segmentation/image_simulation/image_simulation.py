@@ -9,6 +9,7 @@ from .utils import (
     capture_params,
     place_clustered_centers,
     sample_calibrated_cell_diameters,
+    make_wormy_dirt_patch
 )
 from ..utils import (
     make_ellipse_mask,
@@ -103,6 +104,20 @@ def simulate_image(
     cluster_core_min_sep_factor=0.80,
     cluster_chain_probability=0.70,
     cluster_angle_jitter=0.65,
+
+    # Explicit cluster geometry. Small clusters are usually lengthy; larger
+    # clusters are increasingly likely to use compact packed placement.
+    cluster_packed_probability=0.55,
+    cluster_packed_size_bias_range=(3, 15),
+    cluster_packed_contact_factor_range=(0.88, 1.02),
+    cluster_packed_candidate_count=8,
+    cluster_packed_contact_bonus=1.50,
+
+    # Packed clusters may seed beside an earlier packed cluster. Separate
+    # cluster IDs can then form one larger packed region without core overlap.
+    cluster_packed_region_join_probability=0.30,
+    cluster_packed_region_contact_factor_range=(0.95, 1.12),
+
     cluster_seed_tries=120,
     cluster_member_tries=24,
     cluster_pack_min_sep_factor=0.84,
@@ -182,8 +197,9 @@ def simulate_image(
         geometry coupled.
       - Core diameters are sampled from image-size-dependent measured bounds.
         The old power-law scaling remains available only as a fallback.
-      - Cluster placement is linear in the number of cells apart from small
-        within-cluster checks. Global overlap resolution still uses a KD-tree.
+      - Clusters explicitly use lengthy or packed placement. Packed clusters
+        score a small local candidate set and may share a larger packed region.
+        Global overlap resolution still uses a KD-tree.
       - The base render halo can be disabled; camera/acquisition halo may be added later.
       - Boundary target settings are internal constants, not user parameters.
       - focus_frac_in still affects sampled render sigmas, but the standard
@@ -457,7 +473,13 @@ def simulate_image(
     else:
         cluster_ids = np.full(n_cells, -1, dtype=np.int32)
 
-    cf, cluster_ids, cluster_edges = place_clustered_centers(
+    (
+        cf,
+        cluster_ids,
+        cluster_edges,
+        cluster_modes,
+        cluster_region_ids,
+    ) = place_clustered_centers(
         rng=rng,
         cluster_ids=cluster_ids,
         r_px=r_px,
@@ -475,6 +497,15 @@ def simulate_image(
         core_min_sep_factor=cluster_core_min_sep_factor,
         chain_probability=cluster_chain_probability,
         angle_jitter=cluster_angle_jitter,
+        packed_probability=cluster_packed_probability,
+        packed_size_bias_range=cluster_packed_size_bias_range,
+        packed_contact_factor_range=cluster_packed_contact_factor_range,
+        packed_candidate_count=cluster_packed_candidate_count,
+        packed_contact_bonus=cluster_packed_contact_bonus,
+        packed_region_join_probability=cluster_packed_region_join_probability,
+        packed_region_contact_factor_range=(
+            cluster_packed_region_contact_factor_range
+        ),
         seed_tries=cluster_seed_tries,
         member_tries=cluster_member_tries,
     )
@@ -758,23 +789,39 @@ def simulate_image(
         img[outside, 1] += (refl[outside] * bg_color[1] * 0.9).astype(np.float32)
         img[outside, 2] += (refl[outside] * bg_color[2] * 0.9).astype(np.float32)
 
-    # ---------- debris (small, dim) inside the well only ----------
+    # ---------- debris (small, dim, worm-like) inside the well only ----------
     inside_idx = np.flatnonzero(inside.ravel())
     if inside_idx.size > 0:
         n_dirt = int(inside.sum() * float(dirt_density))
+
         for _ in range(n_dirt):
             idx = int(rng.choice(inside_idx))
             ry_d, rx_d = divmod(idx, W)
 
-            rad_d = int(rng.integers(dirt_size[0], dirt_size[1] + 1))
-            patch_r = max(3, int(rad_d * rng.uniform(1.0, 1.6)))
-            y0, y1 = ry_d - patch_r, ry_d + patch_r + 1
-            x0, x1 = rx_d - patch_r, rx_d + patch_r + 1
+            base_size = int(rng.integers(dirt_size[0], dirt_size[1] + 1))
+
+            alpha_map, col = make_wormy_dirt_patch(
+                rng=rng,
+                base_size=base_size,
+                dirt_sigma=dirt_sigma,
+                dirt_alpha=dirt_alpha,
+                base_orange=base_orange,
+                base_green=base_green,
+            )
+
+            ph, pw = alpha_map.shape
+            patch_r_y = ph // 2
+            patch_r_x = pw // 2
+
+            y0, y1 = ry_d - patch_r_y, ry_d + patch_r_y + 1
+            x0, x1 = rx_d - patch_r_x, rx_d + patch_r_x + 1
+
             if y1 <= 0 or x1 <= 0 or y0 >= H or x0 >= W:
                 continue
 
             y0c, y1c = max(0, y0), min(H, y1)
             x0c, x1c = max(0, x0), min(W, x1)
+
             sy0, sy1 = y0c - y0, y1c - y0
             sx0, sx1 = x0c - x0, x1c - x0
 
@@ -783,44 +830,6 @@ def simulate_image(
                 continue
             if mask_in.mean() < 0.25 and rng.random() < 0.7:
                 continue
-
-            ps_h = y1 - y0
-            ps_w = x1 - x0
-            noise = rng.normal(0.0, 1.0, size=(ps_h, ps_w)).astype(np.float32)
-            base_sig = rng.uniform(0.8, 1.6)
-            field = blur(noise, base_sig)
-            thr_blob = np.percentile(field, rng.uniform(72.0, 90.0))
-            blob = field > thr_blob
-
-            yy_l, xx_l = np.mgrid[y0:y1, x0:x1]
-            yy_l = yy_l.astype(np.float32, copy=False)
-            xx_l = xx_l.astype(np.float32, copy=False)
-            dy = yy_l - np.float32(ry_d)
-            dx = xx_l - np.float32(rx_d)
-            r2 = (dy * dy + dx * dx).astype(np.float32)
-
-            mask_center = r2 <= (rad_d * rad_d * rng.uniform(0.9, 1.4))
-            blob = np.logical_and(blob, mask_center)
-
-            r1 = int(rng.integers(0, 2))
-            r2c = int(rng.integers(0, 2))
-            if r1 > 0:
-                blob = morphology.binary_opening(blob, footprint=morphology.disk(r1))
-            if r2c > 0:
-                blob = morphology.binary_closing(blob, footprint=morphology.disk(r2c))
-            if not blob.any():
-                continue
-
-            sig_edge = rng.uniform(*dirt_sigma)
-            alpha_soft = blur(blob.astype(np.float32), sig_edge)
-            alpha_soft = alpha_soft / (alpha_soft.max() + 1e-8)
-
-            a = rng.uniform(*dirt_alpha)
-            alpha_map = (a * alpha_soft).astype(np.float32)
-            hmix = float(rng.uniform(0.0, 1.0))
-            base_mix = ((1.0 - hmix) * base_orange + hmix * base_green).astype(np.float32)
-            bright = float(0.85 + 0.3 * rng.random())
-            col = (bright * base_mix).clip(0.0, 1.0).astype(np.float32)
 
             alpha_local = alpha_map[sy0:sy1, sx0:sx1] * mask_in.astype(np.float32)
             if alpha_local.max() <= 0:
@@ -904,8 +913,24 @@ def simulate_image(
         "cell_diameter_scale_clip": cell_diameter_scale_clip,
         "cluster_ids": cluster_ids.astype(np.int32),
         "cluster_edges": cluster_edges,
+        "cluster_modes": cluster_modes.astype(np.int8),
+        "cluster_mode_codes": {
+            -1: "isolated",
+            0: "lengthy",
+            1: "packed",
+        },
+        "cluster_region_ids": cluster_region_ids.astype(np.int32),
         "n_clusters": int(np.unique(cluster_ids[cluster_ids >= 0]).size),
         "n_clustered_cells": int(np.sum(cluster_ids >= 0)),
+        "n_lengthy_clusters": int(
+            np.unique(cluster_ids[cluster_modes == 0]).size
+        ),
+        "n_packed_clusters": int(
+            np.unique(cluster_ids[cluster_modes == 1]).size
+        ),
+        "n_packed_regions": int(
+            np.unique(cluster_region_ids[cluster_region_ids >= 0]).size
+        ),
         "final_sigmas": final_sigmas,
         "target_keep_ids": keep_ids.astype(np.int32),
         "params": all_params,
