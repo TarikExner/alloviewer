@@ -117,6 +117,10 @@ def make_simulation_parameter_mosaic(
             focus_frac_in=1.0,
             in_focus_sigma_thresh=None,
 
+            # Disable all cluster placement for this mosaic.
+            cluster_enable=False,
+            clustered_cell_frac=0.0,
+
             # Baseline placement.
             rim_bias=0.70,
             rim_band=0.20,

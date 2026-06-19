@@ -311,134 +311,419 @@ def plot_real_and_synthetic_pca(
     utils.adjust_fontsize_ticklabels(ax, cfg.AXIS_LABEL_SIZE)
 
 
-def _get_simulated_image():
-    sim_img, _, targets = simulate_image(
-        H=1024,
-        W=1300,
+def make_simulation_parameter_mosaic(
+    H: int = SIMULATION_IMAGE_SIZE,
+    W: int = SIMULATION_IMAGE_SIZE,
+    crop_size: int = SIMULATION_TILE_SIZE,
+    seed: int = SIMULATION_SEED,
+    same_seed_per_tile: bool = True,
+) -> tuple[np.ndarray, list[dict[str, Any]]]:
+    """
+    Create a 4 x 4 simulation parameter mosaic.
 
-        well_radius_frac=0.42,
-        well_center_jitter=0.02,
+    Each panel is generated from a full simulated image. The crop position
+    matches the panel position in the final mosaic, keeping the well ring
+    aligned between panels.
 
-        background_level=0.08,
-        edge_boost=0.22,
-        radial_gamma=1.2,
-        vignette_strength=0.12,
+    Notes
+    -----
+    - Clustering is disabled for all panels.
+    - The calibrated diameter model is disabled because several panels
+      directly test `cell_diameter`.
+    - sigma_in and sigma_out are interpreted as fractions of cell diameter.
+    """
+    if H != W:
+        raise ValueError("This function expects H == W.")
 
-        # cell count
-        n_cells=900,
+    if H != 4 * crop_size:
+        raise ValueError("Use H = W = 4 * crop_size.")
 
-        # use the calibrated diameter model, not the old fixed diameter
-        cell_diameter_bounds_by_short_side=(
-            (1024.0, 7.0, 10.0),
-            (1620.0, 7.0, 11.0),
-            (3024.0, 11.0, 15.0),
-        ),
-        cell_diameter_center_margin_frac=0.20,
-        cell_diameter_sigma_frac=0.18,
-        cell_diameter_min_sigma_px=0.25,
+    rng = np.random.default_rng(seed)
 
-        # legacy diameter fields are ignored when bounds are given,
-        # but keep them harmless
-        cell_diameter=10,
+    base_cfg = img_export_scene()
+    base_params = base_cfg.sample_kwargs(rng)
 
-        large_cell_frac=0.0,
-        large_cell_diameter_factor=1.5,
+    base_params.update(
+        dict(
+            H=H,
+            W=W,
+            return_targets=False,
+            return_aux_targets=False,
 
-        cell_ellipse_enable=True,
-        cell_axis_jitter=0.20,
-        cell_random_rotation=True,
-        cell_intensity_range=(0.70, 1.05),
+            # -------------------------------------------------------------
+            # Fixed geometry
+            # -------------------------------------------------------------
+            well_radius_frac=0.46,
+            well_center_jitter=0.0,
 
-        frac_positive=0.2,
-        color_jitter=0.07,
+            # -------------------------------------------------------------
+            # Baseline well appearance
+            # -------------------------------------------------------------
+            background_level=0.08,
+            edge_boost=0.25,
+            radial_gamma=1.2,
+            vignette_strength=0.20,
 
-        # these are fractions of the core diameter
-        sigma_in=(0.06, 0.10),
-        sigma_out=(0.08, 0.16),
-        focus_frac_in=0.90,
-        in_focus_sigma_thresh=None,
+            background_texture_enable=True,
+            background_texture_sigma_fine=0.6,
+            background_texture_sigma_coarse=2.0,
+            background_texture_fine_weight=0.95,
+            background_texture_coarse_weight=0.04,
+            background_texture_strength=0.03,
+            background_texture_clip=(0.1, 1.6),
 
-        boundary_width=1,
+            # -------------------------------------------------------------
+            # Baseline cells
+            # -------------------------------------------------------------
+            n_cells=900,
 
-        rim_bias=0.60,
-        rim_band=0.2,
-        edge_clamp=0.35,
+            # Disable calibrated bounds because some panels directly vary
+            # cell_diameter and large_cell_diameter_factor.
+            cell_diameter_bounds_by_short_side=None,
 
-        # clustering
-        cluster_enable=True,
-        clustered_cell_frac=0.55,
-        cluster_size_range=(2, 24),
+            cell_diameter=10.5,
+            cell_diameter_reference_short_side=1620.0,
+            cell_diameter_size_exponent=0.95,
+            cell_diameter_scale_clip=(0.60, 2.20),
 
-        # slightly spaced, but still packed enough
-        cluster_contact_factor_range=(1.00, 1.12),
-        cluster_core_min_sep_factor=0.95,
-        cluster_chain_probability=0.50,
-        cluster_angle_jitter=0.85,
+            large_cell_frac=0.10,
+            large_cell_diameter_factor=1.5,
 
-        # mix of packed and lengthy clusters
-        cluster_packed_probability=0.55,
-        cluster_packed_size_bias_range=(3, 15),
-        cluster_packed_contact_factor_range=(0.98, 1.08),
-        cluster_packed_candidate_count=8,
-        cluster_packed_contact_bonus=1.5,
-        cluster_packed_region_join_probability=0.25,
-        cluster_packed_region_contact_factor_range=(1.00, 1.10),
+            cell_ellipse_enable=True,
+            cell_axis_jitter=0.12,
+            cell_random_rotation=True,
+            cell_intensity_range=(0.70, 1.05),
 
-        cluster_seed_tries=120,
-        cluster_member_tries=32,
-        cluster_pack_min_sep_factor=0.95,
+            frac_positive=0.5,
+            color_jitter=0.08,
 
-        min_cell_sep_px=None,
-        rim_min_sep_px=20,
-        pack_iters=20,
-        pack_strength=0.5,
-        wall_margin_px=2.0,
+            # Fractions of cell-core diameter.
+            sigma_in=(0.06, 0.10),
+            sigma_out=(0.08, 0.16),
+            focus_frac_in=1.0,
+            in_focus_sigma_thresh=None,
 
-        side_bias_enable=True,
-        side_bias_theta=1.0,
-        side_bias_strength=0.75,
-        side_bias_kappa=5.0,
-        side_bias_inner_frac=0.55,
+            # -------------------------------------------------------------
+            # Disable clustering
+            # -------------------------------------------------------------
+            cluster_enable=False,
+            clustered_cell_frac=0.0,
 
-        wall_blur_sigma=10.0,
-        ring_artifacts=0,
-        ring_sigma_range=(6.0, 14.0),
-        ring_alpha_range=(0.02, 0.08),
+            # -------------------------------------------------------------
+            # Baseline placement
+            # -------------------------------------------------------------
+            rim_bias=0.70,
+            rim_band=0.20,
+            edge_clamp=0.30,
 
-        # keep ghosts, but make them less aggressive
-        ghost_enable=True,
-        ghost_density=0.03,
-        ghost_offset_px=20.0,
-        ghost_offset_jitter=4.0,
-        ghost_sigma=(2.5, 5.0),
-        ghost_dilate=1.0,
-        ghost_intensity=(0.03, 0.08),
-        ghost_stretch=2.0,
-        ghost_trail=2,
-        ghost_trail_decay=0.6,
+            min_cell_sep_px=None,
+            rim_min_sep_px=8,
+            pack_iters=15,
+            pack_strength=0.45,
+            wall_margin_px=5.0,
 
-        # keep dirt subtle
-        dirt_density=0.00015,
-        dirt_size=(2, 4),
-        dirt_sigma=(0.8, 1.4),
-        dirt_alpha=(0.01, 0.035),
+            side_bias_enable=False,
+            side_bias_theta=0.0,
+            side_bias_strength=0.70,
+            side_bias_kappa=5.0,
+            side_bias_inner_frac=0.5,
 
-        # reflections toned down
-        reflect_enable=True,
-        reflect_n=3,
-        reflect_theta_sigma=0.08,
-        reflect_radial_sigma=7.0,
-        reflect_offset_range=(6.0, 18.0),
-        reflect_alpha_range=(0.02, 0.08),
-        reflect_wobble=0.25,
-        reflect_harmonics=2,
-        reflect_harmonic_decay=0.55,
+            # -------------------------------------------------------------
+            # Baseline wall and artifacts
+            # -------------------------------------------------------------
+            wall_blur_sigma=12.0,
+            ring_artifacts=1,
+            ring_sigma_range=(6.0, 18.0),
+            ring_alpha_range=(0.01, 0.10),
 
-        seed=187,
-        return_targets=True,
+            ghost_enable=True,
+            ghost_density=0.25,
+            ghost_offset_px=25.0,
+            ghost_offset_jitter=5.0,
+            ghost_sigma=(2.5, 6.0),
+            ghost_dilate=1.0,
+            ghost_intensity=(0.02, 0.08),
+            ghost_stretch=1.5,
+            ghost_trail=2,
+            ghost_trail_decay=0.6,
+
+            dirt_density=0.00002,
+            dirt_size=(4, 12),
+            dirt_sigma=(0.0, 2.0),
+            dirt_alpha=(0.1, 1.0),
+
+            reflect_enable=True,
+            reflect_n=4,
+            reflect_theta_sigma=0.12,
+            reflect_radial_sigma=10.0,
+            reflect_offset_range=(10.0, 70.0),
+            reflect_alpha_range=(0.05, 0.16),
+            reflect_wobble=0.4,
+            reflect_harmonics=2,
+            reflect_harmonic_decay=0.55,
+        )
     )
 
-    return sim_img, targets
+    tile_specs = [
+        # =============================================================
+        # Row 0
+        # =============================================================
+        dict(
+            label="ghost artifacts",
+            params=dict(
+                ghost_enable=True,
+                ghost_density=1.0,
+                ghost_offset_px=35.0,
+                ghost_offset_jitter=8.0,
+                ghost_intensity=(0.12, 0.30),
+                ghost_stretch=3.0,
+                ghost_trail=3,
+            ),
+        ),
+        dict(
+            label="wall reflections",
+            params=dict(
+                n_cells=700,
+                reflect_enable=True,
+                reflect_n=18,
+                reflect_theta_sigma=0.24,
+                reflect_radial_sigma=20.0,
+                reflect_offset_range=(6.0, 45.0),
+                reflect_alpha_range=(0.25, 0.45),
+                reflect_wobble=0.9,
+                reflect_harmonics=4,
+                reflect_harmonic_decay=0.75,
+                ghost_density=0.05,
+                ring_artifacts=0,
+            ),
+        ),
+        dict(
+            label="wall artifacts",
+            params=dict(
+                n_cells=750,
+                wall_blur_sigma=24.0,
+                ring_artifacts=7,
+                ring_sigma_range=(4.0, 14.0),
+                ring_alpha_range=(0.16, 0.30),
+                reflect_n=2,
+                ghost_density=0.05,
+            ),
+        ),
+        dict(
+            label="illumination falloff",
+            params=dict(
+                background_level=0.035,
+                edge_boost=0.15,
+                radial_gamma=1.8,
+                vignette_strength=0.80,
+                n_cells=450,
+            ),
+        ),
+
+        # =============================================================
+        # Row 1
+        # =============================================================
+        dict(
+            label="side bias",
+            params=dict(
+                side_bias_enable=True,
+                side_bias_theta=np.pi,
+                side_bias_strength=0.90,
+                side_bias_kappa=8.0,
+                side_bias_inner_frac=0.45,
+                rim_bias=0.90,
+                rim_band=0.25,
+                n_cells=1100,
+            ),
+        ),
+        dict(
+            label="cell diameter",
+            params=dict(
+                n_cells=280,
+                cell_diameter=18.0,
+                large_cell_frac=0.0,
+                rim_bias=0.35,
+                pack_iters=20,
+            ),
+        ),
+        dict(
+            label="cell count",
+            params=dict(
+                n_cells=2000,
+                cell_diameter=7.0,
+                large_cell_frac=0.0,
+                rim_bias=0.55,
+                rim_band=0.20,
+                edge_clamp=0.25,
+                pack_iters=20,
+            ),
+        ),
+        dict(
+            label="rim bias",
+            params=dict(
+                n_cells=1200,
+                rim_bias=0.95,
+                rim_band=0.45,
+                edge_clamp=0.65,
+            ),
+        ),
+
+        # =============================================================
+        # Row 2
+        # =============================================================
+        dict(
+            label="class ratio",
+            params=dict(
+                n_cells=700,
+                frac_positive=0.98,
+                color_jitter=0.03,
+                large_cell_frac=0.0,
+                rim_bias=0.45,
+            ),
+        ),
+        dict(
+            label="cell focus",
+            params=dict(
+                n_cells=800,
+                focus_frac_in=0.35,
+
+                # Fractions of cell diameter.
+                sigma_in=(0.05, 0.09),
+                sigma_out=(0.16, 0.30),
+
+                rim_bias=0.50,
+            ),
+        ),
+        dict(
+            label="large cells",
+            params=dict(
+                n_cells=650,
+                cell_diameter=10.5,
+                large_cell_frac=0.45,
+                large_cell_diameter_factor=2.0,
+                rim_bias=0.50,
+            ),
+        ),
+        dict(
+            label="debris",
+            params=dict(
+                n_cells=250,
+                dirt_density=0.0012,
+                dirt_size=(4, 14),
+                dirt_sigma=(0.4, 1.6),
+                dirt_alpha=(0.75, 1.0),
+                rim_bias=0.25,
+                background_texture_strength=0.015,
+            ),
+        ),
+
+        # =============================================================
+        # Row 3
+        # =============================================================
+        dict(
+            label="texture",
+            params=dict(
+                n_cells=180,
+                background_texture_enable=True,
+                background_texture_sigma_fine=0.8,
+                background_texture_sigma_coarse=4.0,
+                background_texture_fine_weight=0.55,
+                background_texture_coarse_weight=0.45,
+                background_texture_strength=0.18,
+                background_texture_clip=(0.05, 2.0),
+                rim_bias=0.20,
+            ),
+        ),
+        dict(
+            label="radial brightness",
+            params=dict(
+                n_cells=600,
+                background_level=0.04,
+                edge_boost=0.50,
+                radial_gamma=0.75,
+            ),
+        ),
+        dict(
+            label="cell shape",
+            params=dict(
+                n_cells=420,
+                cell_diameter=15.0,
+                cell_ellipse_enable=True,
+                cell_axis_jitter=0.65,
+                cell_random_rotation=True,
+                large_cell_frac=0.0,
+                rim_bias=0.35,
+                pack_iters=20,
+            ),
+        ),
+        dict(
+            label="baseline",
+            params=dict(),
+        ),
+    ]
+
+    n_rows = 4
+    n_cols = 4
+
+    if len(tile_specs) != n_rows * n_cols:
+        raise RuntimeError(
+            f"Expected {n_rows * n_cols} tile specifications, "
+            f"got {len(tile_specs)}."
+        )
+
+    mosaic = np.zeros((H, W, 3), dtype=np.float32)
+    tile_info: list[dict[str, Any]] = []
+
+    for i, spec in enumerate(tile_specs):
+        row = i // n_cols
+        col = i % n_cols
+
+        params = base_params.copy()
+        params.update(spec["params"])
+
+        # Enforce no clusters even if a panel is edited later.
+        params["cluster_enable"] = False
+        params["clustered_cell_frac"] = 0.0
+
+        if same_seed_per_tile:
+            params["seed"] = seed
+        else:
+            params["seed"] = seed + i * 1009
+
+        img, meta, _ = simulate_image(**params)
+
+        img = np.asarray(img, dtype=np.float32)
+        img = np.clip(img, 0.0, 1.0)
+
+        y0 = row * crop_size
+        y1 = y0 + crop_size
+        x0 = col * crop_size
+        x1 = x0 + crop_size
+
+        crop = img[y0:y1, x0:x1]
+
+        expected_shape = (crop_size, crop_size, 3)
+        if crop.shape != expected_shape:
+            raise RuntimeError(
+                f"Panel {spec['label']!r} produced crop shape "
+                f"{crop.shape}, expected {expected_shape}."
+            )
+
+        mosaic[y0:y1, x0:x1] = crop
+
+        tile_info.append(
+            dict(
+                label=spec["label"],
+                row=row,
+                col=col,
+                source_crop=(y0, y1, x0, x1),
+                params=dict(params),
+                changed_params=dict(spec["params"]),
+                meta=meta,
+            )
+        )
+
+    return mosaic, tile_info
 
 
 def _build_quantile_folders(ext_images_dir: str | Path) -> list[str]:
