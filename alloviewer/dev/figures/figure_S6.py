@@ -89,7 +89,7 @@ def _generate_main_figure(
         # 2x5 grid: row 0 = image + GT masks, row 1 = image + predicted masks
         fig_sgs = gs.subgridspec(2, 5, wspace=0.04, hspace=0.10)
     
-        titles = ["image", "cell mask", "cell boundary", "cell centers", "energy"]
+        titles = ["Image", "Cell mask", "Cell boundary", "Cell centers", "Energy"]
         pred_keys = ["cell", "bound", "center", "energy"]
     
         # inset settings

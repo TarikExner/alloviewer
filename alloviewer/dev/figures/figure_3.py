@@ -76,6 +76,51 @@ INSET_COORDS = {
     "monochrome_segmentation": (140, 498),
 }
 
+PANEL_A_MICROSCOPY_PIXEL_SIZE_UM = 1.32
+PANEL_A_SCALE_BAR_UM = 20.0
+PANEL_A_SCALE_BAR_MARGIN_PX = 6
+PANEL_A_SCALE_BAR_THICKNESS_PX = 6
+
+
+def _add_scale_bar_to_image(
+    image: np.ndarray,
+    *,
+    length_um: float = PANEL_A_SCALE_BAR_UM,
+    pixel_size_um: float = PANEL_A_MICROSCOPY_PIXEL_SIZE_UM,
+    margin_px: int = PANEL_A_SCALE_BAR_MARGIN_PX,
+    thickness_px: int = PANEL_A_SCALE_BAR_THICKNESS_PX,
+) -> np.ndarray:
+    """Return a copy of `image` with a white bottom-right scale bar."""
+    out = np.asarray(image).copy()
+
+    if out.ndim not in (2, 3):
+        raise ValueError(f"Expected 2D or HWC image, got shape {out.shape}.")
+
+    h, w = out.shape[:2]
+    length_px = max(1, int(round(length_um / pixel_size_um)))
+
+    if length_px + 2 * margin_px > w:
+        raise ValueError(
+            f"Scale bar is too wide for image width {w}: "
+            f"length_px={length_px}, margin_px={margin_px}."
+        )
+
+    x1 = w - int(margin_px)
+    x0 = x1 - length_px
+    y1 = h - int(margin_px)
+    y0 = y1 - int(thickness_px)
+
+    white = 255 if np.issubdtype(out.dtype, np.integer) else 1.0
+
+    if out.ndim == 2:
+        out[y0:y1, x0:x1] = white
+    else:
+        out[y0:y1, x0:x1, :3] = white
+        if out.shape[-1] == 4:
+            out[y0:y1, x0:x1, 3] = white
+
+    return out
+
 
 def _as_instance_cfg(cfg_inst: Any) -> Any:
     if isinstance(cfg_inst, InstanceSegmenterConfig):
@@ -422,7 +467,12 @@ def _add_inset_overlay(
     axins.set_yticks([])
 
     for spine in axins.spines.values():
-        spine.set_edgecolor(INSET_BORDER_COLOR)
+        assert isinstance(title, str)
+        spine.set_edgecolor(
+            INSET_BORDER_COLOR
+            if "monochrome" not in title
+            else "white"
+        )
         spine.set_linewidth(INSET_BORDER_LINEWIDTH)
 
     if title is not None:
@@ -693,7 +743,9 @@ def _generate_main_figure(
         fig_sgs = gs.subgridspec(2, 4)
         axes_a = fig_sgs.subplots()
 
-        show_panel(axes_a[0, 0], img_disp, "original")
+        img_disp_with_scale_bar = _add_scale_bar_to_image(img_disp)
+
+        show_panel(axes_a[0, 0], img_disp_with_scale_bar, "original")
         show_panel(axes_a[0, 1], steps["p_cell"], "cell prob. $p_{cell}$", cmap="viridis")
         show_panel(axes_a[0, 2], steps["mask"], "hysteresis mask", cmap="gray")
         show_panel(axes_a[0, 3], steps["dist_s"], "distance", cmap="magma")
@@ -724,7 +776,9 @@ def _generate_main_figure(
         fig_sgs = gs.subgridspec(1, 3)
         axes_b = fig_sgs.subplots()
 
-        show_panel(axes_b[0], img_disp, "original")
+        img_disp_with_scale_bar = _add_scale_bar_to_image(img_disp)
+
+        show_panel(axes_b[0], img_disp_with_scale_bar, "original")
 
         axes_b[1].imshow(inst_baseline_rgb)
         axes_b[1].set_title(
@@ -797,7 +851,7 @@ def _generate_main_figure(
             data=plot_df,
             x_col="human_roi_count",
             y_col="predicted_roi_count",
-            title="UNet and NCISP performance on\nhuman annotated images",
+            title="UNet and NCISP performance on\nhuman annotated real images",
             xlabel="Human ROI count",
             ylabel="Predicted ROI count",
             hue_col="method",
@@ -827,7 +881,7 @@ def _generate_main_figure(
             data=plot_df,
             x_col="n_cells_gt_instances",
             y_col="n_cells_pred_instances",
-            title="UNet comparison to NCISP on\nsimulated images",
+            title="UNet comparison to NCISP on\nvariable simulated images",
             xlabel="n_cells ground truth",
             ylabel="n_cells predicted",
             hue_col="dataset_mode",
@@ -900,27 +954,27 @@ def _generate_main_figure(
             (
                 sim_seg,
                 inset_coords["simulated_segmentation"],
-                f"{cfg.PHONE_DICT['Simulated']}\nsegmentation",
+                f"{cfg.PHONE_DICT['Simulated']}\nSegmentation",
             ),
             (
                 micro_seg,
                 inset_coords["microscopy_segmentation"],
-                f"{cfg.PHONE_DICT['Microscope']}\nsegmentation",
+                f"{cfg.PHONE_DICT['Microscope']}\nSegmentation",
             ),
             (
                 gpixel_seg,
                 inset_coords["googlepixel_segmentation"],
-                f"{cfg.PHONE_DICT['GooglePixel']}\nsegmentation",
+                f"{cfg.PHONE_DICT['GooglePixel']}\nSegmentation",
             ),
             (
                 iphone_seg,
                 inset_coords["iphone_segmentation"],
-                f"{cfg.PHONE_DICT['iPhone']}\nsegmentation",
+                f"{cfg.PHONE_DICT['iPhone']}\nSegmentation",
             ),
             (
                 mono_seg,
                 inset_coords["monochrome_segmentation"],
-                f"{cfg.PHONE_DICT['Monochrome']}\nsegmentation",
+                f"{cfg.PHONE_DICT['Monochrome']}\nSegmentation",
             ),
         ]
 

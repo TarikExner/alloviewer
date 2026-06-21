@@ -603,7 +603,7 @@ def _generate_subfigure_b(
         frameon=False,
         fontsize=max(cfg.AXIS_LABEL_SIZE, 7),
     )
-    ax_legend.set_title("Legend", fontsize=cfg.TITLE_SIZE, pad=2)
+    ax_legend.set_title("", fontsize=cfg.TITLE_SIZE, pad=2)
 
     t_panel = next(p for p in panels if p["name"] == "t_cells")
     t_gt_mask = np.asarray(t_panel["gt_mask"], dtype=bool)

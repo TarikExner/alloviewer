@@ -98,7 +98,7 @@ def _generate_main_figure(
         # Keep tile-level visual display.
         fig_sgs = gs.subgridspec(3, 5, wspace=0.04, hspace=0.10)
 
-        titles = ["image", "cell mask", "cell boundary", "cell centers", "energy"]
+        titles = ["Image", "Cell mask", "Cell boundary", "Cell centers", "Energy"]
         pred_keys = ["cell", "bound", "center", "energy"]
 
         inset_centers = (300, 300)
