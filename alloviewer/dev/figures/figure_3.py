@@ -1,6 +1,6 @@
 import os
 import copy
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 
 import numpy as np
 import pandas as pd
@@ -644,8 +644,8 @@ def prepare_model_evaluation_panel_data(
     model_output_dir: str,
     *,
     model_file: str = "best_small_tiles_S512_seed187.pth",
-    unet_size: str = "small",
-    comparison_images: str = "tiles",
+    unet_size: Literal["small", "medium", "large"] = "small",
+    comparison_images: Literal["external_images", "tiles"] = "tiles",
     redo_analysis: bool = False,
 ) -> dict[str, Any]:
     image_cache_path = os.path.join(
