@@ -77,9 +77,9 @@ INSET_COORDS = {
 }
 
 PANEL_A_MICROSCOPY_PIXEL_SIZE_UM = 1.32
-PANEL_A_SCALE_BAR_UM = 20.0
+PANEL_A_SCALE_BAR_UM = 50.0
 PANEL_A_SCALE_BAR_MARGIN_PX = 6
-PANEL_A_SCALE_BAR_THICKNESS_PX = 6
+PANEL_A_SCALE_BAR_THICKNESS_PX = 4
 
 
 def _add_scale_bar_to_image(
@@ -466,17 +466,21 @@ def _add_inset_overlay(
     axins.set_xticks([])
     axins.set_yticks([])
 
+    assert title is not None
+
+    if "monochrome" in title.lower() and "segmentation" not in title.lower():
+        inset_color = "white"
+    else:
+        inset_color = INSET_BORDER_COLOR
+
     for spine in axins.spines.values():
         assert isinstance(title, str)
         spine.set_edgecolor(
-            INSET_BORDER_COLOR
-            if "monochrome" not in title.lower()
-            else "white"
+            inset_color
         )
         spine.set_linewidth(INSET_BORDER_LINEWIDTH)
 
-    if title is not None:
-        ax.set_title(title, fontsize=cfg.TITLE_SIZE)
+    ax.set_title(title, fontsize=cfg.TITLE_SIZE)
 
     ax.set_xticks([])
     ax.set_yticks([])
