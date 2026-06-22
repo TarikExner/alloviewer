@@ -470,7 +470,7 @@ def _add_inset_overlay(
         assert isinstance(title, str)
         spine.set_edgecolor(
             INSET_BORDER_COLOR
-            if "monochrome" not in title
+            if "monochrome" not in title.lower()
             else "white"
         )
         spine.set_linewidth(INSET_BORDER_LINEWIDTH)
