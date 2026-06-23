@@ -27,6 +27,15 @@ DEFAULT_MODEL_DIR = "./models"
 DEFAULT_H5_PATH = "./image_datasets/human_annotated_images.h5"
 DEFAULT_HUMAN_CSV_DIR = "./human_annotations"
 
+# Epoch filter defaults.
+#
+# Because later checkpoints can over-optimize to the simulator distribution,
+# the default helper run only considers checkpoints up to epoch 40.
+# Set DEFAULT_MAX_EPOCH = None, or pass max_epoch=None, to include all epochs.
+DEFAULT_INCLUDE_EPOCHS: Optional[Sequence[int]] = None
+DEFAULT_MIN_EPOCH: Optional[int] = None
+DEFAULT_MAX_EPOCH: Optional[int] = 100
+
 _EPOCH_RE = re.compile(r"(?:^|[_-])epoch[_-]?(\d+)(?:\D|$)", re.IGNORECASE)
 
 
@@ -44,11 +53,88 @@ def epoch_model_pattern(unet_mode: str) -> str:
     return f"{unet_mode}_*_epoch_*.pth"
 
 
+def _sort_model_paths_by_epoch(paths: Sequence[str]) -> List[str]:
+    """Sort checkpoint paths by parsed epoch, then filename."""
+    return sorted(
+        [str(p) for p in paths],
+        key=lambda p: (
+            parse_epoch_from_model_file(p)
+            if parse_epoch_from_model_file(p) is not None
+            else 10**12,
+            os.path.basename(p),
+        ),
+    )
+
+
+def filter_model_paths_by_epoch(
+    model_paths: Sequence[str],
+    *,
+    include_epochs: Optional[Sequence[int]] = None,
+    min_epoch: Optional[int] = None,
+    max_epoch: Optional[int] = None,
+) -> List[str]:
+    """
+    Filter checkpoint paths by parsed epoch.
+
+    Parameters
+    ----------
+    model_paths:
+        Checkpoint paths.
+    include_epochs:
+        Optional explicit set/list of epochs to keep, e.g. [5, 10, 15, 20, 25, 30, 35, 40].
+        If provided, only these epochs are kept.
+    min_epoch:
+        Optional lower epoch bound, inclusive.
+    max_epoch:
+        Optional upper epoch bound, inclusive.
+
+    Notes
+    -----
+    The filters are combined. For example:
+      include_epochs=[10, 20, 30, 40], max_epoch=30
+    keeps only epochs 10, 20, and 30.
+    """
+    include_set = None
+    if include_epochs is not None:
+        include_set = {int(e) for e in include_epochs}
+
+    out: List[str] = []
+
+    for p in model_paths:
+        ep = parse_epoch_from_model_file(p)
+        if ep is None:
+            continue
+
+        if include_set is not None and ep not in include_set:
+            continue
+
+        if min_epoch is not None and ep < int(min_epoch):
+            continue
+
+        if max_epoch is not None and ep > int(max_epoch):
+            continue
+
+        out.append(str(p))
+
+    out = _sort_model_paths_by_epoch(out)
+
+    if not out:
+        raise FileNotFoundError(
+            "No checkpoint files remained after epoch filtering. "
+            f"include_epochs={include_epochs}, min_epoch={min_epoch}, max_epoch={max_epoch}"
+        )
+
+    return out
+
+
 def find_epoch_model_files(
     model_dir: str,
     *,
     unet_mode: Literal["small", "medium", "large"] = DEFAULT_UNET_MODE,
     model_pattern: Optional[str] = None,
+    include_epochs: Optional[Sequence[int]] = None,
+    min_epoch: Optional[int] = None,
+    max_epoch: Optional[int] = None,
 ) -> List[str]:
     """
     Find saved epoch checkpoints for one UNet size.
@@ -57,23 +143,26 @@ def find_epoch_model_files(
       small_*_epoch_0050.pth
 
     It does not include best_*.pth checkpoints.
+
+    Epoch filtering is applied after file discovery.
     """
     pattern = model_pattern or epoch_model_pattern(unet_mode)
     paths = glob.glob(os.path.join(model_dir, pattern))
 
     epoch_paths = [p for p in paths if parse_epoch_from_model_file(p) is not None]
-    epoch_paths = sorted(
-        epoch_paths,
-        key=lambda p: (
-            parse_epoch_from_model_file(p),
-            os.path.basename(p),
-        ),
-    )
+    epoch_paths = _sort_model_paths_by_epoch(epoch_paths)
 
     if not epoch_paths:
         raise FileNotFoundError(
             f"No epoch model files matching pattern '{pattern}' were found in {model_dir}."
         )
+
+    epoch_paths = filter_model_paths_by_epoch(
+        epoch_paths,
+        include_epochs=include_epochs,
+        min_epoch=min_epoch,
+        max_epoch=max_epoch,
+    )
 
     return epoch_paths
 
@@ -290,6 +379,9 @@ def compare_human_counts_for_epoch_models(
     unet_mode: Literal["small", "medium", "large"] = DEFAULT_UNET_MODE,
     model_pattern: Optional[str] = None,
     model_paths: Optional[Sequence[str]] = None,
+    include_epochs: Optional[Sequence[int]] = DEFAULT_INCLUDE_EPOCHS,
+    min_epoch: Optional[int] = DEFAULT_MIN_EPOCH,
+    max_epoch: Optional[int] = DEFAULT_MAX_EPOCH,
     segmenter_cfg: Optional[SegmenterConfig] = None,
     selection_metric: str = "mae",
     update_cell_mask: bool = False,
@@ -303,6 +395,26 @@ def compare_human_counts_for_epoch_models(
       - selected_model.json
 
     The default selects the checkpoint with lowest MAE versus human counts.
+
+    Epoch filtering
+    ---------------
+    include_epochs:
+        Optional explicit epochs to include.
+    min_epoch:
+        Optional lower epoch bound, inclusive.
+    max_epoch:
+        Optional upper epoch bound, inclusive.
+
+    Examples
+    --------
+    Include only epochs up to 40:
+        compare_human_counts_for_epoch_models(max_epoch=40)
+
+    Include specific checkpoints:
+        compare_human_counts_for_epoch_models(include_epochs=[5, 10, 15, 20, 25, 30, 35, 40])
+
+    Include all checkpoints:
+        compare_human_counts_for_epoch_models(max_epoch=None)
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -311,15 +423,17 @@ def compare_human_counts_for_epoch_models(
             model_dir,
             unet_mode=unet_mode,
             model_pattern=model_pattern,
+            include_epochs=include_epochs,
+            min_epoch=min_epoch,
+            max_epoch=max_epoch,
         )
     else:
-        model_paths = [str(p) for p in model_paths]
-        model_paths = sorted(
+        model_paths = _sort_model_paths_by_epoch([str(p) for p in model_paths])
+        model_paths = filter_model_paths_by_epoch(
             model_paths,
-            key=lambda p: (
-                parse_epoch_from_model_file(p),
-                os.path.basename(p),
-            ),
+            include_epochs=include_epochs,
+            min_epoch=min_epoch,
+            max_epoch=max_epoch,
         )
 
     human_df = load_human_roi_counts(human_csv_dir).copy()
@@ -327,6 +441,12 @@ def compare_human_counts_for_epoch_models(
     human_df["image_name"] = human_df["image_name"].astype(str)
 
     prediction_tables: List[pd.DataFrame] = []
+
+    print(
+        "Running human-count checkpoint comparison with "
+        f"{len(model_paths)} checkpoint(s). "
+        f"include_epochs={include_epochs}, min_epoch={min_epoch}, max_epoch={max_epoch}"
+    )
 
     for model_path in model_paths:
         pred_df = run_one_model_on_h5(
@@ -366,10 +486,19 @@ def compare_human_counts_for_epoch_models(
     summary.to_csv(summary_csv, index=False)
 
     selected = summary.loc[summary["selected"]].head(1)
+    epoch_filter_info = {
+        "include_epochs": None if include_epochs is None else [int(e) for e in include_epochs],
+        "min_epoch": None if min_epoch is None else int(min_epoch),
+        "max_epoch": None if max_epoch is None else int(max_epoch),
+        "n_model_paths": int(len(model_paths)),
+        "model_files": [os.path.basename(p) for p in model_paths],
+    }
+
     if selected.empty:
         selected_info: Dict[str, Any] = {
             "selection_metric": selection_metric,
             "unet_mode": unet_mode,
+            "epoch_filter": epoch_filter_info,
             "selected": None,
             "reason": "No model had a finite selection metric.",
         }
@@ -378,6 +507,7 @@ def compare_human_counts_for_epoch_models(
         selected_info = {
             "selection_metric": selection_metric,
             "unet_mode": unet_mode,
+            "epoch_filter": epoch_filter_info,
             "selected_epoch": None if pd.isna(row.get("epoch")) else int(row["epoch"]),
             "selected_model_file": row.get("model_file"),
             "selected_model_path": row.get("model_path"),
@@ -408,7 +538,16 @@ def compare_human_counts_for_epoch_models(
 
 def run_epoch_model_human_count_comparison(
     unet_mode: Literal["small", "medium", "large"] = DEFAULT_UNET_MODE,
+    include_epochs: Optional[Sequence[int]] = DEFAULT_INCLUDE_EPOCHS,
+    min_epoch: Optional[int] = DEFAULT_MIN_EPOCH,
+    max_epoch: Optional[int] = DEFAULT_MAX_EPOCH,
 ):
+    """
+    Convenience runner.
+
+    Defaults to max_epoch=40 via DEFAULT_MAX_EPOCH.
+    Pass max_epoch=None to include all epoch checkpoints.
+    """
     cfg = SegmenterConfig(
         unet_mode=unet_mode,
         model_dir=DEFAULT_MODEL_DIR,
@@ -430,6 +569,9 @@ def run_epoch_model_human_count_comparison(
         output_dir=DEFAULT_OUTPUT_DIR,
         unet_mode=unet_mode,
         model_pattern=None,  # defaults to f"{unet_mode}_*_epoch_*.pth"
+        include_epochs=include_epochs,
+        min_epoch=min_epoch,
+        max_epoch=max_epoch,
         segmenter_cfg=cfg,
         selection_metric="mae",
         update_cell_mask=False,
