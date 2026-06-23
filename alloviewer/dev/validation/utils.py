@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import math
 import json
 from typing import Any, Dict, List, Sequence, Tuple, Optional
@@ -6,6 +7,7 @@ from typing import Any, Dict, List, Sequence, Tuple, Optional
 import numpy as np
 import cv2
 import torch
+import pandas as pd
 from scipy.spatial import cKDTree
 from scipy.optimize import linear_sum_assignment
 from scipy.stats import spearmanr, wasserstein_distance
@@ -14,6 +16,7 @@ from skimage.morphology import skeletonize
 from scipy import ndimage as ndi
 from skimage import exposure, filters, morphology, measure
 
+from alloviewer.image_analysis.segmenter import SegmenterUNet
 
 # ----------------------------
 # geometry & resizing
@@ -525,3 +528,434 @@ def get_dataset_mode(h5_path: str) -> str:
         return "pad_resize"
     else:
         return "unknown"
+
+
+def decode_json_maybe(x: Any) -> Dict[str, Any]:
+    """
+    Decode one metadata entry from H5.
+
+    Supports:
+      - bytes
+      - np.bytes_
+      - JSON strings
+      - dicts
+      - zero-dimensional numpy object/string arrays
+    """
+    if isinstance(x, np.ndarray) and x.ndim == 0:
+        x = x.item()
+
+    if isinstance(x, bytes):
+        x = x.decode("utf-8")
+
+    if isinstance(x, np.bytes_):
+        x = x.tobytes().decode("utf-8")
+
+    if isinstance(x, str):
+        return json.loads(x)
+
+    if isinstance(x, dict):
+        return x
+
+    raise TypeError(f"Could not decode meta entry of type {type(x)}")
+
+
+def _first_present(d: Dict[str, Any], keys: List[str], default=None):
+    """
+    Return the first present non-None value from a dict.
+    """
+    for k in keys:
+        if k in d and d[k] is not None:
+            return d[k]
+    return default
+
+
+def _as_int_pair(x: Any) -> Optional[Tuple[int, int]]:
+    """
+    Convert a list/tuple/array-like object with at least two entries to an int pair.
+    """
+    if x is None:
+        return None
+
+    if isinstance(x, np.ndarray):
+        x = x.tolist()
+
+    if isinstance(x, (list, tuple)) and len(x) >= 2:
+        return int(x[0]), int(x[1])
+
+    return None
+
+
+def count_positive_labels(lbl: np.ndarray) -> int:
+    """
+    Count instance labels greater than zero.
+    """
+    vals = np.unique(lbl)
+    vals = vals[vals > 0]
+    return int(vals.size)
+
+
+def load_human_roi_counts(csv_dir: str) -> pd.DataFrame:
+    """
+    Load human ROI counts from human_annotations.csv.
+
+    Expected columns:
+      - Folder
+      - image_name
+      - roi_id
+
+    Returns one row per image:
+      Folder, image_name, human_roi_count
+    """
+    csv_path = os.path.join(csv_dir, "human_annotations.csv")
+    df = pd.read_csv(csv_path)
+
+    needed = {"Folder", "image_name", "roi_id"}
+    missing = needed - set(df.columns)
+    if missing:
+        raise ValueError(f"CSV is missing required columns: {sorted(missing)}")
+
+    out = (
+        df.loc[:, ["Folder", "image_name", "roi_id"]]
+        .dropna(subset=["Folder", "image_name", "roi_id"])
+        .copy()
+    )
+
+    out["Folder"] = out["Folder"].astype(str)
+    out["image_name"] = out["image_name"].astype(str)
+
+    return (
+        out.groupby(["Folder", "image_name"], as_index=False)["roi_id"]
+        .nunique()
+        .rename(columns={"roi_id": "human_roi_count"})
+    )
+
+
+def extract_image_identity(meta: Dict[str, Any]) -> Tuple[str, str]:
+    """
+    Extract (Folder, image_name) from H5 metadata.
+
+    Priority:
+      1) direct fields in meta["full"]
+      2) src_path / image_path / img_path / path in meta["full"]
+      3) same path fields in first tile's full_meta
+    """
+    full = meta.get("full", {})
+    if not isinstance(full, dict):
+        full = {}
+
+    folder = _first_present(
+        full,
+        ["Folder", "folder", "subfolder", "dir_name", "dirname", "source_folder"],
+        default=None,
+    )
+    image_name = _first_present(
+        full,
+        ["image_name", "filename", "file_name", "img_name", "name"],
+        default=None,
+    )
+
+    if folder is not None and image_name is not None:
+        return str(folder), str(image_name)
+
+    src_path = _first_present(
+        full,
+        ["src_path", "image_path", "img_path", "path"],
+        default=None,
+    )
+
+    if src_path is None:
+        tiles = meta.get("tiles", [])
+        if isinstance(tiles, list) and len(tiles) > 0:
+            first_tile = tiles[0]
+            if isinstance(first_tile, dict):
+                full_meta = first_tile.get("full_meta", {})
+                if isinstance(full_meta, dict):
+                    src_path = _first_present(
+                        full_meta,
+                        ["src_path", "image_path", "img_path", "path"],
+                        default=None,
+                    )
+
+    if src_path is not None:
+        src_path = os.path.normpath(str(src_path))
+        image_name = os.path.basename(src_path)
+        folder = os.path.basename(os.path.dirname(src_path))
+        if folder and image_name:
+            return folder, image_name
+
+    raise KeyError(
+        "Could not extract Folder/image_name from H5 meta. "
+        f"Available top-level keys: {list(meta.keys())}, "
+        f"full keys: {list(full.keys()) if isinstance(full, dict) else 'n/a'}"
+    )
+
+
+def extract_tile_box(
+    tile_meta: Dict[str, Any],
+    tile_hw: Tuple[int, int],
+) -> Tuple[int, int, int, int]:
+    """
+    Return tile box as (y0, y1, x0, x1).
+
+    For the current tile export:
+      - tile_xy = (y0, x0)
+      - tile_hw = (h, w)
+
+    Also supports generic y0/y1/x0/x1-style metadata.
+    """
+    if "tile_xy" in tile_meta:
+        xy = tile_meta["tile_xy"]
+
+        if isinstance(xy, np.ndarray):
+            xy = xy.tolist()
+
+        if not isinstance(xy, (list, tuple)) or len(xy) < 2:
+            raise ValueError(f"tile_xy has invalid format: {xy}")
+
+        y0 = int(xy[0])
+        x0 = int(xy[1])
+
+        hw = tile_meta.get("tile_hw", tile_hw)
+
+        if isinstance(hw, np.ndarray):
+            hw = hw.tolist()
+
+        if not isinstance(hw, (list, tuple)) or len(hw) < 2:
+            raise ValueError(f"tile_hw has invalid format: {hw}")
+
+        th = int(hw[0])
+        tw = int(hw[1])
+
+        return y0, y0 + th, x0, x0 + tw
+
+    y0 = _first_present(tile_meta, ["y0", "top", "row0", "r0"], default=None)
+    y1 = _first_present(tile_meta, ["y1", "bottom", "row1", "r1"], default=None)
+    x0 = _first_present(tile_meta, ["x0", "left", "col0", "c0"], default=None)
+    x1 = _first_present(tile_meta, ["x1", "right", "col1", "c1"], default=None)
+
+    if None not in (y0, y1, x0, x1):
+        return int(y0), int(y1), int(x0), int(x1)
+
+    raise KeyError(
+        "Could not extract tile box from tile metadata. "
+        f"Available tile keys: {list(tile_meta.keys())}"
+    )
+
+
+def extract_full_hw(
+    meta: Dict[str, Any],
+    tile_metas: List[Dict[str, Any]],
+    tile_hw: Tuple[int, int],
+) -> Tuple[int, int]:
+    """
+    Infer the full image size as (H, W).
+
+    Priority:
+      1) meta["full"] height/width fields
+      2) first tile's full_meta
+      3) shape-like fields
+      4) fallback from tile extents
+    """
+    full = meta.get("full", {})
+    if not isinstance(full, dict):
+        full = {}
+
+    if not full and len(tile_metas) > 0:
+        first_tile = tile_metas[0]
+        if isinstance(first_tile, dict):
+            full_meta = first_tile.get("full_meta", {})
+            if isinstance(full_meta, dict):
+                full = full_meta
+
+    H = _first_present(
+        full,
+        ["height", "H", "img_h", "image_height", "H_in"],
+        default=None,
+    )
+    W = _first_present(
+        full,
+        ["width", "W", "img_w", "image_width", "W_in"],
+        default=None,
+    )
+
+    if H is not None and W is not None:
+        return int(H), int(W)
+
+    shape = _first_present(
+        full,
+        ["shape", "image_shape", "full_shape", "hw"],
+        default=None,
+    )
+    hw = _as_int_pair(shape)
+    if hw is not None:
+        return int(hw[0]), int(hw[1])
+
+    max_y = 0
+    max_x = 0
+
+    for tm in tile_metas:
+        y0, y1, x0, x1 = extract_tile_box(tm, tile_hw)
+        max_y = max(max_y, y1)
+        max_x = max(max_x, x1)
+
+    if max_y <= 0 or max_x <= 0:
+        raise ValueError("Could not infer full image size from H5 metadata.")
+
+    return int(max_y), int(max_x)
+
+
+def stitch_prob_tiles(
+    prob_tiles: np.ndarray,
+    tile_metas: List[Dict[str, Any]],
+    full_hw: Tuple[int, int],
+) -> np.ndarray:
+    """
+    Stitch probability tiles into one full-image probability array.
+
+    Parameters
+    ----------
+    prob_tiles:
+        Array with shape [T, C, tile_h, tile_w].
+    tile_metas:
+        List of tile metadata dicts, length T.
+    full_hw:
+        Full image size as (H, W).
+
+    Returns
+    -------
+    np.ndarray
+        Array with shape [C, H, W].
+
+    Important correction:
+    This version handles clipped tiles correctly. If a tile starts outside the
+    full image coordinate range, the matching source offset inside the tile is
+    used instead of always reading from [:th, :tw].
+    """
+    if prob_tiles.ndim != 4:
+        raise ValueError(f"Expected prob_tiles [T,C,h,w], got {prob_tiles.shape}")
+
+    T, C, tile_h, tile_w = prob_tiles.shape
+
+    if len(tile_metas) != T:
+        raise ValueError(
+            f"Number of tile metas ({len(tile_metas)}) does not match "
+            f"number of tiles ({T})"
+        )
+
+    H, W = int(full_hw[0]), int(full_hw[1])
+
+    if H <= 0 or W <= 0:
+        raise ValueError(f"Invalid full_hw={full_hw}")
+
+    acc = np.zeros((C, H, W), dtype=np.float32)
+    wgt = np.zeros((1, H, W), dtype=np.float32)
+
+    for i, tm in enumerate(tile_metas):
+        y0, y1, x0, x1 = extract_tile_box(tm, (tile_h, tile_w))
+
+        dst_y0 = max(y0, 0)
+        dst_x0 = max(x0, 0)
+        dst_y1 = min(y1, H)
+        dst_x1 = min(x1, W)
+
+        if dst_y1 <= dst_y0 or dst_x1 <= dst_x0:
+            continue
+
+        src_y0 = dst_y0 - y0
+        src_x0 = dst_x0 - x0
+        src_y1 = src_y0 + (dst_y1 - dst_y0)
+        src_x1 = src_x0 + (dst_x1 - dst_x0)
+
+        src_y0 = max(src_y0, 0)
+        src_x0 = max(src_x0, 0)
+        src_y1 = min(src_y1, tile_h)
+        src_x1 = min(src_x1, tile_w)
+
+        copy_h = min(dst_y1 - dst_y0, src_y1 - src_y0)
+        copy_w = min(dst_x1 - dst_x0, src_x1 - src_x0)
+
+        if copy_h <= 0 or copy_w <= 0:
+            continue
+
+        acc[
+            :,
+            dst_y0:dst_y0 + copy_h,
+            dst_x0:dst_x0 + copy_w,
+        ] += prob_tiles[
+            i,
+            :,
+            src_y0:src_y0 + copy_h,
+            src_x0:src_x0 + copy_w,
+        ]
+
+        wgt[
+            :,
+            dst_y0:dst_y0 + copy_h,
+            dst_x0:dst_x0 + copy_w,
+        ] += 1.0
+
+    wgt[wgt == 0] = 1.0
+
+    return (acc / wgt).astype(np.float32)
+
+
+def segment_one_h5_entry(
+    segmenter: SegmenterUNet,
+    imgs_tiles: np.ndarray,
+    meta: Dict[str, Any],
+    *,
+    update_cell_mask: bool = False,
+) -> Dict[str, Any]:
+    """
+    Segment one tiled H5 entry and return one count row.
+
+    imgs_tiles: [Tmax, 3, S, S]
+    meta: decoded JSON dict with a 'tiles' list
+    """
+    if imgs_tiles.ndim != 4 or imgs_tiles.shape[1] != 3:
+        raise ValueError(f"Expected imgs_tiles [T,3,H,W], got {imgs_tiles.shape}")
+
+    tile_metas = meta.get("tiles", None)
+    if not isinstance(tile_metas, list) or len(tile_metas) == 0:
+        raise ValueError("H5 meta['tiles'] is missing or empty.")
+
+    n_tiles = len(tile_metas)
+    imgs_tiles = imgs_tiles[:n_tiles]
+
+    with torch.no_grad():
+        tiles_t = segmenter._to_tensor_tiles(imgs_tiles)
+        probs_t = segmenter.predict_tiles(tiles_t)
+
+    if torch.is_tensor(probs_t):
+        probs_tiles = probs_t.detach().cpu().numpy()
+    else:
+        probs_tiles = np.asarray(probs_t)
+
+    full_hw = extract_full_hw(meta, tile_metas, imgs_tiles.shape[-2:])
+    probs_full = stitch_prob_tiles(probs_tiles, tile_metas, full_hw)
+
+    seg_out = {
+        "probs": {
+            "cell": probs_full[0],
+            "bound": probs_full[1],
+            "center": probs_full[2],
+            "energy": probs_full[3],
+        },
+        "instance_labels": None,
+        "meta": {},
+    }
+
+    if segmenter.inst_seg is None:
+        raise RuntimeError(
+            "Segmenter has no instance segmenter. Set cfg.compute_instances=True."
+        )
+
+    seg_out = segmenter.inst_seg(seg_out, update_cell_mask=update_cell_mask)
+    labels = seg_out["instance_labels"]
+    folder, image_name = extract_image_identity(meta)
+
+    return {
+        "Folder": str(folder),
+        "image_name": str(image_name),
+        "unet_roi_count": count_positive_labels(labels),
+    }
