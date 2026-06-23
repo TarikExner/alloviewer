@@ -18,19 +18,32 @@ from alloviewer.image_analysis.segmenter import SegmenterConfig, SegmenterUNet
 from .utils import (  # noqa: E402
     decode_json_maybe,
     load_human_roi_counts,
-    segment_one_h5_entry
+    segment_one_h5_entry,
 )
 
-DEFAULT_UNET_MODE: Literal["small", "medium", "large"] = "small"
-DEFAULT_OUTPUT_DIR = "./epoch_model_human_count_comparison"
+
+UNetMode = Literal["small", "medium", "large"]
+DatasetMode = Literal["crop_well_resize", "pad_resize", "tiles"]
+
+DEFAULT_UNET_MODE: UNetMode = "small"
+DEFAULT_DATASET_MODE: DatasetMode = "tiles"
+
+# Save result CSV/JSON files directly into ./results.
+DEFAULT_OUTPUT_DIR = "./results"
+
 DEFAULT_MODEL_DIR = "./models"
 DEFAULT_H5_PATH = "./image_datasets/human_annotated_images.h5"
 DEFAULT_HUMAN_CSV_DIR = "./human_annotations"
 
+KNOWN_DATASET_MODES: Sequence[str] = (
+    "crop_well_resize",
+    "pad_resize",
+    "tiles",
+)
+
 # Epoch filter defaults.
 #
-# Because later checkpoints can over-optimize to the simulator distribution,
-# the default helper run only considers checkpoints up to epoch 40.
+# The default helper run only considers checkpoints up to epoch 100.
 # Set DEFAULT_MAX_EPOCH = None, or pass max_epoch=None, to include all epochs.
 DEFAULT_INCLUDE_EPOCHS: Optional[Sequence[int]] = None
 DEFAULT_MIN_EPOCH: Optional[int] = None
@@ -46,6 +59,29 @@ def parse_epoch_from_model_file(path: str) -> Optional[int]:
     if m is None:
         return None
     return int(m.group(1))
+
+
+def detect_dataset_mode_from_model_file(
+    path: str,
+    *,
+    known_dataset_modes: Sequence[str] = KNOWN_DATASET_MODES,
+) -> Optional[str]:
+    """
+    Return dataset mode detected from a checkpoint filename.
+
+    The function uses substring matching against known dataset mode names.
+    This is intentional because checkpoint filenames already encode modes such as
+    'crop_well_resize', 'pad_resize', or 'tiles'.
+    """
+    name = os.path.basename(path)
+    matches = [mode for mode in known_dataset_modes if mode in name]
+
+    if not matches:
+        return None
+
+    # Prefer the longest match if a future mode name overlaps another.
+    matches = sorted(matches, key=len, reverse=True)
+    return matches[0]
 
 
 def epoch_model_pattern(unet_mode: str) -> str:
@@ -64,6 +100,56 @@ def _sort_model_paths_by_epoch(paths: Sequence[str]) -> List[str]:
             os.path.basename(p),
         ),
     )
+
+
+def filter_model_paths_by_dataset_mode(
+    model_paths: Sequence[str],
+    *,
+    dataset_mode: Optional[str] = DEFAULT_DATASET_MODE,
+    known_dataset_modes: Sequence[str] = KNOWN_DATASET_MODES,
+) -> List[str]:
+    """
+    Filter checkpoint paths by dataset mode encoded in the filename.
+
+    Parameters
+    ----------
+    model_paths:
+        Checkpoint paths.
+    dataset_mode:
+        Dataset mode to keep. Defaults to 'tiles'.
+        Pass None to keep all dataset modes.
+    known_dataset_modes:
+        Dataset mode names expected in checkpoint filenames.
+    """
+    if dataset_mode is None:
+        return _sort_model_paths_by_epoch(model_paths)
+
+    dataset_mode = str(dataset_mode)
+    if dataset_mode not in set(known_dataset_modes):
+        raise ValueError(
+            f"Unknown dataset_mode={dataset_mode!r}. "
+            f"Expected one of {list(known_dataset_modes)} or None."
+        )
+
+    out = [
+        str(p)
+        for p in model_paths
+        if detect_dataset_mode_from_model_file(
+            str(p),
+            known_dataset_modes=known_dataset_modes,
+        )
+        == dataset_mode
+    ]
+
+    out = _sort_model_paths_by_epoch(out)
+
+    if not out:
+        raise FileNotFoundError(
+            "No checkpoint files remained after dataset-mode filtering. "
+            f"dataset_mode={dataset_mode!r}"
+        )
+
+    return out
 
 
 def filter_model_paths_by_epoch(
@@ -130,21 +216,23 @@ def filter_model_paths_by_epoch(
 def find_epoch_model_files(
     model_dir: str,
     *,
-    unet_mode: Literal["small", "medium", "large"] = DEFAULT_UNET_MODE,
+    unet_mode: UNetMode = DEFAULT_UNET_MODE,
+    dataset_mode: Optional[DatasetMode] = DEFAULT_DATASET_MODE,
     model_pattern: Optional[str] = None,
     include_epochs: Optional[Sequence[int]] = None,
     min_epoch: Optional[int] = None,
     max_epoch: Optional[int] = None,
 ) -> List[str]:
     """
-    Find saved epoch checkpoints for one UNet size.
+    Find saved epoch checkpoints for one UNet size and dataset mode.
 
     By default this searches only files such as:
       small_*_epoch_0050.pth
 
     It does not include best_*.pth checkpoints.
 
-    Epoch filtering is applied after file discovery.
+    Dataset-mode filtering is applied after file discovery.
+    Epoch filtering is then applied after dataset-mode filtering.
     """
     pattern = model_pattern or epoch_model_pattern(unet_mode)
     paths = glob.glob(os.path.join(model_dir, pattern))
@@ -157,6 +245,10 @@ def find_epoch_model_files(
             f"No epoch model files matching pattern '{pattern}' were found in {model_dir}."
         )
 
+    epoch_paths = filter_model_paths_by_dataset_mode(
+        epoch_paths,
+        dataset_mode=dataset_mode,
+    )
     epoch_paths = filter_model_paths_by_epoch(
         epoch_paths,
         include_epochs=include_epochs,
@@ -170,7 +262,7 @@ def find_epoch_model_files(
 def _segmenter_cfg_for_model(
     *,
     model_path: str,
-    unet_mode: Literal["small", "medium", "large"],
+    unet_mode: UNetMode,
     base_cfg: Optional[SegmenterConfig],
 ) -> SegmenterConfig:
     """Copy/create a SegmenterConfig and point it to one checkpoint."""
@@ -190,11 +282,13 @@ def _segmenter_cfg_for_model(
     cfg.model_file = os.path.basename(model_path)
     return cfg
 
+
 def run_one_model_on_h5(
     *,
     h5_path: str,
     model_path: str,
-    unet_mode: Literal["small", "medium", "large"] = DEFAULT_UNET_MODE,
+    unet_mode: UNetMode = DEFAULT_UNET_MODE,
+    dataset_mode: Optional[str] = None,
     segmenter_cfg: Optional[SegmenterConfig] = None,
     update_cell_mask: bool = False,
     desc: Optional[str] = None,
@@ -208,6 +302,12 @@ def run_one_model_on_h5(
     epoch = parse_epoch_from_model_file(model_path)
     if epoch is None:
         raise ValueError(f"Could not parse epoch from model file: {model_path}")
+
+    detected_dataset_mode = detect_dataset_mode_from_model_file(model_path)
+    if dataset_mode is None:
+        dataset_mode_for_rows = detected_dataset_mode
+    else:
+        dataset_mode_for_rows = str(dataset_mode)
 
     cfg = _segmenter_cfg_for_model(
         model_path=model_path,
@@ -231,7 +331,7 @@ def run_one_model_on_h5(
 
         iterator = tqdm(
             range(n_use),
-            desc=desc or f"Human-count set | {unet_mode} epoch {epoch}",
+            desc=desc or f"Human-count set | {unet_mode} {dataset_mode_for_rows} epoch {epoch}",
             dynamic_ncols=True,
         )
 
@@ -246,6 +346,7 @@ def run_one_model_on_h5(
             )
             row["image_index"] = int(i)
             row["unet_mode"] = unet_mode
+            row["dataset_mode"] = dataset_mode_for_rows
             row["epoch"] = int(epoch)
             row["model_file"] = os.path.basename(model_path)
             row["model_path"] = os.path.abspath(model_path)
@@ -280,6 +381,7 @@ def summarize_count_errors(
     """Summarize count agreement for each checkpoint."""
     required = {
         "unet_mode",
+        "dataset_mode",
         "epoch",
         "model_file",
         "model_path",
@@ -291,14 +393,15 @@ def summarize_count_errors(
         raise ValueError(f"per_image_df is missing required columns: {sorted(missing)}")
 
     rows: List[Dict[str, Any]] = []
-    group_cols = ["unet_mode", "epoch", "model_file", "model_path"]
+    group_cols = ["unet_mode", "dataset_mode", "epoch", "model_file", "model_path"]
 
     for key, group in per_image_df.groupby(group_cols, dropna=False):
-        unet_mode, epoch, model_file, model_path = key
+        unet_mode, dataset_mode, epoch, model_file, model_path = key
         matched = group.dropna(subset=["human_roi_count", "unet_roi_count"]).copy()
 
         base = {
             "unet_mode": unet_mode,
+            "dataset_mode": dataset_mode,
             "epoch": epoch,
             "model_file": model_file,
             "model_path": model_path,
@@ -365,8 +468,8 @@ def summarize_count_errors(
         summary.loc[idx, "selected"] = True
 
     return summary.sort_values(
-        ["selected", "epoch"],
-        ascending=[False, True],
+        ["selected", "dataset_mode", "epoch"],
+        ascending=[False, True, True],
     ).reset_index(drop=True)
 
 
@@ -376,7 +479,8 @@ def compare_human_counts_for_epoch_models(
     human_csv_dir: str = DEFAULT_HUMAN_CSV_DIR,
     model_dir: str = DEFAULT_MODEL_DIR,
     output_dir: str = DEFAULT_OUTPUT_DIR,
-    unet_mode: Literal["small", "medium", "large"] = DEFAULT_UNET_MODE,
+    unet_mode: UNetMode = DEFAULT_UNET_MODE,
+    dataset_mode: Optional[DatasetMode] = DEFAULT_DATASET_MODE,
     model_pattern: Optional[str] = None,
     model_paths: Optional[Sequence[str]] = None,
     include_epochs: Optional[Sequence[int]] = DEFAULT_INCLUDE_EPOCHS,
@@ -387,14 +491,20 @@ def compare_human_counts_for_epoch_models(
     update_cell_mask: bool = False,
 ) -> Dict[str, Any]:
     """
-    Run saved epoch checkpoints for one UNet size on the human-count image set.
+    Run saved epoch checkpoints for one UNet size and dataset mode on the human-count image set.
 
-    Writes:
+    Writes directly to output_dir:
       - per_image_counts_by_epoch.csv
       - summary_by_epoch.csv
       - selected_model.json
 
     The default selects the checkpoint with lowest MAE versus human counts.
+
+    Dataset-mode filtering
+    ----------------------
+    dataset_mode:
+        Dataset mode to include. Defaults to 'tiles'.
+        Pass None to include all dataset modes.
 
     Epoch filtering
     ---------------
@@ -407,11 +517,20 @@ def compare_human_counts_for_epoch_models(
 
     Examples
     --------
-    Include only epochs up to 40:
-        compare_human_counts_for_epoch_models(max_epoch=40)
+    Default: tiles checkpoints up to epoch 100:
+        compare_human_counts_for_epoch_models()
 
-    Include specific checkpoints:
-        compare_human_counts_for_epoch_models(include_epochs=[5, 10, 15, 20, 25, 30, 35, 40])
+    Include only tiles checkpoints up to epoch 40:
+        compare_human_counts_for_epoch_models(dataset_mode="tiles", max_epoch=40)
+
+    Include only specific tiles checkpoints:
+        compare_human_counts_for_epoch_models(
+            dataset_mode="tiles",
+            include_epochs=[5, 10, 15, 20, 25, 30, 35, 40],
+        )
+
+    Include all dataset modes:
+        compare_human_counts_for_epoch_models(dataset_mode=None)
 
     Include all checkpoints:
         compare_human_counts_for_epoch_models(max_epoch=None)
@@ -422,6 +541,7 @@ def compare_human_counts_for_epoch_models(
         model_paths = find_epoch_model_files(
             model_dir,
             unet_mode=unet_mode,
+            dataset_mode=dataset_mode,
             model_pattern=model_pattern,
             include_epochs=include_epochs,
             min_epoch=min_epoch,
@@ -429,6 +549,10 @@ def compare_human_counts_for_epoch_models(
         )
     else:
         model_paths = _sort_model_paths_by_epoch([str(p) for p in model_paths])
+        model_paths = filter_model_paths_by_dataset_mode(
+            model_paths,
+            dataset_mode=dataset_mode,
+        )
         model_paths = filter_model_paths_by_epoch(
             model_paths,
             include_epochs=include_epochs,
@@ -445,7 +569,9 @@ def compare_human_counts_for_epoch_models(
     print(
         "Running human-count checkpoint comparison with "
         f"{len(model_paths)} checkpoint(s). "
-        f"include_epochs={include_epochs}, min_epoch={min_epoch}, max_epoch={max_epoch}"
+        f"unet_mode={unet_mode}, dataset_mode={dataset_mode}, "
+        f"include_epochs={include_epochs}, min_epoch={min_epoch}, max_epoch={max_epoch}, "
+        f"output_dir={output_dir}"
     )
 
     for model_path in model_paths:
@@ -453,6 +579,7 @@ def compare_human_counts_for_epoch_models(
             h5_path=h5_path,
             model_path=model_path,
             unet_mode=unet_mode,
+            dataset_mode=dataset_mode,
             segmenter_cfg=segmenter_cfg,
             update_cell_mask=update_cell_mask,
         )
@@ -482,11 +609,15 @@ def compare_human_counts_for_epoch_models(
     summary_csv = os.path.join(output_dir, "summary_by_epoch.csv")
     selected_json = os.path.join(output_dir, "selected_model.json")
 
-    per_image.sort_values(["epoch", "Folder", "image_name"]).to_csv(per_image_csv, index=False)
+    per_image.sort_values(["dataset_mode", "epoch", "Folder", "image_name"]).to_csv(
+        per_image_csv,
+        index=False,
+    )
     summary.to_csv(summary_csv, index=False)
 
     selected = summary.loc[summary["selected"]].head(1)
-    epoch_filter_info = {
+    filter_info = {
+        "dataset_mode": dataset_mode,
         "include_epochs": None if include_epochs is None else [int(e) for e in include_epochs],
         "min_epoch": None if min_epoch is None else int(min_epoch),
         "max_epoch": None if max_epoch is None else int(max_epoch),
@@ -498,7 +629,7 @@ def compare_human_counts_for_epoch_models(
         selected_info: Dict[str, Any] = {
             "selection_metric": selection_metric,
             "unet_mode": unet_mode,
-            "epoch_filter": epoch_filter_info,
+            "filter": filter_info,
             "selected": None,
             "reason": "No model had a finite selection metric.",
         }
@@ -507,7 +638,8 @@ def compare_human_counts_for_epoch_models(
         selected_info = {
             "selection_metric": selection_metric,
             "unet_mode": unet_mode,
-            "epoch_filter": epoch_filter_info,
+            "dataset_mode": row.get("dataset_mode"),
+            "filter": filter_info,
             "selected_epoch": None if pd.isna(row.get("epoch")) else int(row["epoch"]),
             "selected_model_file": row.get("model_file"),
             "selected_model_path": row.get("model_path"),
@@ -537,7 +669,8 @@ def compare_human_counts_for_epoch_models(
 
 
 def run_epoch_model_human_count_comparison(
-    unet_mode: Literal["small", "medium", "large"] = DEFAULT_UNET_MODE,
+    unet_mode: UNetMode = DEFAULT_UNET_MODE,
+    dataset_mode: Optional[DatasetMode] = DEFAULT_DATASET_MODE,
     include_epochs: Optional[Sequence[int]] = DEFAULT_INCLUDE_EPOCHS,
     min_epoch: Optional[int] = DEFAULT_MIN_EPOCH,
     max_epoch: Optional[int] = DEFAULT_MAX_EPOCH,
@@ -545,7 +678,13 @@ def run_epoch_model_human_count_comparison(
     """
     Convenience runner.
 
-    Defaults to max_epoch=40 via DEFAULT_MAX_EPOCH.
+    Defaults:
+      unet_mode='small'
+      dataset_mode='tiles'
+      max_epoch=100
+      output_dir='./results'
+
+    Pass dataset_mode=None to include all dataset modes.
     Pass max_epoch=None to include all epoch checkpoints.
     """
     cfg = SegmenterConfig(
@@ -568,6 +707,7 @@ def run_epoch_model_human_count_comparison(
         model_dir=DEFAULT_MODEL_DIR,
         output_dir=DEFAULT_OUTPUT_DIR,
         unet_mode=unet_mode,
+        dataset_mode=dataset_mode,
         model_pattern=None,  # defaults to f"{unet_mode}_*_epoch_*.pth"
         include_epochs=include_epochs,
         min_epoch=min_epoch,
