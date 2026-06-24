@@ -110,7 +110,7 @@ class InstanceSegmenterConfig:
     use_centers: bool = True
     center_seed_method: str = "nms"
     center_min_distance: int = 1
-    center_thr: float = 0.5
+    center_thr: float = 0.7
 
     compactness: float = 0.0
     watershed_line: bool = False
