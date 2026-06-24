@@ -126,8 +126,8 @@ def make_simulation_parameter_mosaic(
             color_jitter=0.08,
 
             # Fractions of cell-core diameter.
-            sigma_in=(0.5, 0.72),
-            sigma_out=(0.5, 0.72),
+            sigma_in=(0.2, 0.32),
+            sigma_out=(0.2, 0.32),
             focus_frac_in=1.0,
             in_focus_sigma_thresh=None,
 
