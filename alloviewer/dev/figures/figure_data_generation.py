@@ -25,7 +25,7 @@ from alloviewer.image_analysis.segmenter import SegmenterUNetInference
 from alloviewer.image_analysis.config import UNET_CONFIG, INSTANCE_CONFIG_DICT
 from alloviewer.image_analysis.io import load_image
 from alloviewer.dev.segmentation.image_simulation import (
-    simulate_image, img_export_scene
+    simulate_image, default_scene
 )
 import copy
 
@@ -68,7 +68,7 @@ def make_simulation_parameter_mosaic(
 
     rng = np.random.default_rng(seed)
 
-    base_cfg = img_export_scene()
+    base_cfg = default_scene()
     base_params = base_cfg.sample_kwargs(rng)
 
     base_params.update(
