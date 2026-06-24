@@ -60,8 +60,8 @@ INSET_BORDER_LINEWIDTH = 2
 
 
 INSET_COORDS = {
-    "simulated_image": (250, 250),
-    "simulated_segmentation": (250, 250),
+    "simulated_image": (250, 120),
+    "simulated_segmentation": (250, 120),
 
     "microscopy_image": (150, 150),
     "microscopy_segmentation": (150, 150),
