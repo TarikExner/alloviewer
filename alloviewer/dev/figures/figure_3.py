@@ -815,7 +815,7 @@ def _generate_main_figure(
         _plot_identity_scatter(
             ax=plot_ax,
             data=unet_on_sim,
-            x_col="n_cells_gt_instances",
+            x_col="n_cells_gt_instances_stored_labels",
             y_col="n_cells_pred_instances",
             title="UNet performance on\nsimulated images",
             xlabel="n_cells ground truth",
