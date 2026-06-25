@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import os
-import json
 import gc
+import json
+import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -32,15 +32,22 @@ from .utils import (
 from .config import TrainingValidationConfig
 
 
+VALIDATION_VERSION = "imagewide_imagej_stored_gt_v2"
+
+
 def _tile_signature(meta: Dict[str, Any]) -> List[Tuple[Tuple[int, int], Tuple[int, int]]]:
     tiles = meta.get("tiles", None)
     if not isinstance(tiles, list) or len(tiles) == 0:
         raise ValueError("meta['tiles'] missing or empty")
 
-    sig = []
+    sig: List[Tuple[Tuple[int, int], Tuple[int, int]]] = []
     for tm in tiles:
+        if not isinstance(tm, dict):
+            raise TypeError(f"Tile metadata must be dict, got {type(tm)}")
         if "tile_xy" not in tm or "tile_hw" not in tm:
-            raise KeyError(f"Tile metadata missing tile_xy/tile_hw. Keys: {list(tm.keys())}")
+            raise KeyError(
+                f"Tile metadata missing tile_xy/tile_hw. Keys: {list(tm.keys())}"
+            )
 
         y0, x0 = tm["tile_xy"]
         h, w = tm["tile_hw"]
@@ -75,7 +82,7 @@ def _basename_from_meta(meta: Dict[str, Any]) -> str:
 
     if not src_path:
         tiles = meta.get("tiles", [])
-        if tiles:
+        if isinstance(tiles, list) and len(tiles) > 0 and isinstance(tiles[0], dict):
             full_meta = tiles[0].get("full_meta", {})
             if isinstance(full_meta, dict):
                 src_path = str(full_meta.get("src_path", ""))
@@ -104,7 +111,11 @@ def _assert_same_sample_identity(
     stem_gt = os.path.splitext(name_gt)[0]
     stem_ij = os.path.splitext(name_ij)[0]
 
-    if stem_gt != stem_ij and not stem_ij.startswith(stem_gt) and not stem_gt.startswith(stem_ij):
+    if (
+        stem_gt != stem_ij
+        and not stem_ij.startswith(stem_gt)
+        and not stem_gt.startswith(stem_ij)
+    ):
         raise RuntimeError(
             f"Sample identity mismatch at sample_idx={sample_idx}: "
             f"GT={name_gt}, ImageJ={name_ij}"
@@ -126,12 +137,12 @@ def _extract_full_hw(
     """
     full = meta.get("full", {})
     if isinstance(full, dict):
-        for hk, wk in [
+        for hk, wk in (
             ("H_in", "W_in"),
             ("H", "W"),
             ("height", "width"),
             ("image_height", "image_width"),
-        ]:
+        ):
             if hk in full and wk in full:
                 return int(full[hk]), int(full[wk])
 
@@ -149,6 +160,41 @@ def _extract_full_hw(
     return int(max_y), int(max_x)
 
 
+def _int_or_nan(x: Any) -> Any:
+    try:
+        if x is None or pd.isna(x):
+            return np.nan
+        return int(x)
+    except Exception:
+        return np.nan
+
+
+def _float_or_nan(x: Any) -> float:
+    try:
+        if x is None or pd.isna(x):
+            return float("nan")
+        return float(x)
+    except Exception:
+        return float("nan")
+
+
+def _jsonify_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    params_out: Dict[str, Any] = {}
+
+    for k, v in params.items():
+        col = f"param_{k}"
+
+        if isinstance(v, (int, float, np.integer, np.floating)):
+            params_out[col] = float(v)
+        elif isinstance(v, (list, tuple, np.ndarray)):
+            try:
+                params_out[col] = json.dumps([float(x) for x in list(v)])
+            except Exception:
+                continue
+
+    return params_out
+
+
 def stitch_float_tiles_mean(
     tiles: np.ndarray,
     tile_metas: List[Dict[str, Any]],
@@ -162,7 +208,7 @@ def stitch_float_tiles_mean(
     tiles:
         [T, C, S, S]
     tile_metas:
-        metadata with tile_xy=(y0,x0), tile_hw=(h,w)
+        Metadata with tile_xy=(y0,x0), tile_hw=(h,w).
     full_hw:
         (H_full, W_full)
 
@@ -219,8 +265,8 @@ def stitch_instance_tiles(
     """
     Stitch global-ID instance tiles.
 
-    This assumes instance labels are global across tiles. Your dataset writer
-    keeps global IDs in /inst, so this is valid.
+    This assumes instance labels are global across tiles. The dataset writer
+    keeps global IDs in /inst, so this is valid for the simulated GT dataset.
     """
     if inst_tiles.ndim != 3:
         raise ValueError(f"Expected inst_tiles [T,H,W], got {inst_tiles.shape}")
@@ -253,7 +299,7 @@ def stitch_instance_tiles(
         if hh <= 0 or ww <= 0:
             continue
 
-        tile = inst_tiles[i, :hh, :ww].astype(np.int32)
+        tile = inst_tiles[i, :hh, :ww].astype(np.int32, copy=False)
 
         region = out[y0:y1, x0:x1]
         mask = tile > 0
@@ -288,19 +334,30 @@ def _make_seg_out(
 
 
 def _segment_full_probs(
-    inst_segmenter,
+    inst_segmenter: Any,
     cell: np.ndarray,
     bound: np.ndarray,
     center: np.ndarray,
     energy: np.ndarray,
+    *,
+    cell_thr: float,
     update_cell_mask: bool = True,
 ) -> np.ndarray:
+    """
+    Convert full-image probability maps into an instance map.
+
+    If inst_segmenter is None, this is the conventional baseline and uses
+    cfg.cell_thr via the required cell_thr argument. Do not hard-code 0.5 here.
+    """
     if inst_segmenter is None:
-        return sklabel((cell >= 0.5).astype(np.uint8), connectivity=1).astype(np.int32)
+        return sklabel(
+            (cell >= float(cell_thr)).astype(np.uint8),
+            connectivity=1,
+        ).astype(np.int32)
 
     seg_out = _make_seg_out(cell, bound, center, energy)
     seg_out = inst_segmenter(seg_out, update_cell_mask=update_cell_mask)
-    return seg_out["instance_labels"].astype(np.int32)
+    return np.asarray(seg_out["instance_labels"], dtype=np.int32)
 
 
 def _row_metrics_for_prediction(
@@ -365,26 +422,24 @@ def _row_metrics_for_prediction(
     )
 
     return {
+        "validation_version": VALIDATION_VERSION,
         "sample_idx": int(sample_idx),
         "tile_idx": -1,
         "metric_level": "image",
         "dataset_mode": dataset_mode,
         "segmentation_method": segmentation_method,
         "src_path": src_path if src_path is not None else "",
-        "n_cells_full_meta": (
-            int(n_cells_full_meta) if n_cells_full_meta is not None else np.nan
-        ),
-        "frac_positive": (
-            float(frac_positive) if frac_positive is not None else np.nan
-        ),
+        "n_cells_full_meta": _int_or_nan(n_cells_full_meta),
+        "frac_positive": _float_or_nan(frac_positive),
         "n_cells_gt_instances": int(n_gt),
-        "n_cells_pred_components_thr0p5": int(n_pred_components),
+        "n_cells_pred_components_cell_thr": int(n_pred_components),
+        "cell_component_thr": float(cfg.cell_thr),
         "n_cells_pred_centers": int(n_centers),
         "n_cells_pred_instances": int(n_pred_instances),
-        "count_error_components": int(n_pred_components - n_gt),
-        "count_error_centers": int(n_centers - n_gt),
-        "count_error_instances": int(n_pred_instances - n_gt),
-        "abs_count_error_instances": int(abs(n_pred_instances - n_gt)),
+        "count_error_components_vs_gt_instances": int(n_pred_components - n_gt),
+        "count_error_centers_vs_gt_instances": int(n_centers - n_gt),
+        "count_error_instances_vs_gt_instances": int(n_pred_instances - n_gt),
+        "abs_count_error_instances_vs_gt_instances": int(abs(n_pred_instances - n_gt)),
         **{f"mask_{k}": v for k, v in mask_stats.items()},
         "boundary_f1": float(boundary_f1),
         **{f"center_{k}": v for k, v in center_stats.items()},
@@ -393,9 +448,65 @@ def _row_metrics_for_prediction(
     }
 
 
+def _make_segmenter_and_validation_config(
+    *,
+    gt_h5_path: str,
+    out_csv: str,
+    out_summary_json: str,
+    unet_mode: str,
+    model_dir: str,
+    model_file: str,
+    seg_method: str,
+) -> Tuple[SegmenterUNet, SegmenterUNet, TrainingValidationConfig]:
+    """
+    Build the UNet segmenter, the ImageJ instance segmenter holder, and a
+    validation config aligned with the segmentation defaults.
+    """
+    instance_cfg = InstanceSegmenterConfig()
+
+    seg_params: Dict[str, Any] = dict(
+        unet_mode=unet_mode,
+        model_dir=model_dir,
+        model_file=model_file,
+        device="cuda" if torch.cuda.is_available() else "cpu",
+        use_amp=torch.cuda.is_available(),
+        normalize=False,  # TiledH5Dataset/H5CellsDataset already normalizes.
+    )
+
+    segmenter_cfg_obj = SegmenterConfig(
+        compute_instances=(seg_method == "inst_seg"),
+        instance_cfg=instance_cfg.to_dict(),
+        **seg_params,
+    )
+
+    # This object is used only to access .inst_seg for ImageJ target maps.
+    imagej_segmenter_cfg_obj = SegmenterConfig(
+        compute_instances=True,
+        instance_cfg=instance_cfg.to_dict(),
+        **seg_params,
+    )
+
+    cfg = TrainingValidationConfig(
+        h5_path=gt_h5_path,
+        cell_thr=float(segmenter_cfg_obj.thr_cell),
+        center_peak_thr=float(instance_cfg.center_thr),
+        center_nms_dist=int(instance_cfg.center_min_distance),
+        boundary_thr=float(segmenter_cfg_obj.thr_bound),
+        boundary_sweep=True,
+        batch_size=1,
+        out_csv=out_csv,
+        out_summary_json=out_summary_json,
+    )
+
+    segmenter = SegmenterUNet.from_config(segmenter_cfg_obj.to_dict())
+    imagej_segmenter = SegmenterUNet.from_config(imagej_segmenter_cfg_obj.to_dict())
+
+    return segmenter, imagej_segmenter, cfg
+
+
 def validate_unet_vs_imagej_on_fullres_h5(
     segmenter: SegmenterUNet,
-    gt_segmenter: SegmenterUNet,
+    imagej_segmenter: SegmenterUNet,
     cfg: TrainingValidationConfig,
     imagej_h5_path: str,
     indices: Optional[Sequence[int]] = None,
@@ -405,18 +516,23 @@ def validate_unet_vs_imagej_on_fullres_h5(
     """
     Image-wide validation on simulated full-resolution images.
 
-    The H5 files are still tile-based, but metrics are computed after stitching
-    all tiles back to full-image maps.
+    The H5 files are tile-based, but metrics are computed after stitching all
+    tiles back to full-image maps.
 
     Rows:
       - dataset_mode == "UNet"
       - dataset_mode == "imageJ"
+
+    Ground-truth policy:
+      - simulated GT uses stitched stored /inst labels;
+      - ImageJ instances are reconstructed from ImageJ-generated target maps;
+      - UNet conventional mode uses cfg.cell_thr, not a hard-coded threshold.
     """
     if segmentation_method not in ("conventional", "inst_seg"):
         raise ValueError(f"Unknown segmentation_method: {segmentation_method}")
 
-    if gt_segmenter.inst_seg is None:
-        raise ValueError("gt_segmenter must have compute_instances=True")
+    if imagej_segmenter.inst_seg is None:
+        raise ValueError("imagej_segmenter must have compute_instances=True")
 
     ds_gt = TiledH5Dataset(cfg.h5_path, indices=indices)
     ds_ij = TiledH5Dataset(imagej_h5_path, indices=indices)
@@ -532,15 +648,17 @@ def validate_unet_vs_imagej_on_fullres_h5(
                 bound=probs_unet_full[1],
                 center=probs_unet_full[2],
                 energy=probs_unet_full[3],
+                cell_thr=cfg.cell_thr,
                 update_cell_mask=True,
             )
 
             inst_ij_full = _segment_full_probs(
-                inst_segmenter=gt_segmenter.inst_seg,
+                inst_segmenter=imagej_segmenter.inst_seg,
                 cell=tgts_ij_full[0],
                 bound=tgts_ij_full[1],
                 center=tgts_ij_full[2],
                 energy=tgts_ij_full[3],
+                cell_thr=cfg.cell_thr,
                 update_cell_mask=True,
             )
 
@@ -553,17 +671,7 @@ def validate_unet_vs_imagej_on_fullres_h5(
             src_path = full_meta.get("src_path", "")
 
             params = full_meta.get("params", {})
-            params_out: Dict[str, Any] = {}
-            if isinstance(params, dict):
-                for k, v in params.items():
-                    col = f"param_{k}"
-                    if isinstance(v, (int, float, np.floating)):
-                        params_out[col] = float(v)
-                    elif isinstance(v, (list, tuple, np.ndarray)):
-                        try:
-                            params_out[col] = json.dumps([float(x) for x in list(v)])
-                        except Exception:
-                            continue
+            params_out = _jsonify_params(params if isinstance(params, dict) else {})
 
             row_unet = _row_metrics_for_prediction(
                 sample_idx=original_idx,
@@ -626,6 +734,7 @@ def validate_unet_vs_imagej_on_fullres_h5(
     ]
 
     summary = {
+        "validation_version": VALIDATION_VERSION,
         "n_images": int(df["sample_idx"].nunique()) if len(df) else 0,
         "n_rows": int(len(df)),
         "means": {
@@ -690,46 +799,21 @@ def run_fullres_unet_vs_imagej_validation(
     gt_h5_path = os.path.join(h5_dir, gt_h5_name)
     imagej_h5_path = os.path.join(h5_dir, imagej_h5_name)
 
-    cfg = TrainingValidationConfig(
-        h5_path=gt_h5_path,
-        cell_thr=0.1,
+    model_file = f"best_{unet_mode}_tiles_S512_seed187.pth"
+
+    segmenter, imagej_segmenter, cfg = _make_segmenter_and_validation_config(
+        gt_h5_path=gt_h5_path,
         out_csv=out_csv,
         out_summary_json=out_summary_json,
-    )
-
-    seg_params: Dict[str, Any] = dict(
         unet_mode=unet_mode,
         model_dir=model_dir,
-        model_file=f"best_{unet_mode}_tiles_S512_seed187.pth",
-        device="cuda" if torch.cuda.is_available() else "cpu",
-        use_amp=torch.cuda.is_available(),
-        normalize=False,
+        model_file=model_file,
+        seg_method=seg_method,
     )
-
-    if seg_method == "conventional":
-        segmenter_cfg = SegmenterConfig(
-            compute_instances=False,
-            **seg_params,
-        ).to_dict()
-    else:
-        segmenter_cfg = SegmenterConfig(
-            instance_cfg=InstanceSegmenterConfig().to_dict(),
-            compute_instances=True,
-            **seg_params,
-        ).to_dict()
-
-    gt_segmenter_cfg = SegmenterConfig(
-        instance_cfg=InstanceSegmenterConfig().to_dict(),
-        compute_instances=True,
-        **seg_params,
-    ).to_dict()
-
-    gt_segmenter = SegmenterUNet.from_config(gt_segmenter_cfg)
-    segmenter = SegmenterUNet.from_config(segmenter_cfg)
 
     df, _ = validate_unet_vs_imagej_on_fullres_h5(
         segmenter=segmenter,
-        gt_segmenter=gt_segmenter,
+        imagej_segmenter=imagej_segmenter,
         cfg=cfg,
         imagej_h5_path=imagej_h5_path,
         segmentation_method=seg_method,
@@ -737,3 +821,4 @@ def run_fullres_unet_vs_imagej_validation(
 
     gc.collect()
     return df
+

@@ -2,7 +2,7 @@ from __future__ import annotations
 import os
 import math
 import json
-from typing import Any, Dict, List, Sequence, Tuple, Optional
+from typing import Any, Dict, List, Sequence, Tuple, Optional, Type
 
 import numpy as np
 import cv2
@@ -15,6 +15,18 @@ from skimage.metrics import structural_similarity as ssim
 from skimage.morphology import skeletonize
 from scipy import ndimage as ndi
 from skimage import exposure, filters, morphology, measure
+
+from skimage.measure import label as sklabel
+from skimage.segmentation import relabel_sequential
+from torch.utils.data import DataLoader
+
+from tqdm import tqdm
+
+from alloviewer.image_analysis.segmenter import (
+    SegmenterUNet,
+    SegmenterConfig,
+    InstanceSegmenterConfig,
+)
 
 from alloviewer.image_analysis.segmenter import SegmenterUNet
 
@@ -959,3 +971,518 @@ def segment_one_h5_entry(
         "image_name": str(image_name),
         "unet_roi_count": count_positive_labels(labels),
     }
+
+VALIDATION_VERSION_STORED_INST_GT = "stored_inst_gt_v2"
+
+
+def validation_count_positive_labels(inst: np.ndarray) -> int:
+    """Count positive instance labels in a 2D label image."""
+    vals = np.unique(inst)
+    vals = vals[vals > 0]
+    return int(vals.size)
+
+
+def validation_locally_relabel_instances(inst: np.ndarray) -> np.ndarray:
+    """
+    Convert stored labels to compact local labels while keeping 0 as background.
+
+    Stored H5 labels may be global ids. Several metrics iterate over 1..max_id,
+    so local relabeling avoids slow or misleading behavior when ids are sparse.
+    """
+    inst = np.asarray(inst, dtype=np.int32)
+    inst_local, _, _ = relabel_sequential(inst)
+    return inst_local.astype(np.int32, copy=False)
+
+
+def validation_as_float_or_nan(x: Any) -> float:
+    if isinstance(x, (int, float, np.integer, np.floating)):
+        return float(x)
+    return np.nan
+
+
+def validation_as_int_or_nan(x: Any) -> Any:
+    if isinstance(x, (int, np.integer)):
+        return int(x)
+    if isinstance(x, (float, np.floating)) and np.isfinite(float(x)):
+        return int(x)
+    return np.nan
+
+
+def validation_get_original_sample_idx(
+    loop_idx: int,
+    indices: Optional[Sequence[int]],
+) -> int:
+    if indices is None:
+        return int(loop_idx)
+    return int(indices[loop_idx])
+
+
+def validation_extract_full_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
+    full_meta = meta.get("full", {})
+    if isinstance(full_meta, dict):
+        return full_meta
+    return {}
+
+
+def validation_extract_tile_meta(meta: Dict[str, Any], tile_idx: int) -> Dict[str, Any]:
+    tiles = meta.get("tiles", [])
+    if isinstance(tiles, list) and tile_idx < len(tiles):
+        tile_meta = tiles[tile_idx]
+        if isinstance(tile_meta, dict):
+            return tile_meta
+    return {}
+
+
+def validation_extract_params(meta: Dict[str, Any]) -> Dict[str, Any]:
+    full_meta = validation_extract_full_meta(meta)
+
+    params = full_meta.get("params", None)
+    if isinstance(params, dict):
+        return params
+
+    params = meta.get("params", None)
+    if isinstance(params, dict):
+        return params
+
+    return {}
+
+
+def validation_extract_tile_n_cells_meta(tile_meta: Dict[str, Any]) -> float:
+    """
+    Return the tile-level metadata count.
+
+    For simulated tiled data, this is usually the number of cells whose centers
+    lie inside the tile, stored as tile_meta['sim_meta']['n_cells'].
+    """
+    if not isinstance(tile_meta, dict):
+        return np.nan
+
+    sim_meta = tile_meta.get("sim_meta", None)
+    if isinstance(sim_meta, dict):
+        if "n_cells" in sim_meta:
+            return validation_as_float_or_nan(sim_meta["n_cells"])
+
+        centers = sim_meta.get("centers", None)
+        if isinstance(centers, list):
+            return float(len(centers))
+
+    if "n_cells" in tile_meta:
+        return validation_as_float_or_nan(tile_meta["n_cells"])
+
+    centers = tile_meta.get("centers", None)
+    if isinstance(centers, list):
+        return float(len(centers))
+
+    return np.nan
+
+
+def validation_extract_tile_frac_positive(tile_meta: Dict[str, Any]) -> float:
+    if not isinstance(tile_meta, dict):
+        return np.nan
+
+    sim_meta = tile_meta.get("sim_meta", None)
+    if isinstance(sim_meta, dict) and "frac_positive" in sim_meta:
+        return validation_as_float_or_nan(sim_meta["frac_positive"])
+
+    if "frac_positive" in tile_meta:
+        return validation_as_float_or_nan(tile_meta["frac_positive"])
+
+    return np.nan
+
+
+def validation_extract_tile_xy(tile_meta: Dict[str, Any]) -> Tuple[float, float]:
+    if not isinstance(tile_meta, dict):
+        return np.nan, np.nan
+
+    tile_xy = tile_meta.get("tile_xy", (np.nan, np.nan))
+
+    if isinstance(tile_xy, np.ndarray):
+        tile_xy = tile_xy.tolist()
+
+    if isinstance(tile_xy, (list, tuple)) and len(tile_xy) == 2:
+        return validation_as_float_or_nan(tile_xy[0]), validation_as_float_or_nan(tile_xy[1])
+
+    return np.nan, np.nan
+
+
+def validation_jsonify_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    params_out: Dict[str, Any] = {}
+
+    for k, v in params.items():
+        col = f"param_{k}"
+
+        if isinstance(v, (int, float, np.integer, np.floating)):
+            params_out[col] = float(v)
+        elif isinstance(v, (list, tuple, np.ndarray)):
+            try:
+                params_out[col] = json.dumps([float(x) for x in list(v)])
+            except Exception:
+                continue
+        else:
+            continue
+
+    return params_out
+
+
+def validation_prediction_masks_and_counts(
+    *,
+    out: Dict[str, Any],
+    tile_idx: int,
+    segmentation_method: str,
+    cell_prob: np.ndarray,
+    cfg: Any,
+) -> Tuple[np.ndarray, int, int]:
+    """
+    Return prediction mask and counts for one tile.
+
+    Returns
+    -------
+    cell_pred_bin_for_mask_metrics : np.ndarray
+        Binary prediction used for mask IoU/Dice.
+    n_components_cell_thr : int
+        Connected components after thresholding the cell probability with
+        cfg.cell_thr.
+    n_pred_instances : int
+        Conventional mode: same as n_components_cell_thr.
+        inst_seg mode: number of predicted instance labels.
+    """
+    component_bin = (cell_prob >= cfg.cell_thr).astype(np.uint8)
+    n_components_cell_thr = int(sklabel(component_bin, connectivity=1).max())
+
+    if segmentation_method == "conventional":
+        return component_bin, n_components_cell_thr, n_components_cell_thr
+
+    if segmentation_method == "inst_seg":
+        inst_pred_list = out.get("instance_labels", None)
+        if inst_pred_list is None:
+            raise RuntimeError(
+                "segmentation_method='inst_seg' but segmenter output has no instance_labels."
+            )
+
+        inst_pred = np.asarray(inst_pred_list[tile_idx], dtype=np.int32)
+        cell_pred_bin = (inst_pred > 0).astype(np.uint8)
+        n_pred_instances = validation_count_positive_labels(inst_pred)
+
+        return cell_pred_bin, n_components_cell_thr, n_pred_instances
+
+    raise ValueError(f"Unknown segmentation_method: {segmentation_method}")
+
+
+def validation_count_error_vs_meta(pred_count: int, n_cells_gt_meta_tile: float) -> float:
+    if np.isfinite(float(n_cells_gt_meta_tile)):
+        return float(pred_count - int(n_cells_gt_meta_tile))
+    return np.nan
+
+
+def validation_summary_from_dataframe(df: pd.DataFrame) -> Dict[str, Any]:
+    metric_cols = [
+        c
+        for c in df.columns
+        if any(
+            c.startswith(pfx)
+            for pfx in (
+                "mask_",
+                "boundary_",
+                "center_",
+                "energy_",
+                "count_error_",
+                "abs_count_error_",
+            )
+        )
+    ]
+
+    means: Dict[str, float] = {}
+    stds: Dict[str, float] = {}
+
+    for c in metric_cols:
+        values = pd.to_numeric(df[c], errors="coerce").to_numpy(dtype=np.float64)
+        if np.isfinite(values).any():
+            means[c] = float(np.nanmean(values))
+            stds[c] = float(np.nanstd(values))
+        else:
+            means[c] = np.nan
+            stds[c] = np.nan
+
+    return {
+        "validation_version": VALIDATION_VERSION_STORED_INST_GT,
+        "n_images": int(df["sample_idx"].nunique()) if len(df) else 0,
+        "n_tiles": int(len(df)),
+        "means": means,
+        "stds": stds,
+    }
+
+
+def validation_validate_tiled_h5(
+    *,
+    segmenter: SegmenterUNet,
+    cfg: Any,
+    dataset_cls: Type[Any],
+    collate_fn: Any,
+    indices: Optional[Sequence[int]] = None,
+    segmentation_method: str = "inst_seg",
+    stop: Optional[int] = None,
+    progress_desc: Optional[str] = None,
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """
+    Shared tile-level validation loop for saved H5 datasets.
+
+    Ground-truth policy
+    -------------------
+    - Stored /inst labels are the source of truth for pixel-level instance metrics.
+    - Tile metadata n_cells is stored separately for grouping and center-in-tile analyses.
+    - GT instances are not reconstructed from target heads.
+    """
+    if segmentation_method not in ("conventional", "inst_seg"):
+        raise ValueError(f"Unknown segmentation_method: {segmentation_method}")
+
+    if segmentation_method == "inst_seg" and segmenter.inst_seg is None:
+        raise ValueError(
+            "segmentation_method='inst_seg' requires SegmenterUNet with compute_instances=True"
+        )
+
+    ds = dataset_cls(cfg.h5_path, indices=indices)
+
+    dataloader = DataLoader(
+        ds,
+        batch_size=1,
+        shuffle=False,
+        num_workers=cfg.workers,
+        pin_memory=True,
+        drop_last=False,
+        collate_fn=collate_fn,
+    )
+
+    rows: list[Dict[str, Any]] = []
+    dataset_mode = get_dataset_mode(cfg.h5_path)
+
+    desc = progress_desc or f"validate tiled h5 ({dataset_mode}, {segmentation_method})"
+
+    with tqdm(
+        total=len(ds),
+        desc=desc,
+        unit="img",
+        dynamic_ncols=True,
+    ) as pbar:
+        for loop_idx, batch in enumerate(dataloader):
+            if stop is not None and loop_idx == stop:
+                break
+
+            original_idx = validation_get_original_sample_idx(loop_idx, indices)
+
+            imgs_t, tgts_t, extras = batch
+
+            imgs_t = imgs_t[0]                    # [T,3,H,W]
+            tgts_t = tgts_t[0]                    # [T,4,H,W]
+            inst_all = extras["instance_labels"][0]  # [T,H,W]
+            meta = extras["meta"][0]
+
+            tile_metas = meta.get("tiles", [])
+            if isinstance(tile_metas, list) and len(tile_metas) > 0:
+                T = len(tile_metas)
+            else:
+                T = int(imgs_t.shape[0])
+
+            imgs_np = imgs_t[:T].detach().cpu().numpy().astype(np.float32)
+            tgts_np = tgts_t[:T].detach().cpu().numpy().astype(np.float32)
+            inst_np = inst_all[:T].detach().cpu().numpy().astype(np.int32)
+
+            out = segmenter(imgs_np)
+
+            cell_probs = out["probs"]["cell"]
+            bound_probs = out["probs"]["bound"]
+            center_probs = out["probs"]["center"]
+            energy_probs = out["probs"]["energy"]
+
+            full_meta = validation_extract_full_meta(meta)
+            n_cells_full = full_meta.get("n_cells", np.nan)
+            frac_positive_full = full_meta.get("frac_positive", np.nan)
+            src_path = full_meta.get("src_path", "")
+
+            params_out = validation_jsonify_params(validation_extract_params(meta))
+
+            for t in range(T):
+                tgt = tgts_np[t]                 # [4,H,W]
+                inst_gt_stored = inst_np[t]      # [H,W], source of truth
+
+                cell_gt = (tgt[0] > 0.5).astype(np.uint8)
+                energy_gt = tgt[3].astype(np.float32)
+
+                cell_prob = np.asarray(cell_probs[t], dtype=np.float32)
+                bound_prob = np.asarray(bound_probs[t], dtype=np.float32)
+                center_pred = np.asarray(center_probs[t], dtype=np.float32)
+                energy_pred = np.asarray(energy_probs[t], dtype=np.float32)
+
+                n_gt_stored = validation_count_positive_labels(inst_gt_stored)
+                inst_gt_local = validation_locally_relabel_instances(inst_gt_stored)
+
+                tile_meta = validation_extract_tile_meta(meta, t)
+                tile_y, tile_x = validation_extract_tile_xy(tile_meta)
+                n_cells_gt_meta_tile = validation_extract_tile_n_cells_meta(tile_meta)
+                frac_positive_tile = validation_extract_tile_frac_positive(tile_meta)
+
+                (
+                    cell_pred_bin,
+                    n_components_cell_thr,
+                    n_pred_instances,
+                ) = validation_prediction_masks_and_counts(
+                    out=out,
+                    tile_idx=t,
+                    segmentation_method=segmentation_method,
+                    cell_prob=cell_prob,
+                    cfg=cfg,
+                )
+
+                peaks = nms_peaks_np(
+                    center_pred,
+                    thr=cfg.center_peak_thr,
+                    min_dist=cfg.center_nms_dist,
+                )
+                n_centers_pred = int(len(peaks))
+
+                mask_stats = iou_dice_overlap(cell_pred_bin, cell_gt)
+
+                boundary_f1 = boundary_f1_skeletonized(
+                    bound_prob,
+                    inst_gt_local,
+                    tol=cfg.boundary_tol,
+                    thr=cfg.boundary_thr,
+                    sweep=cfg.boundary_sweep,
+                )
+
+                center_stats = center_metrics_hungarian(
+                    center_pred,
+                    inst_gt_local,
+                    peak_thr=cfg.center_peak_thr,
+                    nms_dist=cfg.center_nms_dist,
+                    match_radius=cfg.center_match_radius,
+                    ap_thr_list=cfg.ap_thr_list,
+                    oks_thresholds=cfg.oks_thresholds,
+                )
+
+                energy_stats = energy_metrics_extended_full(
+                    energy_pred,
+                    energy_gt,
+                    cell_gt,
+                    frac_delta=cfg.energy_frac_delta,
+                )
+
+                err_components_stored = int(n_components_cell_thr - n_gt_stored)
+                err_centers_stored = int(n_centers_pred - n_gt_stored)
+                err_instances_stored = int(n_pred_instances - n_gt_stored)
+
+                err_components_meta = validation_count_error_vs_meta(
+                    n_components_cell_thr,
+                    n_cells_gt_meta_tile,
+                )
+                err_centers_meta = validation_count_error_vs_meta(
+                    n_centers_pred,
+                    n_cells_gt_meta_tile,
+                )
+                err_instances_meta = validation_count_error_vs_meta(
+                    n_pred_instances,
+                    n_cells_gt_meta_tile,
+                )
+
+                row: Dict[str, Any] = {
+                    "validation_version": VALIDATION_VERSION_STORED_INST_GT,
+                    "sample_idx": int(original_idx),
+                    "tile_idx": int(t),
+                    "metric_level": "tile",
+                    "dataset_mode": dataset_mode,
+                    "segmentation_method": segmentation_method,
+                    "unet_mode": segmenter.cfg.unet_mode,
+                    "src_path": src_path if src_path is not None else "",
+                    "tile_y": int(tile_y) if np.isfinite(tile_y) else np.nan,
+                    "tile_x": int(tile_x) if np.isfinite(tile_x) else np.nan,
+                    "n_cells_per_img": validation_as_int_or_nan(n_cells_full),
+                    "n_cells_gt_meta_tile": validation_as_int_or_nan(n_cells_gt_meta_tile),
+                    "n_cells_gt_instances_stored_labels": int(n_gt_stored),
+                    "n_cells_gt_instances": int(n_gt_stored),
+                    "frac_positive_per_img": validation_as_float_or_nan(frac_positive_full),
+                    "frac_positive_tile": validation_as_float_or_nan(frac_positive_tile),
+                    "n_cells_pred_components_cell_thr": int(n_components_cell_thr),
+                    "cell_component_thr": float(cfg.cell_thr),
+                    "n_cells_pred_centers": int(n_centers_pred),
+                    "n_cells_pred_instances": int(n_pred_instances),
+                    "count_error_components_vs_stored_labels": err_components_stored,
+                    "count_error_centers_vs_stored_labels": err_centers_stored,
+                    "count_error_instances_vs_stored_labels": err_instances_stored,
+                    "abs_count_error_components_vs_stored_labels": int(abs(err_components_stored)),
+                    "abs_count_error_centers_vs_stored_labels": int(abs(err_centers_stored)),
+                    "abs_count_error_instances_vs_stored_labels": int(abs(err_instances_stored)),
+                    "count_error_components_vs_meta_tile": err_components_meta,
+                    "count_error_centers_vs_meta_tile": err_centers_meta,
+                    "count_error_instances_vs_meta_tile": err_instances_meta,
+                    "abs_count_error_components_vs_meta_tile": abs(err_components_meta) if np.isfinite(err_components_meta) else np.nan,
+                    "abs_count_error_centers_vs_meta_tile": abs(err_centers_meta) if np.isfinite(err_centers_meta) else np.nan,
+                    "abs_count_error_instances_vs_meta_tile": abs(err_instances_meta) if np.isfinite(err_instances_meta) else np.nan,
+                    **{f"mask_{k}": v for k, v in mask_stats.items()},
+                    "boundary_f1": float(boundary_f1),
+                    **{f"center_{k}": v for k, v in center_stats.items()},
+                    **{f"energy_{k}": v for k, v in energy_stats.items()},
+                    **params_out,
+                }
+
+                rows.append(row)
+
+            pbar.update(1)
+
+    df = pd.DataFrame(rows)
+    summary = validation_summary_from_dataframe(df)
+
+    if cfg.out_csv:
+        os.makedirs(os.path.dirname(cfg.out_csv) or ".", exist_ok=True)
+        df.to_csv(cfg.out_csv, index=False)
+
+    if cfg.out_summary_json:
+        os.makedirs(os.path.dirname(cfg.out_summary_json) or ".", exist_ok=True)
+        with open(cfg.out_summary_json, "w") as f:
+            json.dump(summary, f, indent=2)
+
+    return df, summary
+
+
+def validation_make_segmenter_and_config(
+    *,
+    h5_path: str,
+    out_csv: str,
+    out_summary_json: str,
+    unet_mode: str,
+    model_dir: str,
+    model_file: str,
+    seg_method: str,
+    validation_config_cls: Type[Any],
+) -> Tuple[SegmenterUNet, Any]:
+    """Create SegmenterUNet plus a matching TrainingValidationConfig-like object."""
+    instance_cfg = InstanceSegmenterConfig()
+
+    seg_params: Dict[str, Any] = dict(
+        unet_mode=unet_mode,
+        model_dir=model_dir,
+        model_file=model_file,
+        device="cuda" if torch.cuda.is_available() else "cpu",
+        use_amp=torch.cuda.is_available(),
+        normalize=False,  # H5CellsDataset/TiledH5Dataset already normalizes.
+    )
+
+    segmenter_cfg_obj = SegmenterConfig(
+        compute_instances=(seg_method == "inst_seg"),
+        instance_cfg=instance_cfg.to_dict(),
+        **seg_params,
+    )
+
+    cfg = validation_config_cls(
+        h5_path=h5_path,
+        cell_thr=float(segmenter_cfg_obj.thr_cell),
+        center_peak_thr=float(instance_cfg.center_thr),
+        center_nms_dist=int(instance_cfg.center_min_distance),
+        boundary_thr=float(segmenter_cfg_obj.thr_bound),
+        boundary_sweep=True,
+        batch_size=1,
+        out_csv=out_csv,
+        out_summary_json=out_summary_json,
+    )
+
+    segmenter = SegmenterUNet.from_config(segmenter_cfg_obj.to_dict())
+    return segmenter, cfg
+
