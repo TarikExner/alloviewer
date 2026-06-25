@@ -76,9 +76,6 @@ def _generate_main_figure(
         energy_plot.set_title("Energy SSIM score", fontsize = cfg.TITLE_SIZE)
         energy_plot.set_ylim(-0.1, 1.15)
 
-
-
-
     def generate_subfigure_b(
         fig: Figure, ax: Axes, gs: SubplotSpec, subfigure_label
     ) -> None:
@@ -93,7 +90,7 @@ def _generate_main_figure(
         pred_keys = ["cell", "bound", "center", "energy"]
     
         # inset settings
-        inset_centers = (50, 250)
+        inset_centers = (250, 250)
         inset_box_px = 96
         inset_zoom = 3.0
     
