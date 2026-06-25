@@ -101,7 +101,7 @@ def _generate_main_figure(
         titles = ["Image", "Cell mask", "Cell boundary", "Cell centers", "Energy"]
         pred_keys = ["cell", "bound", "center", "energy"]
 
-        inset_centers = (300, 300)
+        inset_centers = (450, 150)
         inset_box_px = 96
         inset_zoom = 3.0
 
