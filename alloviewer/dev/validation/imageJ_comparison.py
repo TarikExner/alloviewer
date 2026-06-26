@@ -492,7 +492,7 @@ def _make_segmenter_and_validation_config(
         center_peak_thr=float(instance_cfg.center_thr),
         center_nms_dist=int(instance_cfg.center_min_distance),
         boundary_thr=float(segmenter_cfg_obj.thr_bound),
-        boundary_sweep=True,
+        boundary_sweep=False,
         batch_size=1,
         out_csv=out_csv,
         out_summary_json=out_summary_json,
