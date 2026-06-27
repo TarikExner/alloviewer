@@ -1,16 +1,16 @@
-# api/routes/fcxm.py
-import inspect
 import os
 import time
 from pathlib import Path
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 
-from alloviewer.flow_cytometry.pipeline import run_fcxm_analysis
 from alloviewer.flow_cytometry.plots import build_results_response_from_cache
-from alloviewer.flow_cytometry.pdf_report import build_fcxm_summary_pdf, ReportMeta
+from alloviewer.flow_cytometry.pdf_report import (
+    build_fcxm_summary_pdf,
+    ReportMeta,
+)
 
 from ...models import (
     FCXMResultsRequest,
@@ -20,16 +20,24 @@ from ...models import (
     FCXMRunProgressResponse,
     FcsDisplayNamesRequest,
     FcsDisplayNamesResponse,
-    FCXM_JOB_PROGRESS,
-    FCXM_JOB_RESULTS,
-    FCXM_JOB_PLOTS,
-    FCXM_JOB_RUN_REQUESTS,
-    fcxm_job_touch,
-    fcxm_job_cleanup,
 )
+
+from app.services.job_state import (
+    set_fcxm_progress,
+    get_fcxm_progress,
+    set_fcxm_request,
+    get_fcxm_request,
+    get_fcxm_result,
+    get_fcxm_plot_cache_path,
+)
+
+from app.services.fcxm_cache_storage import load_fcxm_plot_cache
+from app.services.fcxm_jobs import collect_original_filenames
+from app.workers.tasks_fcxm import run_fcxm_job_task
 
 from ...core.settings import settings
 from ...core.paths import resolve_under_base_dir
+
 
 router = APIRouter(prefix="/api/fcxm", tags=["fcxm"])
 
@@ -58,10 +66,6 @@ def _normalize_meta_key(key) -> str:
 
 
 def _extract_tube_name_from_meta(meta: dict, fallback: str) -> str:
-    """
-    FCS tube names are not stored under one universal key.
-    Try common keys and fall back to filename.
-    """
     if not meta:
         return fallback
 
@@ -95,9 +99,6 @@ def _extract_tube_name_from_meta(meta: dict, fallback: str) -> str:
 
 
 def _read_fcs_metadata(path: Path) -> dict:
-    """
-    Read FCS metadata with flowio.
-    """
     from flowio import FlowData
 
     fd = FlowData(str(path))
@@ -116,52 +117,10 @@ def _resolve_fcs_upload_path(filename: str) -> Path:
     return dest
 
 
-def _collect_original_filenames(req_dict: dict) -> list[str]:
-    files: list[str] = []
-
-    for sample in req_dict.get("samples", []):
-        for fp in sample.get("file_paths", []) or []:
-            if fp:
-                files.append(str(fp))
-
-    return files
-
-
-def _resolve_request_file_paths(req_dict: dict) -> dict[str, str]:
-    """
-    Converts request file paths to absolute paths in-place.
-
-    Returns:
-        Mapping from normalized absolute path to original uploaded filename.
-    """
-    abs_to_original: dict[str, str] = {}
-
-    for sample in req_dict.get("samples", []):
-        abs_paths = []
-
-        for fp in sample.get("file_paths", []) or []:
-            dest = resolve_under_base_dir(settings.data_dir, fp)
-
-            if dest.suffix.lower() != ".fcs":
-                raise HTTPException(status_code=415, detail=f"Not an .fcs file: {fp}")
-
-            if not dest.exists():
-                raise HTTPException(status_code=400, detail=f"File not found: {fp}")
-
-            abs_path = str(dest)
-            abs_paths.append(abs_path)
-            abs_to_original[_norm_path(abs_path)] = str(fp)
-
-        sample["file_paths"] = abs_paths
-
-    return abs_to_original
-
-
-def _public_filename(value: str | None, abs_to_original: dict[str, str]) -> str | None:
-    """
-    Converts an absolute path reported by analysis code back to the original
-    uploaded filename used by the frontend.
-    """
+def _public_filename(
+    value: str | None,
+    abs_to_original: dict[str, str],
+) -> str | None:
     if not value:
         return None
 
@@ -172,6 +131,7 @@ def _public_filename(value: str | None, abs_to_original: dict[str, str]) -> str 
         return abs_to_original[norm]
 
     return text
+
 
 def _public_filenames(
     values: list[str] | None,
@@ -186,68 +146,6 @@ def _public_filenames(
 
     return out
 
-def run_fcxm_job(job_id: str, req: FCXMRunRequest):
-    try:
-        req_dict = req.model_dump()
-        original_files = _collect_original_filenames(req_dict)
-        total_files = len(original_files)
-
-        FCXM_JOB_PROGRESS[job_id] = {
-            **FCXM_JOB_PROGRESS.get(job_id, {}),
-            "status": "running",
-            "message": "Starting flow cytometry analysis.",
-            "stage": "starting",
-            "total_files": max(1, total_files * 5),
-            "done_files": 0,
-            "current_file": None,
-            "done_filenames": [],
-            "last_access": time.time(),
-        }
-
-        abs_to_original = _resolve_request_file_paths(req_dict)
-
-        # Store the mapping privately in the progress dict.
-        # The GET endpoint uses it to convert absolute paths back to frontend filenames.
-        FCXM_JOB_PROGRESS[job_id]["_abs_to_original"] = abs_to_original
-        FCXM_JOB_PROGRESS[job_id]["_original_files"] = original_files
-
-        result = run_fcxm_analysis(
-            req_dict=req_dict,
-            job_id=job_id,
-        )
-
-        FCXM_JOB_RESULTS[job_id] = result["payload"]
-        FCXM_JOB_PLOTS[job_id] = result["plot_cache"]
-
-        previous = FCXM_JOB_PROGRESS.get(job_id, {})
-        total_work = int(previous.get("total_files") or max(1, total_files * 5))
-
-        FCXM_JOB_PROGRESS[job_id] = {
-            **previous,
-            "status": "done",
-            "message": "Done.",
-            "stage": "done",
-            "total_files": total_work,
-            "done_files": total_work,
-            "current_file": None,
-            "done_filenames": original_files,
-            "last_access": time.time(),
-        }
-
-        fcxm_job_touch(job_id)
-
-    except Exception as e:
-        FCXM_JOB_PROGRESS[job_id] = {
-            **FCXM_JOB_PROGRESS.get(job_id, {}),
-            "status": "error",
-            "message": str(e),
-            "stage": "error",
-            "error": repr(e),
-            "current_file": None,
-            "last_access": time.time(),
-        }
-        fcxm_job_touch(job_id)
-        print(f"FCXM job failed for {job_id}: {repr(e)}")
 
 @router.post("/fcs-display-names", response_model=FcsDisplayNamesResponse)
 async def fcxm_fcs_display_names(req: FcsDisplayNamesRequest):
@@ -273,47 +171,47 @@ async def fcxm_fcs_display_names(req: FcsDisplayNamesRequest):
 
 
 @router.post("/run", response_model=FCXMRunStartResponse)
-async def fcxm_run(req: FCXMRunRequest, background_tasks: BackgroundTasks):
+async def fcxm_run(req: FCXMRunRequest):
     job_id = str(uuid.uuid4())
     now = time.time()
 
     req_dict = req.model_dump()
-    original_files = _collect_original_filenames(req_dict)
+    original_files = collect_original_filenames(req_dict)
     total_files = len(original_files)
 
-    fcxm_job_cleanup()
+    set_fcxm_progress(
+        job_id,
+        {
+            "status": "queued",
+            "message": "Queued.",
+            "stage": "queued",
+            "created_at": now,
+            "last_access": now,
+            "total_files": max(1, total_files * 5),
+            "done_files": 0,
+            "current_file": None,
+            "done_filenames": [],
+        },
+    )
 
-    FCXM_JOB_PROGRESS[job_id] = {
-        "status": "queued",
-        "message": "Queued.",
-        "stage": "queued",
-        "created_at": now,
-        "last_access": now,
-        "total_files": max(1, total_files * 5),
-        "done_files": 0,
-        "current_file": None,
-        "done_filenames": [],
-    }
+    set_fcxm_request(job_id, req_dict)
 
-    FCXM_JOB_RUN_REQUESTS[job_id] = req_dict
+    run_fcxm_job_task.delay(job_id, req_dict)
 
-    background_tasks.add_task(run_fcxm_job, job_id, req)
     return {"job_id": job_id}
 
 
 @router.get("/run/{job_id}", response_model=FCXMRunProgressResponse)
 async def fcxm_run_progress(job_id: str):
-    fcxm_job_cleanup()
+    prog = get_fcxm_progress(job_id)
 
-    if job_id not in FCXM_JOB_PROGRESS:
+    if prog is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    fcxm_job_touch(job_id)
+    res = get_fcxm_result(job_id)
 
-    prog = FCXM_JOB_PROGRESS[job_id]
-    res = FCXM_JOB_RESULTS.get(job_id)
-
-    abs_to_original = prog.get("_abs_to_original", {}) or {}
+    req_dict = get_fcxm_request(job_id) or {}
+    abs_to_original = req_dict.get("_abs_to_original", {}) or {}
 
     current_file = _public_filename(
         prog.get("current_file"),
@@ -336,15 +234,15 @@ async def fcxm_run_progress(job_id: str):
         "done_filenames": done_filenames,
     }
 
+
 @router.post("/results", response_model=FCXMResultsResponse)
 async def fcxm_results(req: FCXMResultsRequest):
-    fcxm_job_cleanup()
+    plot_cache_path = get_fcxm_plot_cache_path(req.job_id)
 
-    cache = FCXM_JOB_PLOTS.get(req.job_id)
-    if cache is None:
+    if not plot_cache_path:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    fcxm_job_touch(req.job_id)
+    cache = load_fcxm_plot_cache(plot_cache_path)
 
     abs_path = str(resolve_under_base_dir(settings.data_dir, req.fcs_filename))
     key = _norm_path(abs_path)
@@ -367,6 +265,7 @@ async def fcxm_results(req: FCXMResultsRequest):
         selected_gate=req.gate,
         selected_key=key,
     )
+
     return FCXMResultsResponse(**data)
 
 
@@ -376,9 +275,8 @@ async def fcxm_summary_pdf(
     positivity_metric: str | None = None,
     positivity_threshold: float | None = None,
 ):
-    fcxm_job_cleanup()
+    prog = get_fcxm_progress(job_id)
 
-    prog = FCXM_JOB_PROGRESS.get(job_id)
     if prog is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -388,12 +286,13 @@ async def fcxm_summary_pdf(
             detail=f"Job status is {prog.get('status')}",
         )
 
-    payload = FCXM_JOB_RESULTS.get(job_id)
-    plot_cache = FCXM_JOB_PLOTS.get(job_id)
-    if payload is None or plot_cache is None:
+    payload = get_fcxm_result(job_id)
+    plot_cache_path = get_fcxm_plot_cache_path(job_id)
+
+    if payload is None or not plot_cache_path:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    fcxm_job_touch(job_id)
+    plot_cache = load_fcxm_plot_cache(plot_cache_path)
 
     pdf_bytes = build_fcxm_summary_pdf(
         payload=payload,

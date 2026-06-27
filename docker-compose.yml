@@ -1,0 +1,100 @@
+services:
+  redis:
+    image: redis:7
+    container_name: alloviewer_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  api:
+    image: alloviewer-backend:local
+    build: .
+    container_name: alloviewer_api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      DATA_DIR: /data
+      REDIS_URL: redis://redis:6379/0
+      PLATE_LAYOUT_STORE: /data/plate_layouts
+      TORCH_DEVICE: auto
+    volumes:
+      - .:/app
+      - ./app/data:/data
+    depends_on:
+      - redis
+
+  worker_cpu:
+    image: alloviewer-backend:local
+    build: .
+    container_name: alloviewer_worker_cpu
+    command: celery -A app.workers.celery_app.celery_app worker -Q cpu --loglevel=info --pool=solo --concurrency=1
+    environment:
+      DATA_DIR: /data
+      REDIS_URL: redis://redis:6379/0
+      PLATE_LAYOUT_STORE: /data/plate_layouts
+      C_FORCE_ROOT: "true"
+      TORCH_DEVICE: cpu
+    volumes:
+      - .:/app
+      - ./app/data:/data
+    depends_on:
+      - redis
+
+  worker_image:
+    image: alloviewer-backend:local
+    build: .
+    container_name: alloviewer_worker_image
+    command: celery -A app.workers.celery_app.celery_app worker -Q image --loglevel=info --pool=solo --concurrency=1
+    environment:
+      DATA_DIR: /data
+      REDIS_URL: redis://redis:6379/0
+      PLATE_LAYOUT_STORE: /data/plate_layouts
+      C_FORCE_ROOT: "true"
+      TORCH_DEVICE: auto
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      - .:/app
+      - ./app/data:/data
+    depends_on:
+      - redis
+    gpus: all
+
+  worker_maintenance:
+    image: alloviewer-backend:local
+    build: .
+    container_name: alloviewer_worker_maintenance
+    command: celery -A app.workers.celery_app.celery_app worker -Q maintenance --loglevel=info --pool=solo --concurrency=1
+    environment:
+      DATA_DIR: /data
+      REDIS_URL: redis://redis:6379/0
+      PLATE_LAYOUT_STORE: /data/plate_layouts
+      C_FORCE_ROOT: "true"
+      TORCH_DEVICE: cpu
+    volumes:
+      - .:/app
+      - ./app/data:/data
+    depends_on:
+      - redis
+
+  beat:
+    image: alloviewer-backend:local
+    build: .
+    container_name: alloviewer_beat
+    command: celery -A app.workers.celery_app.celery_app beat --loglevel=info
+    environment:
+      DATA_DIR: /data
+      REDIS_URL: redis://redis:6379/0
+      PLATE_LAYOUT_STORE: /data/plate_layouts
+      C_FORCE_ROOT: "true"
+      TORCH_DEVICE: cpu
+    volumes:
+      - .:/app
+      - ./app/data:/data
+    depends_on:
+      - redis
+
+volumes:
+  redis_data:
