@@ -7,7 +7,7 @@ services:
       - redis_data:/data
 
   api:
-    image: alloviewer-backend:local
+    image: ${BACKEND_IMAGE:-alloviewer-backend:local}
     build: .
     container_name: alloviewer_api
     restart: unless-stopped
@@ -25,7 +25,7 @@ services:
       - redis
 
   worker_cpu:
-    image: alloviewer-backend:local
+    image: ${BACKEND_IMAGE:-alloviewer-backend:local}
     build: .
     container_name: alloviewer_worker_cpu
     restart: unless-stopped
@@ -42,7 +42,7 @@ services:
       - redis
 
   worker_image_cpu:
-    image: alloviewer-backend:local
+    image: ${BACKEND_IMAGE:-alloviewer-backend:local}
     build: .
     container_name: alloviewer_worker_image_cpu
     restart: unless-stopped
@@ -61,7 +61,7 @@ services:
       - redis
 
   worker_image_gpu:
-    image: alloviewer-backend:local
+    image: ${BACKEND_IMAGE:-alloviewer-backend:local}
     build: .
     container_name: alloviewer_worker_image_gpu
     restart: unless-stopped
@@ -83,7 +83,7 @@ services:
     gpus: all
 
   worker_maintenance:
-    image: alloviewer-backend:local
+    image: ${BACKEND_IMAGE:-alloviewer-backend:local}
     build: .
     container_name: alloviewer_worker_maintenance
     restart: unless-stopped
@@ -100,7 +100,7 @@ services:
       - redis
 
   beat:
-    image: alloviewer-backend:local
+    image: ${BACKEND_IMAGE:-alloviewer-backend:local}
     build: .
     container_name: alloviewer_beat
     restart: unless-stopped
@@ -116,5 +116,23 @@ services:
     depends_on:
       - redis
 
+  caddy:
+    image: caddy:2
+    container_name: alloviewer_caddy
+    restart: unless-stopped
+    profiles:
+      - caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
 volumes:
   redis_data:
+  caddy_data:
+  caddy_config:
