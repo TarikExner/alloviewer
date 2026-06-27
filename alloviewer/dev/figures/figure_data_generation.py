@@ -873,45 +873,239 @@ def generate_param_showcase(
         "n_cols": n_cols,
     }
 
-def get_validation_data(results_dir,
-                        mode: Literal["training", "testing", "human", "imageJ"],
-                        seg_method: Literal["inst_seg", "conventional"] = "inst_seg",
-                        unet_size: Literal["small", "medium", "large"] = "small",
-                        crop_method: Literal["pad_resize", "crop_well_resize", "tiles", "combined"] = "combined",
-                        comparison_images: Literal["external_images", "tiles"] = "tiles"
-                        ) -> pd.DataFrame:
+def _read_validation_csvs(in_file) -> pd.DataFrame:
+    if isinstance(in_file, list):
+        if len(in_file) == 0:
+            raise FileNotFoundError("No validation CSV files found.")
+
+        return pd.concat(
+            [pd.read_csv(file, index_col=None) for file in in_file],
+            axis=0,
+            ignore_index=True,
+        )
+
+    if isinstance(in_file, str):
+        if not os.path.isfile(in_file):
+            raise FileNotFoundError(f"Validation CSV not found: {in_file}")
+
+        return pd.read_csv(in_file, index_col=None)
+
+    raise TypeError("in_file must be str or list[str].")
+
+
+def _first_existing_column(
+    data: pd.DataFrame,
+    candidates: list[str],
+) -> str | None:
+    for col in candidates:
+        if col in data.columns:
+            return col
+    return None
+
+
+def _add_count_error_pct(
+    data: pd.DataFrame,
+    *,
+    mode: str,
+) -> pd.DataFrame:
+    """
+    Add count_error_pct in a schema-tolerant way.
+
+    Refactored validation preferred columns:
+      - count_error_instances_vs_stored_labels
+      - count_error_components_vs_stored_labels
+
+    Old validation fallback columns:
+      - count_error_instances
+      - count_error_components
+    """
+    data = data.copy()
 
     if mode == "training":
-        if crop_method == "combined":
-            files = os.listdir(results_dir)
-            in_file = [
-                os.path.join(results_dir, file) for file in files
-                if "training_val_" in file
-                and file.endswith(".csv")
-            ]
-        else:
-            in_file = os.path.join(results_dir, f"{mode}_val_{unet_size}_{crop_method}.csv")
+        n_cells_key = _first_existing_column(
+            data,
+            [
+                # old training/global image count
+                "n_cells_per_img",
+
+                # new tiled metadata count, useful if available
+                "n_cells_gt_meta_tile",
+
+                # stored-label GT count
+                "n_cells_gt_instances_stored_labels",
+
+                # old/fallback GT count
+                "n_cells_gt_instances",
+            ],
+        )
+
+    elif mode in ("testing", "imageJ"):
+        n_cells_key = _first_existing_column(
+            data,
+            [
+                "n_cells_gt_instances_stored_labels",
+                "n_cells_gt_instances",
+                "n_cells_gt_meta_tile",
+                "n_cells_full_meta",
+                "n_cells_per_img",
+            ],
+        )
+
+    else:
+        return data
+
+    count_error_key = _first_existing_column(
+        data,
+        [
+            # preferred refactored schema
+            "count_error_instances_vs_stored_labels",
+            "count_error_instances_vs_gt_instances",
+            "count_error_components_vs_stored_labels",
+            "count_error_components_vs_gt_instances",
+
+            # old schema fallback
+            "count_error_instances",
+            "count_error_components",
+        ],
+    )
+
+    if n_cells_key is None or count_error_key is None:
+        data["count_error_pct"] = np.nan
+        return data
+
+    denom = pd.to_numeric(data[n_cells_key], errors="coerce")
+    numer = pd.to_numeric(data[count_error_key], errors="coerce")
+
+    denom = denom.replace(0, np.nan)
+
+    data["count_error_pct"] = (numer / denom) * 100.0
+    data["count_error_pct_source"] = count_error_key
+    data["count_error_pct_denominator"] = n_cells_key
+
+    return data
+
+
+def _drop_validation_duplicates(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Drop duplicated rows if combined and individual CSVs were accidentally loaded.
+    """
+    dedup_cols = [
+        c for c in [
+            "sample_idx",
+            "idx",
+            "tile_idx",
+            "metric_level",
+            "dataset_mode",
+            "unet_mode",
+            "segmentation_method",
+            "src_path",
+        ]
+        if c in data.columns
+    ]
+
+    if not dedup_cols:
+        return data.reset_index(drop=True)
+
+    return data.drop_duplicates(subset=dedup_cols).reset_index(drop=True)
+
+
+def _training_files(
+    results_dir: str,
+    *,
+    seg_method: str,
+    unet_size: str,
+    crop_method: str,
+) -> str | list[str]:
+    if crop_method == "combined":
+        combined_file = os.path.join(
+            results_dir,
+            f"training_val_combined_{seg_method}.csv",
+        )
+
+        if os.path.isfile(combined_file):
+            return combined_file
+
+        files = os.listdir(results_dir)
+
+        # Load only individual files, not combined files.
+        in_files = [
+            os.path.join(results_dir, file)
+            for file in files
+            if file.startswith("training_val_")
+            and file.endswith(f"_{seg_method}.csv")
+            and "combined" not in file
+            and "summary" not in file
+        ]
+
+        if len(in_files) == 0:
+            raise FileNotFoundError(
+                f"No training validation files found in {results_dir} "
+                f"for seg_method={seg_method!r}."
+            )
+
+        return sorted(in_files)
+
+    return os.path.join(
+        results_dir,
+        f"training_val_{unet_size}_{crop_method}_{seg_method}.csv",
+    )
+
+
+def get_validation_data(
+    results_dir,
+    mode: Literal["training", "testing", "human", "imageJ"],
+    seg_method: Literal["inst_seg", "conventional"] = "inst_seg",
+    unet_size: Literal["small", "medium", "large"] = "small",
+    crop_method: Literal[
+        "pad_resize",
+        "crop_well_resize",
+        "tiles",
+        "combined",
+    ] = "combined",
+    comparison_images: Literal["external_images", "tiles"] = "tiles",
+) -> pd.DataFrame:
+    """
+    Load validation results for figures.
+
+    Supports both the old validation schema and the refactored schema where
+    count-error columns were renamed explicitly.
+    """
+    if mode == "training":
+        in_file = _training_files(
+            results_dir,
+            seg_method=seg_method,
+            unet_size=unet_size,
+            crop_method=crop_method,
+        )
+
     elif mode == "testing":
-        in_file = os.path.join(results_dir, f"{mode}_val_{unet_size}_{comparison_images}_{seg_method}.csv")
+        in_file = os.path.join(
+            results_dir,
+            f"testing_val_{unet_size}_{comparison_images}_{seg_method}.csv",
+        )
+
     elif mode == "human":
-        in_file = os.path.join(results_dir, "human_annotated_comparison.csv")
+        in_file = os.path.join(
+            results_dir,
+            "human_annotated_comparison.csv",
+        )
+
     elif mode == "imageJ":
-        in_file = os.path.join(results_dir, "testing_val_imageJ_small_inst_seg.csv")
+        in_file = os.path.join(
+            results_dir,
+            f"testing_val_imageJ_{unet_size}_{seg_method}.csv",
+        )
+
     else:
         raise ValueError(f"Unknown mode {mode}")
 
-    if isinstance(in_file, list):
-        data = pd.concat([pd.read_csv(file) for file in in_file], axis = 0, ignore_index = True)
-    elif isinstance(in_file, str):
-        data = pd.read_csv(in_file, index_col = None)
-    else:
-        raise TypeError("in_file must be str or list")
+    data = _read_validation_csvs(in_file)
 
-    if mode == "training":
-        n_cells_key = "n_cells_per_img"
-        data["count_error_pct"] = (data["count_error_components"] / data[n_cells_key]) * 100
+    data = _drop_validation_duplicates(data)
 
-    return data
+    data = _add_count_error_pct(data, mode=mode)
+
+    return data.reset_index(drop=True)
 
 def _prep_config_for_unet_comparison(
     cfg: dict,
