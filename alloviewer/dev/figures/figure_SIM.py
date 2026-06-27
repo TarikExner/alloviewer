@@ -246,12 +246,7 @@ def _generate_main_figure(
     cmap=None,
     dpi: int = 300,
 ) -> None:
-    """
-    Build a figure with:
-      - 6 rows, one per parameter
-      - 4 image columns, one per value
-      - one right-side label column
-    """
+
     images = bundle["images"]
     param_names = bundle["param_names"]
     value_lists = bundle["value_lists"]
@@ -481,8 +476,12 @@ def figure_SIM_generation(
         # off by default unless shown
         cluster_enable=False,
         side_bias_enable=False,
-        ghost_enable=False,
-        reflect_enable=False,
+        ghost_enable=True,
+        reflect_enable=True,
+        ghost_density=0.3,
+        ghost_offset_px=20,
+        ghost_sigma=3.5,
+        ghost_intensity=0.1,
         dirt_density=0.0,
         ring_artifacts=0,
 
