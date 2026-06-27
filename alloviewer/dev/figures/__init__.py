@@ -48,7 +48,7 @@ DIRECTORIES = {
     "flow_data_dir": "../scripts/flow_data/"
 }
 
-def generate_all_figures():
+def generate_all_figures(DIRECTORIES: dict):
 
     figure_1_generation(**DIRECTORIES)
     figure_2_generation(**DIRECTORIES)
