@@ -1045,6 +1045,7 @@ def _generate_main_figure(
 
     fig.savefig(pdf_path, dpi=300, bbox_inches="tight")
     fig.savefig(png_path, dpi=300, bbox_inches="tight")
+
     plt.close(fig)
 
     return

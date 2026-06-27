@@ -241,7 +241,10 @@ def _generate_main_figure(
 
     plt.savefig(pdf_path, dpi=300, bbox_inches="tight")
     plt.savefig(png_path, dpi=300, bbox_inches="tight")
+
     plt.close(fig)
+
+    return
 
 
 def figure_S7_generation(
