@@ -28,8 +28,6 @@ from alloviewer.image_analysis.segmenter import (
     InstanceSegmenterConfig,
 )
 
-from alloviewer.image_analysis.segmenter import SegmenterUNet
-
 # ----------------------------
 # geometry & resizing
 # ----------------------------
@@ -1475,7 +1473,7 @@ def validation_make_segmenter_and_config(
         h5_path=h5_path,
         cell_thr=float(segmenter_cfg_obj.thr_cell),
         center_peak_thr=float(instance_cfg.center_thr),
-        center_nms_dist=int(instance_cfg.center_min_distance),
+        center_nms_dist=3,
         boundary_thr=float(segmenter_cfg_obj.thr_bound),
         boundary_sweep=False,
         batch_size=1,
