@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import pickle
+from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple, Literal, Iterable
 from typing import Mapping, Any, Dict
 
@@ -23,12 +24,435 @@ from .figure_data_utils import (
 from alloviewer.image_analysis.segmenter import SegmenterUNetInference
 from alloviewer.image_analysis.config import UNET_CONFIG, INSTANCE_CONFIG_DICT
 from alloviewer.image_analysis.io import load_image
-from alloviewer.dev.segmentation.image_simulation import simulate_image
+from alloviewer.dev.segmentation.image_simulation import (
+    simulate_image, default_scene
+)
 import copy
+
+SIMULATION_IMAGE_SIZE = 512
+SIMULATION_TILE_SIZE = 128
+SIMULATION_SEED = 42
+SIMULATION_LABEL_Y_OFFSET = 8
 
 _LOG_RE = re.compile(
     r"log_(?P<unet_mode>small|medium|large)_(?P<tag>(pad_resize|crop_well_resize|tiles)_S(?P<target>\d+)_seed(?P<seed>\d+))\.jsonl$"
 )
+
+
+def make_simulation_parameter_mosaic(
+    H: int = SIMULATION_IMAGE_SIZE,
+    W: int = SIMULATION_IMAGE_SIZE,
+    crop_size: int = SIMULATION_TILE_SIZE,
+    seed: int = SIMULATION_SEED,
+    same_seed_per_tile: bool = True,
+) -> tuple[np.ndarray, list[dict[str, Any]]]:
+    """
+    Create a 4 x 4 simulation parameter mosaic.
+
+    Each panel is generated from a full simulated image. The crop position
+    matches the panel position in the final mosaic, keeping the well ring
+    aligned between panels.
+
+    Notes
+    -----
+    - Clustering is disabled for all panels.
+    - The calibrated diameter model is disabled because several panels
+      directly test `cell_diameter`.
+    - sigma_in and sigma_out are interpreted as fractions of cell diameter.
+    """
+    if H != W:
+        raise ValueError("This function expects H == W.")
+
+    if H != 4 * crop_size:
+        raise ValueError("Use H = W = 4 * crop_size.")
+
+    rng = np.random.default_rng(seed)
+
+    base_cfg = default_scene()
+    base_params = base_cfg.sample_kwargs(rng)
+
+    base_params.update(
+        dict(
+            H=H,
+            W=W,
+            return_targets=False,
+            return_aux_targets=False,
+
+            # -------------------------------------------------------------
+            # Fixed geometry
+            # -------------------------------------------------------------
+            well_radius_frac=0.46,
+            well_center_jitter=0.0,
+
+            # -------------------------------------------------------------
+            # Baseline well appearance
+            # -------------------------------------------------------------
+            background_level=0.08,
+            edge_boost=0.25,
+            radial_gamma=1.2,
+            vignette_strength=0.20,
+
+            background_texture_enable=True,
+            background_texture_sigma_fine=0.6,
+            background_texture_sigma_coarse=2.0,
+            background_texture_fine_weight=0.95,
+            background_texture_coarse_weight=0.04,
+            background_texture_strength=0.03,
+            background_texture_clip=(0.1, 1.6),
+
+            # -------------------------------------------------------------
+            # Baseline cells
+            # -------------------------------------------------------------
+            n_cells=900,
+
+            # Disable calibrated bounds because some panels directly vary
+            # cell_diameter and large_cell_diameter_factor.
+            cell_diameter_bounds_by_short_side=None,
+
+            cell_diameter=10.5,
+            cell_diameter_reference_short_side=1620.0,
+            cell_diameter_size_exponent=0.95,
+            cell_diameter_scale_clip=(0.60, 2.20),
+
+            large_cell_frac=0.10,
+            large_cell_diameter_factor=1.5,
+
+            cell_ellipse_enable=True,
+            cell_axis_jitter=0.12,
+            cell_random_rotation=True,
+            cell_intensity_range=(0.70, 1.05),
+
+            frac_positive=0.5,
+            color_jitter=0.08,
+
+            # Fractions of cell-core diameter.
+            sigma_in=(0.2, 0.22),
+            sigma_out=(0.2, 0.22),
+            focus_frac_in=1.0,
+            in_focus_sigma_thresh=None,
+
+            # -------------------------------------------------------------
+            # Disable clustering
+            # -------------------------------------------------------------
+            cluster_enable=False,
+            clustered_cell_frac=0.0,
+
+            # -------------------------------------------------------------
+            # Baseline placement
+            # -------------------------------------------------------------
+            rim_bias=0.70,
+            rim_band=0.20,
+            edge_clamp=0.30,
+
+            min_cell_sep_px=None,
+            rim_min_sep_px=8,
+            pack_iters=15,
+            pack_strength=0.45,
+            wall_margin_px=5.0,
+
+            side_bias_enable=False,
+            side_bias_theta=0.0,
+            side_bias_strength=0.70,
+            side_bias_kappa=5.0,
+            side_bias_inner_frac=0.5,
+
+            # -------------------------------------------------------------
+            # Baseline wall and artifacts
+            # -------------------------------------------------------------
+            wall_blur_sigma=12.0,
+            ring_artifacts=1,
+            ring_sigma_range=(6.0, 18.0),
+            ring_alpha_range=(0.01, 0.10),
+
+            ghost_enable=True,
+            ghost_density=0.25,
+            ghost_offset_px=25.0,
+            ghost_offset_jitter=5.0,
+            ghost_sigma=(2.5, 6.0),
+            ghost_dilate=1.0,
+            ghost_intensity=(0.02, 0.08),
+            ghost_stretch=1.5,
+            ghost_trail=2,
+            ghost_trail_decay=0.6,
+
+            dirt_density=0.00002,
+            dirt_size=(4, 12),
+            dirt_sigma=(0.0, 2.0),
+            dirt_alpha=(0.1, 1.0),
+
+            reflect_enable=True,
+            reflect_n=4,
+            reflect_theta_sigma=0.12,
+            reflect_radial_sigma=10.0,
+            reflect_offset_range=(10.0, 70.0),
+            reflect_alpha_range=(0.05, 0.16),
+            reflect_wobble=0.4,
+            reflect_harmonics=2,
+            reflect_harmonic_decay=0.55,
+        )
+    )
+
+    tile_specs = [
+        # =============================================================
+        # Row 0
+        # =============================================================
+        dict(
+            label="ghost artifacts",
+            params=dict(
+                ghost_enable=True,
+                ghost_density=1.0,
+                ghost_offset_px=35.0,
+                ghost_offset_jitter=8.0,
+                ghost_intensity=(0.12, 0.30),
+                ghost_stretch=3.0,
+                ghost_trail=3,
+            ),
+        ),
+        dict(
+            label="wall reflections",
+            params=dict(
+                n_cells=700,
+                reflect_enable=True,
+                reflect_n=18,
+                reflect_theta_sigma=0.24,
+                reflect_radial_sigma=20.0,
+                reflect_offset_range=(6.0, 45.0),
+                reflect_alpha_range=(0.25, 0.45),
+                reflect_wobble=0.9,
+                reflect_harmonics=4,
+                reflect_harmonic_decay=0.75,
+                ghost_density=0.05,
+                ring_artifacts=0,
+            ),
+        ),
+        dict(
+            label="wall artifacts",
+            params=dict(
+                n_cells=750,
+                wall_blur_sigma=24.0,
+                ring_artifacts=7,
+                ring_sigma_range=(4.0, 14.0),
+                ring_alpha_range=(0.16, 0.30),
+                reflect_n=2,
+                ghost_density=0.05,
+            ),
+        ),
+        dict(
+            label="illumination falloff",
+            params=dict(
+                background_level=0.035,
+                edge_boost=0.15,
+                radial_gamma=1.8,
+                vignette_strength=0.80,
+                n_cells=450,
+            ),
+        ),
+
+        # =============================================================
+        # Row 1
+        # =============================================================
+        dict(
+            label="side bias",
+            params=dict(
+                side_bias_enable=True,
+                side_bias_theta=np.pi,
+                side_bias_strength=0.90,
+                side_bias_kappa=8.0,
+                side_bias_inner_frac=0.45,
+                rim_bias=0.90,
+                rim_band=0.25,
+                n_cells=1100,
+            ),
+        ),
+        dict(
+            label="cell diameter",
+            params=dict(
+                n_cells=280,
+                cell_diameter=18.0,
+                large_cell_frac=0.0,
+                rim_bias=0.35,
+                pack_iters=20,
+            ),
+        ),
+        dict(
+            label="cell count",
+            params=dict(
+                n_cells=2000,
+                cell_diameter=7.0,
+                large_cell_frac=0.0,
+                rim_bias=0.55,
+                rim_band=0.20,
+                edge_clamp=0.25,
+                pack_iters=20,
+            ),
+        ),
+        dict(
+            label="rim bias",
+            params=dict(
+                n_cells=1200,
+                rim_bias=0.95,
+                rim_band=0.45,
+                edge_clamp=0.65,
+            ),
+        ),
+
+        # =============================================================
+        # Row 2
+        # =============================================================
+        dict(
+            label="class ratio",
+            params=dict(
+                n_cells=700,
+                frac_positive=0.98,
+                color_jitter=0.03,
+                large_cell_frac=0.0,
+                rim_bias=0.45,
+            ),
+        ),
+        dict(
+            label="cell focus",
+            params=dict(
+                n_cells=800,
+                focus_frac_in=0.35,
+
+                # Fractions of cell diameter.
+                sigma_in=(0.05, 0.09),
+                sigma_out=(0.16, 0.30),
+
+                rim_bias=0.50,
+            ),
+        ),
+        dict(
+            label="large cells",
+            params=dict(
+                n_cells=650,
+                cell_diameter=10.5,
+                large_cell_frac=0.45,
+                large_cell_diameter_factor=2.0,
+                rim_bias=0.50,
+            ),
+        ),
+        dict(
+            label="debris",
+            params=dict(
+                n_cells=250,
+                dirt_density=0.0012,
+                dirt_size=(4, 14),
+                dirt_sigma=(0.4, 1.6),
+                dirt_alpha=(0.75, 1.0),
+                rim_bias=0.25,
+                background_texture_strength=0.015,
+            ),
+        ),
+
+        # =============================================================
+        # Row 3
+        # =============================================================
+        dict(
+            label="texture",
+            params=dict(
+                n_cells=180,
+                background_texture_enable=True,
+                background_texture_sigma_fine=0.8,
+                background_texture_sigma_coarse=4.0,
+                background_texture_fine_weight=0.55,
+                background_texture_coarse_weight=0.45,
+                background_texture_strength=0.18,
+                background_texture_clip=(0.05, 2.0),
+                rim_bias=0.20,
+            ),
+        ),
+        dict(
+            label="radial brightness",
+            params=dict(
+                n_cells=600,
+                background_level=0.04,
+                edge_boost=0.50,
+                radial_gamma=0.75,
+            ),
+        ),
+        dict(
+            label="cell shape",
+            params=dict(
+                n_cells=420,
+                cell_diameter=15.0,
+                cell_ellipse_enable=True,
+                cell_axis_jitter=0.65,
+                cell_random_rotation=True,
+                large_cell_frac=0.0,
+                rim_bias=0.35,
+                pack_iters=20,
+            ),
+        ),
+        dict(
+            label="baseline",
+            params=dict(),
+        ),
+    ]
+
+    n_rows = 4
+    n_cols = 4
+
+    if len(tile_specs) != n_rows * n_cols:
+        raise RuntimeError(
+            f"Expected {n_rows * n_cols} tile specifications, "
+            f"got {len(tile_specs)}."
+        )
+
+    mosaic = np.zeros((H, W, 3), dtype=np.float32)
+    tile_info: list[dict[str, Any]] = []
+
+    for i, spec in enumerate(tile_specs):
+        row = i // n_cols
+        col = i % n_cols
+
+        params = base_params.copy()
+        params.update(spec["params"])
+
+        # Enforce no clusters even if a panel is edited later.
+        params["cluster_enable"] = False
+        params["clustered_cell_frac"] = 0.0
+
+        if same_seed_per_tile:
+            params["seed"] = seed
+        else:
+            params["seed"] = seed + i * 1009
+
+        img, meta, _ = simulate_image(**params)
+
+        img = np.asarray(img, dtype=np.float32)
+        img = np.clip(img, 0.0, 1.0)
+
+        y0 = row * crop_size
+        y1 = y0 + crop_size
+        x0 = col * crop_size
+        x1 = x0 + crop_size
+
+        crop = img[y0:y1, x0:x1]
+
+        expected_shape = (crop_size, crop_size, 3)
+        if crop.shape != expected_shape:
+            raise RuntimeError(
+                f"Panel {spec['label']!r} produced crop shape "
+                f"{crop.shape}, expected {expected_shape}."
+            )
+
+        mosaic[y0:y1, x0:x1] = crop
+
+        tile_info.append(
+            dict(
+                label=spec["label"],
+                row=row,
+                col=col,
+                source_crop=(y0, y1, x0, x1),
+                params=dict(params),
+                changed_params=dict(spec["params"]),
+                meta=meta,
+            )
+        )
+
+    return mosaic, tile_info
+
 
 def _postprocess_to_rgb(img: np.ndarray,
                         tile_idx: Optional[int]) -> np.ndarray:
@@ -215,7 +639,7 @@ def fetch_images(
     indices: Sequence[int],
     *,
     tile_idx: Optional[int] = None,
-    dataset_key: Optional[str] = "imgs",
+    dataset_key: str = "imgs",
     resize_to: Optional[Tuple[int, int]] = (240,240),
 ) -> List[np.ndarray]:
     """Fetch multiple images using `fetch_image` for convenience."""
@@ -449,86 +873,442 @@ def generate_param_showcase(
         "n_cols": n_cols,
     }
 
-def get_validation_data(results_dir,
-                        mode: Literal["training", "testing", "human", "imageJ"],
-                        seg_method: Literal["inst_seg", "conventional"] = "inst_seg",
-                        unet_size: Literal["small", "medium", "large"] = "small",
-                        crop_method: Literal["pad_resize", "crop_well_resize", "tiles", "combined"] = "combined",
-                        comparison_images: Literal["external_images", "tiles"] = "tiles"
-                        ) -> pd.DataFrame:
+def _read_validation_csvs(in_file) -> pd.DataFrame:
+    if isinstance(in_file, list):
+        if len(in_file) == 0:
+            raise FileNotFoundError("No validation CSV files found.")
+
+        return pd.concat(
+            [pd.read_csv(file, index_col=None) for file in in_file],
+            axis=0,
+            ignore_index=True,
+        )
+
+    if isinstance(in_file, str):
+        if not os.path.isfile(in_file):
+            raise FileNotFoundError(f"Validation CSV not found: {in_file}")
+
+        return pd.read_csv(in_file, index_col=None)
+
+    raise TypeError("in_file must be str or list[str].")
+
+
+def _first_existing_column(
+    data: pd.DataFrame,
+    candidates: list[str],
+) -> str | None:
+    for col in candidates:
+        if col in data.columns:
+            return col
+    return None
+
+
+def _add_count_error_pct(
+    data: pd.DataFrame,
+    *,
+    mode: str,
+) -> pd.DataFrame:
+    """
+    Add count_error_pct in a schema-tolerant way.
+
+    Refactored validation preferred columns:
+      - count_error_instances_vs_stored_labels
+      - count_error_components_vs_stored_labels
+
+    Old validation fallback columns:
+      - count_error_instances
+      - count_error_components
+    """
+    data = data.copy()
 
     if mode == "training":
-        if crop_method == "combined":
-            in_file = os.path.join(results_dir, f"{mode}_val_combined.csv")
-        else:
-            in_file = os.path.join(results_dir, f"{mode}_val_{unet_size}_{crop_method}.csv")
+        n_cells_key = _first_existing_column(
+            data,
+            [
+                # old training/global image count
+                "n_cells_per_img",
+
+                # new tiled metadata count, useful if available
+                "n_cells_gt_meta_tile",
+
+                # stored-label GT count
+                "n_cells_gt_instances_stored_labels",
+
+                # old/fallback GT count
+                "n_cells_gt_instances",
+            ],
+        )
+
+    elif mode in ("testing", "imageJ"):
+        n_cells_key = _first_existing_column(
+            data,
+            [
+                "n_cells_gt_instances_stored_labels",
+                "n_cells_gt_instances",
+                "n_cells_gt_meta_tile",
+                "n_cells_full_meta",
+                "n_cells_per_img",
+            ],
+        )
+
+    else:
+        return data
+
+    count_error_key = _first_existing_column(
+        data,
+        [
+            # preferred refactored schema
+            "count_error_instances_vs_stored_labels",
+            "count_error_instances_vs_gt_instances",
+            "count_error_components_vs_stored_labels",
+            "count_error_components_vs_gt_instances",
+
+            # old schema fallback
+            "count_error_instances",
+            "count_error_components",
+        ],
+    )
+
+    if n_cells_key is None or count_error_key is None:
+        data["count_error_pct"] = np.nan
+        return data
+
+    denom = pd.to_numeric(data[n_cells_key], errors="coerce")
+    numer = pd.to_numeric(data[count_error_key], errors="coerce")
+
+    denom = denom.replace(0, np.nan)
+
+    data["count_error_pct"] = (numer / denom) * 100.0
+    data["count_error_pct_source"] = count_error_key
+    data["count_error_pct_denominator"] = n_cells_key
+
+    return data
+
+
+def _drop_validation_duplicates(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Drop duplicated rows if combined and individual CSVs were accidentally loaded.
+    """
+    dedup_cols = [
+        c for c in [
+            "sample_idx",
+            "idx",
+            "tile_idx",
+            "metric_level",
+            "dataset_mode",
+            "unet_mode",
+            "segmentation_method",
+            "src_path",
+        ]
+        if c in data.columns
+    ]
+
+    if not dedup_cols:
+        return data.reset_index(drop=True)
+
+    return data.drop_duplicates(subset=dedup_cols).reset_index(drop=True)
+
+
+def _training_files(
+    results_dir: str,
+    *,
+    seg_method: str,
+    unet_size: str,
+    crop_method: str,
+) -> str | list[str]:
+    if crop_method == "combined":
+        combined_file = os.path.join(
+            results_dir,
+            f"training_val_combined_{seg_method}.csv",
+        )
+
+        if os.path.isfile(combined_file):
+            return combined_file
+
+        files = os.listdir(results_dir)
+
+        # Load only individual files, not combined files.
+        in_files = [
+            os.path.join(results_dir, file)
+            for file in files
+            if file.startswith("training_val_")
+            and file.endswith(f"_{seg_method}.csv")
+            and "combined" not in file
+            and "summary" not in file
+        ]
+
+        if len(in_files) == 0:
+            raise FileNotFoundError(
+                f"No training validation files found in {results_dir} "
+                f"for seg_method={seg_method!r}."
+            )
+
+        return sorted(in_files)
+
+    return os.path.join(
+        results_dir,
+        f"training_val_{unet_size}_{crop_method}_{seg_method}.csv",
+    )
+
+
+def get_validation_data(
+    results_dir,
+    mode: Literal["training", "testing", "human", "imageJ"],
+    seg_method: Literal["inst_seg", "conventional"] = "inst_seg",
+    unet_size: Literal["small", "medium", "large"] = "small",
+    crop_method: Literal[
+        "pad_resize",
+        "crop_well_resize",
+        "tiles",
+        "combined",
+    ] = "combined",
+    comparison_images: Literal["external_images", "tiles"] = "tiles",
+) -> pd.DataFrame:
+    """
+    Load validation results for figures.
+
+    Supports both the old validation schema and the refactored schema where
+    count-error columns were renamed explicitly.
+    """
+    if mode == "training":
+        in_file = _training_files(
+            results_dir,
+            seg_method=seg_method,
+            unet_size=unet_size,
+            crop_method=crop_method,
+        )
+
     elif mode == "testing":
-        in_file = os.path.join(results_dir, f"{mode}_val_{unet_size}_{comparison_images}_{seg_method}.csv")
+        in_file = os.path.join(
+            results_dir,
+            f"testing_val_{unet_size}_{comparison_images}_{seg_method}.csv",
+        )
+
     elif mode == "human":
-        in_file = os.path.join(results_dir, "human_annotated_comparison.csv")
+        in_file = os.path.join(
+            results_dir,
+            "human_annotated_comparison.csv",
+        )
+
     elif mode == "imageJ":
-        in_file = os.path.join(results_dir, "testing_val_imageJ_small_inst_seg.csv")
+        in_file = os.path.join(
+            results_dir,
+            f"testing_val_imageJ_{unet_size}_{seg_method}.csv",
+        )
+
     else:
         raise ValueError(f"Unknown mode {mode}")
 
-    data = pd.read_csv(in_file, index_col = None)
+    data = _read_validation_csvs(in_file)
 
-    if mode == "training":
-        n_cells_key = "n_cells_per_img"
-        data["count_error_pct"] = (data["count_error_components"] / data[n_cells_key]) * 100
+    data = _drop_validation_duplicates(data)
 
-    return data
+    data = _add_count_error_pct(data, mode=mode)
+
+    return data.reset_index(drop=True)
 
 def _prep_config_for_unet_comparison(
     cfg: dict,
     models_dir: str,
-    unet_mode: Literal["large", "medium", "small"]
+    unet_mode: Literal["large", "medium", "small"],
 ) -> dict:
+    cfg = copy.deepcopy(cfg)
     cfg["model_dir"] = models_dir
     cfg["unet_mode"] = unet_mode
     cfg["model_file"] = f"best_{unet_mode}_tiles_S512_seed187.pth"
+    cfg["input_is_tiles"] = False
+    cfg["normalize"] = True
     return cfg
 
-def generate_unet_comparison(models_dir: str,
-                             h5_path: str,
-                             unet_base_config: Any,
-                             segmenter_class: Any,
-                             output_dir: str,
-                             output_filename: str = "unet_segmentation_comparison",
-                             redo_analysis: bool = False) -> dict:
+
+@dataclass(frozen=True)
+class Inset:
+    """
+    Square crop region.
+
+    Coordinates use image-array convention:
+        x = column index
+        y = row index
+
+    Crop:
+        image[y : y + size, x : x + size]
+    """
+    x: int
+    y: int
+    size: int
+
+
+MICROSCOPY_IMAGE_CONFIG = {
+    "base_dir": "20251014_25719852",
+    "image_path": "Bild_323.tif",
+    "inset": Inset(x=1200, y=100, size=512),
+}
+
+
+def _crop_inset_array(arr: np.ndarray, inset: Inset) -> np.ndarray:
+    arr = np.asarray(arr)
+
+    if arr.ndim not in (2, 3):
+        raise ValueError(f"Expected 2D or HWC image array, got shape {arr.shape}.")
+
+    h, w = arr.shape[:2]
+
+    x0 = int(inset.x)
+    y0 = int(inset.y)
+    x1 = x0 + int(inset.size)
+    y1 = y0 + int(inset.size)
+
+    if inset.size <= 0:
+        raise ValueError(f"inset.size must be positive, got {inset.size}.")
+
+    if x0 < 0 or y0 < 0:
+        raise ValueError(f"Inset starts outside image: x={x0}, y={y0}.")
+
+    if x1 > w or y1 > h:
+        raise ValueError(
+            f"Inset exceeds image bounds. "
+            f"Inset x=[{x0}, {x1}), y=[{y0}, {y1}); "
+            f"image width={w}, height={h}."
+        )
+
+    return arr[y0:y1, x0:x1, ...] if arr.ndim == 3 else arr[y0:y1, x0:x1]
+
+
+def _load_real_life_unet_input_tile(
+    *,
+    ext_images_dir: str,
+    image_config: dict[str, Any],
+    page: int = 0,
+    max_mp: Optional[float] = 200.0,
+) -> dict[str, Any]:
+    """
+    Load a real-life microscopy image and crop the selected UNet input tile.
+
+    Returns:
+        full_image: HWC float32 image in [0, 1]
+        tile: HWC float32 512x512 crop in [0, 1]
+        load_report: loader metadata
+    """
+    base_dir = os.path.join(ext_images_dir, image_config["base_dir"])
+    image_path = image_config["image_path"]
+    inset = image_config["inset"]
+
+    full_image, load_report = load_image(
+        image_path,
+        page=page,
+        base_dir=base_dir,
+        max_mp=max_mp,
+        as_chw=False,
+        scale=True,
+    )
+
+    full_image = np.asarray(full_image, dtype=np.float32)
+
+    tile = _crop_inset_array(full_image, inset).astype(np.float32, copy=False)
+
+    if tile.ndim == 2:
+        tile = np.repeat(tile[..., None], 3, axis=-1)
+
+    if tile.ndim != 3:
+        raise ValueError(f"Expected cropped tile to be HWC, got shape {tile.shape}.")
+
+    if tile.shape[0] != inset.size or tile.shape[1] != inset.size:
+        raise ValueError(
+            f"Unexpected tile shape {tile.shape}; expected "
+            f"({inset.size}, {inset.size}, C)."
+        )
+
+    if tile.shape[-1] == 1:
+        tile = np.repeat(tile, 3, axis=-1)
+
+    if tile.shape[-1] > 3:
+        tile = tile[..., :3]
+
+    if tile.shape[-1] != 3:
+        raise ValueError(f"Expected 3-channel tile, got shape {tile.shape}.")
+
+    return {
+        "full_image": full_image,
+        "tile": tile,
+        "inset": inset,
+        "base_dir": base_dir,
+        "image_path": image_path,
+        "load_report": load_report,
+    }
+
+
+def generate_unet_comparison(
+    models_dir: str,
+    ext_images_dir: str,
+    unet_base_config: Any,
+    segmenter_class: Any,
+    output_dir: str,
+    output_filename: str = "unet_segmentation_comparison",
+    redo_analysis: bool = False,
+    image_config: Optional[dict[str, Any]] = None,
+) -> dict:
+    """
+    Compare small, medium, and large UNets on a real-life microscopy crop.
+
+    The image is loaded with scale=True, so the input tile is float32 in [0, 1].
+    Further UNet normalization is handled by SegmenterUNet according to the
+    model config.
+    """
+    os.makedirs(output_dir, exist_ok=True)
 
     output_file = os.path.join(output_dir, f"{output_filename}.dict")
+
     existing_file = check_for_file(output_file)
     if existing_file is not None and not redo_analysis:
         assert isinstance(existing_file, dict)
         return existing_file
 
-    large_cfg = _prep_config_for_unet_comparison(unet_base_config, models_dir, "large")
-    med_cfg = _prep_config_for_unet_comparison(unet_base_config, models_dir, "medium")
-    small_cfg = _prep_config_for_unet_comparison(unet_base_config, models_dir, "small")
+    if image_config is None:
+        image_config = MICROSCOPY_IMAGE_CONFIG
+
+    large_cfg = _prep_config_for_unet_comparison(
+        unet_base_config,
+        models_dir,
+        "large",
+    )
+    med_cfg = _prep_config_for_unet_comparison(
+        unet_base_config,
+        models_dir,
+        "medium",
+    )
+    small_cfg = _prep_config_for_unet_comparison(
+        unet_base_config,
+        models_dir,
+        "small",
+    )
 
     large_seg = segmenter_class.from_config(large_cfg)
     med_seg = segmenter_class.from_config(med_cfg)
     small_seg = segmenter_class.from_config(small_cfg)
 
-    img_idx = 47
+    image_payload = _load_real_life_unet_input_tile(
+        ext_images_dir=ext_images_dir,
+        image_config=image_config,
+    )
 
-    h5file = os.path.join(h5_path, "tiles_train.h5")
-    with h5py.File(h5file, "r") as f:
-        img = np.asarray(f["imgs"][img_idx])
+    img = image_payload["tile"]
 
-
-    large_pred = large_seg(img)["probs"]
-    med_pred = med_seg(img)["probs"]
-    small_pred = small_seg(img)["probs"]
+    small_out = small_seg(img)
+    med_out = med_seg(img)
+    large_out = large_seg(img)
 
     res = {
         "original": img,
-        "small": small_pred,
-        "med": med_pred,
-        "large": large_pred
+        "full_image": image_payload["full_image"],
+        "inset": image_payload["inset"],
+        "image_path": image_payload["image_path"],
+        "base_dir": image_payload["base_dir"],
+        "load_report": image_payload["load_report"],
+        "small": small_out["probs"],
+        "med": med_out["probs"],
+        "large": large_out["probs"],
     }
-    
+
     with open(output_file, "wb") as file:
         pickle.dump(res, file)
 
@@ -594,8 +1374,8 @@ def resize_square_image(
     return cv2.resize(image, target_size, interpolation=interpolation)
 
 
-def _prepare_image(image: np.ndarray, is_segmentation: bool = False) -> np.ndarray:
-    interpolation = cv2.INTER_NEAREST if is_segmentation else cv2.INTER_LINEAR
+def prepare_image(image: np.ndarray, is_segmentation: bool = False) -> np.ndarray:
+    interpolation = cv2.INTER_NEAREST if is_segmentation else cv2.INTER_CUBIC
     return resize_square_image(image, interpolation=interpolation)
 
 def crop_square(image: np.ndarray, x: int, y: int, length: int) -> np.ndarray:
@@ -618,11 +1398,11 @@ def _load_crop_resize_image(
     image, _ = load_image(file_name, base_dir=base_dir, scale=scale, as_chw=False)
     x, y, length = crop_params
     image = crop_square(image, x=x, y=y, length=length)
-    image = _prepare_image(image, is_segmentation=False)
+    # image = _prepare_image(image, is_segmentation=False)
     return image
 
 def load_or_create_figure_1_image_cache(
-    cache_path: str = "./figure_data/figure_1_image_cache.npz",
+    cache_path: str,
     model_dir: str = "../scripts/models",
     model_file: str = "best_small_tiles_S512_seed187.pth",
     force_recompute: bool = False,
@@ -634,11 +1414,9 @@ def load_or_create_figure_1_image_cache(
 
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
 
-    # -------------------------
-    # Build segmenter
-    # -------------------------
     unet_config = copy.deepcopy(UNET_CONFIG)
     unet_config["model_dir"] = model_dir
+    unet_config["unet_mode"] = "large" if "large" in model_file else "small"
     unet_config["model_file"] = model_file
     unet_config["instance_cfg"] = INSTANCE_CONFIG_DICT
     unet_config["thr_cell"] = 0.1
@@ -646,11 +1424,8 @@ def load_or_create_figure_1_image_cache(
 
     seg = SegmenterUNetInference.from_config(unet_config)
 
-    # -------------------------
-    # Hardcoded image loading
-    # -------------------------
     sim_img = _load_crop_resize_image(
-        file_name="000006.tif",
+        file_name="000008.tif",
         base_dir="../scripts/image_datasets/imgs",
         crop_params=(500, 200, 1200),
         scale=True,
@@ -677,21 +1452,24 @@ def load_or_create_figure_1_image_cache(
         scale=True,
     )
 
-    # -------------------------
-    # Expensive part: inference
-    # -------------------------
+    monochrome_img = _load_crop_resize_image(
+        file_name="xm1_+dtt_1b.tif",
+        base_dir="../scripts/ext_images/20260507_XM1_+DTT_mono_rgb/",
+        crop_params=(0, 0, 1440),
+        scale=True,
+    )
+
     sim_seg_labels = seg(sim_img)["instance_labels"]
     mic_seg_labels = seg(mic_img)["instance_labels"]
     gp_seg_labels = seg(gp_img)["instance_labels"]
     iphone_seg_labels = seg(iphone_img)["instance_labels"]
+    monochrome_seg_labels = seg(monochrome_img)["instance_labels"]
 
-    # -------------------------
-    # Convert labels to display RGB
-    # -------------------------
     sim_seg_rgb = instance_labels_to_rgb(sim_seg_labels)
     mic_seg_rgb = instance_labels_to_rgb(mic_seg_labels)
     gp_seg_rgb = instance_labels_to_rgb(gp_seg_labels)
     iphone_seg_rgb = instance_labels_to_rgb(iphone_seg_labels)
+    monochrome_seg_rgb = instance_labels_to_rgb(monochrome_seg_labels)
 
     data = {
         "simulated_image": sim_img,
@@ -702,6 +1480,8 @@ def load_or_create_figure_1_image_cache(
         "googlepixel_segmentation": gp_seg_rgb,
         "iphone_image": iphone_img,
         "iphone_segmentation": iphone_seg_rgb,
+        "monochrome_image": monochrome_img,
+        "monochrome_segmentation": monochrome_seg_rgb,
     }
 
     np.savez_compressed(cache_path, **data)
@@ -984,11 +1764,12 @@ def get_score_frame():
     TE 26.04.2026
     """
 
-    manual = pd.read_csv("../scripts/manual_df.csv", index_col = None)
-    imagej = pd.read_csv("../scripts/imagej_df.csv", index_col = None)
-    unet = pd.  read_csv("../scripts/unet_df.csv", index_col = None)
+    manual = pd.read_csv("../scripts/results/manual_df.csv", index_col = None)
+    imagej = pd.read_csv("../scripts/results/imagej_df.csv", index_col = None)
+    unet = pd.  read_csv("../scripts/results/unet_df.csv", index_col = None)
     df = concat_annotator_frames([manual, imagej, unet])
     df = df[~(df["Folder"] == "20251028_25720349_+DTT")]
+    df = df[~df["score"].isin([0,11])]
     df["Annotator"] = df["Annotator"].astype(str)
 
     df_filled, refs = fill_and_recalculate_frac_pos_from_scores_random(

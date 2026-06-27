@@ -1,11 +1,13 @@
 from __future__ import annotations
+import os
 import math
 import json
-from typing import Any, Dict, List, Sequence, Tuple, Optional
+from typing import Any, Dict, List, Sequence, Tuple, Optional, Type
 
 import numpy as np
 import cv2
 import torch
+import pandas as pd
 from scipy.spatial import cKDTree
 from scipy.optimize import linear_sum_assignment
 from scipy.stats import spearmanr, wasserstein_distance
@@ -14,6 +16,17 @@ from skimage.morphology import skeletonize
 from scipy import ndimage as ndi
 from skimage import exposure, filters, morphology, measure
 
+from skimage.measure import label as sklabel
+from skimage.segmentation import relabel_sequential
+from torch.utils.data import DataLoader
+
+from tqdm import tqdm
+
+from alloviewer.image_analysis.segmenter import (
+    SegmenterUNet,
+    SegmenterConfig,
+    InstanceSegmenterConfig,
+)
 
 # ----------------------------
 # geometry & resizing
@@ -525,3 +538,949 @@ def get_dataset_mode(h5_path: str) -> str:
         return "pad_resize"
     else:
         return "unknown"
+
+
+def decode_json_maybe(x: Any) -> Dict[str, Any]:
+    """
+    Decode one metadata entry from H5.
+
+    Supports:
+      - bytes
+      - np.bytes_
+      - JSON strings
+      - dicts
+      - zero-dimensional numpy object/string arrays
+    """
+    if isinstance(x, np.ndarray) and x.ndim == 0:
+        x = x.item()
+
+    if isinstance(x, bytes):
+        x = x.decode("utf-8")
+
+    if isinstance(x, np.bytes_):
+        x = x.tobytes().decode("utf-8")
+
+    if isinstance(x, str):
+        return json.loads(x)
+
+    if isinstance(x, dict):
+        return x
+
+    raise TypeError(f"Could not decode meta entry of type {type(x)}")
+
+
+def _first_present(d: Dict[str, Any], keys: List[str], default=None):
+    """
+    Return the first present non-None value from a dict.
+    """
+    for k in keys:
+        if k in d and d[k] is not None:
+            return d[k]
+    return default
+
+
+def _as_int_pair(x: Any) -> Optional[Tuple[int, int]]:
+    """
+    Convert a list/tuple/array-like object with at least two entries to an int pair.
+    """
+    if x is None:
+        return None
+
+    if isinstance(x, np.ndarray):
+        x = x.tolist()
+
+    if isinstance(x, (list, tuple)) and len(x) >= 2:
+        return int(x[0]), int(x[1])
+
+    return None
+
+
+def count_positive_labels(lbl: np.ndarray) -> int:
+    """
+    Count instance labels greater than zero.
+    """
+    vals = np.unique(lbl)
+    vals = vals[vals > 0]
+    return int(vals.size)
+
+
+def load_human_roi_counts(csv_dir: str) -> pd.DataFrame:
+    """
+    Load human ROI counts from human_annotations.csv.
+
+    Expected columns:
+      - Folder
+      - image_name
+      - roi_id
+
+    Returns one row per image:
+      Folder, image_name, human_roi_count
+    """
+    csv_path = os.path.join(csv_dir, "human_annotations.csv")
+    df = pd.read_csv(csv_path)
+
+    needed = {"Folder", "image_name", "roi_id"}
+    missing = needed - set(df.columns)
+    if missing:
+        raise ValueError(f"CSV is missing required columns: {sorted(missing)}")
+
+    out = (
+        df.loc[:, ["Folder", "image_name", "roi_id"]]
+        .dropna(subset=["Folder", "image_name", "roi_id"])
+        .copy()
+    )
+
+    out["Folder"] = out["Folder"].astype(str)
+    out["image_name"] = out["image_name"].astype(str)
+
+    return (
+        out.groupby(["Folder", "image_name"], as_index=False)["roi_id"]
+        .nunique()
+        .rename(columns={"roi_id": "human_roi_count"})
+    )
+
+
+def extract_image_identity(meta: Dict[str, Any]) -> Tuple[str, str]:
+    """
+    Extract (Folder, image_name) from H5 metadata.
+
+    Priority:
+      1) direct fields in meta["full"]
+      2) src_path / image_path / img_path / path in meta["full"]
+      3) same path fields in first tile's full_meta
+    """
+    full = meta.get("full", {})
+    if not isinstance(full, dict):
+        full = {}
+
+    folder = _first_present(
+        full,
+        ["Folder", "folder", "subfolder", "dir_name", "dirname", "source_folder"],
+        default=None,
+    )
+    image_name = _first_present(
+        full,
+        ["image_name", "filename", "file_name", "img_name", "name"],
+        default=None,
+    )
+
+    if folder is not None and image_name is not None:
+        return str(folder), str(image_name)
+
+    src_path = _first_present(
+        full,
+        ["src_path", "image_path", "img_path", "path"],
+        default=None,
+    )
+
+    if src_path is None:
+        tiles = meta.get("tiles", [])
+        if isinstance(tiles, list) and len(tiles) > 0:
+            first_tile = tiles[0]
+            if isinstance(first_tile, dict):
+                full_meta = first_tile.get("full_meta", {})
+                if isinstance(full_meta, dict):
+                    src_path = _first_present(
+                        full_meta,
+                        ["src_path", "image_path", "img_path", "path"],
+                        default=None,
+                    )
+
+    if src_path is not None:
+        src_path = os.path.normpath(str(src_path))
+        image_name = os.path.basename(src_path)
+        folder = os.path.basename(os.path.dirname(src_path))
+        if folder and image_name:
+            return folder, image_name
+
+    raise KeyError(
+        "Could not extract Folder/image_name from H5 meta. "
+        f"Available top-level keys: {list(meta.keys())}, "
+        f"full keys: {list(full.keys()) if isinstance(full, dict) else 'n/a'}"
+    )
+
+
+def extract_tile_box(
+    tile_meta: Dict[str, Any],
+    tile_hw: Tuple[int, int],
+) -> Tuple[int, int, int, int]:
+    """
+    Return tile box as (y0, y1, x0, x1).
+
+    For the current tile export:
+      - tile_xy = (y0, x0)
+      - tile_hw = (h, w)
+
+    Also supports generic y0/y1/x0/x1-style metadata.
+    """
+    if "tile_xy" in tile_meta:
+        xy = tile_meta["tile_xy"]
+
+        if isinstance(xy, np.ndarray):
+            xy = xy.tolist()
+
+        if not isinstance(xy, (list, tuple)) or len(xy) < 2:
+            raise ValueError(f"tile_xy has invalid format: {xy}")
+
+        y0 = int(xy[0])
+        x0 = int(xy[1])
+
+        hw = tile_meta.get("tile_hw", tile_hw)
+
+        if isinstance(hw, np.ndarray):
+            hw = hw.tolist()
+
+        if not isinstance(hw, (list, tuple)) or len(hw) < 2:
+            raise ValueError(f"tile_hw has invalid format: {hw}")
+
+        th = int(hw[0])
+        tw = int(hw[1])
+
+        return y0, y0 + th, x0, x0 + tw
+
+    y0 = _first_present(tile_meta, ["y0", "top", "row0", "r0"], default=None)
+    y1 = _first_present(tile_meta, ["y1", "bottom", "row1", "r1"], default=None)
+    x0 = _first_present(tile_meta, ["x0", "left", "col0", "c0"], default=None)
+    x1 = _first_present(tile_meta, ["x1", "right", "col1", "c1"], default=None)
+
+    if None not in (y0, y1, x0, x1):
+        return int(y0), int(y1), int(x0), int(x1)
+
+    raise KeyError(
+        "Could not extract tile box from tile metadata. "
+        f"Available tile keys: {list(tile_meta.keys())}"
+    )
+
+
+def extract_full_hw(
+    meta: Dict[str, Any],
+    tile_metas: List[Dict[str, Any]],
+    tile_hw: Tuple[int, int],
+) -> Tuple[int, int]:
+    """
+    Infer the full image size as (H, W).
+
+    Priority:
+      1) meta["full"] height/width fields
+      2) first tile's full_meta
+      3) shape-like fields
+      4) fallback from tile extents
+    """
+    full = meta.get("full", {})
+    if not isinstance(full, dict):
+        full = {}
+
+    if not full and len(tile_metas) > 0:
+        first_tile = tile_metas[0]
+        if isinstance(first_tile, dict):
+            full_meta = first_tile.get("full_meta", {})
+            if isinstance(full_meta, dict):
+                full = full_meta
+
+    H = _first_present(
+        full,
+        ["height", "H", "img_h", "image_height", "H_in"],
+        default=None,
+    )
+    W = _first_present(
+        full,
+        ["width", "W", "img_w", "image_width", "W_in"],
+        default=None,
+    )
+
+    if H is not None and W is not None:
+        return int(H), int(W)
+
+    shape = _first_present(
+        full,
+        ["shape", "image_shape", "full_shape", "hw"],
+        default=None,
+    )
+    hw = _as_int_pair(shape)
+    if hw is not None:
+        return int(hw[0]), int(hw[1])
+
+    max_y = 0
+    max_x = 0
+
+    for tm in tile_metas:
+        y0, y1, x0, x1 = extract_tile_box(tm, tile_hw)
+        max_y = max(max_y, y1)
+        max_x = max(max_x, x1)
+
+    if max_y <= 0 or max_x <= 0:
+        raise ValueError("Could not infer full image size from H5 metadata.")
+
+    return int(max_y), int(max_x)
+
+
+def stitch_prob_tiles(
+    prob_tiles: np.ndarray,
+    tile_metas: List[Dict[str, Any]],
+    full_hw: Tuple[int, int],
+) -> np.ndarray:
+    """
+    Stitch probability tiles into one full-image probability array.
+
+    Parameters
+    ----------
+    prob_tiles:
+        Array with shape [T, C, tile_h, tile_w].
+    tile_metas:
+        List of tile metadata dicts, length T.
+    full_hw:
+        Full image size as (H, W).
+
+    Returns
+    -------
+    np.ndarray
+        Array with shape [C, H, W].
+
+    Important correction:
+    This version handles clipped tiles correctly. If a tile starts outside the
+    full image coordinate range, the matching source offset inside the tile is
+    used instead of always reading from [:th, :tw].
+    """
+    if prob_tiles.ndim != 4:
+        raise ValueError(f"Expected prob_tiles [T,C,h,w], got {prob_tiles.shape}")
+
+    T, C, tile_h, tile_w = prob_tiles.shape
+
+    if len(tile_metas) != T:
+        raise ValueError(
+            f"Number of tile metas ({len(tile_metas)}) does not match "
+            f"number of tiles ({T})"
+        )
+
+    H, W = int(full_hw[0]), int(full_hw[1])
+
+    if H <= 0 or W <= 0:
+        raise ValueError(f"Invalid full_hw={full_hw}")
+
+    acc = np.zeros((C, H, W), dtype=np.float32)
+    wgt = np.zeros((1, H, W), dtype=np.float32)
+
+    for i, tm in enumerate(tile_metas):
+        y0, y1, x0, x1 = extract_tile_box(tm, (tile_h, tile_w))
+
+        dst_y0 = max(y0, 0)
+        dst_x0 = max(x0, 0)
+        dst_y1 = min(y1, H)
+        dst_x1 = min(x1, W)
+
+        if dst_y1 <= dst_y0 or dst_x1 <= dst_x0:
+            continue
+
+        src_y0 = dst_y0 - y0
+        src_x0 = dst_x0 - x0
+        src_y1 = src_y0 + (dst_y1 - dst_y0)
+        src_x1 = src_x0 + (dst_x1 - dst_x0)
+
+        src_y0 = max(src_y0, 0)
+        src_x0 = max(src_x0, 0)
+        src_y1 = min(src_y1, tile_h)
+        src_x1 = min(src_x1, tile_w)
+
+        copy_h = min(dst_y1 - dst_y0, src_y1 - src_y0)
+        copy_w = min(dst_x1 - dst_x0, src_x1 - src_x0)
+
+        if copy_h <= 0 or copy_w <= 0:
+            continue
+
+        acc[
+            :,
+            dst_y0:dst_y0 + copy_h,
+            dst_x0:dst_x0 + copy_w,
+        ] += prob_tiles[
+            i,
+            :,
+            src_y0:src_y0 + copy_h,
+            src_x0:src_x0 + copy_w,
+        ]
+
+        wgt[
+            :,
+            dst_y0:dst_y0 + copy_h,
+            dst_x0:dst_x0 + copy_w,
+        ] += 1.0
+
+    wgt[wgt == 0] = 1.0
+
+    return (acc / wgt).astype(np.float32)
+
+
+def segment_one_h5_entry(
+    segmenter: SegmenterUNet,
+    imgs_tiles: np.ndarray,
+    meta: Dict[str, Any],
+    *,
+    update_cell_mask: bool = False,
+) -> Dict[str, Any]:
+    """
+    Segment one tiled H5 entry and return one count row.
+
+    imgs_tiles: [Tmax, 3, S, S]
+    meta: decoded JSON dict with a 'tiles' list
+    """
+    if imgs_tiles.ndim != 4 or imgs_tiles.shape[1] != 3:
+        raise ValueError(f"Expected imgs_tiles [T,3,H,W], got {imgs_tiles.shape}")
+
+    tile_metas = meta.get("tiles", None)
+    if not isinstance(tile_metas, list) or len(tile_metas) == 0:
+        raise ValueError("H5 meta['tiles'] is missing or empty.")
+
+    n_tiles = len(tile_metas)
+    imgs_tiles = imgs_tiles[:n_tiles]
+
+    with torch.no_grad():
+        tiles_t = segmenter._to_tensor_tiles(imgs_tiles)
+        probs_t = segmenter.predict_tiles(tiles_t)
+
+    if torch.is_tensor(probs_t):
+        probs_tiles = probs_t.detach().cpu().numpy()
+    else:
+        probs_tiles = np.asarray(probs_t)
+
+    full_hw = extract_full_hw(meta, tile_metas, imgs_tiles.shape[-2:])
+    probs_full = stitch_prob_tiles(probs_tiles, tile_metas, full_hw)
+
+    seg_out = {
+        "probs": {
+            "cell": probs_full[0],
+            "bound": probs_full[1],
+            "center": probs_full[2],
+            "energy": probs_full[3],
+        },
+        "instance_labels": None,
+        "meta": {},
+    }
+
+    if segmenter.inst_seg is None:
+        raise RuntimeError(
+            "Segmenter has no instance segmenter. Set cfg.compute_instances=True."
+        )
+
+    seg_out = segmenter.inst_seg(seg_out, update_cell_mask=update_cell_mask)
+    labels = seg_out["instance_labels"]
+    folder, image_name = extract_image_identity(meta)
+
+    return {
+        "Folder": str(folder),
+        "image_name": str(image_name),
+        "unet_roi_count": count_positive_labels(labels),
+    }
+
+VALIDATION_VERSION_STORED_INST_GT = "stored_inst_gt_v2"
+
+
+def validation_count_positive_labels(inst: np.ndarray) -> int:
+    """Count positive instance labels in a 2D label image."""
+    vals = np.unique(inst)
+    vals = vals[vals > 0]
+    return int(vals.size)
+
+
+def validation_locally_relabel_instances(inst: np.ndarray) -> np.ndarray:
+    """
+    Convert stored labels to compact local labels while keeping 0 as background.
+
+    Stored H5 labels may be global ids. Several metrics iterate over 1..max_id,
+    so local relabeling avoids slow or misleading behavior when ids are sparse.
+    """
+    inst = np.asarray(inst, dtype=np.int32)
+    inst_local, _, _ = relabel_sequential(inst)
+    return inst_local.astype(np.int32, copy=False)
+
+
+def validation_as_float_or_nan(x: Any) -> float:
+    if isinstance(x, (int, float, np.integer, np.floating)):
+        return float(x)
+    return np.nan
+
+
+def validation_as_int_or_nan(x: Any) -> Any:
+    if isinstance(x, (int, np.integer)):
+        return int(x)
+    if isinstance(x, (float, np.floating)) and np.isfinite(float(x)):
+        return int(x)
+    return np.nan
+
+
+def validation_get_original_sample_idx(
+    loop_idx: int,
+    indices: Optional[Sequence[int]],
+) -> int:
+    if indices is None:
+        return int(loop_idx)
+    return int(indices[loop_idx])
+
+
+def validation_extract_full_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
+    full_meta = meta.get("full", {})
+    if isinstance(full_meta, dict):
+        return full_meta
+    return {}
+
+
+def validation_extract_tile_meta(meta: Dict[str, Any], tile_idx: int) -> Dict[str, Any]:
+    tiles = meta.get("tiles", [])
+    if isinstance(tiles, list) and tile_idx < len(tiles):
+        tile_meta = tiles[tile_idx]
+        if isinstance(tile_meta, dict):
+            return tile_meta
+    return {}
+
+
+def validation_extract_params(meta: Dict[str, Any]) -> Dict[str, Any]:
+    full_meta = validation_extract_full_meta(meta)
+
+    params = full_meta.get("params", None)
+    if isinstance(params, dict):
+        return params
+
+    params = meta.get("params", None)
+    if isinstance(params, dict):
+        return params
+
+    return {}
+
+
+def validation_extract_tile_n_cells_meta(tile_meta: Dict[str, Any]) -> float:
+    """
+    Return the tile-level metadata count.
+
+    For simulated tiled data, this is usually the number of cells whose centers
+    lie inside the tile, stored as tile_meta['sim_meta']['n_cells'].
+    """
+    if not isinstance(tile_meta, dict):
+        return np.nan
+
+    sim_meta = tile_meta.get("sim_meta", None)
+    if isinstance(sim_meta, dict):
+        if "n_cells" in sim_meta:
+            return validation_as_float_or_nan(sim_meta["n_cells"])
+
+        centers = sim_meta.get("centers", None)
+        if isinstance(centers, list):
+            return float(len(centers))
+
+    if "n_cells" in tile_meta:
+        return validation_as_float_or_nan(tile_meta["n_cells"])
+
+    centers = tile_meta.get("centers", None)
+    if isinstance(centers, list):
+        return float(len(centers))
+
+    return np.nan
+
+
+def validation_extract_tile_frac_positive(tile_meta: Dict[str, Any]) -> float:
+    if not isinstance(tile_meta, dict):
+        return np.nan
+
+    sim_meta = tile_meta.get("sim_meta", None)
+    if isinstance(sim_meta, dict) and "frac_positive" in sim_meta:
+        return validation_as_float_or_nan(sim_meta["frac_positive"])
+
+    if "frac_positive" in tile_meta:
+        return validation_as_float_or_nan(tile_meta["frac_positive"])
+
+    return np.nan
+
+
+def validation_extract_tile_xy(tile_meta: Dict[str, Any]) -> Tuple[float, float]:
+    if not isinstance(tile_meta, dict):
+        return np.nan, np.nan
+
+    tile_xy = tile_meta.get("tile_xy", (np.nan, np.nan))
+
+    if isinstance(tile_xy, np.ndarray):
+        tile_xy = tile_xy.tolist()
+
+    if isinstance(tile_xy, (list, tuple)) and len(tile_xy) == 2:
+        return validation_as_float_or_nan(tile_xy[0]), validation_as_float_or_nan(tile_xy[1])
+
+    return np.nan, np.nan
+
+
+def validation_jsonify_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    params_out: Dict[str, Any] = {}
+
+    for k, v in params.items():
+        col = f"param_{k}"
+
+        if isinstance(v, (int, float, np.integer, np.floating)):
+            params_out[col] = float(v)
+        elif isinstance(v, (list, tuple, np.ndarray)):
+            try:
+                params_out[col] = json.dumps([float(x) for x in list(v)])
+            except Exception:
+                continue
+        else:
+            continue
+
+    return params_out
+
+
+def validation_prediction_masks_and_counts(
+    *,
+    out: Dict[str, Any],
+    tile_idx: int,
+    segmentation_method: str,
+    cell_prob: np.ndarray,
+    cfg: Any,
+) -> Tuple[np.ndarray, int, int]:
+    """
+    Return prediction mask and counts for one tile.
+
+    Returns
+    -------
+    cell_pred_bin_for_mask_metrics : np.ndarray
+        Binary prediction used for mask IoU/Dice.
+    n_components_cell_thr : int
+        Connected components after thresholding the cell probability with
+        cfg.cell_thr.
+    n_pred_instances : int
+        Conventional mode: same as n_components_cell_thr.
+        inst_seg mode: number of predicted instance labels.
+    """
+    component_bin = (cell_prob >= cfg.cell_thr).astype(np.uint8)
+    n_components_cell_thr = int(sklabel(component_bin, connectivity=1).max())
+
+    if segmentation_method == "conventional":
+        return component_bin, n_components_cell_thr, n_components_cell_thr
+
+    if segmentation_method == "inst_seg":
+        inst_pred_list = out.get("instance_labels", None)
+        if inst_pred_list is None:
+            raise RuntimeError(
+                "segmentation_method='inst_seg' but segmenter output has no instance_labels."
+            )
+
+        inst_pred = np.asarray(inst_pred_list[tile_idx], dtype=np.int32)
+        cell_pred_bin = (inst_pred > 0).astype(np.uint8)
+        n_pred_instances = validation_count_positive_labels(inst_pred)
+
+        return cell_pred_bin, n_components_cell_thr, n_pred_instances
+
+    raise ValueError(f"Unknown segmentation_method: {segmentation_method}")
+
+
+def validation_count_error_vs_meta(pred_count: int, n_cells_gt_meta_tile: float) -> float:
+    if np.isfinite(float(n_cells_gt_meta_tile)):
+        return float(pred_count - int(n_cells_gt_meta_tile))
+    return np.nan
+
+
+def validation_summary_from_dataframe(df: pd.DataFrame) -> Dict[str, Any]:
+    metric_cols = [
+        c
+        for c in df.columns
+        if any(
+            c.startswith(pfx)
+            for pfx in (
+                "mask_",
+                "boundary_",
+                "center_",
+                "energy_",
+                "count_error_",
+                "abs_count_error_",
+            )
+        )
+    ]
+
+    means: Dict[str, float] = {}
+    stds: Dict[str, float] = {}
+
+    for c in metric_cols:
+        values = pd.to_numeric(df[c], errors="coerce").to_numpy(dtype=np.float64)
+        if np.isfinite(values).any():
+            means[c] = float(np.nanmean(values))
+            stds[c] = float(np.nanstd(values))
+        else:
+            means[c] = np.nan
+            stds[c] = np.nan
+
+    return {
+        "validation_version": VALIDATION_VERSION_STORED_INST_GT,
+        "n_images": int(df["sample_idx"].nunique()) if len(df) else 0,
+        "n_tiles": int(len(df)),
+        "means": means,
+        "stds": stds,
+    }
+
+
+def validation_validate_tiled_h5(
+    *,
+    segmenter: SegmenterUNet,
+    cfg: Any,
+    dataset_cls: Type[Any],
+    collate_fn: Any,
+    indices: Optional[Sequence[int]] = None,
+    segmentation_method: str = "inst_seg",
+    stop: Optional[int] = None,
+    progress_desc: Optional[str] = None,
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """
+    Shared tile-level validation loop for saved H5 datasets.
+
+    Ground-truth policy
+    -------------------
+    - Stored /inst labels are the source of truth for pixel-level instance metrics.
+    - Tile metadata n_cells is stored separately for grouping and center-in-tile analyses.
+    - GT instances are not reconstructed from target heads.
+    """
+    if segmentation_method not in ("conventional", "inst_seg"):
+        raise ValueError(f"Unknown segmentation_method: {segmentation_method}")
+
+    if segmentation_method == "inst_seg" and segmenter.inst_seg is None:
+        raise ValueError(
+            "segmentation_method='inst_seg' requires SegmenterUNet with compute_instances=True"
+        )
+
+    ds = dataset_cls(cfg.h5_path, indices=indices)
+
+    dataloader = DataLoader(
+        ds,
+        batch_size=1,
+        shuffle=False,
+        num_workers=cfg.workers,
+        pin_memory=True,
+        drop_last=False,
+        collate_fn=collate_fn,
+    )
+
+    rows: list[Dict[str, Any]] = []
+    dataset_mode = get_dataset_mode(cfg.h5_path)
+
+    desc = progress_desc or f"validate tiled h5 ({dataset_mode}, {segmentation_method})"
+
+    with tqdm(
+        total=len(ds),
+        desc=desc,
+        unit="img",
+        dynamic_ncols=True,
+    ) as pbar:
+        for loop_idx, batch in enumerate(dataloader):
+            if stop is not None and loop_idx == stop:
+                break
+
+            original_idx = validation_get_original_sample_idx(loop_idx, indices)
+
+            imgs_t, tgts_t, extras = batch
+
+            imgs_t = imgs_t[0]                    # [T,3,H,W]
+            tgts_t = tgts_t[0]                    # [T,4,H,W]
+            inst_all = extras["instance_labels"][0]  # [T,H,W]
+            meta = extras["meta"][0]
+
+            tile_metas = meta.get("tiles", [])
+            if isinstance(tile_metas, list) and len(tile_metas) > 0:
+                T = len(tile_metas)
+            else:
+                T = int(imgs_t.shape[0])
+
+            imgs_np = imgs_t[:T].detach().cpu().numpy().astype(np.float32)
+            tgts_np = tgts_t[:T].detach().cpu().numpy().astype(np.float32)
+            inst_np = inst_all[:T].detach().cpu().numpy().astype(np.int32)
+
+            out = segmenter(imgs_np)
+
+            cell_probs = out["probs"]["cell"]
+            bound_probs = out["probs"]["bound"]
+            center_probs = out["probs"]["center"]
+            energy_probs = out["probs"]["energy"]
+
+            full_meta = validation_extract_full_meta(meta)
+            n_cells_full = full_meta.get("n_cells", np.nan)
+            frac_positive_full = full_meta.get("frac_positive", np.nan)
+            src_path = full_meta.get("src_path", "")
+
+            params_out = validation_jsonify_params(validation_extract_params(meta))
+
+            for t in range(T):
+                tgt = tgts_np[t]                 # [4,H,W]
+                inst_gt_stored = inst_np[t]      # [H,W], source of truth
+
+                cell_gt = (tgt[0] > 0.5).astype(np.uint8)
+                energy_gt = tgt[3].astype(np.float32)
+
+                cell_prob = np.asarray(cell_probs[t], dtype=np.float32)
+                bound_prob = np.asarray(bound_probs[t], dtype=np.float32)
+                center_pred = np.asarray(center_probs[t], dtype=np.float32)
+                energy_pred = np.asarray(energy_probs[t], dtype=np.float32)
+
+                n_gt_stored = validation_count_positive_labels(inst_gt_stored)
+                inst_gt_local = validation_locally_relabel_instances(inst_gt_stored)
+
+                tile_meta = validation_extract_tile_meta(meta, t)
+                tile_y, tile_x = validation_extract_tile_xy(tile_meta)
+                n_cells_gt_meta_tile = validation_extract_tile_n_cells_meta(tile_meta)
+                frac_positive_tile = validation_extract_tile_frac_positive(tile_meta)
+
+                (
+                    cell_pred_bin,
+                    n_components_cell_thr,
+                    n_pred_instances,
+                ) = validation_prediction_masks_and_counts(
+                    out=out,
+                    tile_idx=t,
+                    segmentation_method=segmentation_method,
+                    cell_prob=cell_prob,
+                    cfg=cfg,
+                )
+
+                peaks = nms_peaks_np(
+                    center_pred,
+                    thr=cfg.center_peak_thr,
+                    min_dist=cfg.center_nms_dist,
+                )
+                n_centers_pred = int(len(peaks))
+
+                mask_stats = iou_dice_overlap(cell_pred_bin, cell_gt)
+
+                boundary_f1 = boundary_f1_skeletonized(
+                    bound_prob,
+                    inst_gt_local,
+                    tol=cfg.boundary_tol,
+                    thr=cfg.boundary_thr,
+                    sweep=cfg.boundary_sweep,
+                )
+
+                center_stats = center_metrics_hungarian(
+                    center_pred,
+                    inst_gt_local,
+                    peak_thr=cfg.center_peak_thr,
+                    nms_dist=cfg.center_nms_dist,
+                    match_radius=cfg.center_match_radius,
+                    ap_thr_list=cfg.ap_thr_list,
+                    oks_thresholds=cfg.oks_thresholds,
+                )
+
+                energy_stats = energy_metrics_extended_full(
+                    energy_pred,
+                    energy_gt,
+                    cell_gt,
+                    frac_delta=cfg.energy_frac_delta,
+                )
+
+                err_components_stored = int(n_components_cell_thr - n_gt_stored)
+                err_centers_stored = int(n_centers_pred - n_gt_stored)
+                err_instances_stored = int(n_pred_instances - n_gt_stored)
+
+                err_components_meta = validation_count_error_vs_meta(
+                    n_components_cell_thr,
+                    n_cells_gt_meta_tile,
+                )
+                err_centers_meta = validation_count_error_vs_meta(
+                    n_centers_pred,
+                    n_cells_gt_meta_tile,
+                )
+                err_instances_meta = validation_count_error_vs_meta(
+                    n_pred_instances,
+                    n_cells_gt_meta_tile,
+                )
+
+                row: Dict[str, Any] = {
+                    "validation_version": VALIDATION_VERSION_STORED_INST_GT,
+                    "sample_idx": int(original_idx),
+                    "tile_idx": int(t),
+                    "metric_level": "tile",
+                    "dataset_mode": dataset_mode,
+                    "segmentation_method": segmentation_method,
+                    "unet_mode": segmenter.cfg.unet_mode,
+                    "src_path": src_path if src_path is not None else "",
+                    "tile_y": int(tile_y) if np.isfinite(tile_y) else np.nan,
+                    "tile_x": int(tile_x) if np.isfinite(tile_x) else np.nan,
+                    "n_cells_per_img": validation_as_int_or_nan(n_cells_full),
+                    "n_cells_gt_meta_tile": validation_as_int_or_nan(n_cells_gt_meta_tile),
+                    "n_cells_gt_instances_stored_labels": int(n_gt_stored),
+                    "n_cells_gt_instances": int(n_gt_stored),
+                    "frac_positive_per_img": validation_as_float_or_nan(frac_positive_full),
+                    "frac_positive_tile": validation_as_float_or_nan(frac_positive_tile),
+                    "n_cells_pred_components_cell_thr": int(n_components_cell_thr),
+                    "cell_component_thr": float(cfg.cell_thr),
+                    "n_cells_pred_centers": int(n_centers_pred),
+                    "n_cells_pred_instances": int(n_pred_instances),
+                    "count_error_components_vs_stored_labels": err_components_stored,
+                    "count_error_centers_vs_stored_labels": err_centers_stored,
+                    "count_error_instances_vs_stored_labels": err_instances_stored,
+                    "abs_count_error_components_vs_stored_labels": int(abs(err_components_stored)),
+                    "abs_count_error_centers_vs_stored_labels": int(abs(err_centers_stored)),
+                    "abs_count_error_instances_vs_stored_labels": int(abs(err_instances_stored)),
+                    "count_error_components_vs_meta_tile": err_components_meta,
+                    "count_error_centers_vs_meta_tile": err_centers_meta,
+                    "count_error_instances_vs_meta_tile": err_instances_meta,
+                    "abs_count_error_components_vs_meta_tile": abs(err_components_meta) if np.isfinite(err_components_meta) else np.nan,
+                    "abs_count_error_centers_vs_meta_tile": abs(err_centers_meta) if np.isfinite(err_centers_meta) else np.nan,
+                    "abs_count_error_instances_vs_meta_tile": abs(err_instances_meta) if np.isfinite(err_instances_meta) else np.nan,
+                    **{f"mask_{k}": v for k, v in mask_stats.items()},
+                    "boundary_f1": float(boundary_f1),
+                    **{f"center_{k}": v for k, v in center_stats.items()},
+                    **{f"energy_{k}": v for k, v in energy_stats.items()},
+                    **params_out,
+                }
+
+                rows.append(row)
+
+            pbar.update(1)
+
+    df = pd.DataFrame(rows)
+    summary = validation_summary_from_dataframe(df)
+
+    if cfg.out_csv:
+        os.makedirs(os.path.dirname(cfg.out_csv) or ".", exist_ok=True)
+        df.to_csv(cfg.out_csv, index=False)
+
+    if cfg.out_summary_json:
+        os.makedirs(os.path.dirname(cfg.out_summary_json) or ".", exist_ok=True)
+        with open(cfg.out_summary_json, "w") as f:
+            json.dump(summary, f, indent=2)
+
+    return df, summary
+
+
+def validation_make_segmenter_and_config(
+    *,
+    h5_path: str,
+    out_csv: str,
+    out_summary_json: str,
+    unet_mode: str,
+    model_dir: str,
+    model_file: str,
+    seg_method: str,
+    validation_config_cls: Type[Any],
+) -> Tuple[SegmenterUNet, Any]:
+    """Create SegmenterUNet plus a matching TrainingValidationConfig-like object."""
+    instance_cfg = InstanceSegmenterConfig()
+
+    seg_params: Dict[str, Any] = dict(
+        unet_mode=unet_mode,
+        model_dir=model_dir,
+        model_file=model_file,
+        device="cuda" if torch.cuda.is_available() else "cpu",
+        use_amp=torch.cuda.is_available(),
+        normalize=False,  # H5CellsDataset/TiledH5Dataset already normalizes.
+    )
+
+    segmenter_cfg_obj = SegmenterConfig(
+        compute_instances=(seg_method == "inst_seg"),
+        instance_cfg=instance_cfg.to_dict(),
+        **seg_params,
+    )
+
+    cfg = validation_config_cls(
+        h5_path=h5_path,
+        cell_thr=float(segmenter_cfg_obj.thr_cell),
+        center_peak_thr=float(instance_cfg.center_thr),
+        center_nms_dist=3,
+        boundary_thr=float(segmenter_cfg_obj.thr_bound),
+        boundary_sweep=False,
+        batch_size=1,
+        out_csv=out_csv,
+        out_summary_json=out_summary_json,
+    )
+
+    segmenter = SegmenterUNet.from_config(segmenter_cfg_obj.to_dict())
+    return segmenter, cfg
+

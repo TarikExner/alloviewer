@@ -11,33 +11,19 @@ from .camera_style_config import (
 
 from .histogram_capture import (
     apply_device_quantile_band_match,
+    cache_uses_paired_image_sampling,
 )
 
 from .utils import (
     apply_s_curve,
     lift_shadows,
     compress_highlights,
+    sample_channel_values,
     apply_channel_median_match,
     apply_read_noise,
     apply_global_blur,
     apply_photon_noise,
 )
-
-
-def _sample_channel_values(
-    rng: RNG,
-    ranges,
-    dtype=np.float32,
-) -> np.ndarray:
-    """
-    Sample one value per channel from ((r_lo, r_hi), (g_lo, g_hi), (b_lo, b_hi)).
-    """
-    vals = [
-        float(rng.uniform(float(lo), float(hi)))
-        for lo, hi in ranges
-    ]
-    return np.asarray(vals, dtype=dtype)
-
 
 def apply_camera_style(
     img: np.ndarray,
@@ -97,8 +83,8 @@ def apply_camera_style(
     img = np.clip(img * exposure, 0.0, 1.0)
 
     # 1b) channel-specific exposure / underillumination
-    channel_gains = _sample_channel_values(rng, params.channel_gain_range)
-    channel_shifts = _sample_channel_values(rng, params.channel_shift_range)
+    channel_gains = sample_channel_values(rng, params.channel_gain_range)
+    channel_shifts = sample_channel_values(rng, params.channel_shift_range)
     img = np.clip(
         img * channel_gains[None, None, :] + channel_shifts[None, None, :],
         0.0,
@@ -184,14 +170,30 @@ def apply_camera_style(
     vignette_amp = rng.uniform(*params.vignette_amp_range)
     if vignette_amp > 0:
         yy, xx = np.mgrid[0:H, 0:W]
-        cy, cx = H / 2.0, W / 2.0
-        rr = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2)
-        r_norm = rr / (0.72 * max(H, W))
+        yy = yy.astype(np.float32, copy=False)
+        xx = xx.astype(np.float32, copy=False)
 
-        vignette = 1.0 - vignette_amp * (r_norm ** 2)
-        vignette = np.clip(vignette, 1.0 - vignette_amp, 1.0)
+        cy = np.float32(0.5 * H)
+        cx = np.float32(0.5 * W)
 
-        img = np.clip(img * vignette[..., None], 0.0, 1.0)
+        dy = yy - cy
+        dx = xx - cx
+        rr = np.sqrt(dy * dy + dx * dx).astype(np.float32)
+
+        r_norm = (rr / np.float32(0.72 * max(H, W))).astype(np.float32)
+
+        vignette = (
+            np.float32(1.0)
+            - np.float32(vignette_amp) * (r_norm * r_norm)
+        ).astype(np.float32)
+
+        vignette = np.clip(
+            vignette,
+            np.float32(1.0 - vignette_amp),
+            np.float32(1.0),
+        ).astype(np.float32)
+
+        img = np.clip(img * vignette[..., None], 0.0, 1.0).astype(np.float32)
 
     # 9) S-curve / midtone contrast
     s = rng.uniform(*params.midtone_contrast_range)
@@ -293,27 +295,9 @@ def apply_camera_style(
 
         img = np.clip(img, 0.0, 1.0).astype(np.float32)
 
-    # 19) JPEG
-    if rng.random() < params.jpeg_prob:
-        tmp = np.clip(img * 255.0, 0, 255).astype(np.uint8)
-        tmp_bgr = cv2.cvtColor(tmp, cv2.COLOR_RGB2BGR)
+    paired_image_histogram_applied = False
 
-        quality = int(
-            rng.integers(
-                params.jpeg_quality_range[0],
-                params.jpeg_quality_range[1] + 1,
-            )
-        )
-
-        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-        ok, enc = cv2.imencode(".jpg", tmp_bgr, encode_param)
-
-        if ok:
-            dec_bgr = cv2.imdecode(enc, cv2.IMREAD_COLOR)
-            img = cv2.cvtColor(dec_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-            img = np.clip(img, 0.0, 1.0)
-
-    # 20) soft histogram band match
+    # 19) soft histogram band match
     if (
         params.use_histogram_match
         and quantile_band_cache is not None
@@ -337,12 +321,25 @@ def apply_camera_style(
             )
             img = np.clip(img, 0.0, 1.0).astype(np.float32)
 
-    # 21) optional per-channel median correction
+            paired_image_histogram_applied = (
+                cache_uses_paired_image_sampling(
+                    quantile_band_cache
+                )
+                and params.histogram_match_mode
+                in {
+                    "sample_real_curve",
+                    "sample_real_image",
+                    "paired_real_image",
+                }
+            )
+
+    # 20) optional per-channel median correction
     if (
         params.use_histogram_match
         and params.use_median_match
         and quantile_band_cache is not None
         and style_name in quantile_band_cache.get("devices", {})
+        and not paired_image_histogram_applied
     ):
         median_strength = rng.uniform(*params.median_match_strength)
 
@@ -361,6 +358,26 @@ def apply_camera_style(
                 strength=float(median_strength),
                 per_channel_strength=channel_strength,
             )
+            img = np.clip(img, 0.0, 1.0).astype(np.float32)
+
+    # 21) JPEG as final phone/output artifact
+    if rng.random() < params.jpeg_prob:
+        tmp = np.clip(img * 255.0, 0, 255).astype(np.uint8)
+        tmp_bgr = cv2.cvtColor(tmp, cv2.COLOR_RGB2BGR)
+
+        quality = int(
+            rng.integers(
+                params.jpeg_quality_range[0],
+                params.jpeg_quality_range[1] + 1,
+            )
+        )
+
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
+        ok, enc = cv2.imencode(".jpg", tmp_bgr, encode_param)
+
+        if ok:
+            dec_bgr = cv2.imdecode(enc, cv2.IMREAD_COLOR)
+            img = cv2.cvtColor(dec_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
             img = np.clip(img, 0.0, 1.0).astype(np.float32)
 
     return img.astype(np.float32)

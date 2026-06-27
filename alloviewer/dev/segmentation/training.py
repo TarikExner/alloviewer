@@ -1199,6 +1199,7 @@ def train(
     lr_warmup_epochs: int = 3,          # LR warmup
     lr_warmup_start_factor: float = 1e-2,
     grad_clip_norm: float | None = 1.0,
+    checkpoint_every: int | None = 5,
 ):
     os.makedirs(out_dir, exist_ok=True)
 
@@ -1286,6 +1287,11 @@ def train(
     best_path = os.path.join(out_dir, f"best_{unet_mode}_{tag}.pth")
     log_path   = os.path.join(out_dir, f"log_{unet_mode}_{tag}.jsonl")
 
+    if checkpoint_every is not None:
+        checkpoint_every = int(checkpoint_every)
+        if checkpoint_every <= 0:
+            checkpoint_every = None
+
     if is_rank0:
         run_meta = {
             "unet_mode": unet_mode,
@@ -1301,6 +1307,7 @@ def train(
             "out_dir": out_dir,
             "best_path": best_path,
             "log_path": log_path,
+            "checkpoint_every": checkpoint_every,
         }
         if device.type == "cuda":
             run_meta["gpu_name"] = torch.cuda.get_device_name(device)
@@ -1347,8 +1354,14 @@ def train(
 
         if is_rank0:
             state = (model.module.state_dict() if hasattr(model, "module") else model.state_dict())
-            # epoch_path = os.path.join(out_dir, f"{unet_mode}_{tag}_epoch_{ep}.pth")
-            # torch.save(state, epoch_path)
+
+            checkpoint_path = None
+            if checkpoint_every is not None and (ep % checkpoint_every == 0):
+                checkpoint_path = os.path.join(
+                    out_dir,
+                    f"{unet_mode}_{tag}_epoch_{ep:04d}.pth",
+                )
+                torch.save(state, checkpoint_path)
 
             # use UNWEIGHTED val loss for model selection
             sel = va["loss_unweighted"]
@@ -1404,7 +1417,7 @@ def train(
                 "mode": mode,
                 "target": int(target),
                 "unet_mode": unet_mode,
-                # "checkpoint": epoch_path,
+                "checkpoint": checkpoint_path,
             }
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec) + "\n")

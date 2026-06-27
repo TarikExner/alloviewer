@@ -285,8 +285,6 @@ def run_image_analysis(
             "pra_analysis": pra_analysis,
         }
 
-        print(result)
-
         set_image_result(job_id, to_jsonable(result))
 
         update_image_progress(

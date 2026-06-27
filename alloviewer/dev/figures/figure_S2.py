@@ -1,582 +1,123 @@
-from __future__ import annotations
-
 import os
-import pickle
-from pathlib import Path
-from typing import Optional, Sequence, Tuple
-
+import pandas as pd
 import numpy as np
+import seaborn as sns
 from matplotlib import pyplot as plt
-from matplotlib.gridspec import GridSpec, SubplotSpec
-from matplotlib.figure import Figure
-from matplotlib.axes import Axes
+from matplotlib.gridspec import GridSpec
+from matplotlib.patches import Patch
 
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
+from .figure_data_generation import get_dataset_statistics
 
 from . import figure_config as cfg
-from . import figure_utils as utils
-
-from alloviewer.image_analysis.io import load_image
-from alloviewer.dev.segmentation.image_simulation import simulate_image
-from alloviewer.dev.segmentation.image_simulation import (
-    apply_camera_style,
-    CameraStyleConfig,
-    load_or_build_quantile_band_cache,
-)
-from alloviewer.dev.segmentation.image_simulation.camera_style_config import (
-    STYLE_PARAMS_REGISTRY,
-    with_histogram_adherence,
-)
-from .camera_style_utils import (
-    get_feature_cache_path,
-    collect_synthetic_feature_rows_from_dataset,
-)
-
-from ..segmentation.dataset_io import DiskSimCellsDataset
-
-
-def crop_image(image, x, y, width, height):
-    """
-    Crop an image using top-left corner (x, y) and crop size.
-    """
-    h, w = image.shape[:2]
-
-    if x < 0 or y < 0:
-        raise ValueError("x and y must be >= 0")
-    if width <= 0 or height <= 0:
-        raise ValueError("width and height must be > 0")
-    if x + width > w or y + height > h:
-        raise ValueError("Crop region goes outside image bounds")
-
-    return image[y:y + height, x:x + width]
-
-
-def plot_rgb_histogram(
-    ax: Axes,
-    image: np.ndarray,
-    bins: int = 256,
-    density: bool = True,
-    value_range: tuple[int, int] | tuple[float, float] | None = None,
-    linewidth: float = 0.5,
-) -> None:
-    """
-    Plot RGB histogram curves onto an existing axis.
-    """
-    if image.ndim != 3 or image.shape[2] != 3:
-        raise ValueError("image must have shape (H, W, 3)")
-
-    if value_range is None:
-        if np.issubdtype(image.dtype, np.integer):
-            value_range = (0, 255)
-        else:
-            value_range = (0.0, 1.0)
-
-    channel_names = ["Red", "Green", "Blue"]
-    channel_colors = ["red", "green", "blue"]
-
-    for i, (name, color) in enumerate(zip(channel_names, channel_colors)):
-        values = image[..., i].ravel()
-        hist, bin_edges = np.histogram(
-            values,
-            bins=bins,
-            range=value_range,
-            density=density,
-        )
-        bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
-        ax.plot(
-            bin_centers,
-            hist,
-            color=color,
-            label=name,
-            linewidth=linewidth,
-        )
-
-    ax.set_xlabel("Pixel intensity", fontsize=cfg.AXIS_LABEL_SIZE)
-    ax.set_ylabel("Density" if density else "Count", fontsize=cfg.AXIS_LABEL_SIZE)
-    utils.adjust_fontsize_ticklabels(ax, cfg.AXIS_LABEL_SIZE)
-    ax.legend(frameon=False, fontsize=cfg.AXIS_LABEL_SIZE)
-
-
-def _select_pca_features(
-    feature_names: Sequence[str],
-    normalized: bool,
-    feature_subset: Optional[Sequence[str]] = None,
-    drop_size_features: bool = True,
-) -> list[str]:
-    if feature_subset is not None:
-        return list(feature_subset)
-
-    if drop_size_features:
-        if normalized:
-            drop = {
-                "height",
-                "width",
-                "aspect_ratio",
-                "n_pixels_used",
-                "sat_mean",
-                "sat_std",
-                "sat_skew",
-                "dark_frac",
-                "bright_frac",
-            }
-        else:
-            drop = {
-                "height",
-                "width",
-                "aspect_ratio",
-                "n_pixels_used",
-            }
-    else:
-        drop = set()
-        if normalized:
-            drop = {"dark_frac", "bright_frac"}
-
-    return [f for f in feature_names if f not in drop]
-
-
-def plot_real_and_synthetic_pca(
-    ax: Axes,
-    dataset,
-    cache_path: str | Path = "",
-    n_synthetic: int = 100,
-    normalized: bool = True,
-    feature_subset: Optional[Sequence[str]] = None,
-    drop_size_features: bool = True,
-    hist_bins: int = 16,
-    percentiles: Sequence[float] = (1, 5, 25, 50, 75, 95, 99),
-    sample_pixels: Optional[int] = 300_000,
-    rng_seed: int = 0,
-    alpha_real: float = 0.45,
-    alpha_syn: float = 0.80,
-    s_real: float = 16,
-    s_syn: float = 36,
-    use_first_tile_only: bool = True,
-    normalized_hist_range: Tuple[float, float] = (-3.0, 3.0),
-    title: Optional[str] = None,
-) -> None:
-    """
-    PCA comparison between real images and dataset images, plotted onto an axis.
-    """
-    final_cache_path = get_feature_cache_path(
-        cache_path=cache_path,
-        normalized=normalized,
-    )
-
-    if not final_cache_path.exists():
-        raise FileNotFoundError(f"Cache file not found: {final_cache_path}")
-
-    with open(final_cache_path, "rb") as f:
-        payload = pickle.load(f)
-
-    real_rows = payload["rows"]
-    feature_names = payload["feature_names"]
-
-    feature_names_used = _select_pca_features(
-        feature_names=feature_names,
-        normalized=normalized,
-        feature_subset=feature_subset,
-        drop_size_features=drop_size_features,
-    )
-
-    if not feature_names_used:
-        raise ValueError("No features selected for PCA")
-
-    synthetic_rows = collect_synthetic_feature_rows_from_dataset(
-        dataset=dataset,
-        n_synthetic=n_synthetic,
-        hist_bins=hist_bins,
-        percentiles=percentiles,
-        sample_pixels=sample_pixels,
-        rng_seed=rng_seed,
-        use_first_tile_only=use_first_tile_only,
-        normalized_features=normalized,
-        normalized_hist_range=normalized_hist_range,
-    )
-
-    all_rows = list(real_rows) + list(synthetic_rows)
-    X = np.array(
-        [[row[f] for f in feature_names_used] for row in all_rows],
-        dtype=np.float64,
-    )
-
-    finite_cols = np.all(np.isfinite(X), axis=0)
-    if not finite_cols.all():
-        feature_names_used = [
-            f for f, keep in zip(feature_names_used, finite_cols)
-            if keep
-        ]
-        X = X[:, finite_cols]
-
-    if X.shape[0] < 2:
-        raise ValueError("Need at least two images for PCA.")
-    if X.shape[1] < 2:
-        raise ValueError("Need at least two finite features for PCA.")
-
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    pca = PCA(n_components=2, random_state=rng_seed)
-    X_pca = pca.fit_transform(X_scaled)
-
-    labels = [str(row["phone"]).lower() for row in all_rows]
-    is_real = np.array(
-        [not str(row["path"]).startswith("<synthetic_") for row in all_rows],
-        dtype=bool,
-    )
-
-    device_order = [
-        "iphone",
-        "googlepixel",
-        "microscope",
-        "monochrome_real",
-        "monochrome_generic",
-        "simulated_raw",
-        "synthetic",
-    ]
-
-    syn_markers = {
-        "iphone": "x",
-        "googlepixel": "^",
-        "microscope": "s",
-        "monochrome_real": "v",
-        "monochrome_generic": "P",
-        "simulated_raw": "D",
-        "synthetic": "D",
-    }
-
-    for dev in device_order:
-        idx = [i for i, lab in enumerate(labels) if lab == dev and is_real[i]]
-        if idx:
-            pts = X_pca[idx]
-            ax.scatter(
-                pts[:, 0],
-                pts[:, 1],
-                alpha=alpha_real,
-                s=s_real,
-                label=f"real {dev}",
-            )
-
-    for dev in device_order:
-        idx = [i for i, lab in enumerate(labels) if lab == dev and not is_real[i]]
-        if idx:
-            pts = X_pca[idx]
-            ax.scatter(
-                pts[:, 0],
-                pts[:, 1],
-                alpha=alpha_syn,
-                s=s_syn,
-                marker=syn_markers.get(dev, "x"),
-                label=f"synthetic {dev}",
-            )
-
-    ax.set_xlabel("PC1", fontsize=cfg.AXIS_LABEL_SIZE)
-    ax.set_ylabel("PC2", fontsize=cfg.AXIS_LABEL_SIZE)
-
-    if title is None:
-        title = (
-            "PCA of normalized real vs normalized synthetic image features"
-            if normalized
-            else "PCA of real vs denormalized synthetic image features"
-        )
-
-    ax.set_title(title, fontsize=cfg.TITLE_SIZE)
-
-    handles, legend_labels = ax.get_legend_handles_labels()
-    label_map = {
-        "real iphone": cfg.PHONE_DICT['iPhone'],
-        "real googlepixel": cfg.PHONE_DICT['GooglePixel'],
-        "real microscope": cfg.PHONE_DICT['Microscope'],
-        "real monochrome_real": cfg.PHONE_DICT['Monochrome'],
-        "real monochrome_generic": "Monochrome generic",
-        "synthetic iphone": f"Simulated {cfg.PHONE_DICT['iPhone']}",
-        "synthetic googlepixel": f"Simulated {cfg.PHONE_DICT['GooglePixel']}",
-        "synthetic microscope": f"Simulated {cfg.PHONE_DICT['Microscope']}",
-        "synthetic monochrome_real": f"Simulated {cfg.PHONE_DICT['Monochrome']}",
-        "synthetic monochrome_generic": f"Simulated {cfg.PHONE_DICT['Generic']}",
-        "synthetic simulated_raw": "Simulated raw",
-        "synthetic synthetic": "Simulated",
-    }
-
-    mapped_labels = [label_map.get(label, label) for label in legend_labels]
-    ax.legend(
-        handles,
-        mapped_labels,
-        bbox_to_anchor=(1.05, 0.5),
-        loc="center left",
-        frameon=False,
-        fontsize=cfg.AXIS_LABEL_SIZE,
-    )
-
-    utils.adjust_fontsize_ticklabels(ax, cfg.AXIS_LABEL_SIZE)
-
-
-def _get_simulated_image():
-    sim_img, _, targets = simulate_image(
-        H=1024,
-        W=1300,
-        well_radius_frac=0.42,
-        well_center_jitter=0.02,
-
-        background_level=0.08,
-        edge_boost=0.25,
-        radial_gamma=1.2,
-        vignette_strength=0.20,
-
-        n_cells=2000,
-        cell_diameter=10,
-
-        large_cell_frac=0.0,
-        large_cell_diameter_factor=1.5,
-
-        cell_ellipse_enable=True,
-        cell_axis_jitter=0.20,
-        cell_random_rotation=True,
-        cell_intensity_range=(0.70, 1.05),
-
-        frac_positive=0.01,
-        color_jitter=0.07,
-        sigma_in=(0.5, 1.0),
-        sigma_out=(1.6, 3.2),
-        focus_frac_in=1.0,
-        in_focus_sigma_thresh=None,
-        boundary_width=1,
-
-        rim_bias=0.85,
-        rim_band=0.2,
-        edge_clamp=0.5,
-
-        min_cell_sep_px=None,
-        rim_min_sep_px=12,
-        pack_iters=20,
-        pack_strength=0.5,
-        wall_margin_px=2.0,
-
-        side_bias_enable=True,
-        side_bias_theta=1.0,
-        side_bias_strength=0.75,
-        side_bias_kappa=5.0,
-        side_bias_inner_frac=0.55,
-
-        wall_blur_sigma=12.0,
-        ring_artifacts=0,
-        ring_sigma_range=(6.0, 18.0),
-        ring_alpha_range=(0.03, 0.12),
-
-        ghost_enable=True,
-        ghost_density=0.10,
-        ghost_offset_px=25.0,
-        ghost_offset_jitter=6.0,
-        ghost_sigma=(2.5, 6.0),
-        ghost_dilate=1.0,
-        ghost_intensity=(0.1, 0.1),
-
-        ghost_stretch=3.0,
-        ghost_trail=3,
-        ghost_trail_decay=0.6,
-
-        dirt_density=0.0007,
-        dirt_size=(2, 4),
-        dirt_sigma=(1.2, 2.0),
-        dirt_alpha=(0.01, 0.04),
-
-        reflect_enable=True,
-        reflect_n=6,
-        reflect_theta_sigma=0.10,
-        reflect_radial_sigma=8.0,
-        reflect_offset_range=(6.0, 24.0),
-        reflect_alpha_range=(0.05, 0.20),
-        reflect_wobble=0.35,
-        reflect_harmonics=2,
-        reflect_harmonic_decay=0.55,
-
-        seed=187,
-        return_targets=True,
-    )
-
-    return sim_img, targets
-
-
-def _build_quantile_folders(ext_images_dir: str | Path) -> list[str]:
-    ext_images_dir = Path(ext_images_dir)
-
-    return [
-        str(ext_images_dir / "20251106_25065441_iPhone_XR_JPEG"),
-        str(ext_images_dir / "20251106_25722169_iPhone_XR_JPEG"),
-        str(ext_images_dir / "20251106_25722269_iPhone_XR_JPEG"),
-        str(ext_images_dir / "20251107_25065521_GooglePixel"),
-        str(ext_images_dir / "20251107_25722332_GooglePixel"),
-        str(ext_images_dir / "20251014_25719960"),
-        str(ext_images_dir / "20251014_25720084"),
-        str(ext_images_dir / "20251107_25065521"),
-        str(ext_images_dir / "20251107_25722332"),
-        str(ext_images_dir / "20260507_XM1_+DTT_mono_rgb"),
-    ]
-
 
 def _generate_main_figure(
-    mic_img,
-    gp_img,
-    iphone_img,
-    mono_img,
-    sim_img,
-    mic_adj,
-    gp_adj,
-    iphone_adj,
-    mono_adj,
-    ds,
-    style_cache_path,
-    figure_output_dir,
-    figure_name,
-) -> None:
-    def generate_subfigure_a(
-        fig: Figure,
-        ax: Axes,
-        gs: SubplotSpec,
-        subfigure_label: str,
-    ) -> None:
-        ax.axis("off")
-        utils.figure_label(ax, subfigure_label, x=0)
-        fig_sgs = gs.subgridspec(2, 5)
-
-        orig_sim = fig.add_subplot(fig_sgs[0, 0])
-        orig_sim.imshow(sim_img)
-        orig_sim.set_title(f"{cfg.PHONE_DICT['Simulated']}", fontsize=cfg.TITLE_SIZE)
-
-        mic = fig.add_subplot(fig_sgs[0, 1])
-        mic.imshow(mic_img)
-        mic.set_title(cfg.PHONE_DICT["Microscope"], fontsize=cfg.TITLE_SIZE)
-
-        iphone = fig.add_subplot(fig_sgs[0, 3])
-        iphone.imshow(iphone_img)
-        iphone.set_title(cfg.PHONE_DICT["iPhone"], fontsize=cfg.TITLE_SIZE)
-
-        gp = fig.add_subplot(fig_sgs[0, 2])
-        gp.imshow(gp_img)
-        gp.set_title(cfg.PHONE_DICT["GooglePixel"], fontsize=cfg.TITLE_SIZE)
-
-        mono = fig.add_subplot(fig_sgs[0, 4])
-        mono.imshow(mono_img)
-        mono.set_title(cfg.PHONE_DICT["Monochrome"], fontsize=cfg.TITLE_SIZE)
-
-        orig_hist = fig.add_subplot(fig_sgs[1, 0])
-        plot_rgb_histogram(orig_hist, sim_img)
-        orig_hist.set_title(f"{cfg.PHONE_DICT['Simulated']} histogram\n", fontsize=cfg.TITLE_SIZE)
-
-        mic_hist = fig.add_subplot(fig_sgs[1, 1])
-        plot_rgb_histogram(mic_hist, mic_img)
-        mic_hist.set_title(f"{cfg.PHONE_DICT['Microscope']} histogram", fontsize=cfg.TITLE_SIZE)
-
-        iphone_hist = fig.add_subplot(fig_sgs[1, 3])
-        plot_rgb_histogram(iphone_hist, iphone_img)
-        iphone_hist.set_title(f"{cfg.PHONE_DICT['iPhone']} histogram", fontsize=cfg.TITLE_SIZE)
-
-        gp_hist = fig.add_subplot(fig_sgs[1, 2])
-        plot_rgb_histogram(gp_hist, gp_img)
-        gp_hist.set_title(f"{cfg.PHONE_DICT['GooglePixel']} histogram", fontsize=cfg.TITLE_SIZE)
-
-        mono_hist = fig.add_subplot(fig_sgs[1, 4])
-        plot_rgb_histogram(mono_hist, mono_img)
-        mono_hist.set_title(f"{cfg.PHONE_DICT['Monochrome']} histogram", fontsize=cfg.TITLE_SIZE)
-
-        for im_ax in (orig_sim, mic, gp, iphone, mono):
-            utils.prep_image_axis(im_ax)
-
-    def generate_subfigure_b(
-        fig: Figure,
-        ax: Axes,
-        gs: SubplotSpec,
-        subfigure_label: str,
-    ) -> None:
-        ax.axis("off")
-        utils.figure_label(ax, subfigure_label, x=0)
-        fig_sgs = gs.subgridspec(1, 1)
-
-        pca_plot = fig.add_subplot(fig_sgs[0])
-        plot_real_and_synthetic_pca(
-            pca_plot,
-            ds,
-            style_cache_path,
-        )
-        utils.remove_axis_labels(pca_plot)
-
-    def generate_subfigure_c(
-        fig: Figure,
-        ax: Axes,
-        gs: SubplotSpec,
-        subfigure_label: str,
-    ) -> None:
-        ax.axis("off")
-        utils.figure_label(ax, subfigure_label, x=0)
-        fig_sgs = gs.subgridspec(2, 5)
-
-        orig_sim = fig.add_subplot(fig_sgs[0, 0])
-        orig_sim.imshow(sim_img)
-        orig_sim.set_title(f"{cfg.PHONE_DICT['Simulated']}\n", fontsize=cfg.TITLE_SIZE)
-        utils.prep_image_axis(orig_sim)
-
-        mic_sim = fig.add_subplot(fig_sgs[0, 1])
-        mic_sim.imshow(mic_adj)
-        mic_sim.set_title(f"Adjusted to\n{cfg.PHONE_DICT['Microscope']}", fontsize=cfg.TITLE_SIZE)
-        utils.prep_image_axis(mic_sim)
-
-        gp_sim = fig.add_subplot(fig_sgs[0, 2])
-        gp_sim.imshow(gp_adj)
-        gp_sim.set_title(f"Adjusted to\n{cfg.PHONE_DICT['GooglePixel']}", fontsize=cfg.TITLE_SIZE)
-        utils.prep_image_axis(gp_sim)
-
-        iphone_sim = fig.add_subplot(fig_sgs[0, 3])
-        iphone_sim.imshow(iphone_adj)
-        iphone_sim.set_title(f"Adjusted to\n{cfg.PHONE_DICT['iPhone']}", fontsize=cfg.TITLE_SIZE)
-        utils.prep_image_axis(iphone_sim)
-
-        mono_sim = fig.add_subplot(fig_sgs[0, 4])
-        mono_sim.imshow(mono_adj)
-        mono_sim.set_title(f"Adjusted to\n{cfg.PHONE_DICT['Monochrome']}", fontsize=cfg.TITLE_SIZE)
-        utils.prep_image_axis(mono_sim)
-
-        orig_hist = fig.add_subplot(fig_sgs[1, 0])
-        plot_rgb_histogram(orig_hist, sim_img)
-        orig_hist.set_title(f"{cfg.PHONE_DICT['Simulated']} histogram\n", fontsize=cfg.TITLE_SIZE)
-
-        mic_hist = fig.add_subplot(fig_sgs[1, 1])
-        plot_rgb_histogram(mic_hist, mic_adj)
-        mic_hist.set_title(f"{cfg.PHONE_DICT['Microscope']} histogram\n(simulated)", fontsize=cfg.TITLE_SIZE)
-
-        gp_hist = fig.add_subplot(fig_sgs[1, 2])
-        plot_rgb_histogram(gp_hist, gp_adj)
-        gp_hist.set_title(f"{cfg.PHONE_DICT['GooglePixel']} histogram\n(simulated)", fontsize=cfg.TITLE_SIZE)
-
-        iphone_hist = fig.add_subplot(fig_sgs[1, 3])
-        plot_rgb_histogram(iphone_hist, iphone_adj)
-        iphone_hist.set_title(f"{cfg.PHONE_DICT['iPhone']} histogram\n(simulated)", fontsize=cfg.TITLE_SIZE)
-
-        mono_hist = fig.add_subplot(fig_sgs[1, 4])
-        plot_rgb_histogram(mono_hist, mono_adj)
-        mono_hist.set_title(f"{cfg.PHONE_DICT['Monochrome']} histogram\n(simulated)", fontsize=cfg.TITLE_SIZE)
+    figure_output_dir: str = "",
+    figure_name: str = "",
+    *,
+    data: pd.DataFrame,
+    cols_to_plot: list[str]
+):
+    """
+    Build a 6x3 grid (18 tiles). First 17 tiles show histograms of cols_to_plot
+    with hue=dataset_col using stacked counts. The last tile shows the legend only.
+    Saves PDF/PNG if figure_output_dir is given, and also returns (fig, axes).
+    """
 
     fig = plt.figure(
-        layout="constrained",
-        figsize=(cfg.FIGURE_WIDTH_FULL * 1.15, cfg.FIGURE_HEIGHT_FULL * 1.08),
+        layout="constrained", figsize=(cfg.FIGURE_WIDTH_FULL, cfg.FIGURE_HEIGHT_FULL)
     )
-    gs = GridSpec(
-        ncols=1,
-        nrows=3,
-        figure=fig,
-        height_ratios=[1, 1, 1],
+    gs = GridSpec(nrows=6, ncols=3, figure=fig)
+
+    # palette and hue levels
+    levels = list(pd.Index(data["crop_method"].astype(str)).unique())
+    palette = sns.color_palette(cfg.HIST_CMAP, n_colors=len(levels))
+
+    total_tiles = 5 * 3
+    last_idx = total_tiles - 1  # legend tile index = 17
+    axes = []
+
+    def _process_title(title: str):
+        title = title.replace("_", " ")
+        if title == "H":
+            title = "image height"
+        if title == "W":
+            title = "image width"
+        return title
+
+
+    def _make_hue_legend(ax, levels, palette, alpha=0.45, title=None, fontsize=9):
+        handles = [
+            Patch(facecolor=palette[i], edgecolor="none", alpha=alpha, label=str(lv))
+            for i, lv in enumerate(levels)
+        ]
+        return ax.legend(
+            handles=handles,
+            title=title,
+            frameon=False,
+            bbox_to_anchor = (0, 0.5),
+            loc="center left",
+            fontsize=fontsize
+        )
+
+
+    for i in range(total_tiles):
+        r, c = divmod(i, 3)
+        ax = fig.add_subplot(gs[r, c])
+        axes.append(ax)
+
+        if i == last_idx:
+            ax.axis("off")
+            continue
+
+        # out of columns? hide axis (except last)
+        if i >= len(cols_to_plot):
+            continue
+
+        col = cols_to_plot[i]
+        # common bin range (numeric coercion for safety)
+        x = pd.to_numeric(data[col], errors="coerce").dropna().to_numpy()
+        if x.size == 0 or not np.isfinite(x).any():
+            ax.axis("off")
+            continue
+
+        lo = float(np.nanmin(x))
+        hi = float(np.nanmax(x))
+        if not np.isfinite(lo) or not np.isfinite(hi) or lo == hi:
+            lo, hi = lo - 0.5, hi + 0.5
+
+        sns.histplot(
+            data=data,
+            x=col,
+            hue="crop_method",
+            bins=30,
+            binrange=(lo, hi),
+            stat="count",
+            multiple="stack",
+            alpha=0.45,
+            element="poly",
+            edgecolor=None,
+            ax=ax,
+            palette=palette,
+            kde=False,
+        )
+
+        leg = ax.get_legend()
+        if leg is not None:
+            leg.remove()
+
+        ax.set_title(_process_title(col), fontsize=9)
+        ax.set_xlabel("")
+        ax.set_ylabel("count")
+
+    # draw legend in the last tile
+    ax_leg = axes[last_idx]
+    _make_hue_legend(
+        ax_leg,
+        levels=levels,
+        palette=[palette[i] for i in range(len(levels))],
+        title="crop method",
+        fontsize=9,
     )
-
-    a_coords = gs[0, :]
-    b_coords = gs[1, :]
-    c_coords = gs[2, :]
-
-    fig_a = fig.add_subplot(a_coords)
-    fig_b = fig.add_subplot(b_coords)
-    fig_c = fig.add_subplot(c_coords)
-
-    generate_subfigure_a(fig, fig_a, a_coords, "A")
-    generate_subfigure_b(fig, fig_b, b_coords, "B")
-    generate_subfigure_c(fig, fig_c, c_coords, "C")
 
     os.makedirs(figure_output_dir, exist_ok=True)
 
@@ -586,112 +127,52 @@ def _generate_main_figure(
     plt.savefig(pdf_path, dpi=300, bbox_inches="tight")
     plt.savefig(png_path, dpi=300, bbox_inches="tight")
 
+    plt.close()
+
     return
 
 
 def figure_S2_generation(
+    h5_path: str,
     validation_results_dir: str,
-    ext_images_dir,
-    figure_output_dir,
-    **kwargs,
+    figure_output_dir: str,
+    **kwargs
 ):
-    ds = DiskSimCellsDataset(
-        os.path.join(validation_results_dir, "test_ds_diverse_mc.ds")
+    crop_well_stats = get_dataset_statistics(
+        h5_path = os.path.join(h5_path, "crop_well_resize_train.h5"),
+        output_dir = validation_results_dir 
+    )
+    pad_stats = get_dataset_statistics(
+        h5_path = os.path.join(h5_path, "pad_resize_train.h5"),
+        output_dir = validation_results_dir
+    )
+    tile_stats = get_dataset_statistics(
+        h5_path = os.path.join(h5_path, "tiles_train.h5"),
+        output_dir = validation_results_dir
     )
 
-    style_cache_path = os.path.join(validation_results_dir, "style_cache.cache")
+    data = pd.concat([crop_well_stats, pad_stats, tile_stats], axis = 0)
 
-    mic, _ = load_image(
-        "Bild_3139.tif",
-        base_dir=os.path.join(ext_images_dir, "20251106_25065441/"),
-        as_chw=False,
-    )
-    mic = crop_image(mic, 150, 0, 1750, 1500)
-
-    iphone, _ = load_image(
-        "IMG_3857.jpeg",
-        base_dir=os.path.join(ext_images_dir, "20251106_25065441_iPhone_XR_JPEG/"),
-        as_chw=False,
-    )
-    iphone = crop_image(iphone, 1000, 100, 2700, 2500)
-
-    gp, _ = load_image(
-        "PXL_20251107_130200415.jpg",
-        base_dir=os.path.join(ext_images_dir, "20251107_25065521_GooglePixel/"),
-        as_chw=False,
-    )
-    gp = np.transpose(gp, (1, 0, 2))
-    gp = crop_image(gp, 1100, 300, 2900, 2700)
-
-    mono, _ = load_image(
-        "auto1_4b.tif",
-        base_dir=os.path.join(ext_images_dir, "20260504_Auto1_mono_rgb"),
-        as_chw=False,
-    )
-
-    sim_img, sim_targets = _get_simulated_image()
-    cell_mask = None
-    if isinstance(sim_targets, dict) and "cell_mask" in sim_targets:
-        cell_mask = sim_targets["cell_mask"].astype(np.float32)
-
-    q_band_cache = load_or_build_quantile_band_cache(
-        folders=_build_quantile_folders(ext_images_dir),
-        cache_path=os.path.join(validation_results_dir, "camera_quantile_band_cache.pkl"),
-    )
-
-    style_registry_strict = with_histogram_adherence(
-        STYLE_PARAMS_REGISTRY,
-        mode="figure",
-    )
-
-    iphone_adj = apply_camera_style(
-        sim_img,
-        rng=np.random.default_rng(187),
-        style_cfg=CameraStyleConfig(("iphone",)),
-        style_registry=style_registry_strict,
-        quantile_band_cache=q_band_cache,
-        cell_mask=cell_mask,
-    )
-
-    gp_adj = apply_camera_style(
-        sim_img,
-        rng=np.random.default_rng(187),
-        style_cfg=CameraStyleConfig(("googlepixel",)),
-        style_registry=style_registry_strict,
-        quantile_band_cache=q_band_cache,
-        cell_mask=cell_mask,
-    )
-
-    mic_adj = apply_camera_style(
-        sim_img,
-        rng=np.random.default_rng(187),
-        style_cfg=CameraStyleConfig(("microscope",)),
-        style_registry=style_registry_strict,
-        quantile_band_cache=q_band_cache,
-        cell_mask=cell_mask,
-    )
-
-    mono_adj = apply_camera_style(
-        sim_img,
-        rng=np.random.default_rng(187),
-        style_cfg=CameraStyleConfig(("monochrome_real",)),
-        style_registry=style_registry_strict,
-        quantile_band_cache=q_band_cache,
-        cell_mask=cell_mask,
-    )
+    cols_to_plot = [
+        "n_cells",
+        "frac_positive",
+        "large_cell_frac",
+        "large_cell_diameter_factor",
+        "edge_clamp",
+        "background_level",
+        "H",
+        "W",
+        "color_jitter",
+        "rim_bias",
+        "rim_band",
+        "pack_strength",
+        "ghost_density",
+        "dirt_density",
+    ]
 
     _generate_main_figure(
-        mic_img=mic,
-        gp_img=gp,
-        iphone_img=iphone,
-        mono_img=mono,
-        sim_img=sim_img,
-        mic_adj=mic_adj,
-        gp_adj=gp_adj,
-        iphone_adj=iphone_adj,
-        mono_adj=mono_adj,
-        ds=ds,
-        style_cache_path=style_cache_path,
         figure_output_dir=figure_output_dir,
         figure_name="Figure_S2",
+        data = data,
+        cols_to_plot = cols_to_plot
     )

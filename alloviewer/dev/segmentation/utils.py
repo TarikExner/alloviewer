@@ -9,7 +9,7 @@ from skimage import filters, measure, morphology, exposure
 from skimage.segmentation import watershed
 from skimage.segmentation import relabel_sequential
 
-from typing import Union, List, Tuple 
+from typing import Union, List, Tuple, Optional
 import cv2
 
 
@@ -125,28 +125,184 @@ def compute_inner_boundary(inst_np: np.ndarray) -> np.ndarray:
     b[:,0]   &= (a[:,0]   != 0)
     return b.astype(np.uint8)
 
-def make_soft_boundary_from_instances(inst: np.ndarray,
-                                      ring_width: int = 1,
-                                      soft_band: int = 2,
-                                      sigma: float = 1.0) -> np.ndarray:
-    ring = compute_inner_boundary(inst).astype(bool)
-    if ring_width > 1:
-        rad = max(1, int(ring_width // 2))
-        ring = ndi.binary_dilation(ring, structure=ndi.generate_binary_structure(2,1), iterations=rad)
-    cell = (inst > 0)
-    if soft_band > 0:
-        not_ring = ~ring
-        dist = ndi.distance_transform_edt(not_ring)
-        dist[~cell] = np.inf
-        soft = np.exp(-(dist**2) / (2.0 * (sigma**2)))
-        soft[dist > float(soft_band)] = 0.0
-        soft[~np.isfinite(soft)] = 0.0
-        m = soft.max()
-        if m > 0:
-            soft = soft / m
-        return soft.astype(np.float32)
-    else:
-        return ring.astype(np.float32)
+
+def make_soft_boundary_from_instances(
+    inst: np.ndarray,
+    ring_width: int = 1,
+    soft_band: int = 2,
+    sigma: float = 1.0,
+) -> np.ndarray:
+    """
+    Faster version of your current per-instance soft boundary.
+
+    Main speed fix:
+    - Uses ndi.find_objects() to get all instance bounding boxes once.
+    - Avoids np.where(inst == label_id) over the full image for every label.
+
+    Still computes per-instance local distance transforms.
+    """
+    inst = np.asarray(inst)
+    if inst.ndim != 2:
+        raise ValueError(f"Expected 2D instance map, got shape {inst.shape}")
+
+    if inst.size == 0:
+        return np.zeros(inst.shape, dtype=np.float32)
+
+    max_label = int(inst.max())
+    if max_label <= 0:
+        return np.zeros(inst.shape, dtype=np.float32)
+
+    inner_width = max(0.0, float(ring_width))
+    outer_width = max(0.0, float(soft_band))
+    sigma = max(1e-6, float(sigma))
+
+    H, W = inst.shape
+    out = np.zeros((H, W), dtype=np.float32)
+
+    pad = int(np.ceil(max(inner_width, outer_width) + 3.0 * sigma))
+
+    # One pass over the label image.
+    # Returns one slice tuple per label index 1..max_label.
+    objects = ndi.find_objects(inst)
+
+    denom = np.float32(2.0 * sigma * sigma)
+
+    for label_idx, sl in enumerate(objects, start=1):
+        if sl is None:
+            continue
+
+        ys, xs = sl
+
+        y0 = max(0, ys.start - pad)
+        y1 = min(H, ys.stop + pad)
+        x0 = max(0, xs.start - pad)
+        x1 = min(W, xs.stop + pad)
+
+        crop = inst[y0:y1, x0:x1]
+        m = crop == label_idx
+
+        if not np.any(m):
+            continue
+
+        dist_inside = ndi.distance_transform_edt(m).astype(np.float32)
+        dist_outside = ndi.distance_transform_edt(~m).astype(np.float32)
+
+        signed_dist = dist_outside
+        signed_dist[m] = -dist_inside[m]
+
+        band = (signed_dist >= -inner_width) & (signed_dist <= outer_width)
+        if not np.any(band):
+            continue
+
+        soft = np.exp(-(signed_dist * signed_dist) / denom).astype(np.float32)
+        soft[~band] = 0.0
+
+        out_crop = out[y0:y1, x0:x1]
+        np.maximum(out_crop, soft, out=out_crop)
+
+    return np.clip(out, 0.0, 1.0).astype(np.float32)
+
+
+def normalize01(x: np.ndarray) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float32)
+    if x.size == 0:
+        return x.astype(np.float32, copy=False)
+
+    m = x.max()
+    if m > 0:
+        x = x / np.float32(m)
+
+    return x.astype(np.float32, copy=False)
+
+
+def make_ellipse_mask(radius: int, ratio: float, angle: float):
+    """
+    Build a hard ellipse mask with approximately constant area.
+
+    Returns
+    -------
+    mask:
+        Boolean array with shape [2*r_box+1, 2*r_box+1].
+    r_box:
+        Integer half-size of the returned mask.
+    """
+    radius = max(1, int(radius))
+    ratio = max(1e-6, float(ratio))
+
+    s = float(np.sqrt(ratio))
+    a = float(radius) * s
+    b = float(radius) / s
+
+    r_box = int(np.ceil(max(a, b)))
+    yy_p, xx_p = np.mgrid[-r_box:r_box + 1, -r_box:r_box + 1].astype(np.float32)
+    ca, sa = np.cos(angle), np.sin(angle)
+    xr = ca * xx_p + sa * yy_p
+    yr = -sa * xx_p + ca * yy_p
+
+    mask = (xr * xr) / (a * a + 1e-8) + (yr * yr) / (b * b + 1e-8) <= 1.0
+    return mask, r_box
+
+
+def render_mask_derived_cell(
+    core_mask: np.ndarray,
+    sigma: float,
+    halo_weight: float = 0.20,
+    halo_sigma_factor: float = 2.25,
+    min_sigma: float = 0.10,
+) -> np.ndarray:
+    """
+    Create a soft visible cell from the exact hard instance mask.
+
+    Fast path:
+    - if halo_weight <= 0, compute only the core blur
+    - if sigma is effectively zero, return the hard mask
+    """
+    core_mask = np.asarray(core_mask, dtype=np.float32)
+
+    if core_mask.max() <= 0:
+        return core_mask.astype(np.float32, copy=False)
+
+    sigma = max(float(sigma), float(min_sigma))
+    halo_weight = float(np.clip(halo_weight, 0.0, 1.0))
+
+    # Fast path: no blur needed
+    if sigma <= 1e-6:
+        return core_mask.astype(np.float32, copy=False)
+
+    core = ndi.gaussian_filter(
+        core_mask,
+        sigma=sigma,
+        mode="constant",
+        cval=0.0,
+    ).astype(np.float32, copy=False)
+
+    core = normalize01(core)
+
+    # Fast path: halo disabled
+    if halo_weight <= 0.0:
+        return core
+
+    halo_sigma_factor = max(float(halo_sigma_factor), 1.0)
+
+    # If halo blur is effectively identical, avoid second filter
+    if abs(halo_sigma_factor - 1.0) < 1e-6:
+        return core
+
+    halo = ndi.gaussian_filter(
+        core_mask,
+        sigma=sigma * halo_sigma_factor,
+        mode="constant",
+        cval=0.0,
+    ).astype(np.float32, copy=False)
+
+    halo = normalize01(halo)
+
+    render = (
+        np.float32(1.0 - halo_weight) * core
+        + np.float32(halo_weight) * halo
+    ).astype(np.float32)
+
+    return normalize01(render)
 
 def make_center_stem_from_centers(centers, shape):
     H, W = shape
@@ -378,4 +534,91 @@ def crop_external_meta_to_tile(meta_full: dict, y0: int, x0: int, h: int, w: int
     return new_meta
 
 
+def apply_overexposure_halo(
+    img: np.ndarray,
+    *,
+    threshold: float,
+    sigma: float,
+    strength: float,
+    wash_strength: float = 0.0,
+    cell_mask: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """
+    Add a local overexposure halo around bright cell signal.
+
+    The effect is driven by bright pixels, optionally restricted by the
+    simulated cell mask. Nearby halos naturally overlap because the halo
+    field is built on the whole image at once.
+
+    Parameters
+    ----------
+    img:
+        RGB HWC float32 image in [0, 1].
+    threshold:
+        Only signal above this threshold contributes to the halo.
+    sigma:
+        Gaussian blur sigma for the halo spread.
+    strength:
+        Strength of the added halo field.
+    wash_strength:
+        Optional local contrast washout around the halo.
+    cell_mask:
+        Optional binary/float cell mask [H, W]. If given, the halo is focused
+        on cell regions.
+    """
+    if sigma <= 0.0 or strength <= 0.0:
+        return img
+
+    img = np.clip(img.astype(np.float32, copy=False), 0.0, 1.0)
+
+    bright = np.maximum(img - float(threshold), 0.0)
+
+    if cell_mask is not None:
+        mask = np.asarray(cell_mask, dtype=np.float32)
+        if mask.ndim != 2:
+            raise ValueError(f"cell_mask must be 2D, got shape {mask.shape}")
+
+        mask = np.clip(mask, 0.0, 1.0)
+
+        # soften the mask a bit so the halo can spill just beyond the cell body
+        mask_soft = cv2.GaussianBlur(
+            mask,
+            (0, 0),
+            sigmaX=max(0.5, float(sigma) * 0.75),
+            sigmaY=max(0.5, float(sigma) * 0.75),
+        )
+        mask_soft = np.clip(mask_soft, 0.0, 1.0)
+
+        bright = bright * mask_soft[..., None]
+
+    halo = cv2.GaussianBlur(
+        bright,
+        (0, 0),
+        sigmaX=float(sigma),
+        sigmaY=float(sigma),
+    ).astype(np.float32)
+
+    # Add the halo in a saturating way so overlap matters,
+    # but does not blow up too hard.
+    img = img + float(strength) * halo * (1.0 - img)
+    img = np.clip(img, 0.0, 1.0)
+
+    # Optional local washout: makes boundaries less crisp in bright regions.
+    if wash_strength > 0.0:
+        halo_map = halo.max(axis=2, keepdims=True)
+        halo_scale = float(halo_map.max()) + 1e-6
+        wash_mask = np.clip(halo_map / halo_scale, 0.0, 1.0)
+
+        local_blur = cv2.GaussianBlur(
+            img,
+            (0, 0),
+            sigmaX=float(sigma),
+            sigmaY=float(sigma),
+        ).astype(np.float32)
+
+        alpha = float(wash_strength) * wash_mask
+        img = (1.0 - alpha) * img + alpha * local_blur
+        img = np.clip(img, 0.0, 1.0)
+
+    return img.astype(np.float32)
 

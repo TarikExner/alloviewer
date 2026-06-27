@@ -27,6 +27,7 @@ from .utils import (
     seeded_watershed_from_mask,
     load_com_labels_csv,
     crop_external_meta_to_tile,
+    apply_overexposure_halo
 )
 from .image_simulation import (
     CameraDimension,
@@ -34,7 +35,7 @@ from .image_simulation import (
     CameraStyleConfig,
     STYLE_PARAMS_REGISTRY,
     diverse_cameras,
-    load_or_build_quantile_band_cache
+    load_or_build_quantile_band_cache,
 )
 
 class BaseCellsTilesDataset(Dataset):
@@ -540,6 +541,72 @@ class SimCellsDataset(BaseCellsTilesDataset):
 
         return tiles
 
+    def _apply_overexposure_halo_to_tiles(
+        self,
+        tiles: List[Dict],
+        rng,
+        style_name: str,
+    ) -> List[Dict]:
+        """
+        Apply overexposure halo only to simulated final-size tiles.
+
+        This is intentionally SimCellsDataset-only. Do not move this into
+        BaseCellsTilesDataset._finalize_tiles(), because that would also affect
+        external real-image datasets.
+        """
+        if style_name in {"simulated_raw", "raw_simulated"}:
+            return tiles
+
+        if style_name not in self.camera_style_registry:
+            return tiles
+
+        params = self.camera_style_registry[style_name]
+
+        if rng.random() >= params.halo_prob:
+            return tiles
+
+        halo_threshold = float(rng.uniform(*params.halo_threshold_range))
+        halo_sigma = float(rng.uniform(*params.halo_sigma_range))
+        halo_strength = float(rng.uniform(*params.halo_strength_range))
+        halo_wash_strength = float(rng.uniform(*params.halo_wash_strength_range))
+
+        for t in tiles:
+            img_t = t["img"].astype(np.float32, copy=False)
+
+            h, w = img_t.shape[:2]
+
+            # Safety guard: only apply to final model-input tiles.
+            # This prevents accidental expensive full-res halo in mode="fullres".
+            if h != self.target or w != self.target:
+                continue
+
+            cell_t = t.get("cell", None)
+            if cell_t is None:
+                cell_t = (t["inst"] > 0).astype(np.float32)
+            else:
+                cell_t = cell_t.astype(np.float32, copy=False)
+
+            t["img"] = apply_overexposure_halo(
+                img=img_t,
+                threshold=halo_threshold,
+                sigma=halo_sigma,
+                strength=halo_strength,
+                wash_strength=halo_wash_strength,
+                cell_mask=cell_t,
+            ).astype(np.float32, copy=False)
+
+            t["mode_meta"] = {
+                **t["mode_meta"],
+                "halo_after_tiling": True,
+                "halo_style": style_name,
+                "halo_threshold": halo_threshold,
+                "halo_sigma": halo_sigma,
+                "halo_strength": halo_strength,
+                "halo_wash_strength": halo_wash_strength,
+            }
+
+        return tiles
+
     def __getitem__(self, idx):
         rng = np.random.default_rng(
             int(self.base_rng.integers(0, 2**31 - 1)) ^ int(idx)
@@ -548,18 +615,23 @@ class SimCellsDataset(BaseCellsTilesDataset):
         # build sim kwargs from configs
         sim_kwargs = self.scene_cfg.sample_kwargs(rng, camera=self.camera_cfg)
         sim_kwargs.setdefault("return_targets", True)
+        sim_kwargs.setdefault("return_aux_targets", False)
 
         # simulate
         img, meta, targets = simulate_image(**sim_kwargs)
         cell = targets["cell_mask"].astype(np.float32)
         inst = targets["instance_labels"].astype(np.int32)
+
+        style_name = self.camera_style_cfg.sample_style(rng)
+        style_cfg_one = CameraStyleConfig(styles=(style_name,), probs=None)
+
         img = apply_camera_style(
             img,
             rng,
-            self.camera_style_cfg,
+            style_cfg_one,
             self.camera_style_registry,
             quantile_band_cache=self.quantile_band_cache,
-            cell_mask=cell
+            cell_mask=cell,
         )
 
         tiles = []
@@ -618,11 +690,21 @@ class SimCellsDataset(BaseCellsTilesDataset):
             else:
                 raise ValueError("Choose n_tiles to be a positive integer or -1")
 
+        tiles = self._apply_overexposure_halo_to_tiles(
+            tiles=tiles,
+            rng=rng,
+            style_name=style_name,
+        )
+
+        sim_kwargs_clean = {k: v for k, v in sim_kwargs.items() if k != "seed"}
+        sim_kwargs_clean["camera_style"] = style_name
+        sim_kwargs_clean["halo_after_tiling"] = True
+
         # finalize: heads, transforms, stack
         return self._finalize_tiles(
             tiles=tiles,
             full_meta=full_meta,
-            sim_kwargs={k: v for k, v in sim_kwargs.items() if k != "seed"},
+            sim_kwargs=sim_kwargs_clean,
         )
 
 

@@ -746,15 +746,20 @@ def create_tiled_from_fullres(
 
         if H_in <= th or W_in <= th:
             # fallback: single tile; handled in main loop
-            stride = None
             tile_coords: List[Tuple[int, int]] = [(0, 0)]
             T_tiles = 1
         else:
             stride = max(1, th - tile_overlap)
-            tile_coords = []
-            for y0 in range(0, H_in - th + 1, stride):
-                for x0 in range(0, W_in - th + 1, stride):
-                    tile_coords.append((int(y0), int(x0)))
+
+            ys = list(range(0, max(1, H_in - th + 1), stride))
+            if ys[-1] + th < H_in:
+                ys.append(H_in - th)
+
+            xs = list(range(0, max(1, W_in - th + 1), stride))
+            if xs[-1] + th < W_in:
+                xs.append(W_in - th)
+
+            tile_coords = [(int(y0), int(x0)) for y0 in ys for x0 in xs]
             T_tiles = len(tile_coords)
 
     # --- (re-)create output file ---

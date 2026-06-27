@@ -7,6 +7,23 @@ from alloviewer.image_analysis.io import load_image
 from IPython.display import clear_output
 import os
 
+BCG_IMAGES_FOLDERS = [
+    "./ext_images/20251106_25065441_iPhone_XR_JPEG",
+    "./ext_images/20251106_25722169_iPhone_XR_JPEG",
+    "./ext_images/20251106_25722269_iPhone_XR_JPEG",
+    "./ext_images/20251107_25065521_GooglePixel",
+    "./ext_images/20251107_25722332_GooglePixel",
+    "./ext_images/20251014_25719960",
+    "./ext_images/20251014_25720084",
+    "./ext_images/20251107_25065521",
+    "./ext_images/20251107_25722332",
+    "./ext_images/20251210_25066239_XM",
+    "./ext_images/20251210_25066239_XM_+DTT",
+    "./ext_images/20260120_26700788_LCT_RV",
+    "./ext_images/20260120_26700790_LCT_RV",
+    "./ext_images/20260121_26700790_LCT_RV_DTT",
+]
+
 def show_rectangle(
     img: np.ndarray,
     x: int,
@@ -310,16 +327,46 @@ def review_dataset_and_save(
     tile_size=512,
     step=128,
     reuse_last_rectangle=True,
+    skip_existing=True,
 ):
     """
-    Loop through images like a manual dataloader.
+    Loop through images for manual review.
+
+    Images whose output file already exists are skipped automatically.
+    They still count toward the displayed progress counter.
     """
+    image_paths = list(image_paths)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     results = []
 
     cur_x, cur_y, cur_w, cur_h = x, y, width, height
 
     for i, img_path in enumerate(image_paths, start=1):
+        img_path = Path(img_path)
+
+        out_name = make_output_name(img_path)
+        out_path = out_dir / out_name
+
         print(f"\n===== [{i}/{len(image_paths)}] {img_path} =====")
+
+        # Skip images that have already been processed.
+        if skip_existing and out_path.exists():
+            print(f"Already processed, skipping: {out_path}")
+
+            results.append({
+                "image_path": str(img_path),
+                "output_path": str(out_path),
+                "status": "already_exists",
+                "x": None,
+                "y": None,
+                "width": None,
+                "height": None,
+            })
+
+            clear_output(wait=True)
+            continue
 
         status, rect = review_and_save_one_image(
             img_path,
@@ -335,6 +382,7 @@ def review_dataset_and_save(
 
         results.append({
             "image_path": str(img_path),
+            "output_path": str(out_path),
             "status": status,
             "x": rect[0],
             "y": rect[1],

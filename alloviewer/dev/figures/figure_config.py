@@ -32,12 +32,12 @@ TWO_COL_LEGEND = {
 }
 
 PHONE_DICT = {
-    "iPhone": "smartphone\nbrand 1",
-    "GooglePixel": "smartphone\nbrand 2",
-    "Microscope": "microscope camera\nrgb",
-    "Monochrome": "microscope camera\nmonochrome",
-    "Generic": "generic\n",
-    "Simulated": "simulated\n"
+    "iPhone": "Smartphone\nBrand 2",
+    "GooglePixel": "Smartphone\nBrand 1",
+    "Microscope": "Color Camera\n",
+    "Monochrome": "Monochrome Camera\n",
+    "Generic": "Generic\n",
+    "Simulated": "Simulated\n"
 }
 
 STRIPPLOT_PARAMS = {"linewidth": 0.5, "dodge": True, "s": 2}
