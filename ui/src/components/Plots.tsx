@@ -31,6 +31,9 @@ export type Series1D = {
   label: string;
   color: string;
   values: number[];
+
+  dashed?: boolean;
+  foreground?: boolean;
 };
 
 function finiteNumber(x: any): x is number {
@@ -535,6 +538,8 @@ export function LinePlot({
         color: s.color,
         counts: h.dens,
         maxY: h.maxY,
+        dashed: !!s.dashed,
+        foreground: !!s.foreground,
       };
     });
 
@@ -646,12 +651,11 @@ export function LinePlot({
     });
 
     // Draw inactive curves first so the highlighted curve stays visually on top.
-    const drawOrder = activeSeriesKey
-      ? [
-          ...global.per.filter((s) => s.key !== activeSeriesKey),
-          ...global.per.filter((s) => s.key === activeSeriesKey),
-        ]
-      : global.per;
+    const drawOrder = [
+      ...global.per.filter((s) => !s.foreground && s.key !== activeSeriesKey),
+      ...global.per.filter((s) => s.foreground && s.key !== activeSeriesKey),
+      ...global.per.filter((s) => s.key === activeSeriesKey),
+    ];
 
     for (const s of drawOrder) {
       const isActive = !!activeSeriesKey && s.key === activeSeriesKey;
@@ -661,6 +665,7 @@ export function LinePlot({
       ctx.globalAlpha = isDimmed ? 0.18 : 1;
       ctx.strokeStyle = s.color || PLOT_LINE_COLOR;
       ctx.lineWidth = isActive ? PLOT_LINE_WIDTH + 2 : PLOT_LINE_WIDTH;
+      ctx.setLineDash(s.dashed ? [6, 4] : []);
       ctx.beginPath();
 
       let started = false;

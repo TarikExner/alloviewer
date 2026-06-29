@@ -27,6 +27,116 @@ from .utils import (
 ProgressEvent = Dict[str, Any]
 ProgressCallback = Callable[[ProgressEvent], None]
 
+
+# -------------------------
+# FCS tube-name helpers
+# -------------------------
+
+def _safe_decode(value: Any) -> str:
+    if value is None:
+        return ""
+
+    if isinstance(value, bytes):
+        for enc in ("utf-8", "latin-1", "cp1252"):
+            try:
+                return value.decode(enc).strip()
+            except Exception:
+                pass
+        return value.decode(errors="ignore").strip()
+
+    return str(value).strip()
+
+
+def _normalize_meta_key(key: Any) -> str:
+    return str(key).strip().lower().replace("_", " ").replace("-", " ")
+
+
+def _extract_tube_name_from_meta(meta: Dict[str, Any], fallback: str) -> str:
+    if not meta:
+        return fallback
+
+    normalized = {
+        _normalize_meta_key(k): _safe_decode(v)
+        for k, v in meta.items()
+        if _safe_decode(v)
+    }
+
+    candidate_keys = [
+        "$tube name",
+        "tube name",
+        "$tubename",
+        "tubename",
+        "tube",
+        "tube name:",
+        "sample name",
+        "$sample",
+        "sample",
+        "$src",
+        "src",
+        "name",
+    ]
+
+    for key in candidate_keys:
+        value = normalized.get(_normalize_meta_key(key))
+        if value:
+            return value
+
+    return fallback
+
+
+def _metadata_from_fcs_object(fcs: Any) -> Dict[str, Any]:
+    for attr in ("text", "metadata", "meta", "keywords", "fcs_metadata"):
+        value = getattr(fcs, attr, None)
+        if isinstance(value, dict):
+            return dict(value)
+
+    # Some wrappers expose the underlying FlowData-like object.
+    for attr in ("flow_data", "flowdata", "fd", "data"):
+        obj = getattr(fcs, attr, None)
+        if obj is None:
+            continue
+        for sub_attr in ("text", "metadata", "meta", "keywords"):
+            value = getattr(obj, sub_attr, None)
+            if isinstance(value, dict):
+                return dict(value)
+
+    return {}
+
+
+def _metadata_from_path(path_like: str) -> Dict[str, Any]:
+    try:
+        path = Path(str(path_like))
+        if not path.exists() or path.suffix.lower() != ".fcs":
+            return {}
+        from flowio import FlowData
+        fd = FlowData(str(path))
+        return dict(getattr(fd, "text", {}) or {})
+    except Exception:
+        return {}
+
+
+def _tube_name_for_file(*, fcs: Any, fp: str, fallback: str) -> str:
+    meta = _metadata_from_fcs_object(fcs)
+    tube = _extract_tube_name_from_meta(meta, fallback)
+    if tube != fallback:
+        return tube
+
+    meta = _metadata_from_path(fp)
+    return _extract_tube_name_from_meta(meta, fallback)
+
+
+def _raw_cutoff_from_transformed(cutoff_t: float, cofactor: float) -> float:
+    """Invert the asinh(raw/cofactor) transform used for IgG display cutoffs."""
+    try:
+        c = float(cutoff_t)
+        k = float(cofactor)
+    except Exception:
+        return float("nan")
+    if not np.isfinite(c) or not np.isfinite(k) or k <= 0:
+        return float("nan")
+    return float(np.sinh(c) * k)
+
+
 def _build_payload(
     *,
     fitted: FittedGater,
@@ -190,6 +300,15 @@ def build_plot_cache_entry_for_file(
         cutoff = float(cutoff_by_gate.get(gate, 0.0))
         igg_pos_by_gate[gate] = (igg_ds > cutoff).tolist()
 
+    igg_cofactor = float(getattr(fitted.config.transform, "igg_cofactor", 150.0))
+    cutoff_raw_by_gate = {
+        str(gate): _raw_cutoff_from_transformed(cutoff, igg_cofactor)
+        for gate, cutoff in (cutoff_by_gate or {}).items()
+    }
+
+    fallback_tube_name = _short_file_label({"file_key_raw": fp})
+    tube_name = _tube_name_for_file(fcs=fcs, fp=fp, fallback=fallback_tube_name)
+
     for marker_name in marker_names:
         marker_mask = np.asarray(
             fa.m_by_marker.get(marker_name, np.zeros(n, dtype=bool)),
@@ -206,9 +325,12 @@ def build_plot_cache_entry_for_file(
         "file_key": key,
         "file_key_raw": fp,
         "sample_name": sample.name,
+        "tube_name": tube_name,
         "role": sample.role,
         "gate_options": gate_options,
         "cutoff_by_gate": dict(cutoff_by_gate),
+        "cutoff_raw_by_gate": dict(cutoff_raw_by_gate),
+        "igg_cofactor": igg_cofactor,
 
         # Downsampled scatter and IgG.
         "fsc_a": as_list_finite(fsc_a[idx]) if fsc_a is not None else None,
@@ -504,6 +626,7 @@ def _build_single_file_line_series(
         "pos_pct": pos_pct,
 
         "filename": _short_file_label(entry),
+        "tube_name": str(entry.get("tube_name") or ""),
         "sample_name": str(entry.get("sample_name") or ""),
         "role": str(entry.get("role") or ""),
     }
@@ -534,7 +657,7 @@ def _build_control_file_line_series(
 
     entries.sort(
         key=lambda e: (
-            str(e.get("sample_name", "")),
+            str(e.get("tube_name") or e.get("sample_name") or ""),
             _short_file_label(e),
         )
     )
@@ -577,6 +700,14 @@ def build_results_response_from_cache(
 
     cutoff_by_gate = entry.get("cutoff_by_gate", {}) or {}
     cutoff = float(cutoff_by_gate.get(gate, 0.0))
+
+    cutoff_raw_by_gate = entry.get("cutoff_raw_by_gate", {}) or {}
+    cutoff_raw = float(cutoff_raw_by_gate.get(gate, float("nan")))
+    if not np.isfinite(cutoff_raw):
+        cutoff_raw = _raw_cutoff_from_transformed(
+            cutoff,
+            float(entry.get("igg_cofactor", 150.0)),
+        )
 
     selected_file_metrics_by_gate = (
         entry.get("selected_file_metrics_by_gate", {}) or {}
@@ -704,7 +835,7 @@ def build_results_response_from_cache(
         max_line_values=max_line_values,
     )
 
-    sc_sel, ln_sel = collect_plot_series(
+    sc_sel, _ln_sel_combined = collect_plot_series(
         plot_cache=plot_cache,
         selected_key=selected_key,
         gate=gate,
@@ -713,6 +844,15 @@ def build_results_response_from_cache(
         color="#3b82f6",
         only_selected=True,
         max_points_final=max_points_final,
+        max_line_values=max_line_values,
+    )
+
+    ln_sel = _build_single_file_line_series(
+        entry=entry,
+        gate=gate,
+        label="Selected file",
+        color="#3b82f6",
+        cutoff=cutoff,
         max_line_values=max_line_values,
     )
 
@@ -748,17 +888,14 @@ def build_results_response_from_cache(
         max_line_values=max_line_values,
     )
 
-    selected_entry = plot_cache[selected_key]
-    selected_role = str(selected_entry.get("role", "")).upper()
-
     line_series = [
         *negative_control_lines,
         *positive_control_lines,
+        # Keep the selected file as its own foreground curve.
+        # This is intentional even when the selected file itself is NC or PC,
+        # because the report and app must show the selected file in blue.
+        ln_sel,
     ]
-
-    # Avoid drawing the same control file twice when the selected file itself is NC or PC.
-    if selected_role not in {"NC", "PC"}:
-        line_series.append(ln_sel)
 
     return {
         "gate_options": gate_options,
@@ -767,6 +904,8 @@ def build_results_response_from_cache(
         "final_scatter_series": [sc_nc, sc_pc, sc_sel],
         "line_series": line_series,
         "cutoff": cutoff,
+        "cutoff_raw": cutoff_raw,
+        "cutoff_transformed": cutoff,
         "selected_file_metrics": selected_file_metrics,
         "selected_sample_metrics": selected_sample_metrics,
     }

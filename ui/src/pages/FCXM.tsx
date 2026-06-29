@@ -1334,12 +1334,18 @@ export default function FCXMApp() {
 
                       <div className="overflow-hidden rounded-xl border dark:border-neutral-800 p-2 h-[260px]">
                         <LinePlot
-                          series={overviewLineSeries.map((s) => ({
-                            key: s.key,
-                            label: s.label,
-                            color: s.color,
-                            values: s.values,
-                          }))}
+                          series={overviewLineSeries.map((s) => {
+                            const isSelectedFileCurve = s.key === selectedFileCurveKey;
+                        
+                            return {
+                              key: s.key,
+                              label: s.label,
+                              color: isSelectedFileCurve ? "#3b82f6" : s.color,
+                              values: s.values,
+                              dashed: isSelectedFileCurve,
+                              foreground: isSelectedFileCurve,
+                            };
+                          })}
                           activeSeriesKey={activeCurveKey}
                           xLabel={t("FCXM.axes.igg")}
                           showLegend={false}
