@@ -1,8 +1,13 @@
+import os
 import copy
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Optional, Literal
+from typing import List, Optional
 
 import numpy as np
+import torch
 
 from . import load_images
 from .structs import PlateLayout, ROIResult, WellResult, ParsedPlateLayout
@@ -21,16 +26,94 @@ from .utils import (
 )
 from .services.analysis import (
     calculate_allele_reactivity_evidence,
-    calculate_pra_reactivity_score
+    calculate_pra_reactivity_score,
 )
 
 from app.services.job_state import (
     set_image_progress,
     update_image_progress,
-    get_image_progress,
-    append_image_done_well,
     set_image_result,
 )
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+
+    print(f"RAW: {raw}")
+
+    if raw is None or raw == "":
+        return default
+
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+
+    return max(1, value)
+
+
+def _segmenter_device_type(segmenter: SegmenterUNetInference) -> str:
+    device = getattr(segmenter, "device", None)
+    device_type = getattr(device, "type", None)
+    return str(device_type or "unknown")
+
+
+def _segmenter_is_cuda(segmenter: SegmenterUNetInference) -> bool:
+    return _segmenter_device_type(segmenter) == "cuda"
+
+
+def _cpu_segmentation_workers(
+    segmenter: SegmenterUNetInference,
+    total: int,
+) -> int:
+    if _segmenter_is_cuda(segmenter):
+        return 1
+
+    workers = _env_int("IMAGE_ANALYSIS_CPU_WORKERS", 4)
+    return max(1, min(workers, total))
+
+
+def _prepare_cpu_parallel_runtime(max_workers: int) -> None:
+    if max_workers <= 1:
+        return
+
+    # Avoid nested CPU oversubscription:
+    # 4 Python worker threads x N Torch/OpenMP threads can otherwise explode.
+    try:
+        torch.set_num_threads(1)
+    except Exception:
+        pass
+
+    try:
+        torch.set_num_interop_threads(1)
+    except Exception:
+        pass
+
+
+def _update_segmentation_progress(
+    *,
+    job_id: str,
+    current_well: Optional[str],
+    done: int,
+    total: int,
+    done_wells: list[str],
+) -> None:
+    """Write one complete segmentation-progress state to Redis.
+
+    This avoids separate Redis writes for ``done`` and ``done_wells``. In the
+    parallel path, separate writes are more likely to collide and can leave the
+    frontend with a progress object where the numeric counter updates but the
+    highlighted wells do not.
+    """
+    update_image_progress(
+        job_id,
+        stage="segmenting",
+        current_well=current_well,
+        done=done,
+        total=total,
+        done_wells=done_wells.copy(),
+    )
+
 
 def _extract_roi_from_image(
     image: np.ndarray,
@@ -76,6 +159,212 @@ def _extract_roi_from_image(
     return wr, segmentation_results
 
 
+def _segment_one_well(
+    *,
+    well,
+    segmenter: SegmenterUNetInference,
+    qc: bool,
+    job_id: str,
+) -> tuple[str, WellResult, np.ndarray]:
+    thread_name = threading.current_thread().name
+    t0 = time.perf_counter()
+
+    print(
+        f"[image-job {job_id}] START well {well.well_id} on {thread_name}",
+        flush=True,
+    )
+
+    try:
+        image = well.image
+
+        if image.shape[0] == 0:
+            raise ValueError(f"No image provided for well {well.well_id}.")
+
+        # Keep these local to each thread. Cheap to create, avoids shared
+        # mutable state in the ROI extraction and QC code.
+        extractor = RGBExtractor()
+        qc_monitor = QCMonitor() if qc else None
+
+        wr, segmentation_results = _extract_roi_from_image(
+            image=image,
+            extractor=extractor,
+            segmenter=segmenter,
+            qc_monitor=qc_monitor,
+            well_id=well.well_id,
+            qc=qc,
+        )
+
+        labels_for_preview = segmentation_results["instance_labels_for_rois"].astype(
+            np.uint16,
+            copy=False,
+        )
+
+        # Drop the large probability maps and temporary arrays as soon as the
+        # only needed output has been copied/referenced.
+        segmentation_results.clear()
+
+        dt = time.perf_counter() - t0
+        print(
+            f"[image-job {job_id}] DONE well {well.well_id} "
+            f"in {dt:.1f}s on {thread_name}",
+            flush=True,
+        )
+
+        return well.well_id, wr, labels_for_preview
+
+    except Exception as exc:
+        dt = time.perf_counter() - t0
+        print(
+            f"[image-job {job_id}] FAILED well {well.well_id} "
+            f"after {dt:.1f}s on {thread_name}: {repr(exc)}",
+            flush=True,
+        )
+        raise
+
+
+def _segment_plate_wells(
+    *,
+    wells_list,
+    segmenter: SegmenterUNetInference,
+    qc: bool,
+    job_id: str,
+) -> tuple[dict[str, WellResult], dict[str, np.ndarray]]:
+    total = len(wells_list)
+    max_workers = _cpu_segmentation_workers(segmenter, total)
+    _prepare_cpu_parallel_runtime(max_workers)
+
+    device_type = _segmenter_device_type(segmenter)
+    mode = "sequential" if max_workers == 1 else "parallel"
+
+    print(
+        f"[image-job {job_id}] segmentation mode={mode}, "
+        f"device={device_type}, max_workers={max_workers}, total_wells={total}",
+        flush=True,
+    )
+
+    completed: dict[str, tuple[WellResult, np.ndarray]] = {}
+    done = 0
+    done_wells: list[str] = []
+
+    if max_workers == 1:
+        print(
+            f"[image-job {job_id}] one worker, "
+            f"cuda_available={torch.cuda.is_available()}",
+            flush=True,
+        )
+
+        for well in wells_list:
+            # In sequential mode this marks the well that is currently running.
+            update_image_progress(
+                job_id,
+                stage="segmenting",
+                current_well=well.well_id,
+                done=done,
+                total=total,
+                done_wells=done_wells.copy(),
+            )
+
+            wid, wr, labels = _segment_one_well(
+                well=well,
+                segmenter=segmenter,
+                qc=qc,
+                job_id=job_id,
+            )
+
+            completed[wid] = (wr, labels)
+            done += 1
+            done_wells.append(wid)
+
+            _update_segmentation_progress(
+                job_id=job_id,
+                current_well=wid,
+                done=done,
+                total=total,
+                done_wells=done_wells,
+            )
+
+    else:
+        print(
+            f"[image-job {job_id}] multiple workers, "
+            f"cuda_available={torch.cuda.is_available()}",
+            flush=True,
+        )
+
+        _update_segmentation_progress(
+            job_id=job_id,
+            current_well=None,
+            done=done,
+            total=total,
+            done_wells=done_wells,
+        )
+
+        with ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="image-seg",
+        ) as pool:
+            futures = {
+                pool.submit(
+                    _segment_one_well,
+                    well=well,
+                    segmenter=segmenter,
+                    qc=qc,
+                    job_id=job_id,
+                ): well.well_id
+                for well in wells_list
+            }
+
+            try:
+                for future in as_completed(futures):
+                    scheduled_wid = futures[future]
+
+                    try:
+                        wid, wr, labels = future.result()
+                    except Exception as exc:
+                        for other in futures:
+                            other.cancel()
+
+                        raise RuntimeError(
+                            f"Segmentation failed for well {scheduled_wid}."
+                        ) from exc
+
+                    completed[wid] = (wr, labels)
+                    done += 1
+                    done_wells.append(wid)
+
+                    # In parallel mode, current_well means the latest completed
+                    # well, not the only active well.
+                    _update_segmentation_progress(
+                        job_id=job_id,
+                        current_well=wid,
+                        done=done,
+                        total=total,
+                        done_wells=done_wells,
+                    )
+
+            finally:
+                update_image_progress(job_id, current_well=None)
+
+    missing = [well.well_id for well in wells_list if well.well_id not in completed]
+    if missing:
+        raise RuntimeError(
+            "Segmentation did not return results for wells: "
+            + ", ".join(missing)
+        )
+
+    per_well = {
+        well.well_id: completed[well.well_id][0]
+        for well in wells_list
+    }
+
+    per_well_instance_labels = {
+        well.well_id: completed[well.well_id][1]
+        for well in wells_list
+    }
+
+    return per_well, per_well_instance_labels
+
+
+
 def run_image_analysis(
     layout: PlateLayout,
     image_order: List[str],
@@ -92,19 +381,16 @@ def run_image_analysis(
     if not job_id:
         job_id = "MY_JOB"
 
+    print(f"[image-job {job_id}] started", flush=True)
+
     try:
         if not unet_config:
             unet_config = copy.deepcopy(UNET_CONFIG)
             unet_config["instance_cfg"] = INSTANCE_CONFIG.to_dict()
 
         segmenter = SegmenterUNetInference.from_config(unet_config)
-        qc_monitor = QCMonitor()
-        extractor = RGBExtractor()
         calibrator = PCNCGaussian2DCalibrator()
         classifier_ctor = ROIClassifierGaussian2D3Way
-
-        per_well: dict[str, WellResult] = {}
-        per_well_instance_labels: dict[str, np.ndarray] = {}
 
         segmented_dir = Path(data_dir) / "segmented" / job_id
 
@@ -131,39 +417,12 @@ def run_image_analysis(
             },
         )
 
-        for well_idx, well in enumerate(plate.get()):
-            update_image_progress(
-                job_id,
-                stage="segmenting",
-                current_well=well.well_id,
-            )
-            print(f"Calculating well {well.well_id}")
-
-            image = well.image
-
-            if image.shape[0] == 0:
-                raise ValueError("No image provided.")
-
-            wr, segmentation_results = _extract_roi_from_image(
-                image=image,
-                extractor=extractor,
-                segmenter=segmenter,
-                qc_monitor=qc_monitor,
-                well_id=well.well_id,
-                qc=qc,
-            )
-
-            per_well[well.well_id] = wr
-
-            per_well_instance_labels[well.well_id] = segmentation_results[
-                "instance_labels_for_rois"
-            ].astype(np.uint16, copy=False)
-
-            append_image_done_well(
-                job_id=job_id,
-                well_id=well.well_id,
-                done=well_idx + 1,
-            )
+        per_well, per_well_instance_labels = _segment_plate_wells(
+            wells_list=wells_list,
+            segmenter=segmenter,
+            qc=qc,
+            job_id=job_id,
+        )
 
         update_image_progress(job_id, current_well=None)
 
@@ -186,7 +445,6 @@ def run_image_analysis(
             wr.rois = [ROIResult(**d) for d in updated]
 
         update_image_progress(job_id, stage="saving_previews")
-
 
         for wid, wr in per_well.items():
             segmented_path = segmented_dir / f"{wid}.png"
@@ -295,6 +553,8 @@ def run_image_analysis(
             current_well=None,
         )
 
+        print(f"[image-job {job_id}] done", flush=True)
+
         return result
 
     except Exception as e:
@@ -306,5 +566,6 @@ def run_image_analysis(
             current_well=None,
         )
 
-        print(f"Image analysis failed for job {job_id}: {repr(e)}")
+        print(f"[image-job {job_id}] failed: {repr(e)}", flush=True)
         raise
+

@@ -733,33 +733,17 @@ export default function CrossmatchApp() {
 
             <div className="space-y-4">
               <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4">
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <div>
-                    <div className="font-medium">
-                      {t("cdc_xm_app.summary_values.title")}
-                    </div>
-
-                    {summaryError ? (
-                      <div className="mt-1 text-xs text-red-600 dark:text-red-400">
-                        {summaryError}
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={onDownloadSummary}
-                    disabled={!canDownloadSummary}
-                    className="shrink-0 rounded-xl border px-3 py-2 text-sm
-                               bg-white hover:bg-neutral-50 disabled:opacity-50
-                               dark:bg-neutral-900 dark:hover:bg-neutral-800
-                               dark:border-neutral-700 dark:text-neutral-200"
-                  >
-                    {summaryBusy ? "Preparing PDF..." : "Download Summary"}
-                  </button>
+                <div className="font-medium mb-3">
+                  {t("cdc_xm_app.summary_values.title")}
                 </div>
-
-                <CrossmatchSummaryGrid summary={summary} />
+              
+                <CrossmatchSummaryGrid
+                  summary={summary}
+                  onDownloadSummary={onDownloadSummary}
+                  canDownloadSummary={canDownloadSummary}
+                  summaryBusy={summaryBusy}
+                  summaryError={summaryError}
+                />
               </div>
 
               <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4">

@@ -1197,7 +1197,7 @@ def hysteresis_mask(
         mask = np.zeros_like(weak, dtype=bool)
 
     if close_selem is not None:
-        mask = morphology.binary_closing(mask, close_selem)
+        mask = morphology.closing(mask, close_selem)
 
     mask = ndi.binary_fill_holes(mask)
 

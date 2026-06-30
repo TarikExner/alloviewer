@@ -17,11 +17,72 @@ from reportlab.platypus import (
     Table,
     TableStyle,
     PageBreak,
+    Flowable
 )
 
 
 PAGE_SIZE_MODE_DEFAULT = "SAFE"
 
+class EditableTextBox(Flowable):
+    def __init__(
+        self,
+        *,
+        name: str,
+        label: str,
+        width: float,
+        height: float,
+        label_width: float = 38 * mm,
+        value: str = "",
+        tooltip: str | None = None,
+        font_size: int = 8,
+    ):
+        super().__init__()
+        self.name = name
+        self.label = label
+        self.width = width
+        self.height = height
+        self.label_width = label_width
+        self.value = value
+        self.tooltip = tooltip or label
+        self.font_size = font_size
+
+    def wrap(self, availWidth, availHeight):
+        return self.width, self.height
+
+    def draw(self):
+        canvas = self.canv
+        field_x = self.label_width
+        field_w = self.width - self.label_width
+
+        canvas.saveState()
+
+        canvas.setStrokeColor(colors.grey)
+        canvas.setLineWidth(0.25)
+        canvas.rect(0, 0, self.width, self.height, stroke=1, fill=0)
+        canvas.line(self.label_width, 0, self.label_width, self.height)
+
+        canvas.setFont("Helvetica-Bold", 7)
+        canvas.drawString(5, self.height - 8, self.label)
+
+        canvas.acroForm.textfieldRelative(
+            name=self.name,
+            tooltip=self.tooltip,
+            value=self.value,
+            x=field_x + 2,
+            y=2,
+            width=field_w - 4,
+            height=self.height - 4,
+            fontName="Helvetica",
+            fontSize=self.font_size,
+            borderStyle="solid",
+            borderWidth=0,
+            borderColor=None,
+            fillColor=None,
+            textColor=colors.black,
+            fieldFlags="multiline",
+        )
+
+        canvas.restoreState()
 
 def _safe_pagesizes() -> tuple[tuple[float, float], tuple[float, float]]:
     a4w, a4h = A4
@@ -690,9 +751,6 @@ def build_cdc_summary_pdf(
         story.append(Spacer(1, 3 * mm))
         story.append(_allele_table(pra.get("alleles") or [], style_cell, style_th))
 
-    # ---------------------------------------------------------------------
-    # Last page: interpretation and sign-off
-    # ---------------------------------------------------------------------
     story.append(PageBreak())
     story.append(Paragraph("Interpretation and sign-off", style_title))
     story.append(
@@ -703,15 +761,31 @@ def build_cdc_summary_pdf(
     )
     story.append(Spacer(1, 4 * mm))
 
-    comment_rows = [
-        [
-            _par("Interpretation:", style_th),
-            _par("", style_cell),
-        ],
-        [
-            _par("Comments:", style_th),
-            _par("", style_cell),
-        ],
+    story.append(
+        EditableTextBox(
+            name=f"{job_id}_interpretation",
+            label="Interpretation:",
+            width=usable_w,
+            height=34 * mm,
+            tooltip="Interpretation",
+        )
+    )
+
+    story.append(Spacer(1, 4 * mm))
+
+    story.append(
+        EditableTextBox(
+            name=f"{job_id}_comments",
+            label="Comments:",
+            width=usable_w,
+            height=46 * mm,
+            tooltip="Comments",
+        )
+    )
+
+    story.append(Spacer(1, 5 * mm))
+
+    signoff_rows = [
         [
             _par("Examiner signature:", style_th),
             _par(
@@ -728,13 +802,13 @@ def build_cdc_summary_pdf(
         ],
     ]
 
-    comment_tbl = Table(
-        comment_rows,
+    signoff_tbl = Table(
+        signoff_rows,
         colWidths=[38 * mm, usable_w - 38 * mm],
-        rowHeights=[30 * mm, 42 * mm, 14 * mm, 14 * mm],
+        rowHeights=[14 * mm, 14 * mm],
     )
 
-    comment_tbl.setStyle(
+    signoff_tbl.setStyle(
         TableStyle(
             [
                 ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
@@ -747,7 +821,7 @@ def build_cdc_summary_pdf(
         )
     )
 
-    story.append(comment_tbl)
+    story.append(signoff_tbl)
 
     doc.build(story)
 

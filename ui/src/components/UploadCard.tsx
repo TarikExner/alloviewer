@@ -286,6 +286,26 @@ export function UploadCard({
         className="hidden"
         onChange={handleChange}
       />
+      {progress !== null && (
+        <div className="mt-3">
+          <div className="h-2 w-full bg-neutral-200 dark:bg-neutral-800 rounded">
+            <div
+              className="h-2 rounded bg-blue-500 dark:bg-sky-500 transition-[width]"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+
+          <div className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
+            {progress}%
+          </div>
+        </div>
+      )}
+
+      {message && (
+        <div className="mt-2 text-sm text-neutral-700 dark:text-neutral-300">
+          {message}
+        </div>
+      )}
 
       <div className="flex-1 min-h-0 overflow-auto">
         {!hideSelectedNow && selected.length > 0 && (
@@ -381,26 +401,6 @@ export function UploadCard({
             </div>
           )}
 
-        {progress !== null && (
-          <div className="mt-3">
-            <div className="h-2 w-full bg-neutral-200 dark:bg-neutral-800 rounded">
-              <div
-                className="h-2 rounded bg-blue-500 dark:bg-sky-500 transition-[width]"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-
-            <div className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
-              {progress}%
-            </div>
-          </div>
-        )}
-
-        {message && (
-          <div className="mt-2 text-sm text-neutral-700 dark:text-neutral-300">
-            {message}
-          </div>
-        )}
       </div>
     </div>
   );

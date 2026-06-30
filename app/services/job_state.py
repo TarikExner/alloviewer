@@ -4,7 +4,7 @@ from typing import Any
 
 from app.core.redis_settings import redis_settings
 from app.services.redis_client import redis_client
-
+from redis.exceptions import WatchError
 
 TTL = redis_settings.job_state_ttl_seconds
 
@@ -243,7 +243,7 @@ def append_fcxm_done_filename(
             pipe.set(key, _dumps(current), ex=TTL)
             pipe.execute()
             return
-        except redis_client.WatchError:
+        except WatchError:
             continue
         finally:
             pipe.reset()
