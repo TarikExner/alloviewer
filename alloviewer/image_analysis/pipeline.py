@@ -4,7 +4,8 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Any, Callable
+import logging
 
 import numpy as np
 import torch
@@ -29,12 +30,10 @@ from .services.analysis import (
     calculate_pra_reactivity_score,
 )
 
-from app.services.job_state import (
-    set_image_progress,
-    update_image_progress,
-    set_image_result,
-)
 
+logger = logging.getLogger(__name__)
+
+ProgressCallback = Callable[[dict[str, Any]], None]
 
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
@@ -50,6 +49,14 @@ def _env_int(name: str, default: int) -> int:
         return default
 
     return max(1, value)
+
+
+def _emit_progress(
+    callback: ProgressCallback | None,
+    **values: Any,
+) -> None:
+    if callback is not None:
+        callback(values)
 
 
 def _segmenter_device_type(segmenter: SegmenterUNetInference) -> str:
@@ -92,21 +99,15 @@ def _prepare_cpu_parallel_runtime(max_workers: int) -> None:
 
 def _update_segmentation_progress(
     *,
-    job_id: str,
-    current_well: Optional[str],
+    progress_cb: ProgressCallback | None,
+    current_well: str | None,
     done: int,
     total: int,
     done_wells: list[str],
 ) -> None:
-    """Write one complete segmentation-progress state to Redis.
-
-    This avoids separate Redis writes for ``done`` and ``done_wells``. In the
-    parallel path, separate writes are more likely to collide and can leave the
-    frontend with a progress object where the numeric counter updates but the
-    highlighted wells do not.
-    """
-    update_image_progress(
-        job_id,
+    _emit_progress(
+        progress_cb,
+        status="running",
         stage="segmenting",
         current_well=current_well,
         done=done,
