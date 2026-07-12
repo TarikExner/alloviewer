@@ -3,6 +3,120 @@ import { useTranslation } from "react-i18next";
 import { uploadWithProgress } from "../api";
 import { parseLayout } from "../api";
 
+type DroppedEntry = {
+  isFile: boolean;
+  isDirectory: boolean;
+
+  file?: (
+    success: (file: File) => void,
+    failure?: (error: DOMException) => void
+  ) => void;
+
+  createReader?: () => {
+    readEntries: (
+      success: (entries: DroppedEntry[]) => void,
+      failure?: (error: DOMException) => void
+    ) => void;
+  };
+};
+
+type EntryDataTransferItem = DataTransferItem & {
+  getAsEntry?: () => DroppedEntry | null;
+  webkitGetAsEntry?: () => DroppedEntry | null;
+};
+
+function readFileEntry(entry: DroppedEntry): Promise<File> {
+  return new Promise((resolve, reject) => {
+    if (!entry.file) {
+      reject(new Error("Dropped file entry could not be read."));
+      return;
+    }
+
+    entry.file(resolve, reject);
+  });
+}
+
+function readDirectoryBatch(
+  reader: ReturnType<NonNullable<DroppedEntry["createReader"]>>
+): Promise<DroppedEntry[]> {
+  return new Promise((resolve, reject) => {
+    reader.readEntries(resolve, reject);
+  });
+}
+
+async function readDroppedEntry(entry: DroppedEntry): Promise<File[]> {
+  if (entry.isFile) {
+    return [await readFileEntry(entry)];
+  }
+
+  if (!entry.isDirectory || !entry.createReader) {
+    return [];
+  }
+
+  const reader = entry.createReader();
+  const children: DroppedEntry[] = [];
+
+  /*
+   * readEntries() may return directory contents in several batches.
+   * Continue until it returns an empty batch.
+   */
+  while (true) {
+    const batch = await readDirectoryBatch(reader);
+
+    if (batch.length === 0) {
+      break;
+    }
+
+    children.push(...batch);
+  }
+
+  const nestedFiles = await Promise.all(
+    children.map((child) => readDroppedEntry(child))
+  );
+
+  return nestedFiles.flat();
+}
+
+async function getDroppedFiles(
+  dataTransfer: DataTransfer,
+  allowDirectory: boolean
+): Promise<File[]> {
+  const items = Array.from(dataTransfer.items || []).filter(
+    (item) => item.kind === "file"
+  );
+
+  const entries = items
+    .map((item) => {
+      const entryItem = item as EntryDataTransferItem;
+
+      return (
+        entryItem.getAsEntry?.() ??
+        entryItem.webkitGetAsEntry?.() ??
+        null
+      );
+    })
+    .filter((entry): entry is DroppedEntry => entry !== null);
+
+  if (entries.length > 0) {
+    const acceptedEntries = allowDirectory
+      ? entries
+      : entries.filter((entry) => entry.isFile);
+
+    const nestedFiles = await Promise.all(
+      acceptedEntries.map((entry) => readDroppedEntry(entry))
+    );
+
+    return nestedFiles.flat();
+  }
+
+  // Fallback for browsers without the entry API.
+  return Array.from(dataTransfer.files || []);
+}
+
+function containsDraggedFiles(dataTransfer: DataTransfer): boolean {
+  return Array.from(dataTransfer.types || []).includes("Files");
+}
+
 export function UploadCard({
   title,
   accept,
@@ -44,6 +158,7 @@ export function UploadCard({
   const [message, setMessage] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const dragDepthRef = useRef(0);
   const [uploadedItems, setUploadedItems] = useState<any[]>([]);
 
   const assignedSet = new Set(assignedFilenames);
@@ -66,7 +181,6 @@ export function UploadCard({
     (files: File[]) => {
       setSelected(files);
       setUploadedItems([]);
-      setMessage(null);
       onPicked(files);
     },
     [onPicked]
@@ -111,37 +225,85 @@ export function UploadCard({
     [syncParent, mode, applyFileFilter]
   );
 
-  const onDrop = useCallback(
-    (e: React.DragEvent) => {
+  const onDragEnter = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      if (!containsDraggedFiles(e.dataTransfer)) return;
+  
       e.preventDefault();
       e.stopPropagation();
-      setDragging(false);
-
-      const rawFiles = Array.from(e.dataTransfer.files || []);
-      if (!rawFiles.length) return;
-
-      const files = applyFileFilter(rawFiles);
-      if (!files.length) {
-        syncParent([]);
-        return;
-      }
-
-      syncParent(mode === "excel-layout" ? [files[0]] : files);
+  
+      dragDepthRef.current += 1;
+      setDragging(true);
     },
-    [syncParent, mode, applyFileFilter]
+    []
   );
-
-  const onDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragging(true);
-  };
-
-  const onDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragging(false);
-  };
+  
+  const onDragOver = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      if (!containsDraggedFiles(e.dataTransfer)) return;
+  
+      e.preventDefault();
+      e.stopPropagation();
+  
+      e.dataTransfer.dropEffect = "copy";
+      setDragging(true);
+    },
+    []
+  );
+  
+  const onDragLeave = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      if (!containsDraggedFiles(e.dataTransfer)) return;
+  
+      e.preventDefault();
+      e.stopPropagation();
+  
+      dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+  
+      if (dragDepthRef.current === 0) {
+        setDragging(false);
+      }
+    },
+    []
+  );
+  
+  const onDrop = useCallback(
+    async (e: React.DragEvent<HTMLDivElement>) => {
+      if (!containsDraggedFiles(e.dataTransfer)) return;
+  
+      e.preventDefault();
+      e.stopPropagation();
+  
+      dragDepthRef.current = 0;
+      setDragging(false);
+      setMessage(null);
+  
+      try {
+        const rawFiles = await getDroppedFiles(
+          e.dataTransfer,
+          Boolean(allowDirectory)
+        );
+  
+        if (!rawFiles.length) return;
+  
+        const files = applyFileFilter(rawFiles);
+  
+        if (!files.length) {
+          syncParent([]);
+          return;
+        }
+  
+        syncParent(mode === "excel-layout" ? [files[0]] : files);
+      } catch (err) {
+        setMessage(
+          err instanceof Error
+            ? err.message
+            : t("UploadCard.messages.upload_failed")
+        );
+      }
+    },
+    [allowDirectory, applyFileFilter, mode, syncParent, t]
+  );
 
   const startUpload = useCallback(async () => {
     if (!selected.length || uploading) return;
@@ -215,9 +377,10 @@ export function UploadCard({
         dragging ? "ring-2 ring-blue-500" : "",
         className,
       ].join(" ")}
-      onDrop={onDrop}
+      onDragEnter={onDragEnter}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
+      onDrop={onDrop}
     >
       <div className="flex items-center justify-between gap-3 mb-2">
         <h3 className="font-medium text-neutral-900 dark:text-neutral-100">
