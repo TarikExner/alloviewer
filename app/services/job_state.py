@@ -49,7 +49,7 @@ def _merge_json(key: str, updates: dict[str, Any]) -> dict[str, Any]:
             pipe.set(key, _dumps(current), ex=TTL)
             pipe.execute()
             return current
-        except redis_client.WatchError:
+        except WatchError:
             continue
         finally:
             pipe.reset()
@@ -128,7 +128,7 @@ def append_image_done_well(job_id: str, well_id: str, done: int | None = None) -
             pipe.set(key, _dumps(current), ex=TTL)
             pipe.execute()
             return
-        except redis_client.WatchError:
+        except WatchError:
             continue
         finally:
             pipe.reset()
@@ -251,6 +251,16 @@ def append_fcxm_done_filename(
 
 def delete_fcxm_job(job_id: str) -> None:
     redis_client.delete(
+        fcxm_progress_key(job_id),
+        fcxm_result_key(job_id),
+        fcxm_request_key(job_id),
+        fcxm_plot_cache_path_key(job_id),
+    )
+
+def delete_all_job_state(job_id: str) -> None:
+    redis_client.delete(
+        image_progress_key(job_id),
+        image_result_key(job_id),
         fcxm_progress_key(job_id),
         fcxm_result_key(job_id),
         fcxm_request_key(job_id),

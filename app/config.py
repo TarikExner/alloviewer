@@ -1,11 +1,21 @@
+MAX_THUMB_SIZE = 512
+MAX_FILE_SIZE_MB = 100
 
-MAX_THUMB_SIZE = 512  # max width/height in pixels
-
-ALLOWED_MIME = {
-    "application/pdf",
-    "image/png",
-    "image/jpeg",
-    "image/tiff",
+IMAGE_EXTENSIONS = {
+    ".tif",
+    ".tiff",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".bmp",
+    ".webp",
 }
-ALLOWED_EXT = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".fcs"}
-MAX_FILE_SIZE_MB = 100  # per file, adjust
+
+FCS_EXTENSIONS = {
+    ".fcs",
+}
+
+LAYOUT_EXTENSIONS = {
+    ".xlsx",
+    ".xlsm",
+}
