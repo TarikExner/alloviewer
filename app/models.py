@@ -1,6 +1,3 @@
-import time
-import threading
-
 from typing import Dict, List, Literal, Optional, Any
 from pydantic import BaseModel, Field
 
@@ -9,61 +6,20 @@ WellID = str
 
 ChannelRole = Literal["Scatter", "Population Marker", "IgG Marker"]
 SampleRole = Literal["NC", "PC", "SAMPLE"]
-
-IMAGE_JOB_PROGRESS: Dict[str, Dict[str, Any]] = {}
-IMAGE_JOB_RESULTS: Dict[str, Any] = {}
-
-FCXM_JOB_PROGRESS: Dict[str, Dict[str, Any]] = {}
-FCXM_JOB_RESULTS: Dict[str, Any] = {}
-FCXM_JOB_PLOTS: Dict[str, Any] = {}
-FCXM_JOB_RUN_REQUESTS: Dict[str, Dict[str, Any]] = {}
-
-# One lock for all FCXM job dicts (requests + background tasks share these)
-FCXM_JOB_LOCK = threading.RLock()
-
-# Time-to-live since last access (seconds). Adjust as needed.
-FCXM_JOB_TTL_SECONDS = 6 * 60 * 10  # 1 hour
-
-def fcxm_job_touch(job_id: str) -> None:
-    """
-    Update last_access (and set created_at if missing).
-    Safe to call even if job_id is unknown.
-    """
-    now = time.time()
-    prog = FCXM_JOB_PROGRESS.get(job_id)
-    if prog is None:
-        return
-    prog.setdefault("created_at", now)
-    prog["last_access"] = now
+JobType = Literal["pra", "crossmatch", "fcxm"]
 
 
-def fcxm_job_cleanup() -> int:
-    """
-    Remove FCXM jobs that have not been accessed for FCXM_JOB_TTL_SECONDS.
-    Returns number of deleted jobs.
-    """
-    now = time.time()
-    deleted = 0
+class CreateJobRequest(BaseModel):
+    job_type: JobType
 
-    # Decide staleness based on progress timestamps (single source of truth)
-    stale_ids: List[str] = []
-    for job_id, prog in list(FCXM_JOB_PROGRESS.items()):
-        last_access = prog.get("last_access") or prog.get("created_at")
-        if last_access is None:
-            # If no timestamps, treat as stale
-            stale_ids.append(job_id)
-            continue
-        if (now - float(last_access)) > FCXM_JOB_TTL_SECONDS:
-            stale_ids.append(job_id)
 
-    for job_id in stale_ids:
-        FCXM_JOB_PROGRESS.pop(job_id, None)
-        FCXM_JOB_RESULTS.pop(job_id, None)
-        FCXM_JOB_PLOTS.pop(job_id, None)
-        FCXM_JOB_RUN_REQUESTS.pop(job_id, None)
-        deleted += 1
-
-    return deleted
+class JobResponse(BaseModel):
+    job_id: str
+    job_type: JobType
+    status: str
+    stage: str | None = None
+    created_at: float
+    updated_at: float
 
 class PlateLayout(BaseModel):
     wells: Dict[WellID, WellType]
@@ -72,12 +28,12 @@ class ProcessRequest(BaseModel):
     layout: PlateLayout
     image_order: List[WellID]
     image_filenames: list[str]
-    template_filename: Optional[str] = None
-    assay_type: Literal["pra", "crossmatch"] = "pra"
 
-    hla_layout_upload_id: Optional[str] = None
-
-    pra_positivity_threshold: float = Field(default=20.0, ge=0.0, le=100.0)
+    pra_positivity_threshold: float = Field(
+        default=20.0,
+        ge=0.0,
+        le=100.0,
+    )
 
 class ProcessStartResponse(BaseModel):
     job_id: str
@@ -93,12 +49,16 @@ class ProcessResponse(BaseModel):
     summary: Dict[str, float]
 
 class ProgressResponse(BaseModel):
-    status: str  # "queued" | "running" | "done"
-    done: int
-    total: int
-    current_well: Optional[str]
-    done_wells: List[str]
-    result: Optional[dict] = None
+    status: str
+    stage: str | None = None
+
+    done: int = 0
+    total: int = 0
+    current_well: str | None = None
+    done_filenames: list[str] = Field(default_factory=list)
+
+    result: Any | None = None
+
     error: str | None = None
     error_type: str | None = None
     failed_stage: str | None = None
@@ -143,7 +103,6 @@ class LineSeries(BaseModel):
     role: str | None = None
 
 class FCXMResultsRequest(BaseModel):
-    job_id: str
     fcs_filename: str
     gate: str = ""
 
