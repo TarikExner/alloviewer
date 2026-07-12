@@ -25,6 +25,7 @@ import {
   normalizeSavedNames,
   sameFiles,
   sameStringArray,
+  isSupportedImageFile,
 } from "../lib/upload";
 import { buildDefaultCDC } from "../lib/cdcDefaults";
 import {
@@ -96,9 +97,11 @@ export default function CDCApp() {
   }, []);
 
   const handleImagesPicked = useCallback((files: File[]) => {
-    const validFiles = files.filter((file) => file.type.startsWith("image/"));
-
-    setImageFiles((prev) => (sameFiles(prev, validFiles) ? prev : validFiles));
+    const validFiles = files.filter(isSupportedImageFile);
+  
+    setImageFiles((prev) =>
+      sameFiles(prev, validFiles) ? prev : validFiles
+    );
   }, []);
 
   const handleImagesUploaded = useCallback((saved: any[]) => {
@@ -509,7 +512,7 @@ export default function CDCApp() {
               <UploadCard
                 key={`images-${uploadResetKey}`}
                 title={t("cdc_app.upload_cards.images.title")}
-                accept="image/*"
+                accept=".tif,.tiff,.png,.jpg,.jpeg,.bmp,.webp"
                 allowDirectory
                 autoUpload
                 fileFilter={(file) => file.type.startsWith("image/")}

@@ -25,3 +25,22 @@ export function getUploadedFilename(item: any): string | null {
   if (typeof item === "string") return item;
   return item.filename ?? item.name ?? null;
 }
+
+export const SUPPORTED_IMAGE_EXTENSIONS = [
+  "tif",
+  "tiff",
+  "png",
+  "jpg",
+  "jpeg",
+  "bmp",
+  "webp",
+] as const;
+
+const SUPPORTED_IMAGE_PATTERN = new RegExp(
+  `\\.(${SUPPORTED_IMAGE_EXTENSIONS.join("|")})$`,
+  "i"
+);
+
+export function isSupportedImageFile(file: File): boolean {
+  return SUPPORTED_IMAGE_PATTERN.test(file.name);
+}
