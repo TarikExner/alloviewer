@@ -60,7 +60,7 @@ export function StatusPill({
           </div>
 
           {message || error ? (
-            <div className="text-xs text-neutral-600 dark:text-neutral-400 truncate">
+            <div className="text-xs text-neutral-600 dark:text-neutral-400 whitespace-pre-wrap break-words">
               {error || message}
             </div>
           ) : null}

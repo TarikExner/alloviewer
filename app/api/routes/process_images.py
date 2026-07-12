@@ -16,7 +16,6 @@ from .plate_layouts import get_repo
 
 from alloviewer.image_analysis.storage.repo import LayoutRepo
 from alloviewer.image_analysis.services.pdf_report import build_cdc_summary_pdf
-from alloviewer.image_analysis.utils import to_jsonable
 
 from app.services.job_state import (
     set_image_progress,
@@ -102,7 +101,11 @@ async def get_process(job_id: str):
 
     result = get_image_result(job_id)
 
-    return {**progress, "result": result}
+    return {
+        **progress,
+        "support_id": progress.get("support_id") or job_id,
+        "result": result,
+    }
 
 
 @router.get("/api/process/{job_id}/segmented/{well_id}.png")

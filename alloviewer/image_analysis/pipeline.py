@@ -383,6 +383,7 @@ def run_image_analysis(
 
     print(f"[image-job {job_id}] started", flush=True)
 
+
     try:
         if not unet_config:
             unet_config = copy.deepcopy(UNET_CONFIG)

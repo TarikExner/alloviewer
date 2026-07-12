@@ -1,8 +1,13 @@
 import { API_BASE } from "../App";
 
 export type ChannelRole = "Scatter" | "Population Marker" | "IgG";
-export type SimPoint = { x: number; y: number; inGate?: boolean };
 export type SampleRole = "NC" | "PC" | "SAMPLE";
+
+export type SimPoint = {
+  x: number;
+  y: number;
+  inGate?: boolean;
+};
 
 export type PlotSeries = {
   label: string;
@@ -16,13 +21,20 @@ export type PlotSeries = {
 export type LineSeries = {
   label: string;
   color: string;
+
   values: number[];
+  values_raw?: number[];
+
   n_total: number;
   n_pos: number;
   pos_pct: number;
+
   filename?: string | null;
   sample_name?: string | null;
   role?: string | null;
+
+  raw_median?: number | null;
+  x_label?: string | null;
 };
 
 export type GatingPlot = {
@@ -35,6 +47,7 @@ export type GatingPlot = {
 export type FCXMGateMetrics = {
   label: string;
   n_events: number;
+
   igg_pos_fraction: number;
   igg_median_raw: number;
   igg_median_t: number;
@@ -49,10 +62,13 @@ export type FCXMGateMetrics = {
 export type FCXMResultsResponse = {
   gate_options: string[];
   selected_gate?: string;
+
   gating_plots: GatingPlot[];
   final_scatter_series: PlotSeries[];
   line_series: LineSeries[];
+
   cutoff: number;
+
   selected_file_metrics?: FCXMGateMetrics | null;
   selected_sample_metrics?: FCXMGateMetrics | null;
 };
@@ -63,7 +79,8 @@ export type FcsPanelResponse = {
   channels?: string[];
   files_seen?: number;
   example_file?: string | null;
-  [k: string]: any;
+  rows?: PanelRow[];
+  [key: string]: unknown;
 };
 
 export type PanelRow = {
@@ -89,16 +106,30 @@ export type FCXMRunStartResponse = {
   job_id: string;
 };
 
-export type FCXMRunProgress = {
+export type FCXMRunProgressResponse = {
   status: "queued" | "running" | "done" | "error";
+
   message?: string | null;
   stage?: string | null;
-  result?: any;
+  result?: unknown;
+
   total_files?: number | null;
   done_files?: number | null;
   current_file?: string | null;
   done_filenames?: string[];
+
+  error?: string | null;
+  error_type?: string | null;
+  failed_stage?: string | null;
+  failed_file?: string | null;
+  support_id?: string | null;
 };
+
+/*
+ * Kept as an alias so existing imports do not break.
+ * New code may use FCXMRunProgressResponse directly.
+ */
+export type FCXMRunProgress = FCXMRunProgressResponse;
 
 export type FCXMResultsRequest = {
   job_id: string;
@@ -113,19 +144,187 @@ export type FcsDisplayNamesResponse = {
   names: Record<string, string>;
 };
 
+type FastApiValidationError = {
+  loc?: Array<string | number>;
+  msg?: string;
+  type?: string;
+};
+
+type FastApiErrorBody = {
+  detail?: unknown;
+  message?: unknown;
+  error?: unknown;
+};
+
+type JsonRequestOptions = {
+  url: string;
+  init?: RequestInit;
+  timeoutMs: number;
+  timeoutMessage: string;
+  fallbackError: string;
+};
+
+function formatValidationError(error: FastApiValidationError): string {
+  const location = Array.isArray(error.loc)
+    ? error.loc
+        .filter((part) => part !== "body")
+        .map(String)
+        .join(".")
+    : "";
+
+  const message = error.msg?.trim() || "Invalid request value";
+
+  return location ? `${location}: ${message}` : message;
+}
+
+function formatErrorDetail(detail: unknown): string {
+  if (typeof detail === "string") {
+    return detail.trim();
+  }
+
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => {
+        if (item && typeof item === "object") {
+          return formatValidationError(item as FastApiValidationError);
+        }
+
+        return String(item);
+      })
+      .filter(Boolean);
+
+    return messages.join("\n");
+  }
+
+  if (detail && typeof detail === "object") {
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return String(detail);
+    }
+  }
+
+  return "";
+}
+
+function extractApiErrorMessage(body: unknown): string {
+  if (!body || typeof body !== "object") {
+    return typeof body === "string" ? body.trim() : "";
+  }
+
+  const data = body as FastApiErrorBody;
+
+  const detail = formatErrorDetail(data.detail);
+  if (detail) return detail;
+
+  const message = formatErrorDetail(data.message);
+  if (message) return message;
+
+  return formatErrorDetail(data.error);
+}
+
+async function readApiError(
+  response: Response,
+  fallbackMessage: string
+): Promise<string> {
+  const text = await response.text().catch(() => "");
+
+  if (!text.trim()) {
+    return `${fallbackMessage} (${response.status})`;
+  }
+
+  try {
+    const parsed = JSON.parse(text);
+    const message = extractApiErrorMessage(parsed);
+
+    if (message) {
+      return message;
+    }
+  } catch {
+    // The response was plain text rather than JSON.
+  }
+
+  return text.trim() || `${fallbackMessage} (${response.status})`;
+}
+
+async function requestJson<T>({
+  url,
+  init,
+  timeoutMs,
+  timeoutMessage,
+  fallbackError,
+}: JsonRequestOptions): Promise<T> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(await readApiError(response, fallbackError));
+    }
+
+    return (await response.json()) as T;
+  } catch (error: unknown) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(timeoutMessage);
+    }
+
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "name" in error &&
+      error.name === "AbortError"
+    ) {
+      throw new Error(timeoutMessage);
+    }
+
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function extractDownloadFilename(
+  response: Response,
+  fallback: string
+): string {
+  const disposition = response.headers.get("Content-Disposition");
+
+  if (!disposition) {
+    return fallback;
+  }
+
+  const utf8Match = disposition.match(
+    /filename\*=UTF-8''([^;\n]+)/i
+  );
+
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1].replace(/["']/g, ""));
+    } catch {
+      return utf8Match[1].replace(/["']/g, "");
+    }
+  }
+
+  const normalMatch = disposition.match(
+    /filename\s*=\s*"?([^";\n]+)"?/i
+  );
+
+  return normalMatch?.[1]?.trim() || fallback;
+}
+
 export async function fetchFcsDisplayNames(params: {
   filenames: string[];
   mode: FcsDisplayNameMode;
   timeoutMs?: number;
 }): Promise<FcsDisplayNamesResponse> {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(
-    () => controller.abort(),
-    params.timeoutMs ?? 10_000
-  );
-
-  try {
-    const res = await fetch(`${API_BASE}/api/fcxm/fcs-display-names`, {
+  return requestJson<FcsDisplayNamesResponse>({
+    url: `${API_BASE}/api/fcxm/fcs-display-names`,
+    init: {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -134,182 +333,174 @@ export async function fetchFcsDisplayNames(params: {
         filenames: params.filenames,
         mode: params.mode,
       }),
-      signal: controller.signal,
-    });
-
-    if (!res.ok) {
-      let detail = "";
-      try {
-        const data = await res.json();
-        detail = data?.detail || data?.message || "";
-      } catch {
-        // ignore
-      }
-
-      throw new Error(
-        detail || `Failed to resolve FCS display names (${res.status})`
-      );
-    }
-
-    return await res.json();
-  } finally {
-    window.clearTimeout(timeout);
-  }
+    },
+    timeoutMs: params.timeoutMs ?? 10_000,
+    timeoutMessage: "FCS display-name request timed out.",
+    fallbackError: "Failed to resolve FCS display names",
+  });
 }
 
 export async function extractPanelFromFcs(
-  fcsFilenames: string[]
+  fcsFilenames: string[],
+  timeoutMs = 30_000
 ): Promise<FcsPanelResponse> {
-  const res = await fetch(`${API_BASE}/api/fcs/panel`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fcs_filenames: fcsFilenames }),
+  return requestJson<FcsPanelResponse>({
+    url: `${API_BASE}/api/fcs/panel`,
+    init: {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        fcs_filenames: fcsFilenames,
+      }),
+    },
+    timeoutMs,
+    timeoutMessage: "FCS panel extraction timed out.",
+    fallbackError: "Failed to extract the FCS panel",
   });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `Server error (${res.status})`);
-  }
-
-  return (await res.json()) as FcsPanelResponse;
 }
 
 export async function fetchFCXMResults(
   params: FCXMResultsRequest
 ): Promise<FCXMResultsResponse> {
-  const timeoutMs = params.timeoutMs ?? 10_000;
-
   if (!params.job_id) {
-    throw new Error("Results request is missing job_id");
+    throw new Error("Results request is missing job_id.");
   }
+
   if (!params.fcs_filename) {
-    throw new Error("Results request is missing fcs_filename");
+    throw new Error("Results request is missing fcs_filename.");
   }
 
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const res = await fetch(`${API_BASE}/api/fcxm/results`, {
+  return requestJson<FCXMResultsResponse>({
+    url: `${API_BASE}/api/fcxm/results`,
+    init: {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({
         job_id: params.job_id,
         fcs_filename: params.fcs_filename,
         gate: params.gate ?? "",
       }),
-      signal: controller.signal,
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(text || `Server error (${res.status})`);
-    }
-    return (await res.json()) as FCXMResultsResponse;
-  } catch (err: any) {
-    if (err?.name === "AbortError") throw new Error("Results request timed out.");
-    throw err;
-  } finally {
-    clearTimeout(t);
-  }
+    },
+    timeoutMs: params.timeoutMs ?? 10_000,
+    timeoutMessage: "Results request timed out.",
+    fallbackError: "Failed to load FCXM results",
+  });
 }
 
 export async function runFCXMAnalysis(
   payload: FCXMRunRequest,
   timeoutMs = 30_000
 ): Promise<FCXMRunStartResponse> {
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const res = await fetch(`${API_BASE}/api/fcxm/run`, {
+  return requestJson<FCXMRunStartResponse>({
+    url: `${API_BASE}/api/fcxm/run`,
+    init: {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(text || `Server error (${res.status})`);
-    }
-    return (await res.json()) as FCXMRunStartResponse;
-  } catch (err: any) {
-    if (err?.name === "AbortError") throw new Error("Run request timed out.");
-    throw err;
-  } finally {
-    clearTimeout(t);
-  }
+    },
+    timeoutMs,
+    timeoutMessage: "FCXM run request timed out.",
+    fallbackError: "Failed to start FCXM analysis",
+  });
 }
 
 export async function fetchFCXMRunProgress(
   jobId: string,
   timeoutMs = 10_000
-): Promise<FCXMRunProgress> {
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const res = await fetch(
-      `${API_BASE}/api/fcxm/run/${encodeURIComponent(jobId)}`,
-      { signal: controller.signal }
-    );
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(text || `Server error (${res.status})`);
-    }
-    return (await res.json()) as FCXMRunProgress;
-  } catch (err: any) {
-    if (err?.name === "AbortError") throw new Error("Progress request timed out.");
-    throw err;
-  } finally {
-    clearTimeout(t);
+): Promise<FCXMRunProgressResponse> {
+  if (!jobId) {
+    throw new Error("Progress request is missing job_id.");
   }
+
+  return requestJson<FCXMRunProgressResponse>({
+    url: `${API_BASE}/api/fcxm/run/${encodeURIComponent(jobId)}`,
+    timeoutMs,
+    timeoutMessage: "Progress request timed out.",
+    fallbackError: "Failed to load FCXM progress",
+  });
 }
 
 export async function downloadFCXMSummaryPdf(
   jobId: string,
-  positivityMetric: "Median Ratio" | "Median Shift" | "Fluorescence Index" | "% pos",
+  positivityMetric:
+    | "Median Ratio"
+    | "Median Shift"
+    | "Fluorescence Index"
+    | "% pos",
   positivityThreshold: string,
   timeoutMs = 30_000
 ): Promise<void> {
-  if (!jobId) throw new Error("Missing jobId");
+  if (!jobId) {
+    throw new Error("Summary download is missing job_id.");
+  }
+
+  const query = new URLSearchParams();
+
+  query.set("positivity_metric", positivityMetric);
+
+  const threshold = positivityThreshold.trim();
+
+  if (threshold) {
+    query.set("positivity_threshold", threshold);
+  }
 
   const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const params = new URLSearchParams({
-      positivity_metric: positivityMetric,
-      positivity_threshold: positivityThreshold,
-    });
-    
-    const res = await fetch(
-      `${API_BASE}/api/fcxm/summary/${encodeURIComponent(jobId)}?${params.toString()}`,
-      { method: "GET", signal: controller.signal }
+    const response = await fetch(
+      `${API_BASE}/api/fcxm/summary/${encodeURIComponent(jobId)}?${query.toString()}`,
+      {
+        method: "GET",
+        signal: controller.signal,
+      }
     );
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(text || `Server error (${res.status})`);
+    if (!response.ok) {
+      throw new Error(
+        await readApiError(response, "Failed to download FCXM summary")
+      );
     }
 
-    const blob = await res.blob();
+    const blob = await response.blob();
     const url = URL.createObjectURL(blob);
 
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "summary.pdf";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    const filename = extractDownloadFilename(
+      response,
+      `fcxm_summary_${jobId}.pdf`
+    );
+
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
 
     URL.revokeObjectURL(url);
-  } catch (err: any) {
-    if (err?.name === "AbortError") throw new Error("Download timed out.");
-    throw err;
+  } catch (error: unknown) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Summary download timed out.");
+    }
+
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "name" in error &&
+      error.name === "AbortError"
+    ) {
+      throw new Error("Summary download timed out.");
+    }
+
+    throw error;
   } finally {
-    clearTimeout(t);
+    window.clearTimeout(timeout);
   }
 }

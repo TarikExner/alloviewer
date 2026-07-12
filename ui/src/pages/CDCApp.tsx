@@ -341,7 +341,26 @@ export default function CDCApp() {
           }
 
           if (prog.status === "error") {
-            setMsg(t("cdc_app.messages.process_failed"));
+            const stage = prog.failed_stage ?? prog.stage;
+            const supportId = prog.support_id ?? job_id;
+          
+            const details = [
+              prog.error || t("cdc_app.messages.process_failed"),
+              prog.error_type
+                ? `${t("common.errors.type")}: ${prog.error_type}`
+                : null,
+              stage
+                ? `${t("common.errors.stage")}: ${stage}`
+                : null,
+              prog.failed_well
+                ? `${t("common.errors.well")}: ${prog.failed_well}`
+                : null,
+              `${t("common.errors.job_id")}: ${supportId}`,
+            ]
+              .filter(Boolean)
+              .join("\n");
+          
+            setMsg(details);
             setBusy(false);
             setProgressPercent(null);
             setJobStage(null);
@@ -515,7 +534,7 @@ export default function CDCApp() {
                 accept=".tif,.tiff,.png,.jpg,.jpeg,.bmp,.webp"
                 allowDirectory
                 autoUpload
-                fileFilter={(file) => file.type.startsWith("image/")}
+                fileFilter={isSupportedImageFile}
                 onPicked={handleImagesPicked}
                 onUploaded={handleImagesUploaded}
                 showUploadedList

@@ -232,8 +232,16 @@ async def fcxm_run_progress(job_id: str):
         "done_files": prog.get("done_files"),
         "current_file": current_file,
         "done_filenames": done_filenames,
-    }
 
+        "error": prog.get("error"),
+        "error_type": prog.get("error_type"),
+        "failed_stage": prog.get("failed_stage"),
+        "failed_file": _public_filename(
+            prog.get("failed_file"),
+            abs_to_original,
+        ),
+        "support_id": prog.get("support_id") or job_id,
+    }
 
 @router.post("/results", response_model=FCXMResultsResponse)
 async def fcxm_results(req: FCXMResultsRequest):

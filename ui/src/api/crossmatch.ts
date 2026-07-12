@@ -3,13 +3,20 @@ import { API_BASE } from "../App";
 
 export type BackendProgress = {
   status: "queued" | "running" | "done" | "error";
+  stage?: string | null;
+
   done: number;
   total: number;
-  current_well: WellID | null;
-  done_wells: WellID[];
-  stage?: string | null;
-  message?: string | null;
-  result?: any;
+  current_well?: string | null;
+  done_wells?: string[];
+
+  result?: unknown;
+
+  error?: string | null;
+  error_type?: string | null;
+  failed_stage?: string | null;
+  failed_well?: string | null;
+  support_id?: string | null;
 };
 
 export async function runProcess(

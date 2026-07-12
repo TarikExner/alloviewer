@@ -10,6 +10,7 @@ from app.models import FCXMRunRequest
 from app.core.settings import settings
 from app.core.paths import resolve_under_base_dir
 
+from app.services.job_errors import describe_job_error
 from app.services.job_state import (
     update_fcxm_progress,
     get_fcxm_progress,
@@ -123,15 +124,34 @@ def run_fcxm_job(job_id: str, req: FCXMRunRequest) -> None:
 
         logger.info("Finished FCXM job %s", job_id)
 
-    except Exception as e:
-        logger.exception("FCXM job failed: %s", job_id)
+    except Exception as exc:
+        previous = get_fcxm_progress(job_id) or {}
+
+        failed_stage = previous.get("stage")
+        failed_file = previous.get("current_file")
+
+        public_error = describe_job_error(exc)
+
+        logger.exception(
+            "FCXM job failed: job_id=%s stage=%s file=%s",
+            job_id,
+            failed_stage,
+            failed_file,
+        )
 
         update_fcxm_progress(
             job_id,
             status="error",
-            message=str(e),
-            stage="error",
-            error=repr(e),
+            message="Flow cytometry analysis failed.",
+
+            stage=failed_stage or "unknown",
+            failed_stage=failed_stage,
+            failed_file=failed_file,
+
+            error=public_error.message,
+            error_type=public_error.error_type,
+            support_id=job_id,
+
             current_file=None,
         )
 

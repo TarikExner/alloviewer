@@ -665,8 +665,27 @@ export default function FCXMApp() {
           }
 
           if (prog.status === "error") {
+            const stage = prog.failed_stage ?? prog.stage;
+            const supportId = prog.support_id ?? job_id;
+          
+            const details = [
+              prog.error || prog.message || t("FCXM.messages.run_failed"),
+              prog.error_type
+                ? `${t("common.errors.type")}: ${prog.error_type}`
+                : null,
+              stage
+                ? `${t("common.errors.stage")}: ${stage}`
+                : null,
+              prog.failed_file
+                ? `${t("common.errors.file")}: ${prog.failed_file}`
+                : null,
+              `${t("common.errors.job_id")}: ${supportId}`,
+            ]
+              .filter(Boolean)
+              .join("\n");
+          
             setRunBusy(false);
-            setRunMsg(prog.message || t("FCXM.messages.run_failed"));
+            setRunMsg(details);
             setRunStage(null);
             setRunCurrentFile(null);
             return;

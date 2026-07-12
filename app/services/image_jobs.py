@@ -4,8 +4,11 @@ from typing import Any
 from alloviewer.image_analysis.pipeline import run_image_analysis
 from alloviewer.image_analysis.structs import PlateLayout
 
-from app.services.job_state import update_image_progress
-
+from app.services.job_errors import describe_job_error
+from app.services.job_state import (
+    get_image_progress,
+    update_image_progress,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,14 +98,34 @@ def run_image_job(
 
         logger.info("Finished image job %s", job_id)
 
-    except Exception as e:
-        logger.exception("Image job failed: %s", job_id)
+    except Exception as exc:
+        previous = get_image_progress(job_id) or {}
+
+        failed_stage = previous.get("stage")
+        failed_well = previous.get("current_well")
+
+        public_error = describe_job_error(exc)
+
+        logger.exception(
+            "Image job failed: job_id=%s stage=%s well=%s",
+            job_id,
+            failed_stage,
+            failed_well,
+        )
 
         update_image_progress(
             job_id,
             status="error",
-            stage="error",
-            error=repr(e),
+
+            # Keep the real stage instead of replacing it with "error".
+            stage=failed_stage or "unknown",
+            failed_stage=failed_stage,
+            failed_well=failed_well,
+
+            error=public_error.message,
+            error_type=public_error.error_type,
+            support_id=job_id,
+
             current_well=None,
         )
 

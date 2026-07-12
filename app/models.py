@@ -99,6 +99,11 @@ class ProgressResponse(BaseModel):
     current_well: Optional[str]
     done_wells: List[str]
     result: Optional[dict] = None
+    error: str | None = None
+    error_type: str | None = None
+    failed_stage: str | None = None
+    failed_well: str | None = None
+    support_id: str | None = None
 
 class SimPoint(BaseModel):
     x: float
@@ -193,6 +198,11 @@ class FCXMRunProgressResponse(BaseModel):
     done_files: int | None = None
     current_file: str | None = None
     done_filenames: list[str] = []
+    error: str | None = None
+    error_type: str | None = None
+    failed_stage: str | None = None
+    failed_file: str | None = None
+    support_id: str | None = None
 
 class FcsDisplayNamesRequest(BaseModel):
     filenames: list[str]
