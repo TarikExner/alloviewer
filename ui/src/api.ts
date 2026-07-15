@@ -1,214 +1,643 @@
 // src/api.ts
-import type { ProcessRequest, ProcessResponse, WellID, WellMap } from "./types";
 
-const BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
+const BASE =
+  import.meta.env.VITE_API_BASE ??
+  "http://127.0.0.1:8000";
 
-type SavedFile = { filename: string; size_mb: number };
-type UploadResp = { saved: SavedFile[] };
+export type JobType =
+  | "pra"
+  | "crossmatch"
+  | "fcxm";
+
+export type JobUploadKind =
+  | "images"
+  | "fcs";
+
+export type JobResponse = {
+  job_id: string;
+  job_type: JobType;
+  status: string;
+  stage?: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
+export type SavedFile = {
+  filename: string;
+  size_mb: number;
+};
+
+export type UploadResponse = {
+  saved: SavedFile[];
+};
 
 export type ParsedPlateLayout = {
   upload_id: string;
   schema_version: string;
   sha256: string;
+
   lot_no?: string | null;
   compl_no?: string | null;
   plate_format?: string | null;
+
   warnings: string[];
   custom_loci: string[];
-  wells: Record<string, {
-    well_id: string;
-    combo_id?: string | null;
-    race?: string | null;
-    loci: { data: Record<string, string[]> };
-  }>;
+
+  wells: Record<
+    string,
+    {
+      well_id: string;
+      combo_id?: string | null;
+      race?: string | null;
+
+      loci: {
+        data: Record<string, string[]>;
+      };
+    }
+  >;
+
   valid: boolean;
 };
 
-export async function parseLayout(file: File, base = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000") {
-  const url = `${base}/api/plate-layouts/parse`;
-  const form = new FormData();
-  form.append("xlsx", file); // field name MUST be "xlsx"
-  const res = await fetch(url, { method: "POST", body: form });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`HTTP ${res.status}: ${text}`);
-  }
-  return res.json(); // ParsedPlateLayout
+type FastApiValidationError = {
+  loc?: Array<string | number>;
+  msg?: string;
+  type?: string;
+};
+
+type FastApiErrorBody = {
+  detail?: unknown;
+  message?: unknown;
+  error?: unknown;
+};
+
+type FileWithRelativePath = File & {
+  __relativePath?: string;
+  webkitRelativePath?: string;
+};
+
+
+function formatValidationError(
+  error: FastApiValidationError
+): string {
+  const location = Array.isArray(error.loc)
+    ? error.loc
+        .filter((part) => part !== "body")
+        .map(String)
+        .join(".")
+    : "";
+
+  const message =
+    error.msg?.trim() ||
+    "Invalid request value";
+
+  return location
+    ? `${location}: ${message}`
+    : message;
 }
 
-export async function parseLayoutVerbose(
-  file: File,
-  base = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000"
-) {
-  const url = `${base}/api/plate-layouts/parse`;
-  console.log("[parseLayout] →", url, "file:", file.name, "size:", file.size);
 
-  const form = new FormData();
-  form.append("xlsx", file);
-  const res = await fetch(url, { method: "POST", body: form });
-  console.log("[parseLayout] status:", res.status, res.statusText);
-  const text = await res.text();
-  console.log("[parseLayout] raw body:", text.slice(0, 500));
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}: ${text}`);
+function formatErrorDetail(
+  detail: unknown
+): string {
+  if (typeof detail === "string") {
+    return detail.trim();
+  }
+
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (
+          item &&
+          typeof item === "object"
+        ) {
+          return formatValidationError(
+            item as FastApiValidationError
+          );
+        }
+
+        return String(item);
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (
+    detail &&
+    typeof detail === "object"
+  ) {
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return String(detail);
+    }
+  }
+
+  return "";
+}
+
+
+function extractApiErrorMessage(
+  body: unknown
+): string {
+  if (
+    !body ||
+    typeof body !== "object"
+  ) {
+    return typeof body === "string"
+      ? body.trim()
+      : "";
+  }
+
+  const data =
+    body as FastApiErrorBody;
+
+  const detail = formatErrorDetail(
+    data.detail
+  );
+
+  if (detail) {
+    return detail;
+  }
+
+  const message = formatErrorDetail(
+    data.message
+  );
+
+  if (message) {
+    return message;
+  }
+
+  return formatErrorDetail(
+    data.error
+  );
+}
+
+
+async function readApiError(
+  response: Response,
+  fallback: string
+): Promise<string> {
+  const text = await response
+    .text()
+    .catch(() => "");
+
+  if (!text.trim()) {
+    return `${fallback} (${response.status})`;
+  }
+
   try {
-    const json = JSON.parse(text);
-    console.log("[parseLayout] wells:", Object.keys(json?.wells ?? {}).length);
-    return json;
-  } catch (e) {
-    console.error("[parseLayout] JSON parse error:", e);
-    throw new Error("Bad JSON from /api/plate-layouts/parse");
+    const parsed = JSON.parse(text);
+    const message =
+      extractApiErrorMessage(parsed);
+
+    if (message) {
+      return message;
+    }
+  } catch {
+    // Plain-text response.
+  }
+
+  return (
+    text.trim() ||
+    `${fallback} (${response.status})`
+  );
+}
+
+
+function readXhrError(
+  xhr: XMLHttpRequest,
+  fallback: string
+): string {
+  const raw =
+    xhr.responseText?.trim() || "";
+
+  if (!raw) {
+    return `${fallback} (${xhr.status || 0})`;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    const message =
+      extractApiErrorMessage(parsed);
+
+    if (message) {
+      return message;
+    }
+  } catch {
+    // Plain-text response.
+  }
+
+  return raw;
+}
+
+
+function relativePathForFile(
+  file: File
+): string {
+  const extended =
+    file as FileWithRelativePath;
+
+  const relativePath =
+    extended.__relativePath ||
+    extended.webkitRelativePath ||
+    file.name;
+
+  return relativePath
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "");
+}
+
+
+export async function createJob(
+  jobType: JobType,
+  base = BASE
+): Promise<JobResponse> {
+  const response = await fetch(
+    `${base}/api/jobs`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type":
+          "application/json",
+      },
+      body: JSON.stringify({
+        job_type: jobType,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      await readApiError(
+        response,
+        "Could not create job"
+      )
+    );
+  }
+
+  return (
+    await response.json()
+  ) as JobResponse;
+}
+
+
+export async function getJob(
+  jobId: string,
+  base = BASE
+): Promise<JobResponse> {
+  if (!jobId) {
+    throw new Error(
+      "Job request is missing job_id."
+    );
+  }
+
+  const response = await fetch(
+    `${base}/api/jobs/${encodeURIComponent(
+      jobId
+    )}`
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      await readApiError(
+        response,
+        "Could not load job"
+      )
+    );
+  }
+
+  return (
+    await response.json()
+  ) as JobResponse;
+}
+
+
+export async function deleteJob(
+  jobId: string,
+  base = BASE
+): Promise<void> {
+  if (!jobId) {
+    return;
+  }
+
+  const response = await fetch(
+    `${base}/api/jobs/${encodeURIComponent(
+      jobId
+    )}`,
+    {
+      method: "DELETE",
+    }
+  );
+
+  if (
+    !response.ok &&
+    response.status !== 404
+  ) {
+    throw new Error(
+      await readApiError(
+        response,
+        "Could not delete job"
+      )
+    );
   }
 }
+
+
+export async function parseLayout(
+  jobId: string,
+  file: File,
+  base = BASE
+): Promise<ParsedPlateLayout> {
+  if (!jobId) {
+    throw new Error(
+      "Plate-layout upload is missing job_id."
+    );
+  }
+
+  if (!file) {
+    throw new Error(
+      "No plate-layout file was selected."
+    );
+  }
+
+  const form = new FormData();
+
+  // Backend field name remains "xlsx".
+  form.append(
+    "xlsx",
+    file,
+    file.name
+  );
+
+  const response = await fetch(
+    `${base}/api/jobs/${encodeURIComponent(
+      jobId
+    )}/plate-layout`,
+    {
+      method: "POST",
+      body: form,
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      await readApiError(
+        response,
+        "Could not parse plate layout"
+      )
+    );
+  }
+
+  return (
+    await response.json()
+  ) as ParsedPlateLayout;
+}
+
 
 export function uploadWithProgress(
+  jobId: string,
+  uploadKind: JobUploadKind,
   files: File[],
-  onProgress?: (percent: number) => void,
-  base = (import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000")
+  onProgress?: (
+    percent: number
+  ) => void,
+  base = BASE
 ): Promise<string[]> {
-  return new Promise((resolve, reject) => {
-    if (!files || files.length === 0) return resolve([]);
-
-    const fd = new FormData();
-    files.forEach((f) => fd.append("files", f));
-
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${base}/api/upload`);
-    xhr.responseType = "text"; // safer to parse ourselves
-
-    const report = (p: number) => {
-      if (typeof onProgress === "function") {
-        try { onProgress(Math.max(0, Math.min(100, Math.round(p)))); } catch {}
+  return new Promise(
+    (resolve, reject) => {
+      if (!jobId) {
+        reject(
+          new Error(
+            "Upload is missing job_id."
+          )
+        );
+        return;
       }
-    };
 
-    let sawProgress = false;
-    let fakeTimer: number | null = null;
-    let fakeVal = 0;
-
-    xhr.upload.onloadstart = () => {
-      report(0);
-      fakeTimer = window.setInterval(() => {
-        if (sawProgress) return;
-        // ease up to 95% while waiting for server reply
-        fakeVal = Math.min(95, fakeVal + 4);
-        report(fakeVal);
-      }, 150);
-    };
-
-    xhr.upload.onprogress = (evt) => {
-      if (evt.lengthComputable) {
-        sawProgress = true;
-        const pct = (evt.loaded / evt.total) * 100;
-        report(pct);
+      if (
+        !files ||
+        files.length === 0
+      ) {
+        resolve([]);
+        return;
       }
-    };
 
-    // extra guard: if onprogress never fires, we still finish on state change
-    xhr.onreadystatechange = () => {
-      if (xhr.readyState === 4) {
-        // will be finalized again in onloadend, but calling is harmless
+      const form = new FormData();
+
+      files.forEach((file) => {
+        form.append(
+          "files",
+          file,
+          file.name
+        );
+
+        form.append(
+          "relative_paths",
+          relativePathForFile(file)
+        );
+      });
+
+      const xhr =
+        new XMLHttpRequest();
+
+      xhr.open(
+        "POST",
+        `${base}/api/jobs/${encodeURIComponent(
+          jobId
+        )}/uploads/${encodeURIComponent(
+          uploadKind
+        )}`
+      );
+
+      xhr.responseType = "text";
+
+      let fakeTimer:
+        | number
+        | null = null;
+
+      let fakeValue = 0;
+      let sawNativeProgress = false;
+      let settled = false;
+
+      const stopFakeProgress = () => {
+        if (fakeTimer !== null) {
+          window.clearInterval(
+            fakeTimer
+          );
+
+          fakeTimer = null;
+        }
+      };
+
+      const report = (
+        value: number
+      ) => {
+        if (
+          typeof onProgress !==
+          "function"
+        ) {
+          return;
+        }
+
+        const normalized = Math.max(
+          0,
+          Math.min(
+            100,
+            Math.round(value)
+          )
+        );
+
+        try {
+          onProgress(normalized);
+        } catch {
+          // Progress callbacks must not
+          // interrupt the upload.
+        }
+      };
+
+      const rejectOnce = (
+        error: Error
+      ) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        stopFakeProgress();
+        reject(error);
+      };
+
+      const resolveOnce = (
+        names: string[]
+      ) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        stopFakeProgress();
         report(100);
-      }
-    };
-
-    // ALWAYS fires (after load/error/abort)
-    xhr.onloadend = () => {
-      if (fakeTimer) { clearInterval(fakeTimer); fakeTimer = null; }
-      report(100);
-
-      const status = xhr.status || 0;
-      const ok = status >= 200 && status < 300;
-
-      if (!ok) {
-        return reject(new Error(`Upload failed: ${status} ${xhr.responseText || ""}`));
-      }
-
-      // tolerate empty body (e.g., 204) in dev
-      const text = xhr.responseText || "";
-      if (!text.trim()) return resolve([]);
-
-      try {
-        const parsed = JSON.parse(text) as { saved: { filename: string }[] };
-        const names = (parsed?.saved ?? []).map((s) => s.filename);
         resolve(names);
-      } catch {
-        reject(new Error("Bad JSON from /api/upload"));
-      }
-    };
+      };
 
-    xhr.onerror = () => {
-      if (fakeTimer) clearInterval(fakeTimer);
-      reject(new Error("Network error during upload"));
-    };
-    xhr.onabort = () => {
-      if (fakeTimer) clearInterval(fakeTimer);
-      reject(new Error("Upload aborted"));
-    };
+      xhr.upload.onloadstart = () => {
+        report(0);
 
-    xhr.send(fd);
-  });
+        fakeTimer =
+          window.setInterval(() => {
+            if (
+              sawNativeProgress ||
+              settled
+            ) {
+              return;
+            }
+
+            fakeValue = Math.min(
+              95,
+              fakeValue + 4
+            );
+
+            report(fakeValue);
+          }, 150);
+      };
+
+      xhr.upload.onprogress = (
+        event
+      ) => {
+        if (
+          event.lengthComputable
+        ) {
+          sawNativeProgress = true;
+
+          report(
+            (event.loaded /
+              event.total) *
+              100
+          );
+        }
+      };
+
+      xhr.onload = () => {
+        stopFakeProgress();
+
+        const status =
+          xhr.status || 0;
+
+        if (
+          status < 200 ||
+          status >= 300
+        ) {
+          rejectOnce(
+            new Error(
+              readXhrError(
+                xhr,
+                "Upload failed"
+              )
+            )
+          );
+
+          return;
+        }
+
+        const text =
+          xhr.responseText || "";
+
+        if (!text.trim()) {
+          resolveOnce([]);
+          return;
+        }
+
+        try {
+          const response =
+            JSON.parse(
+              text
+            ) as UploadResponse;
+
+          const names = (
+            response.saved || []
+          )
+            .map(
+              (saved) =>
+                saved.filename
+            )
+            .filter(Boolean);
+
+          resolveOnce(names);
+        } catch {
+          rejectOnce(
+            new Error(
+              "The upload endpoint returned invalid JSON."
+            )
+          );
+        }
+      };
+
+      xhr.onerror = () => {
+        rejectOnce(
+          new Error(
+            "Network error during upload."
+          )
+        );
+      };
+
+      xhr.onabort = () => {
+        rejectOnce(
+          new Error(
+            "Upload was aborted."
+          )
+        );
+      };
+
+      xhr.ontimeout = () => {
+        rejectOnce(
+          new Error(
+            "Upload timed out."
+          )
+        );
+      };
+
+      xhr.send(form);
+    }
+  );
 }
-
-/** Upload without progress (simple fetch). */
-export async function uploadFiles(files: File[]): Promise<string[]> {
-  if (!files || files.length === 0) return [];
-  const fd = new FormData();
-  files.forEach((f) => fd.append("files", f));
-
-  const res = await fetch(`${BASE}/api/upload`, { method: "POST", body: fd });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Upload failed: ${res.status} ${text}`);
-  }
-  const data: UploadResp = await res.json();
-  return data.saved.map((s) => s.filename);
-}
-
-/**
- * Run the backend. If you pass files, we upload them first and use the saved filenames.
- * You can also pass filenames directly if you already uploaded earlier.
- */
-export async function runProcess(
-  wells: WellMap,
-  imageOrder: WellID[],
-  opts: {
-    templateFile?: File | null;
-    imageFiles?: File[];
-    templateFilename?: string | null;
-    imageFilenames?: string[];
-  } = {}
-): Promise<ProcessResponse> {
-  const layout = { wells };
-
-  // upload if provided
-  let template_filename = opts.templateFilename ?? null;
-  let image_filenames = opts.imageFilenames ?? [];
-
-  if (opts.templateFile) {
-    const [saved] = await uploadFiles([opts.templateFile]); // or uploadWithProgress([file], cb)
-    template_filename = saved ?? null;
-  }
-  if (opts.imageFiles && opts.imageFiles.length) {
-    const saved = await uploadFiles(opts.imageFiles); // or uploadWithProgress(files, cb)
-    image_filenames = saved;
-  }
-
-  const payload: ProcessRequest = {
-    layout,
-    image_order: imageOrder,
-    template_filename,
-    image_filenames,
-  };
-
-  const res = await fetch(`${BASE}/api/process`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Process failed: ${res.status} ${text}`);
-  }
-  return (await res.json()) as ProcessResponse;
-}
-

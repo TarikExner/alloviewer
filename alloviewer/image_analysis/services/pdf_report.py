@@ -122,6 +122,40 @@ def _pct(value: Any, digits: int = 1) -> str:
     return f"{x:.{digits}f}%"
 
 
+def _finite_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if number != number:
+        return None
+
+    return number
+
+
+def _control_percent_with_range(
+    value: Any,
+    *,
+    min_value: Any = None,
+    max_value: Any = None,
+    range_value: Any = None,
+    digits: int = 1,
+) -> str:
+    main = _pct(value, digits)
+    minimum = _finite_float(min_value)
+    maximum = _finite_float(max_value)
+
+    if minimum is not None and maximum is not None:
+        return f"{main} (range: {minimum:.{digits}f}-{maximum:.{digits}f}%)"
+
+    range_number = _finite_float(range_value)
+
+    if range_number is not None:
+        return f"{main} (range: {range_number:.{digits}f}%)"
+
+    return main
+
 def _safe_text(value: Any) -> str:
     text = "" if value is None else str(value)
 
@@ -239,10 +273,15 @@ def _well_layout_table(
     style_well_id: ParagraphStyle,
     style_role: ParagraphStyle,
     threshold: Optional[float],
+    flip_vertical: bool = False
 ) -> Table:
     wells = result.get("wells", {}) or {}
 
     plate_rows = ["A", "B", "C", "D", "E", "F"]
+
+    if flip_vertical:
+        plate_rows.reverse()
+
     plate_cols = list(range(1, 11))
 
     data: list[list[Any]] = [
@@ -393,6 +432,7 @@ def _allele_table(
 def build_cdc_summary_pdf(
     result: Dict[str, Any],
     job_id: str,
+    flip_vertical: bool
 ) -> bytes:
     summary = result.get("summary", {}) or {}
     assay_type = str(
@@ -595,106 +635,111 @@ def build_cdc_summary_pdf(
     story.append(Spacer(1, 24 * mm))
     story.append(Paragraph(report_title, style_title))
 
-    if assay_type == "pra":
-        reactivity = pra.get("reactivity_score", {}) or {}
-
-        result_rows = [
-            ("PRA", _pct(assay.get("pra_percent"), 1)),
-            (
-                "Positive panel wells",
-                f"{assay.get('positive_panel_wells', '-')} / "
-                f"{assay.get('valid_panel_wells', '-')}",
-            ),
-            (
-                "Full panel reactivity",
-                f"{_pct(reactivity.get('score_percent'), 1)} "
-                f"({reactivity.get('positive_well_count', '-')} / "
-                f"{reactivity.get('total_well_count', '-')})",
-            ),
-            (
-                "Mean corrected fraction positive",
-                _pct(assay.get("mean_corrected_frac_pos"), 1),
-            ),
-            (
-                "Median corrected fraction positive",
-                _pct(assay.get("median_corrected_frac_pos"), 1),
-            ),
-            (
-                "Max corrected fraction positive",
-                _pct(assay.get("max_corrected_frac_pos"), 1),
-            ),
-            ("Weak positives", assay.get("n_weak_positive", "-")),
-            ("Moderate positives", assay.get("n_moderate_positive", "-")),
-            ("Strong positives", assay.get("n_strong_positive", "-")),
-            ("Positivity threshold", _pct(threshold, 1)),
-        ]
-    else:
-        result_rows = [
-            ("Final call", assay.get("final_call", "-")),
-            (
-                "Sample corrected fraction positive",
-                _pct(assay.get("sample_corrected_frac_pos"), 1),
-            ),
-            (
-                "Sample raw fraction positive",
-                _pct(assay.get("sample_raw_frac_pos"), 1),
-            ),
-            ("Margin from cutoff", _fmt(assay.get("margin_from_cutoff"), 2)),
-            ("Replicate SD", _fmt(assay.get("replicate_sd"), 2)),
-            ("Replicate range", _fmt(assay.get("replicate_range"), 2)),
-            ("Replicate discordant", assay.get("replicate_discordant", "-")),
-            ("Sample wells", ", ".join(assay.get("sample_wells") or []) or "-"),
-        ]
-
     run_rows = [
         ("Status", run.get("status", "-")),
-        ("PC mean raw", _pct(run.get("pc_mean_raw"), 1)),
-        ("NC mean raw", _pct(run.get("nc_mean_raw"), 1)),
-        ("Dynamic range", _pct(run.get("dynamic_range"), 1)),
-        ("Positive controls", run.get("n_positive_controls", "-")),
-        ("Negative controls", run.get("n_negative_controls", "-")),
-        ("PC replicate range", _fmt(run.get("pc_replicate_range"), 2)),
-        ("NC replicate range", _fmt(run.get("nc_replicate_range"), 2)),
+        (
+            "Positive Control % positive",
+            _control_percent_with_range(
+                run.get("pc_mean_raw"),
+                min_value=run.get("pc_min_raw") or run.get("pc_replicate_min"),
+                max_value=run.get("pc_max_raw") or run.get("pc_replicate_max"),
+                range_value=run.get("pc_replicate_range"),
+                digits=1,
+            ),
+        ),
+        (
+            "Negative Control % positive",
+            _control_percent_with_range(
+                run.get("nc_mean_raw"),
+                min_value=run.get("nc_min_raw") or run.get("nc_replicate_min"),
+                max_value=run.get("nc_max_raw") or run.get("nc_replicate_max"),
+                range_value=run.get("nc_replicate_range"),
+                digits=1,
+            ),
+        ),
+        (
+            "Dynamic range between Positive and Negative Control",
+            _pct(run.get("dynamic_range"), 1),
+        ),
+        (
+            "Controls",
+            f"{run.get('n_positive_controls', '-')} positive control(s); "
+            f"{run.get('n_negative_controls', '-')} negative control(s)",
+        ),
     ]
 
     qc_rows = [
         ("Total wells", qc.get("total_wells", "-")),
         ("Valid wells", qc.get("valid_wells", "-")),
-        ("Mean ROI count", _fmt(qc.get("mean_n_rois"), 1)),
+        ("Mean cell count", _fmt(qc.get("mean_n_rois"), 1)),
         ("Mean uncertain fraction", _fmt(qc.get("mean_uncertain_fraction"), 3)),
-        ("Low ROI wells", len(qc.get("low_roi_wells") or [])),
+        ("Low cell count wells", len(qc.get("low_roi_wells") or [])),
         ("High uncertain wells", len(qc.get("high_uncertain_wells") or [])),
     ]
 
-    usable_w = page_w - left_margin - right_margin
-    third = usable_w / 3.0
+    sections: list[tuple[str, list[tuple[str, Any]]]] = []
 
-    story.append(Paragraph("Result overview", style_h2))
+    if assay_type == "pra":
+        reactivity = pra.get("reactivity_score", {}) or {}
 
-    overview = Table(
+        result_rows = [
+            (
+                "Panel reactivity",
+                f"{_pct(assay.get('pra_percent'), 1)} "
+                f"({assay.get('positive_panel_wells', '-')} / "
+                f"{assay.get('valid_panel_wells', '-')} panel wells)",
+            ),
+            (
+                "Full panel reactivity",
+                f"{_pct(reactivity.get('score_percent'), 1)} "
+                f"({reactivity.get('positive_well_count', '-')} / "
+                f"{reactivity.get('total_well_count', '-')} sample wells)",
+            ),
+            ("Mean corrected", _fmt(assay.get("mean_corrected_frac_pos"), 1)),
+            ("Median corrected", _fmt(assay.get("median_corrected_frac_pos"), 1)),
+            ("Max corrected", _fmt(assay.get("max_corrected_frac_pos"), 1)),
+            ("Threshold", _fmt(threshold, 1)),
+            ("Weak", assay.get("n_weak_positive", "-")),
+            ("Moderate", assay.get("n_moderate_positive", "-")),
+            ("Strong", assay.get("n_strong_positive", "-")),
+        ]
+
+        sections.append(("Summary values", result_rows))
+
+    sections.extend(
         [
+            ("Run validity", run_rows),
+            ("QC", qc_rows),
+        ]
+    )
+
+    usable_w = page_w - left_margin - right_margin
+    column_width = usable_w / len(sections)
+    label_width = min(64 * mm, column_width * 0.62)
+
+    section_cells: list[Any] = []
+
+    for section_title, section_rows in sections:
+        section_cells.append(
             [
+                Paragraph(section_title, style_h2),
                 _metric_table(
-                    result_rows,
+                    section_rows,
                     style_cell,
                     style_th,
-                    [34 * mm, third - 34 * mm],
-                ),
-                _metric_table(
-                    run_rows,
-                    style_cell,
-                    style_th,
-                    [32 * mm, third - 32 * mm],
-                ),
-                _metric_table(
-                    qc_rows,
-                    style_cell,
-                    style_th,
-                    [38 * mm, third - 38 * mm],
+                    [
+                        label_width,
+                        column_width - label_width - 6,
+                    ],
                 ),
             ]
-        ],
-        colWidths=[third, third, third],
+        )
+
+    story.append(Paragraph("Summary values", style_h2))
+
+    overview = Table(
+        [section_cells],
+        colWidths=[column_width for _ in sections],
     )
 
     overview.setStyle(
@@ -703,12 +748,13 @@ def build_cdc_summary_pdf(
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 3),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
             ]
         )
     )
 
     story.append(overview)
-
     # ---------------------------------------------------------------------
     # Page 2: plate only
     # ---------------------------------------------------------------------
@@ -730,6 +776,7 @@ def build_cdc_summary_pdf(
             style_well_id=style_well_id,
             style_role=style_role,
             threshold=threshold,
+            flip_vertical=flip_vertical,
         )
     )
 

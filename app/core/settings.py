@@ -6,7 +6,6 @@ from pathlib import Path
 class Settings:
     data_dir: Path
     cors_origins: list[str]
-    plate_layout_store: str
 
 def _default_data_dir() -> Path:
     base_dir = Path(__file__).resolve().parents[1]  # points to backend/
@@ -26,5 +25,4 @@ settings = Settings(
         "https://alloviewer-woeh.vercel.app",
         "https://alloviewer-f4x0be0x0-tarikexners-projects.vercel.app",
     ],
-    plate_layout_store=os.getenv("PLATE_LAYOUT_STORE", "/tmp/plate_layouts"),
 )

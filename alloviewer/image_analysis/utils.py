@@ -6,6 +6,7 @@ import torch
 from PIL import Image
 from scipy import ndimage as ndi
 from skimage import feature, measure, morphology
+from skimage.segmentation import find_boundaries
 
 from .structs import Plate, PlateLayout, WellImage, WellResult
 from ..dev.segmentation import UNET_MEAN, UNET_STD
@@ -715,7 +716,7 @@ def save_segmented_preview(
     out_path: str | Path,
     max_size: int = 900,
 ) -> None:
-    """Save a color-coded segmentation preview.
+    """Save a color-coded segmentation preview with black ROI outlines.
 
     Parameters
     ----------
@@ -738,7 +739,8 @@ def save_segmented_preview(
     Notes
     -----
     Background is white. Positive ROIs are orange, negative ROIs are green, and
-    uncertain or unknown ROIs are blue.
+    uncertain or unknown ROIs are blue. Each ROI is outlined with a roughly
+    2-pixel-wide black border in the final preview.
     """
     out_path = Path(out_path).with_suffix(".png")
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -751,8 +753,10 @@ def save_segmented_preview(
     labels = labels.astype(np.int32, copy=False)
     max_label = int(labels.max(initial=0))
 
+    # White background by default
     lut = np.full((max_label + 1, 3), 255, dtype=np.uint8)
 
+    # Keep your existing color coding
     for i, roi in enumerate(rois):
         inst_id = _roi_instance_id(roi, fallback_id=i + 1)
 
@@ -769,9 +773,44 @@ def save_segmented_preview(
 
     rgb = lut[labels]
 
-    pil_img = Image.fromarray(rgb, mode="RGB")
-    pil_img.thumbnail((max_size, max_size), Image.Resampling.NEAREST)
-    pil_img.save(out_path, compress_level=1)
+    # Resize first, so the outline width is applied to the final preview size
+    h, w = labels.shape
+    if max(h, w) > max_size:
+        scale = max_size / max(h, w)
+        new_w = max(1, int(round(w * scale)))
+        new_h = max(1, int(round(h * scale)))
+
+        rgb = np.array(
+            Image.fromarray(rgb, mode="RGB").resize(
+                (new_w, new_h),
+                Image.Resampling.NEAREST,
+            ),
+            dtype=np.uint8,
+            copy=True,
+        )
+
+        labels_for_border = np.asarray(
+            Image.fromarray(labels.astype(np.int32), mode="I").resize(
+                (new_w, new_h),
+                Image.Resampling.NEAREST,
+            )
+        ).astype(np.int32, copy=False)
+    else:
+        labels_for_border = labels
+
+    # Build a border mask from the instance labels
+    # "inner" gives a 1 px border; one dilation step makes it about 2 px
+    borders = find_boundaries(
+        labels_for_border,
+        connectivity=1,
+        mode="inner",
+        background=0,
+    )
+
+    # Paint only the border pixels black, keep all ROI fill colors
+    rgb[borders] = (0, 0, 0)
+
+    Image.fromarray(rgb, mode="RGB").save(out_path, compress_level=1)
 
 
 def to_jsonable(obj: Any) -> Any:
@@ -1299,3 +1338,49 @@ def make_markers(
         markers = measure.label(work_mask, connectivity=1).astype(np.int32)
 
     return markers
+
+def add_roi_borders(
+    preview: np.ndarray,
+    instance_labels: np.ndarray,
+) -> np.ndarray:
+    """
+    Add a two-pixel black border around every labeled ROI.
+
+    Boundaries between touching instances are also marked.
+    """
+    output = preview.copy()
+
+    labels = np.asarray(instance_labels)
+
+    if labels.shape != output.shape[:2]:
+        raise ValueError(
+            "Instance labels and preview have different image dimensions."
+        )
+
+    # mode="thick" creates a boundary approximately two pixels wide.
+    borders = find_boundaries(
+        labels,
+        connectivity=1,
+        mode="thick",
+        background=0,
+    )
+
+    if output.ndim == 2:
+        output[borders] = 0
+
+    elif output.ndim == 3 and output.shape[2] >= 3:
+        output[borders, :3] = 0
+
+        # Keep the black border fully visible for RGBA previews.
+        if output.shape[2] == 4:
+            if np.issubdtype(output.dtype, np.integer):
+                output[borders, 3] = np.iinfo(output.dtype).max
+            else:
+                output[borders, 3] = 1.0
+
+    else:
+        raise ValueError(
+            f"Unsupported preview shape: {output.shape}"
+        )
+
+    return output

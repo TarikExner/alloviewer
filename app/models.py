@@ -28,12 +28,12 @@ class ProcessRequest(BaseModel):
     layout: PlateLayout
     image_order: List[WellID]
     image_filenames: list[str]
-
     pra_positivity_threshold: float = Field(
         default=20.0,
         ge=0.0,
         le=100.0,
     )
+    flip_vertical: bool = False
 
 class ProcessStartResponse(BaseModel):
     job_id: str
@@ -149,14 +149,24 @@ class FCXMRunStartResponse(BaseModel):
     job_id: str
 
 class FCXMRunProgressResponse(BaseModel):
-    status: Literal["queued", "running", "done", "error"]
-    message: Optional[str] = None
-    stage: Optional[str] = None
-    result: Optional[Any] = None
+    status: Literal[
+        "queued",
+        "running",
+        "done",
+        "error",
+    ]
+
+    message: str | None = None
+    stage: str | None = None
+    result: Any | None = None
+
     total_files: int | None = None
     done_files: int | None = None
     current_file: str | None = None
-    done_filenames: list[str] = []
+    done_filenames: list[str] = Field(
+        default_factory=list
+    )
+
     error: str | None = None
     error_type: str | None = None
     failed_stage: str | None = None

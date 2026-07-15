@@ -21,9 +21,7 @@ def cleanup_runtime_data_task() -> dict[str, int]:
     logger.info("Starting scheduled runtime cleanup.")
 
     result = cleanup_runtime_data(
-        artifacts_older_than_hours=24.0,
-        uploads_older_than_hours=24.0,
-        include_uploads=True,
+        jobs_older_than_hours=24.0,
         dry_run=False,
     )
 

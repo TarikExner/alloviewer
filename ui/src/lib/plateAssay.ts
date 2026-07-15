@@ -28,12 +28,26 @@ export function buildImageOrder(scanOrder: WellID[], wells: WellMap): WellID[] {
   );
 }
 
+function encodeRelativeUrlPath(path: string): string {
+  return path
+    .replace(/\\/g, "/")
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/");
+}
+
 export function buildThumbnailUrls(
+  jobId: string | null,
   imageSavedNames: string[],
   apiBase: string
 ): string[] {
+  if (!jobId) return [];
+
   return imageSavedNames.map(
-    (name) => `${apiBase}/api/thumbnails/${encodeURIComponent(name)}`
+    (name) =>
+      `${apiBase}/api/jobs/${encodeURIComponent(
+        jobId
+      )}/thumbnails/${encodeRelativeUrlPath(name)}`
   );
 }
 
@@ -116,4 +130,124 @@ export function plateStageMessage(stage: string | null): string | null {
 export function clampPercent(done: number, total: number): number | null {
   if (total <= 0) return null;
   return Math.max(0, Math.min(100, (done / total) * 100));
+}
+
+
+export function buildJobThumbnailUrls(
+  jobId: string | null,
+  imageSavedNames: string[],
+  apiBase: string,
+): string[] {
+  if (!jobId) {
+    return [];
+  }
+
+  const encodedJobId = encodeURIComponent(jobId);
+
+  return imageSavedNames.map((filename) => {
+    const encodedPath = filename
+      .replace(/\\/g, "/")
+      .split("/")
+      .filter(Boolean)
+      .map((part) => encodeURIComponent(part))
+      .join("/");
+
+    return `${apiBase}/api/jobs/${encodedJobId}/thumbnails/${encodedPath}`;
+  });
+}
+
+
+type PreloadImageOptions = {
+  concurrency?: number;
+  signal?: AbortSignal;
+};
+
+
+function preloadOneImage(
+  url: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+
+    const image = new Image();
+
+    const finish = () => {
+      image.onload = null;
+      image.onerror = null;
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    };
+
+    const abort = () => {
+      image.src = "";
+      finish();
+    };
+
+    image.onload = finish;
+    image.onerror = finish;
+
+    signal?.addEventListener(
+      "abort",
+      abort,
+      { once: true },
+    );
+
+    /*
+     * This uses the browser image cache directly and also causes the backend
+     * to generate the lazy thumbnail.
+     */
+    image.src = url;
+  });
+}
+
+
+export async function preloadImageUrls(
+  urls: string[],
+  options: PreloadImageOptions = {},
+): Promise<void> {
+  const uniqueUrls = Array.from(
+    new Set(
+      urls.filter(Boolean),
+    ),
+  );
+
+  if (uniqueUrls.length === 0) {
+    return;
+  }
+
+  const concurrency = Math.max(
+    1,
+    Math.min(
+      options.concurrency ?? 4,
+      uniqueUrls.length,
+    ),
+  );
+
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (
+      nextIndex < uniqueUrls.length &&
+      !options.signal?.aborted
+    ) {
+      const index = nextIndex;
+      nextIndex += 1;
+
+      await preloadOneImage(
+        uniqueUrls[index],
+        options.signal,
+      );
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      { length: concurrency },
+      () => worker(),
+    ),
+  );
 }

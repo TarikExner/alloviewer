@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useJobSession } from "../hooks/useJobSession";
 import { Toolbar } from "../components/Toolbar";
 import { UploadCard } from "../components/UploadCard";
 import PlateEditorWithOrder from "../components/PlateEditorWithOrder";
@@ -36,12 +37,13 @@ import {
   buildImageOrder,
   buildImagesByWell,
   buildInitialWellStatus,
-  buildThumbnailUrls,
+  buildJobThumbnailUrls,
   buildWellToFileMap,
   clampPercent,
   computeSummary,
   countWellsByType,
   extractImageScores,
+  preloadImageUrls,
   type WellRunStatus,
 } from "../lib/plateAssay";
 
@@ -49,11 +51,12 @@ type ActiveStep = 1 | 2 | 3 | 4;
 
 export default function CrossmatchApp() {
   const { t } = useTranslation();
+  const { jobId, ensureJobId, resetJob } = useJobSession("crossmatch");
 
   const [flip, setFlip] = useState(true);
 
   const [columnModes, setColumnModes] = useState<Record<number, CellMode>>(() =>
-    buildDefaultColumnModes()
+    buildDefaultColumnModes(),
   );
 
   const [uploadResetKey, setUploadResetKey] = useState(0);
@@ -69,7 +72,7 @@ export default function CrossmatchApp() {
   const [msg, setMsg] = useState<string | null>(null);
 
   const [wellStatus, setWellStatus] = useState<Record<WellID, WellRunStatus>>(
-    {} as any
+    {} as any,
   );
 
   const [progressPercent, setProgressPercent] = useState<number | null>(null);
@@ -80,7 +83,6 @@ export default function CrossmatchApp() {
   const [plateVisited, setPlateVisited] = useState(false);
   const [autoJumpedToPlate, setAutoJumpedToPlate] = useState(false);
 
-  const [processJobId, setProcessJobId] = useState<string | null>(null);
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
 
@@ -90,10 +92,8 @@ export default function CrossmatchApp() {
 
   const handleImagesPicked = useCallback((files: File[]) => {
     const validFiles = files.filter(isSupportedImageFile);
-  
-    setImageFiles((prev) =>
-      sameFiles(prev, validFiles) ? prev : validFiles
-    );
+
+    setImageFiles((prev) => (sameFiles(prev, validFiles) ? prev : validFiles));
   }, []);
 
   const handleImagesUploaded = useCallback((saved: any[]) => {
@@ -106,14 +106,27 @@ export default function CrossmatchApp() {
 
   const imageOrder = useMemo(
     () => buildImageOrder(scanOrder, wells),
-    [scanOrder, wells]
+    [scanOrder, wells],
   );
 
   const imageURLs = useMemo(
-    () => buildThumbnailUrls(imageSavedNames, API_BASE),
-    [imageSavedNames]
+    () => buildJobThumbnailUrls(jobId, imageSavedNames, API_BASE),
+    [jobId, imageSavedNames]
   );
-
+  
+  useEffect(() => {
+    if (!jobId || imageURLs.length === 0) return;
+  
+    const controller = new AbortController();
+  
+    void preloadImageUrls(imageURLs, {
+      concurrency: 4,
+      signal: controller.signal,
+    });
+  
+    return () => controller.abort();
+  }, [jobId, imageURLs]);
+  
   const imagesByWell = useMemo(
     () => buildImagesByWell(ALL_WELLS, imageOrder, imageURLs),
     [imageOrder, imageURLs]
@@ -126,57 +139,56 @@ export default function CrossmatchApp() {
 
   const sampleCount = useMemo(
     () => countWellsByType(ALL_WELLS, wells, "sample"),
-    [wells]
+    [wells],
   );
 
   const negativeCount = useMemo(
     () => countWellsByType(ALL_WELLS, wells, "negative"),
-    [wells]
+    [wells],
   );
 
   const positiveCount = useMemo(
     () => countWellsByType(ALL_WELLS, wells, "positive"),
-    [wells]
+    [wells],
   );
 
   const igmCount = useMemo(
     () => countWellsByType(ALL_WELLS, wells, "igm"),
-    [wells]
+    [wells],
   );
 
   const mappedImageCount = Math.min(imageSavedNames.length, imageOrder.length);
   const unmappedImageCount = Math.max(
     0,
-    imageSavedNames.length - imageOrder.length
+    imageSavedNames.length - imageOrder.length,
   );
   const missingImageCount = Math.max(
     0,
-    imageOrder.length - imageSavedNames.length
+    imageOrder.length - imageSavedNames.length,
   );
 
   const uploadStepStatus: StepState = !hasImages ? "not_started" : "done";
 
-  const plateStepStatus: StepState =
-    !hasImages
-      ? "not_started"
-      : !hasOrder
+  const plateStepStatus: StepState = !hasImages
+    ? "not_started"
+    : !hasOrder
       ? "needs_attention"
       : !plateVisited
-      ? "needs_review"
-      : missingImageCount > 0
-      ? "needs_attention"
-      : "done";
+        ? "needs_review"
+        : missingImageCount > 0
+          ? "needs_attention"
+          : "done";
 
   const runStepStatus: StepState =
     jobStatus === "error"
       ? "error"
       : jobStatus === "queued" || jobStatus === "running" || busy
-      ? "running"
-      : jobStatus === "done"
-      ? "done"
-      : hasImages && hasOrder && missingImageCount === 0
-      ? "ready"
-      : "not_started";
+        ? "running"
+        : jobStatus === "done"
+          ? "done"
+          : hasImages && hasOrder && missingImageCount === 0
+            ? "ready"
+            : "not_started";
 
   const reportStepStatus: StepState =
     jobStatus === "done" && summary ? "ready" : "not_started";
@@ -188,8 +200,7 @@ export default function CrossmatchApp() {
     imageOrder.length > 0 &&
     missingImageCount === 0;
 
-  const canDownloadSummary =
-    jobStatus === "done" && !!processJobId && !summaryBusy;
+  const canDownloadSummary = jobStatus === "done" && !!jobId && !summaryBusy;
 
   useEffect(() => {
     if (autoJumpedToPlate) return;
@@ -212,6 +223,7 @@ export default function CrossmatchApp() {
   }
 
   function resetExperiment() {
+    void resetJob();
     setUploadResetKey((x) => x + 1);
 
     setFlip(true);
@@ -237,19 +249,18 @@ export default function CrossmatchApp() {
     setPlateVisited(false);
     setAutoJumpedToPlate(false);
 
-    setProcessJobId(null);
     setSummaryBusy(false);
     setSummaryError(null);
   }
 
   async function onDownloadSummary() {
-    if (!processJobId) return;
+    if (!jobId) return;
 
     setSummaryBusy(true);
     setSummaryError(null);
 
     try {
-      await downloadCDCSummaryPdf(processJobId);
+      await downloadCDCSummaryPdf(jobId, flip);
     } catch (err: any) {
       setSummaryError(err?.message || "Could not download summary PDF.");
     } finally {
@@ -269,19 +280,18 @@ export default function CrossmatchApp() {
     setImageScores({});
     setJobStage(null);
 
-    setProcessJobId(null);
     setSummaryBusy(false);
     setSummaryError(null);
 
     const wellToFileAtRun = buildWellToFileMap(imageOrder, imageSavedNames);
 
     try {
-      const { job_id } = await runProcess(wells, imageOrder, {
-        templateFilename: null,
-        imageFilenames: imageSavedNames,
-      });
+      const activeJobId = jobId ?? (await ensureJobId());
 
-      setProcessJobId(job_id);
+      const { job_id } = await runProcess(activeJobId, wells, imageOrder, {
+        imageFilenames: imageSavedNames,
+        flipVertical: flip,
+      });
 
       const poll = async () => {
         try {
@@ -297,7 +307,7 @@ export default function CrossmatchApp() {
             const next = { ...prev };
 
             if (prog.done_wells) {
-              prog.done_wells.forEach((w: WellID) => {
+              prog.done_wells.forEach((w) => {
                 next[w as WellID] = "done";
               });
             }
@@ -327,15 +337,13 @@ export default function CrossmatchApp() {
           if (prog.status === "error") {
             const stage = prog.failed_stage ?? prog.stage;
             const supportId = prog.support_id ?? job_id;
-          
+
             const details = [
               prog.error || t("cdc_xm_app.messages.process_failed"),
               prog.error_type
                 ? `${t("common.errors.type")}: ${prog.error_type}`
                 : null,
-              stage
-                ? `${t("common.errors.stage")}: ${stage}`
-                : null,
+              stage ? `${t("common.errors.stage")}: ${stage}` : null,
               prog.failed_well
                 ? `${t("common.errors.well")}: ${prog.failed_well}`
                 : null,
@@ -343,7 +351,7 @@ export default function CrossmatchApp() {
             ]
               .filter(Boolean)
               .join("\n");
-          
+
             setMsg(details);
             setBusy(false);
             setProgressPercent(null);
@@ -380,23 +388,23 @@ export default function CrossmatchApp() {
     jobStatus === "queued"
       ? t("cdc_xm_app.status.waiting_to_start")
       : jobStatus === "running"
-      ? stageMessage || t("cdc_xm_app.status.processing_plate_images")
-      : jobStatus === "done"
-      ? msg || t("cdc_xm_app.status.analysis_done")
-      : jobStatus === "error"
-      ? msg || t("cdc_xm_app.status.process_failed")
-      : msg;
+        ? stageMessage || t("cdc_xm_app.status.processing_plate_images")
+        : jobStatus === "done"
+          ? msg || t("cdc_xm_app.status.analysis_done")
+          : jobStatus === "error"
+            ? msg || t("cdc_xm_app.status.process_failed")
+            : msg;
 
   const tColumns = Object.values(columnModes).filter(
-    (mode) => mode === "T"
+    (mode) => mode === "T",
   ).length;
 
   const bColumns = Object.values(columnModes).filter(
-    (mode) => mode === "B"
+    (mode) => mode === "B",
   ).length;
 
   const tbColumns = Object.values(columnModes).filter(
-    (mode) => mode === "T/B"
+    (mode) => mode === "T/B",
   ).length;
 
   return (
@@ -438,14 +446,14 @@ export default function CrossmatchApp() {
                 !hasImages
                   ? t("cdc_xm_app.steps.review.summary_upload_first")
                   : !hasOrder
-                  ? t("cdc_xm_app.steps.review.summary_set_scan_order")
-                  : missingImageCount > 0
-                  ? t("cdc_xm_app.steps.review.summary_missing_images", {
-                      count: missingImageCount,
-                    })
-                  : t("cdc_xm_app.steps.review.summary_done", {
-                      count: mappedImageCount,
-                    })
+                    ? t("cdc_xm_app.steps.review.summary_set_scan_order")
+                    : missingImageCount > 0
+                      ? t("cdc_xm_app.steps.review.summary_missing_images", {
+                          count: missingImageCount,
+                        })
+                      : t("cdc_xm_app.steps.review.summary_done", {
+                          count: mappedImageCount,
+                        })
               }
             />
 
@@ -459,10 +467,10 @@ export default function CrossmatchApp() {
                 jobStatus === "done"
                   ? t("cdc_xm_app.steps.run.summary_done")
                   : jobStatus === "running" || jobStatus === "queued"
-                  ? t("cdc_xm_app.steps.run.summary_running")
-                  : canRun
-                  ? t("cdc_xm_app.steps.run.summary_ready")
-                  : t("cdc_xm_app.steps.run.summary_incomplete")
+                    ? t("cdc_xm_app.steps.run.summary_running")
+                    : canRun
+                      ? t("cdc_xm_app.steps.run.summary_ready")
+                      : t("cdc_xm_app.steps.run.summary_incomplete")
               }
             />
 
@@ -511,6 +519,8 @@ export default function CrossmatchApp() {
               accept=".tif,.tiff,.png,.jpg,.jpeg,.bmp,.webp"
               allowDirectory
               autoUpload
+              ensureJobId={ensureJobId}
+              uploadKind="images"
               fileFilter={isSupportedImageFile}
               onPicked={handleImagesPicked}
               onUploaded={handleImagesUploaded}
@@ -555,7 +565,13 @@ export default function CrossmatchApp() {
                   onOrderChange={setScanOrder}
                   flipVertical={flip}
                   onFlipChange={setFlip}
-                  roleOptions={["sample", "positive", "negative", "igm", "empty"]}
+                  roleOptions={[
+                    "sample",
+                    "positive",
+                    "negative",
+                    "igm",
+                    "empty",
+                  ]}
                   buildDefault={buildDefaultCrossmatch}
                   columnModes={columnModes}
                   onColumnModeChange={handleColumnMode}
@@ -601,7 +617,9 @@ export default function CrossmatchApp() {
                       <div className="text-xs text-neutral-600 dark:text-neutral-400">
                         {t("cdc_xm_app.plate_checks.scan_order_wells")}
                       </div>
-                      <div className="mt-1 font-semibold">{imageOrder.length}</div>
+                      <div className="mt-1 font-semibold">
+                        {imageOrder.length}
+                      </div>
                     </div>
                   </div>
 
@@ -678,10 +696,14 @@ export default function CrossmatchApp() {
                       !hasImages
                         ? t("cdc_xm_app.run_button_titles.upload_images_first")
                         : !hasOrder
-                        ? t("cdc_xm_app.run_button_titles.set_scan_order_first")
-                        : missingImageCount > 0
-                        ? t("cdc_xm_app.run_button_titles.missing_ordered_images")
-                        : t("cdc_xm_app.run_button_titles.run_analysis")
+                          ? t(
+                              "cdc_xm_app.run_button_titles.set_scan_order_first",
+                            )
+                          : missingImageCount > 0
+                            ? t(
+                                "cdc_xm_app.run_button_titles.missing_ordered_images",
+                              )
+                            : t("cdc_xm_app.run_button_titles.run_analysis")
                     }
                   >
                     {busy
@@ -711,7 +733,9 @@ export default function CrossmatchApp() {
                       <div className="text-xs text-neutral-600 dark:text-neutral-400">
                         {t("cdc_xm_app.run_setup.wells_to_process")}
                       </div>
-                      <div className="mt-1 font-semibold">{imageOrder.length}</div>
+                      <div className="mt-1 font-semibold">
+                        {imageOrder.length}
+                      </div>
                     </div>
 
                     <div className="rounded-xl border p-3 dark:border-neutral-800">
@@ -758,7 +782,7 @@ export default function CrossmatchApp() {
                 <div className="font-medium mb-3">
                   {t("cdc_xm_app.summary_values.title")}
                 </div>
-              
+
                 <CrossmatchSummaryGrid
                   summary={summary}
                   onDownloadSummary={onDownloadSummary}
@@ -793,3 +817,4 @@ export default function CrossmatchApp() {
     </div>
   );
 }
+

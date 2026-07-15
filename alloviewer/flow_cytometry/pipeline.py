@@ -1,31 +1,47 @@
-# alloviewer/flow_cytometry/pipeline.py
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+import logging
+from typing import Any, Callable
 
 from alloviewer.flow_cytometry.sample import Dataset, Sample
-from alloviewer.flow_cytometry.panel_utils import build_panel_from_rows
-from alloviewer.flow_cytometry.gating import Gater, GatingConfig
+from alloviewer.flow_cytometry.panel_utils import (
+    build_panel_from_rows,
+)
+from alloviewer.flow_cytometry.gating import (
+    Gater,
+    GatingConfig,
+)
 
 from .plots import make_results_payload
 
-from app.services.job_state import (
-    update_fcxm_progress,
-    get_fcxm_progress,
-)
 
-ProgressEvent = Dict[str, Any]
+logger = logging.getLogger(__name__)
+
+ProgressEvent = dict[str, Any]
 ProgressCallback = Callable[[ProgressEvent], None]
 
 
-def _count_files(req_dict: Dict[str, Any]) -> int:
+def _emit_progress(
+    progress_cb: ProgressCallback | None,
+    event: ProgressEvent,
+) -> None:
+    """
+    Send one normalized progress event to the application layer.
+    """
+    if progress_cb is not None:
+        progress_cb(event)
+
+
+def _count_files(req_dict: dict[str, Any]) -> int:
     return sum(
         len(sample.get("file_paths", []) or [])
         for sample in req_dict.get("samples", [])
     )
 
 
-def _event_file_name(event: ProgressEvent) -> str | None:
+def _event_file_name(
+    event: ProgressEvent,
+) -> str | None:
     value = (
         event.get("file_name")
         or event.get("file_path")
@@ -55,31 +71,40 @@ def _stage_message(stage: str) -> str:
         "done": "Analysis done.",
     }
 
-    return messages.get(stage, stage.replace("_", " ").capitalize() + ".")
+    return messages.get(
+        stage,
+        stage.replace("_", " ").capitalize() + ".",
+    )
 
 
 def _make_progress_callback(
     *,
-    job_id: Optional[str],
     total_files: int,
+    progress_cb: ProgressCallback | None,
 ) -> ProgressCallback:
     """
-    Progress is tracked as file-level work units.
+    Build a callback used by the FCXM analysis components.
 
-    Counted stages:
-      - fit_qc
-      - fit_lymphocytes
-      - fit_control_stats
-      - apply_file
-      - plot_cache
+    Progress is represented as file-level work units.
 
-    Global stages are shown as messages but do not increment done_files:
-      - build_dataset
-      - build_panel
-      - fit_marker_calibration
-      - fit_clustering
-      - fit_cluster_labels
-      - payload
+    Counted stages
+    --------------
+    - fit_qc
+    - fit_lymphocytes
+    - fit_control_stats
+    - apply_file
+    - plot_cache
+
+    Global stages
+    -------------
+    These are displayed but do not increment the work-unit counter:
+
+    - build_dataset
+    - build_panel
+    - fit_marker_calibration
+    - fit_clustering
+    - fit_cluster_labels
+    - payload
     """
     counted_stages = {
         "fit_qc",
@@ -89,93 +114,56 @@ def _make_progress_callback(
         "plot_cache",
     }
 
-    total_work = max(1, total_files * len(counted_stages))
+    total_work = max(
+        1,
+        total_files * len(counted_stages),
+    )
+
     done_work = 0
     done_filenames: list[str] = []
 
     def progress(event: ProgressEvent) -> None:
-        nonlocal done_work, done_filenames
+        nonlocal done_work
+        nonlocal done_filenames
 
-        if not job_id:
-            return
+        stage = str(
+            event.get("stage") or "running"
+        )
 
-        stage = str(event.get("stage") or "running")
         file_name = _event_file_name(event)
 
         if stage in counted_stages:
-            done_work = min(done_work + 1, total_work)
+            done_work = min(
+                done_work + 1,
+                total_work,
+            )
 
-        # Only mark files as "done" after plot_cache, because at that point
-        # the file has passed through the full analysis + frontend cache build.
+        # A file is considered fully processed only after its plot cache has
+        # been built.
         if stage == "plot_cache" and file_name:
             if file_name not in done_filenames:
                 done_filenames.append(file_name)
 
-        update_fcxm_progress(
-            job_id,
-            status="running",
-            message=_stage_message(stage),
-            stage=stage,
-            total_files=total_work,
-            done_files=done_work,
-            current_file=file_name,
-            done_filenames=done_filenames,
+        _emit_progress(
+            progress_cb,
+            {
+                "status": "running",
+                "message": _stage_message(stage),
+                "stage": stage,
+                "total_files": total_work,
+                "done_files": done_work,
+                "current_file": file_name,
+                "done_filenames": done_filenames.copy(),
+            },
         )
 
     return progress
 
-def _init_progress(job_id: Optional[str], total_files: int) -> None:
-    if not job_id:
-        return
 
-    total_work = max(1, total_files * 5)
-
-    update_fcxm_progress(
-        job_id,
-        status="running",
-        message="Starting flow cytometry analysis.",
-        stage="starting",
-        total_files=total_work,
-        done_files=0,
-        current_file=None,
-        done_filenames=[],
-    )
-
-
-def _mark_done(job_id: Optional[str]) -> None:
-    if not job_id:
-        return
-
-    previous = get_fcxm_progress(job_id) or {}
-    total = int(previous.get("total_files") or 1)
-
-    update_fcxm_progress(
-        job_id,
-        status="done",
-        message="Analysis done.",
-        stage="done",
-        done_files=total,
-        total_files=total,
-        current_file=None,
-    )
-
-
-def _mark_error(job_id: Optional[str], error: Exception) -> None:
-    if not job_id:
-        return
-
-    update_fcxm_progress(
-        job_id,
-        status="error",
-        message="Analysis failed.",
-        stage="error",
-        error=repr(error),
-        current_file=None,
-    )
-
-
-def _build_dataset(req_dict: Dict[str, Any]) -> Dataset:
-    samples = []
+def _build_dataset(
+    req_dict: dict[str, Any],
+) -> Dataset:
+    samples: list[Sample] = []
 
     for sample_dict in req_dict["samples"]:
         samples.append(
@@ -190,84 +178,119 @@ def _build_dataset(req_dict: Dict[str, Any]) -> Dataset:
 
 
 def run_fcxm_pipeline(
-    req_dict: Dict[str, Any],
-    job_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    req_dict: dict[str, Any],
+    *,
+    progress_cb: ProgressCallback | None = None,
+) -> dict[str, Any]:
     """
     Run FCXM analysis.
 
-    req_dict is created from FCXMRunRequest.model_dump().
+    Parameters
+    ----------
+    req_dict
+        Dictionary created from ``FCXMRunRequest.model_dump()``. It contains
+        panel rows and samples with resolved file paths.
+    progress_cb
+        Optional callback receiving normalized progress dictionaries.
 
-    It contains:
-      - panel_rows: list of dicts
-      - samples: list of dicts with file_paths relative to DATA_DIR
+    Returns
+    -------
+    dict
+        Dictionary containing the frontend payload and plot cache.
 
-    Progress is tracked by file-level work units:
-      - QC
-      - lymphocyte gating
-      - control stats
-      - apply file
-      - plot cache
+    Notes
+    -----
+    This function does not write job state to Redis and does not mark a job as
+    completed or failed. Those actions belong to the application service.
     """
     total_files = _count_files(req_dict)
-    _init_progress(job_id, total_files)
 
-    progress = _make_progress_callback(
-        job_id=job_id,
-        total_files=total_files,
+    logger.info(
+        "Starting FCXM analysis with %d files.",
+        total_files,
     )
 
-    try:
-        progress({"stage": "build_dataset"})
-        ds = _build_dataset(req_dict)
+    counted_stage_count = 5
+    total_work = max(
+        1,
+        total_files * counted_stage_count,
+    )
 
-        progress({"stage": "build_panel"})
-        panel, marker_to_population = build_panel_from_rows(req_dict["panel_rows"])
+    _emit_progress(
+        progress_cb,
+        {
+            "status": "running",
+            "message": _stage_message("starting"),
+            "stage": "starting",
+            "total_files": total_work,
+            "done_files": 0,
+            "current_file": None,
+            "done_filenames": [],
+        },
+    )
 
-        gater = Gater(panel, GatingConfig())
+    progress = _make_progress_callback(
+        total_files=total_files,
+        progress_cb=progress_cb,
+    )
 
-        fitted = gater.fit(
-            ds,
-            progress_cb=progress,
-        )
+    progress({"stage": "build_dataset"})
+    dataset = _build_dataset(req_dict)
 
-        results = gater.apply(
-            ds,
-            fitted,
-            progress_cb=progress,
-        )
+    progress({"stage": "build_panel"})
+    panel, marker_to_population = build_panel_from_rows(
+        req_dict["panel_rows"]
+    )
 
-        progress({"stage": "payload"})
+    gater = Gater(
+        panel,
+        GatingConfig(),
+    )
 
-        payload, plot_cache = make_results_payload(
-            ds=ds,
-            gater=gater,
-            fitted=fitted,
-            results=results,
-            marker_to_population=marker_to_population,
-            max_points=5000,
-            seed=0,
-            progress_cb=progress,
-        )
+    fitted = gater.fit(
+        dataset,
+        progress_cb=progress,
+    )
 
-        _mark_done(job_id)
+    results = gater.apply(
+        dataset,
+        fitted,
+        progress_cb=progress,
+    )
 
-        return {
-            "payload": payload,
-            "plot_cache": plot_cache,
-        }
+    progress({"stage": "payload"})
 
-    except Exception as e:
-        _mark_error(job_id, e)
-        print(f"FCXM analysis failed for job {job_id}: {repr(e)}")
-        raise
+    payload, plot_cache = make_results_payload(
+        ds=dataset,
+        gater=gater,
+        fitted=fitted,
+        results=results,
+        marker_to_population=marker_to_population,
+        max_points=5000,
+        seed=0,
+        progress_cb=progress,
+    )
+
+    logger.info(
+        "Finished FCXM analysis with %d files.",
+        total_files,
+    )
+
+    return {
+        "payload": payload,
+        "plot_cache": plot_cache,
+    }
 
 
 def run_fcxm_analysis(
-    req_dict: Dict[str, Any],
-    job_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    req_dict: dict[str, Any],
+    *,
+    progress_cb: ProgressCallback | None = None,
+) -> dict[str, Any]:
+    """
+    Public FCXM analysis entry point.
+    """
     return run_fcxm_pipeline(
         req_dict=req_dict,
-        job_id=job_id,
+        progress_cb=progress_cb,
     )

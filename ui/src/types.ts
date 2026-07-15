@@ -37,16 +37,6 @@ export const ROLE_LABEL: Record<WellType, string> = {
   empty:    "empty",
 };
 
-export type ProcessRequest = {
-  layout: PlateLayout;
-  image_order: WellID[];
-  template_filename?: string | null;
-  image_filenames: string[];
-  assay_type?: "pra" | "crossmatch";
-
-  hla_layout_upload_id?: string | null;
-  pra_positivity_threshold?: number;
-};
 
 export type WellSummary = {
   well_id: WellID;

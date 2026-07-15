@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useJobSession } from "../hooks/useJobSession";
 import { Toolbar } from "../components/Toolbar";
 import { UploadCard } from "../components/UploadCard";
 import PlateEditorWithOrder from "../components/PlateEditorWithOrder";
@@ -32,12 +33,13 @@ import {
   buildImageOrder,
   buildImagesByWell,
   buildInitialWellStatus,
-  buildThumbnailUrls,
+  buildJobThumbnailUrls,
   buildWellToFileMap,
   clampPercent,
   computeSummary,
   countWellsByType,
   extractImageScores,
+  preloadImageUrls,
   type WellRunStatus,
 } from "../lib/plateAssay";
 
@@ -45,13 +47,11 @@ type ActiveStep = 1 | 2 | 3 | 4;
 
 export default function CDCApp() {
   const { t } = useTranslation();
+  const { jobId, ensureJobId, resetJob } = useJobSession("pra");
 
   const [flip, setFlip] = useState(true);
 
   const [layout, setLayout] = useState<any | null>(null);
-  const [hlaLayoutUploadId, setHlaLayoutUploadId] = useState<string | null>(
-    null
-  );
 
   const [uploadResetKey, setUploadResetKey] = useState(0);
 
@@ -65,7 +65,7 @@ export default function CDCApp() {
   const [msg, setMsg] = useState<string | null>(null);
 
   const [wellStatus, setWellStatus] = useState<Record<WellID, WellRunStatus>>(
-    {} as any
+    {} as any,
   );
 
   const [imageScores, setImageScores] = useState<Record<string, number>>({});
@@ -78,7 +78,6 @@ export default function CDCApp() {
   const [plateVisited, setPlateVisited] = useState(false);
   const [autoJumpedToPlate, setAutoJumpedToPlate] = useState(false);
 
-  const [processJobId, setProcessJobId] = useState<string | null>(null);
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
 
@@ -90,7 +89,6 @@ export default function CDCApp() {
     const first = saved?.[0] ?? null;
 
     setLayout(first);
-    setHlaLayoutUploadId(first?.upload_id ?? null);
 
     setPlateVisited(false);
     setAutoJumpedToPlate(false);
@@ -98,10 +96,8 @@ export default function CDCApp() {
 
   const handleImagesPicked = useCallback((files: File[]) => {
     const validFiles = files.filter(isSupportedImageFile);
-  
-    setImageFiles((prev) =>
-      sameFiles(prev, validFiles) ? prev : validFiles
-    );
+
+    setImageFiles((prev) => (sameFiles(prev, validFiles) ? prev : validFiles));
   }, []);
 
   const handleImagesUploaded = useCallback((saved: any[]) => {
@@ -114,14 +110,27 @@ export default function CDCApp() {
 
   const imageOrder = useMemo(
     () => buildImageOrder(scanOrder, wells),
-    [scanOrder, wells]
+    [scanOrder, wells],
   );
 
   const imageURLs = useMemo(
-    () => buildThumbnailUrls(imageSavedNames, API_BASE),
-    [imageSavedNames]
+    () => buildJobThumbnailUrls(jobId, imageSavedNames, API_BASE),
+    [jobId, imageSavedNames]
   );
-
+  
+  useEffect(() => {
+    if (!jobId || imageURLs.length === 0) return;
+  
+    const controller = new AbortController();
+  
+    void preloadImageUrls(imageURLs, {
+      concurrency: 4,
+      signal: controller.signal,
+    });
+  
+    return () => controller.abort();
+  }, [jobId, imageURLs]);
+  
   const imagesByWell = useMemo(
     () => buildImagesByWell(ALL_WELLS, imageOrder, imageURLs),
     [imageOrder, imageURLs]
@@ -129,63 +138,63 @@ export default function CDCApp() {
 
   const summary = computeSummary(proc);
 
-  const hasLayout = !!layout || !!hlaLayoutUploadId;
+  const hasLayout = !!layout;
   const hasImages = imageSavedNames.length > 0;
   const hasOrder = imageOrder.length > 0;
 
   const negativeCount = useMemo(
     () => countWellsByType(ALL_WELLS, wells, "negative"),
-    [wells]
+    [wells],
   );
 
   const positiveCount = useMemo(
     () => countWellsByType(ALL_WELLS, wells, "positive"),
-    [wells]
+    [wells],
   );
 
   const sampleCount = useMemo(
     () => countWellsByType(ALL_WELLS, wells, "sample"),
-    [wells]
+    [wells],
   );
 
   const mappedImageCount = Math.min(imageSavedNames.length, imageOrder.length);
   const unmappedImageCount = Math.max(
     0,
-    imageSavedNames.length - imageOrder.length
+    imageSavedNames.length - imageOrder.length,
   );
   const missingImageCount = Math.max(
     0,
-    imageOrder.length - imageSavedNames.length
+    imageOrder.length - imageSavedNames.length,
   );
 
   const uploadStepStatus: StepState =
     !hasLayout && !hasImages
       ? "not_started"
       : !hasLayout || !hasImages
-      ? "needs_attention"
-      : "done";
+        ? "needs_attention"
+        : "done";
 
   const plateStepStatus: StepState =
     !hasLayout || !hasImages
       ? "not_started"
       : !hasOrder
-      ? "needs_attention"
-      : !plateVisited
-      ? "needs_review"
-      : missingImageCount > 0
-      ? "needs_attention"
-      : "done";
+        ? "needs_attention"
+        : !plateVisited
+          ? "needs_review"
+          : missingImageCount > 0
+            ? "needs_attention"
+            : "done";
 
   const runStepStatus: StepState =
     jobStatus === "error"
       ? "error"
       : jobStatus === "queued" || jobStatus === "running" || busy
-      ? "running"
-      : jobStatus === "done"
-      ? "done"
-      : hasLayout && hasImages && hasOrder && missingImageCount === 0
-      ? "ready"
-      : "not_started";
+        ? "running"
+        : jobStatus === "done"
+          ? "done"
+          : hasLayout && hasImages && hasOrder && missingImageCount === 0
+            ? "ready"
+            : "not_started";
 
   const reportStepStatus: StepState =
     jobStatus === "done" && summary ? "ready" : "not_started";
@@ -198,8 +207,7 @@ export default function CDCApp() {
     imageOrder.length > 0 &&
     missingImageCount === 0;
 
-  const canDownloadSummary =
-    jobStatus === "done" && !!processJobId && !summaryBusy;
+  const canDownloadSummary = jobStatus === "done" && !!jobId && !summaryBusy;
 
   useEffect(() => {
     if (autoJumpedToPlate) return;
@@ -219,11 +227,11 @@ export default function CDCApp() {
   }
 
   function resetExperiment() {
+    void resetJob();
     setUploadResetKey((x) => x + 1);
 
     setFlip(true);
     setLayout(null);
-    setHlaLayoutUploadId(null);
 
     setImageFiles([]);
     setImageSavedNames([]);
@@ -244,19 +252,18 @@ export default function CDCApp() {
     setPlateVisited(false);
     setAutoJumpedToPlate(false);
 
-    setProcessJobId(null);
     setSummaryBusy(false);
     setSummaryError(null);
   }
 
   async function onDownloadSummary() {
-    if (!processJobId) return;
+    if (!jobId) return;
 
     setSummaryBusy(true);
     setSummaryError(null);
 
     try {
-      await downloadCDCSummaryPdf(processJobId);
+      await downloadCDCSummaryPdf(jobId);
     } catch (err: any) {
       setSummaryError(err?.message || "Could not download summary PDF.");
     } finally {
@@ -276,28 +283,25 @@ export default function CDCApp() {
     setImageScores({});
     setJobStage(null);
 
-    setProcessJobId(null);
     setSummaryBusy(false);
     setSummaryError(null);
 
     const wellToFileAtRun = buildWellToFileMap(imageOrder, imageSavedNames);
 
     try {
-      if (!hlaLayoutUploadId) {
+      if (!layout) {
         throw new Error(
-          "PRA requires a parsed HLA Excel layout before processing."
+          "PRA requires a parsed HLA Excel layout before processing.",
         );
       }
 
-      const { job_id } = await runProcess(wells, imageOrder, {
-        templateFilename: null,
-        imageFilenames: imageSavedNames,
-        assayType: "pra",
-        hlaLayoutUploadId,
-        praPositivityThreshold: 20,
-      });
+      const activeJobId = jobId ?? (await ensureJobId());
 
-      setProcessJobId(job_id);
+      const { job_id } = await runProcess(activeJobId, wells, imageOrder, {
+        imageFilenames: imageSavedNames,
+        praPositivityThreshold: 20,
+        flipVertical: flip,
+      });
 
       const poll = async () => {
         try {
@@ -309,19 +313,22 @@ export default function CDCApp() {
           const pct = clampPercent(prog.done, prog.total);
           if (pct !== null) setProgressPercent(pct);
 
-          setWellStatus((prev) => {
-            const next = { ...prev };
-
-            if (prog.done_wells) {
-              prog.done_wells.forEach((w) => {
-                next[w as WellID] = "done";
-              });
+          setWellStatus(() => {
+            const next = buildInitialWellStatus(imageOrder);
+            const doneWells = new Set((prog.done_wells ?? []).map(String));
+          
+            for (const wellId of doneWells) {
+              next[wellId as WellID] = "done";
             }
-
-            if (prog.current_well) {
-              next[prog.current_well as WellID] = "running";
+          
+            const currentWell = prog.current_well
+              ? String(prog.current_well)
+              : null;
+          
+            if (currentWell && !doneWells.has(currentWell)) {
+              next[currentWell as WellID] = "running";
             }
-
+          
             return next;
           });
 
@@ -343,15 +350,13 @@ export default function CDCApp() {
           if (prog.status === "error") {
             const stage = prog.failed_stage ?? prog.stage;
             const supportId = prog.support_id ?? job_id;
-          
+
             const details = [
               prog.error || t("cdc_app.messages.process_failed"),
               prog.error_type
                 ? `${t("common.errors.type")}: ${prog.error_type}`
                 : null,
-              stage
-                ? `${t("common.errors.stage")}: ${stage}`
-                : null,
+              stage ? `${t("common.errors.stage")}: ${stage}` : null,
               prog.failed_well
                 ? `${t("common.errors.well")}: ${prog.failed_well}`
                 : null,
@@ -359,7 +364,7 @@ export default function CDCApp() {
             ]
               .filter(Boolean)
               .join("\n");
-          
+
             setMsg(details);
             setBusy(false);
             setProgressPercent(null);
@@ -396,12 +401,12 @@ export default function CDCApp() {
     jobStatus === "queued"
       ? t("cdc_app.status.waiting_to_start")
       : jobStatus === "running"
-      ? stageMessage || t("cdc_app.status.processing_plate_images")
-      : jobStatus === "done"
-      ? msg || t("cdc_app.status.analysis_done")
-      : jobStatus === "error"
-      ? msg || t("cdc_app.status.process_failed")
-      : msg;
+        ? stageMessage || t("cdc_app.status.processing_plate_images")
+        : jobStatus === "done"
+          ? msg || t("cdc_app.status.analysis_done")
+          : jobStatus === "error"
+            ? msg || t("cdc_app.status.process_failed")
+            : msg;
 
   return (
     <div className="h-screen overflow-hidden bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 flex flex-col">
@@ -427,14 +432,14 @@ export default function CDCApp() {
                 !hasLayout && !hasImages
                   ? t("cdc_app.steps.upload.summary_missing_layout_and_images")
                   : !hasLayout
-                  ? t("cdc_app.steps.upload.summary_layout_missing", {
-                      count: imageSavedNames.length,
-                    })
-                  : !hasImages
-                  ? t("cdc_app.steps.upload.summary_images_missing")
-                  : t("cdc_app.steps.upload.summary_done", {
-                      count: imageSavedNames.length,
-                    })
+                    ? t("cdc_app.steps.upload.summary_layout_missing", {
+                        count: imageSavedNames.length,
+                      })
+                    : !hasImages
+                      ? t("cdc_app.steps.upload.summary_images_missing")
+                      : t("cdc_app.steps.upload.summary_done", {
+                          count: imageSavedNames.length,
+                        })
               }
             />
 
@@ -448,14 +453,14 @@ export default function CDCApp() {
                 !hasLayout || !hasImages
                   ? t("cdc_app.steps.review.summary_upload_first")
                   : !hasOrder
-                  ? t("cdc_app.steps.review.summary_set_scan_order")
-                  : missingImageCount > 0
-                  ? t("cdc_app.steps.review.summary_missing_images", {
-                      count: missingImageCount,
-                    })
-                  : t("cdc_app.steps.review.summary_done", {
-                      count: mappedImageCount,
-                    })
+                    ? t("cdc_app.steps.review.summary_set_scan_order")
+                    : missingImageCount > 0
+                      ? t("cdc_app.steps.review.summary_missing_images", {
+                          count: missingImageCount,
+                        })
+                      : t("cdc_app.steps.review.summary_done", {
+                          count: mappedImageCount,
+                        })
               }
             />
 
@@ -469,10 +474,10 @@ export default function CDCApp() {
                 jobStatus === "done"
                   ? t("cdc_app.steps.run.summary_done")
                   : jobStatus === "running" || jobStatus === "queued"
-                  ? t("cdc_app.steps.run.summary_running")
-                  : canRun
-                  ? t("cdc_app.steps.run.summary_ready")
-                  : t("cdc_app.steps.run.summary_incomplete")
+                    ? t("cdc_app.steps.run.summary_running")
+                    : canRun
+                      ? t("cdc_app.steps.run.summary_ready")
+                      : t("cdc_app.steps.run.summary_incomplete")
               }
             />
 
@@ -519,10 +524,11 @@ export default function CDCApp() {
               <UploadCard
                 key={`layout-${uploadResetKey}`}
                 title={t("cdc_app.upload_cards.layout.title")}
-                accept=".xlsx,.xls"
+                accept=".xlsx,.xlsm"
                 allowDirectory={false}
                 mode="excel-layout"
-                fileFilter={(file) => /\.(xlsx|xls)$/i.test(file.name)}
+                ensureJobId={ensureJobId}
+                fileFilter={(file) => /\.(xlsx|xlsm)$/i.test(file.name)}
                 onPicked={() => {}}
                 onUploaded={handleLayoutUploaded}
                 className="h-[320px]"
@@ -534,6 +540,8 @@ export default function CDCApp() {
                 accept=".tif,.tiff,.png,.jpg,.jpeg,.bmp,.webp"
                 allowDirectory
                 autoUpload
+                ensureJobId={ensureJobId}
+                uploadKind="images"
                 fileFilter={isSupportedImageFile}
                 onPicked={handleImagesPicked}
                 onUploaded={handleImagesUploaded}
@@ -627,7 +635,9 @@ export default function CDCApp() {
                       <div className="text-xs text-neutral-600 dark:text-neutral-400">
                         {t("cdc_app.plate_checks.scan_order_wells")}
                       </div>
-                      <div className="mt-1 font-semibold">{imageOrder.length}</div>
+                      <div className="mt-1 font-semibold">
+                        {imageOrder.length}
+                      </div>
                     </div>
                   </div>
 
@@ -698,12 +708,16 @@ export default function CDCApp() {
                       !hasLayout
                         ? t("cdc_app.run_button_titles.upload_layout_first")
                         : !hasImages
-                        ? t("cdc_app.run_button_titles.upload_images_first")
-                        : !hasOrder
-                        ? t("cdc_app.run_button_titles.set_scan_order_first")
-                        : missingImageCount > 0
-                        ? t("cdc_app.run_button_titles.missing_ordered_images")
-                        : t("cdc_app.run_button_titles.run_analysis")
+                          ? t("cdc_app.run_button_titles.upload_images_first")
+                          : !hasOrder
+                            ? t(
+                                "cdc_app.run_button_titles.set_scan_order_first",
+                              )
+                            : missingImageCount > 0
+                              ? t(
+                                  "cdc_app.run_button_titles.missing_ordered_images",
+                                )
+                              : t("cdc_app.run_button_titles.run_analysis")
                     }
                   >
                     {busy
@@ -733,7 +747,9 @@ export default function CDCApp() {
                       <div className="text-xs text-neutral-600 dark:text-neutral-400">
                         {t("cdc_app.run_setup.wells_to_process")}
                       </div>
-                      <div className="mt-1 font-semibold">{imageOrder.length}</div>
+                      <div className="mt-1 font-semibold">
+                        {imageOrder.length}
+                      </div>
                     </div>
 
                     <div className="rounded-xl border p-3 dark:border-neutral-800">
@@ -741,7 +757,9 @@ export default function CDCApp() {
                         {t("cdc_app.run_setup.template")}
                       </div>
                       <div className="mt-1 font-semibold truncate">
-                        {hlaLayoutUploadId || t("cdc_app.run_setup.none")}
+                        {layout?.lot_no ??
+                          layout?.upload_id ??
+                          t("cdc_app.run_setup.none")}
                       </div>
                     </div>
                   </div>
@@ -775,7 +793,6 @@ export default function CDCApp() {
 
             <div className="space-y-4">
               <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4">
-
                 <PRASummaryGrid
                   summary={summary}
                   result={proc}
@@ -811,3 +828,4 @@ export default function CDCApp() {
     </div>
   );
 }
+
