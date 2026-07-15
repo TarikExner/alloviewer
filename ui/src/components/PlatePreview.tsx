@@ -3,7 +3,13 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { API_BASE } from "../App";
 import { COLS, ROWS } from "../plateConfig";
-import { type ProcessResponse, type WellID } from "../types";
+import type {
+  ManualWellCall,
+  ProcessResponse,
+  WellCall,
+  WellClassificationOverride,
+  WellID,
+} from "../types";
 import PlatePopupWindow from "./PlatePopupWindow";
 
 type WellRunStatus = "idle" | "running" | "done";
@@ -30,6 +36,10 @@ type PlatePreviewProps = {
   jobStatus?: JobRunStatus;
   imageScores?: Record<string, number>;
   columnLabels?: Partial<Record<number, string>>;
+  onWellOverride?: (
+    well: WellID,
+    call: ManualWellCall | null,
+  ) => Promise<void>;
 };
 
 export function PlatePreview({
@@ -42,6 +52,7 @@ export function PlatePreview({
   jobStatus = "idle",
   imageScores,
   columnLabels,
+  onWellOverride,
 }: PlatePreviewProps) {
   const { t } = useTranslation();
   const gridWrapRef = useRef<HTMLDivElement | null>(null);
@@ -52,6 +63,8 @@ export function PlatePreview({
   const [pinned, setPinned] = useState(false);
   const [pos, setPos] = useState({ left: 0, top: 0 });
   const [detailWell, setDetailWell] = useState<WellID | null>(null);
+  const [overrideBusy, setOverrideBusy] = useState(false);
+  const [overrideError, setOverrideError] = useState<string | null>(null);
 
   useEffect(() => {
     const element = gridWrapRef.current;
@@ -78,6 +91,10 @@ export function PlatePreview({
       }
     };
   }, []);
+
+  useEffect(() => {
+    setOverrideError(null);
+  }, [hoverWell]);
 
   const rowsToRender = useMemo(
     () => (flipVertical ? [...ROWS].reverse() : ROWS),
@@ -129,12 +146,76 @@ export function PlatePreview({
     return finiteNumber(result?.wells?.[well]?.frac_pos);
   }
 
+
+  function wellResultOf(well: WellID): any | null {
+    return result?.wells?.[well] ?? null;
+  }
+
+  function automatedCallOf(well: WellID): WellCall | null {
+    const wellResult = wellResultOf(well);
+    const explicit = wellResult?.automated_call;
+
+    if (
+      explicit === "positive" ||
+      explicit === "negative" ||
+      explicit === "borderline" ||
+      explicit === "not_available"
+    ) {
+      return explicit;
+    }
+
+    const role = String(wellResult?.role ?? "").toLowerCase();
+
+    if (role === "positive") return "positive";
+    if (role === "negative") return "negative";
+    if (role !== "sample") return null;
+
+    const corrected = correctedFracOf(well);
+    if (corrected === null) return "not_available";
+
+    const threshold = finiteNumber(result?.pra_analysis?.positivity_threshold) ?? 20;
+    return corrected >= threshold ? "positive" : "negative";
+  }
+
+  function manualOverrideOf(
+    well: WellID,
+  ): WellClassificationOverride | null {
+    const override = wellResultOf(well)?.manual_override;
+
+    if (
+      override &&
+      (override.call === "positive" || override.call === "negative")
+    ) {
+      return override as WellClassificationOverride;
+    }
+
+    return null;
+  }
+
+  function effectiveCallOf(well: WellID): WellCall | null {
+    const explicit = wellResultOf(well)?.effective_call;
+
+    if (
+      explicit === "positive" ||
+      explicit === "negative" ||
+      explicit === "borderline" ||
+      explicit === "not_available"
+    ) {
+      return explicit;
+    }
+
+    return manualOverrideOf(well)?.call ?? automatedCallOf(well);
+  }
+
   const data = useMemo(() => {
     if (!hoverWell) return null;
 
     const img = imagesByWell[hoverWell] || null;
     const correctedFrac = correctedFracOf(hoverWell);
     const rawFrac = rawFracOf(hoverWell);
+    const automatedCall = automatedCallOf(hoverWell);
+    const effectiveCall = effectiveCallOf(hoverWell);
+    const manualOverride = manualOverrideOf(hoverWell);
     let role: string | null = null;
     let status = "ok";
 
@@ -191,6 +272,9 @@ export function PlatePreview({
       role,
       correctedFrac,
       rawFrac,
+      automatedCall,
+      effectiveCall,
+      manualOverride,
       status,
       race,
       comboId,
@@ -199,10 +283,14 @@ export function PlatePreview({
     };
   }, [hoverWell, imagesByWell, result, layout, imageScores]);
 
-  const isHoverPositive =
-    !!data && data.correctedFrac !== null && data.correctedFrac > 20;
+  const isHoverPositive = !!data && data.effectiveCall === "positive";
+  const canOverrideHoveredWell =
+    !!hoverWell &&
+    data?.role === "sample" &&
+    data.correctedFrac !== null &&
+    !!onWellOverride;
   const CARD_W = 520;
-  const CARD_H = 340;
+  const CARD_H = 460;
   const MARGIN = 8;
 
   const detailSegmentedImageUrl = useMemo(() => {
@@ -285,6 +373,23 @@ export function PlatePreview({
 
   function onContainerMouseLeave() {
     if (!pinned) setHoverWell(null);
+  }
+
+  async function applyHoverOverride(call: ManualWellCall | null) {
+    if (!hoverWell || !onWellOverride || overrideBusy) return;
+
+    setOverrideBusy(true);
+    setOverrideError(null);
+
+    try {
+      await onWellOverride(hoverWell, call);
+    } catch (error: any) {
+      setOverrideError(
+        error?.message || t("PlatePreview.override.update_error"),
+      );
+    } finally {
+      setOverrideBusy(false);
+    }
   }
 
   function progressLabel() {
@@ -406,9 +511,8 @@ export function PlatePreview({
               {COLS.map((column) => {
                 const id = `${row}${column}` as WellID;
                 const url = imagesByWell[id] || null;
-                const correctedFraction = correctedFracOf(id);
-                const isPositive =
-                  correctedFraction !== null && correctedFraction > 20;
+                const isPositive = effectiveCallOf(id) === "positive";
+                const manualOverride = manualOverrideOf(id);
                 const status = wellStatus?.[id] ?? "idle";
                 const isRunning = status === "running";
                 const isDone = status === "done" || (jobStatus === "done" && !!url);
@@ -465,7 +569,13 @@ export function PlatePreview({
                     }}
                     title={id}
                     aria-label={wellAriaLabel(id, !!url, isPositive)}
-                  />
+                  >
+                    {manualOverride ? (
+                      <span className="absolute right-0.5 top-0.5 grid h-5 min-w-5 place-items-center rounded-full border border-violet-700 bg-violet-600 px-1 text-[10px] font-bold text-white shadow">
+                        U
+                      </span>
+                    ) : null}
+                  </div>
                 );
               })}
             </React.Fragment>
@@ -487,7 +597,7 @@ export function PlatePreview({
             top: pos.top,
             width: 520,
             maxWidth: "min(90vw, 520px)",
-            maxHeight: "min(75vh, 360px)",
+            maxHeight: "min(82vh, 480px)",
             padding: 12,
             overflow: "auto",
           }}
@@ -509,7 +619,7 @@ export function PlatePreview({
             <div className="text-sm text-neutral-900 dark:text-neutral-100">
               <div className="font-medium mb-1">
                 {t("PlatePreview.fields.well")}: {hoverWell}
-                {data.correctedFrac !== null && data.correctedFrac > 20 && (
+                {data.effectiveCall === "positive" && (
                   <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
                     {t("PlatePreview.positive")}
                   </span>
@@ -524,6 +634,29 @@ export function PlatePreview({
                   {data.role}
                 </div>
               )}
+
+              <div>
+                <span className="text-neutral-600 dark:text-neutral-400">
+                  {t("PlatePreview.fields.automated_call")}:
+                </span>{" "}
+                {data.automatedCall
+                  ? t(`PlatePopupWindow.calls.${data.automatedCall}`)
+                  : t("PlatePreview.empty_value")}
+              </div>
+
+              <div>
+                <span className="text-neutral-600 dark:text-neutral-400">
+                  {t("PlatePreview.fields.effective_call")}:
+                </span>{" "}
+                {data.effectiveCall
+                  ? t(`PlatePopupWindow.calls.${data.effectiveCall}`)
+                  : t("PlatePreview.empty_value")}
+                {data.manualOverride ? (
+                  <span className="ml-2 rounded-full border border-violet-300 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-800 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-200">
+                    {t("PlatePreview.user_override")}
+                  </span>
+                ) : null}
+              </div>
 
               <div>
                 <span className="text-neutral-600 dark:text-neutral-400">
@@ -549,6 +682,83 @@ export function PlatePreview({
                 </span>{" "}
                 {data.status}
               </div>
+
+              {data.role === "sample" && onWellOverride ? (
+                <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-2.5 dark:border-blue-900 dark:bg-blue-950/40">
+                  <div className="text-xs text-blue-800 dark:text-blue-200">
+                    {pinned
+                      ? t("PlatePreview.override.pinned_hint")
+                      : t("PlatePreview.override.hint")}
+                  </div>
+
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void applyHoverOverride("negative")}
+                      disabled={
+                        !pinned ||
+                        !canOverrideHoveredWell ||
+                        overrideBusy
+                      }
+                      className={[
+                        "w-full rounded-md border px-2 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60",
+                        data.manualOverride?.call === "negative"
+                          ? "border-emerald-700 bg-emerald-700 text-white"
+                          : "border-emerald-300 bg-white text-emerald-800 hover:bg-emerald-50 dark:border-emerald-800 dark:bg-neutral-900 dark:text-emerald-200 dark:hover:bg-emerald-950",
+                      ].join(" ")}
+                    >
+                      {t("PlatePopupWindow.actions.declare_negative")}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void applyHoverOverride("positive")}
+                      disabled={
+                        !pinned ||
+                        !canOverrideHoveredWell ||
+                        overrideBusy
+                      }
+                      className={[
+                        "w-full rounded-md border px-2 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60",
+                        data.manualOverride?.call === "positive"
+                          ? "border-rose-700 bg-rose-700 text-white"
+                          : "border-rose-300 bg-white text-rose-800 hover:bg-rose-50 dark:border-rose-800 dark:bg-neutral-900 dark:text-rose-200 dark:hover:bg-rose-950",
+                      ].join(" ")}
+                    >
+                      {t("PlatePopupWindow.actions.declare_positive")}
+                    </button>
+                  </div>
+
+                  {data.manualOverride ? (
+                    <button
+                      type="button"
+                      onClick={() => void applyHoverOverride(null)}
+                      disabled={!pinned || overrideBusy}
+                      className="mt-2 w-full rounded-md border bg-white px-2 py-1 text-xs font-medium hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:hover:bg-neutral-800"
+                    >
+                      {t("PlatePopupWindow.actions.restore_automated")}
+                    </button>
+                  ) : null}
+
+                  {pinned && !canOverrideHoveredWell ? (
+                    <div className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+                      {t("PlatePreview.override.unavailable")}
+                    </div>
+                  ) : null}
+
+                  {overrideBusy ? (
+                    <div className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+                      {t("PlatePreview.override.updating")}
+                    </div>
+                  ) : null}
+
+                  {overrideError ? (
+                    <div className="mt-2 text-xs text-red-700 dark:text-red-400">
+                      {overrideError}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
               <div className="mt-2">
                 <span className="text-neutral-600 dark:text-neutral-400">
@@ -626,6 +836,9 @@ export function PlatePreview({
           segmentedImageUrl={detailSegmentedImageUrl}
           correctedFraction={correctedFracOf(detailWell)}
           rawFraction={rawFracOf(detailWell)}
+          automatedCall={automatedCallOf(detailWell)}
+          effectiveCall={effectiveCallOf(detailWell)}
+          manualOverride={manualOverrideOf(detailWell)}
           onClose={() => setDetailWell(null)}
         />
       )}

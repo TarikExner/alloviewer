@@ -38,6 +38,10 @@ class ProcessRequest(BaseModel):
     flip_vertical: bool = False
 
 
+class WellClassificationOverrideRequest(BaseModel):
+    call: Literal["positive", "negative"] | None = None
+
+
 class ProcessStartResponse(BaseModel):
     job_id: str
 
@@ -185,4 +189,3 @@ class FcsDisplayNamesRequest(BaseModel):
 
 class FcsDisplayNamesResponse(BaseModel):
     names: dict[str, str]
-

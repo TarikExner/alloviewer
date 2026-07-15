@@ -5,34 +5,26 @@
     "use_policy": "Política de uso",
     "contact": "Contacto"
   },
-
   "home": {
     "get_started": "Empezar",
     "disclaimer_strong": "Solo para uso en investigación.",
     "disclaimer_text": "AlloViewer es una herramienta de software experimental y no está aprobada para diagnóstico clínico, decisiones terapéuticas, asignación de trasplantes ni manejo de pacientes.",
     "disclaimer_link": "Leer la política de uso."
   },
-
   "use_policy": {
     "title": "Política de uso",
     "banner_strong": "Solo para uso en investigación.",
     "banner_text": "AlloViewer es una herramienta de software experimental. No está certificada ni aprobada para diagnóstico clínico, decisiones terapéuticas, asignación de trasplantes ni manejo de pacientes.",
-
     "research_heading": "Solo para investigación y evaluación de flujos de trabajo",
     "research_text": "AlloViewer se proporciona para uso en investigación, desarrollo de métodos, enseñanza y evaluación de flujos de trabajo. El software no está destinado a reemplazar procedimientos de laboratorio establecidos, revisión por expertos ni vías validadas de decisión clínica.",
-
     "no_clinical_heading": "Sin uso clínico independiente",
     "no_clinical_text": "Los resultados generados por AlloViewer no deben utilizarse como única base para el diagnóstico clínico, la evaluación de compatibilidad donante-receptor, la elegibilidad para trasplante, la asignación de órganos, las decisiones terapéuticas ni el manejo de pacientes.",
-
     "review_heading": "Revisión por expertos requerida",
     "review_text": "Todos los resultados requieren una revisión independiente por expertos cualificados de laboratorio o clínicos. Los usuarios son responsables de comprobar los datos de entrada, la calidad del ensayo, el rendimiento de los controles, los resultados del software y cualquier interpretación posterior.",
-
     "validation_heading": "Validación local y responsabilidad regulatoria",
     "validation_text": "Los usuarios son responsables de validar AlloViewer en su propio entorno de laboratorio antes de cualquier uso operativo. Los usuarios también son responsables de cumplir las normas institucionales aplicables, los sistemas de gestión de calidad, los requisitos de protección de datos y los requisitos regulatorios.",
-
     "liability_heading": "Responsabilidad y responsabilidad legal",
     "liability_text": "Los autores y desarrolladores no aceptan responsabilidad por decisiones clínicas, regulatorias, operativas o financieras tomadas sobre la base de resultados de software no validados. El uso del software se realiza bajo la propia responsabilidad del usuario.",
-
     "data_heading": "Manejo de datos",
     "data_text": "Los usuarios no deben cargar datos identificables de pacientes a menos que cuenten con la base legal, institucional y ética requerida para hacerlo. Los archivos cargados deben revisarse y desidentificarse cuando corresponda antes de su uso."
   },
@@ -58,22 +50,16 @@
   },
   "about": {
     "title": "Acerca de AlloViewer",
-
     "purpose_heading": "Propósito",
     "purpose_text": "AlloViewer es una plataforma de software basada en la web para la interpretación estandarizada y trazable del diagnóstico de anticuerpos HLA. Permite el análisis automatizado de ensayos de citotoxicidad dependiente del complemento (CDC) basados en imágenes y de datos de crossmatch por citometría de flujo (FCXM), con el objetivo de reducir la interpretación dependiente del operador en las pruebas físicas de anticuerpos HLA.",
-
     "workflows_heading": "Flujos de trabajo compatibles",
     "workflows_text": "AlloViewer admite actualmente tres flujos de trabajo de ensayo: análisis de especificidad de anticuerpos HLA basado en CDC con paneles comerciales de células de prueba (CDC-PRA), análisis de crossmatch CDC y análisis FCXM. En CDC-PRA, los patrones de citotoxicidad a nivel de pocillo se asignan al diseño del panel de células de prueba cargado para apoyar la inferencia de posibles especificidades de anticuerpos HLA. En los ensayos de crossmatch CDC, los pocillos con linfocitos del donante se evalúan en cuanto a citotoxicidad tras la incubación con suero del receptor. En FCXM, los archivos .fcs cargados se analizan mediante detección automatizada de poblaciones y lecturas de IgG específicas de cada población.",
-
     "why_heading": "Por qué es importante",
     "why_text": "Los ensayos CDC y FCXM siguen siendo relevantes en las pruebas de histocompatibilidad, pero su interpretación puede depender en gran medida de la revisión manual. La puntuación microscópica de CDC suele ser semicuantitativa, mientras que el análisis FCXM depende comúnmente del gating manual de poblaciones y de una interpretación de fluorescencia definida por expertos. AlloViewer proporciona pasos de análisis fijos y reproducibles para que los resultados puedan compararse de forma más consistente entre operadores, ejecuciones y formatos de ensayo.",
-
     "how_heading": "Cómo funciona",
     "how_text": "Para la microscopía CDC, AlloViewer utiliza análisis de imágenes a resolución completa con un modelo U-Net entrenado mediante simulación para detectar linfocitos. Las células detectadas se clasifican usando controles positivos y negativos específicos del experimento en el espacio de fluorescencia rojo-verde, lo que permite la puntuación de citotoxicidad a nivel de pocillo y el manejo explícito de células inciertas. Para FCXM, AlloViewer aplica control de calidad, selección de linfocitos, detección de poblaciones basada en marcadores y extracción de señal IgG específica de cada gate. Cada flujo de trabajo está disponible mediante una interfaz web específica del ensayo y acceso basado en API.",
-
     "dev_heading": "Desarrollo",
     "dev_text": "AlloViewer fue desarrollado principalmente por {{cassian}} (Instituto de Medicina Transfusional e Inmunohematología, Servicio de Donación de Sangre de la Cruz Roja Alemana Baden-Württemberg-Hessen, Frankfurt) y {{tarik}} (División de Reumatología, Departamento de Medicina V, Hospital Universitario de Heidelberg) en un proyecto colaborativo (para consultar la lista completa de autores, véase nuestro artículo).",
-
     "license_heading": "Licencia y uso",
     "license_text": "AlloViewer está disponible bajo la licencia Creative Commons Attribution 4.0 International License (CC BY 4.0), salvo que se indique lo contrario. La versión actual está destinada a uso en investigación y a la evaluación de flujos de trabajo. No ha sido establecida como sistema independiente de decisión clínica, y se requiere validación prospectiva multicéntrica antes de su uso rutinario como apoyo a la toma de decisiones clínicas."
   },
@@ -92,62 +78,48 @@
     "cdc_pra": {
       "title": "Análisis CDC-PRA",
       "intro": "Utilice este flujo de trabajo para el análisis de especificidad de anticuerpos HLA basado en CDC con un panel comercial de células de prueba. AlloViewer asigna el patrón de citotoxicidad observado al diseño del panel cargado e informa posibles especificidades de anticuerpos.",
-
       "step1_title": "1. Cargar el diseño de la placa",
       "step1_body": "Comience cargando el diseño de la placa en formato .xlsx. El archivo debe describir el panel de células de prueba y el tipaje HLA vinculado a cada pocillo. El diseño es necesario porque los resultados CDC-PRA se interpretan a partir del patrón de pocillos positivos y negativos en todo el panel. Puede descargar el archivo de ejemplo a continuación para comprobar si tiene el mismo diseño. Utilice el diseño oficial de la empresa siempre que sea posible.",
       "step1_alt": "Carga del diseño de placa CDC-PRA",
       "download_example": "Descargar ejemplo de diseño .xlsx",
-
       "step2_title": "2. Cargar la carpeta de imágenes",
       "step2_body": "Cargue la carpeta que contiene las imágenes microscópicas de la placa. Las imágenes se asignan según su orden en la lista de imágenes cargada y el orden de escaneo seleccionado. Aunque los nombres de archivo se utilizan para la ordenación, revise cuidadosamente la tabla de asignación de imágenes antes de iniciar el análisis.",
       "step2_alt": "Carga de imágenes CDC-PRA",
-
       "step3_title": "3. Revisar la placa y la asignación de imágenes",
       "step3_body": "Revise los roles de los pocillos, el orden de escaneo y la asignación de imágenes a pocillos. Asegúrese de que cada imagen cargada esté asignada al pocillo correcto. El análisis solo debe iniciarse cuando se haya asignado el número esperado de pocillos y no falte ninguna imagen requerida.",
       "step3_alt": "Revisión de placa CDC-PRA",
-
       "step4_title": "4. Ejecutar el análisis y revisar los resultados",
       "step4_body": "Después de iniciar el análisis, AlloViewer segmenta los linfocitos, clasifica las células usando controles positivos y negativos, y calcula valores de citotoxicidad a nivel de pocillo. Los resultados incluyen el resultado de la placa, valores a nivel de pocillo, indicadores de calidad y un resumen de los patrones de reactividad inferidos que pueden compararse con el diseño del panel cargado.",
       "step4_alt": "Resultados CDC-PRA"
     },
-
     "cdc_xm": {
       "title": "Análisis CDC-XM",
       "intro": "Utilice este flujo de trabajo para el análisis de crossmatch por citotoxicidad dependiente del complemento basado en imágenes. AlloViewer procesa imágenes microscópicas de linfocitos del donante incubados con suero del receptor e informa lecturas de citotoxicidad por pocillo y modo celular.",
-
       "step1_title": "1. Cargar la carpeta de imágenes",
       "step1_body": "Cargue la carpeta que contiene las imágenes microscópicas CDC-XM. Los pocillos pueden asignarse como muestra, control positivo, control negativo, control IgM o vacío. El control IgM se utiliza para comprobar si el tratamiento con ditiotreitol (DTT) reduce eficazmente la reactividad mediada por IgM, lo que ayuda a separar la señal relacionada con IgM de la activación del complemento mediada por IgG, clínicamente relevante.",
       "step1_alt": "Carga de imágenes CDC-XM",
-
       "step2_title": "2. Revisar el diseño de la placa y los modos de columna",
       "step2_body": "Revise los roles de los pocillos y los modos de columna antes de ejecutar el análisis. T significa células T, B significa células B, y T/B significa que los resultados de células T y B están representados para el modo de columna seleccionado. Ajuste el diseño si el esquema de placa predeterminado no coincide con el experimento. Después, compruebe que las imágenes estén asignadas a los pocillos correctos.",
       "step2_alt": "Diseño de placa y modos de columna CDC-XM",
-
       "step3_title": "3. Ejecutar el análisis",
       "step3_body": "Cuando todos los pocillos, controles, modos celulares, orden de escaneo y asignaciones de imágenes sean correctos, inicie el análisis. AlloViewer detecta células individuales, clasifica células viables y lisadas usando controles internos, y calcula fracciones de citotoxicidad a nivel de pocillo.",
       "step3_alt": "Ejecución del análisis CDC-XM",
-
       "step4_title": "4. Revisar los resultados CDC-XM",
       "step4_body": "Después del procesamiento, revise la vista previa de la placa, el estado de los pocillos, los valores de citotoxicidad y la tabla de resumen. Los pocillos límite o inesperados deben revisarse manualmente, especialmente si los pocillos de control o el control IgM sugieren problemas del ensayo.",
       "step4_alt": "Resultados CDC-XM"
     },
-
     "fcxm": {
       "title": "Análisis FC-XM",
       "intro": "Utilice este flujo de trabajo para el análisis de crossmatch por citometría de flujo a partir de archivos .fcs. AlloViewer permite la extracción automatizada del panel, la asignación de muestras, la detección de poblaciones y las lecturas de IgG específicas de cada población.",
-
       "step1_title": "1. Cargar y asignar archivos .fcs",
       "step1_body": "Cargue la carpeta que contiene los archivos .fcs. Después de la carga, asigne los archivos a las tarjetas de muestra correctas. Se requiere un control negativo. Pueden añadirse controles positivos si están disponibles, y pueden añadirse tarjetas de muestra para pacientes o muestras de prueba. Los nombres mostrados pueden aparecer como nombres de archivo o nombres de tubo, según los metadatos FCS disponibles.",
       "step1_alt": "Carga FCS y asignación de muestras FC-XM",
-
       "step2_title": "2. Revisar el panel de marcadores",
       "step2_body": "AlloViewer lee el panel de marcadores a partir de los archivos .fcs cargados. Revise los canales detectados, los anticuerpos, los roles de los marcadores y las poblaciones objetivo antes de ejecutar el análisis. Debe seleccionarse al menos un marcador IgG, porque la interpretación final FC-XM depende de la extracción de la señal IgG específica de cada población.",
       "step2_alt": "Revisión del panel de marcadores FC-XM",
-
       "step3_title": "3. Ejecutar e inspeccionar los resultados",
       "step3_body": "Inicie el análisis después de revisar las muestras y el panel. AlloViewer realiza control de calidad, selección de linfocitos, detección de poblaciones guiada por marcadores y cálculo de lecturas IgG específicas de cada gate. La vista de resultados permite seleccionar una muestra, un archivo y un gate para inspeccionar diagramas de dispersión, curvas de densidad de IgG y métricas por población.",
       "step3_alt": "Ejecución e inspección de resultados FC-XM",
-
       "step4_title": "4. Definir la regla del informe y descargar el resumen",
       "step4_body": "Una vez completado el análisis, elija la métrica de positividad y el umbral utilizados para el informe. Las métricas disponibles incluyen razón de medianas, desplazamiento de mediana, índice de fluorescencia y porcentaje de células positivas. Descargue el resumen solo después de comprobar que el gate seleccionado y los resultados a nivel de muestra coinciden con la regla de interpretación prevista.",
       "step4_alt": "Configuración del informe FC-XM"
@@ -155,12 +127,10 @@
   },
   "cdc_app": {
     "toolbar_title": "AlloViewer - Ensayo de reactividad de panel CDC",
-
     "workflow": {
       "title": "Flujo de trabajo",
       "description": "Seleccione un paso. El área principal de trabajo permanece a la derecha."
     },
-
     "steps": {
       "upload": {
         "title": "Cargar archivos",
@@ -189,7 +159,6 @@
         "summary_not_ready": "Disponible después de la ejecución"
       }
     },
-
     "panels": {
       "upload": {
         "heading": "Paso 1 · Cargar archivos",
@@ -208,7 +177,6 @@
         "description": "Revise el resumen final después del análisis."
       }
     },
-
     "upload_cards": {
       "layout": {
         "title": "Diseño de placa (.xlsx)"
@@ -218,7 +186,6 @@
         "list_label": "Imágenes cargadas"
       }
     },
-
     "stats": {
       "layout": {
         "label": "Diseño",
@@ -232,7 +199,6 @@
         "label": "Archivos locales seleccionados"
       }
     },
-
     "plate_checks": {
       "title": "Comprobaciones de placa",
       "sample_wells": "Pocillos de muestra",
@@ -240,20 +206,17 @@
       "positive_controls": "Controles positivos",
       "scan_order_wells": "Pocillos en el orden de escaneo"
     },
-
     "warnings": {
       "no_negative_controls": "No se han seleccionado pocillos de control negativo.",
       "no_positive_controls": "No se han seleccionado pocillos de control positivo.",
       "missing_ordered_images": "{{count}} pocillo(s) ordenado(s) no tienen imagen.",
       "unmapped_images": "{{count}} imagen(es) cargada(s) no están asignadas a pocillos."
     },
-
     "actions": {
       "reset_experiment": "Restablecer experimento",
       "run_analysis": "Ejecutar análisis",
       "running": "Ejecutando…"
     },
-
     "run_button_titles": {
       "upload_layout_first": "Cargue primero el diseño de Excel",
       "upload_images_first": "Cargue primero las imágenes",
@@ -261,7 +224,6 @@
       "missing_ordered_images": "Algunos pocillos ordenados no tienen imágenes",
       "run_analysis": "Ejecutar análisis"
     },
-
     "run_setup": {
       "title": "Configuración de ejecución",
       "images_uploaded": "Imágenes cargadas",
@@ -269,28 +231,23 @@
       "template": "Plantilla",
       "none": "Ninguna"
     },
-
     "summary_values": {
       "title": "Valores del resumen"
     },
-
     "plate_result": {
       "title": "Resultado de la placa"
     },
-
     "messages": {
       "analysis_done": "Análisis completado.",
       "analysis_done_no_result": "El análisis finalizó, pero no se devolvió ningún resultado.",
       "process_failed": "El proceso falló."
     },
-
     "status": {
       "waiting_to_start": "Esperando inicio.",
       "processing_plate_images": "Procesando imágenes de la placa.",
       "analysis_done": "Análisis completado.",
       "process_failed": "El proceso falló."
     },
-
     "stage_messages": {
       "default": "Procesando imágenes de la placa.",
       "segmentation": "Segmentando células.",
@@ -306,12 +263,10 @@
   "FCXM": {
     "toolbar_title": "AlloViewer - Crossmatch por citometría de flujo",
     "empty_value": "—",
-
     "workflow": {
       "title": "Flujo de trabajo",
       "description": "Seleccione un paso. El área principal de trabajo permanece a la derecha."
     },
-
     "steps": {
       "upload": {
         "title": "Cargar y asignar",
@@ -341,7 +296,6 @@
         "summary_not_ready": "Disponible después de la ejecución"
       }
     },
-
     "panels": {
       "upload": {
         "heading": "Paso 1 · Cargar y asignar archivos",
@@ -360,25 +314,21 @@
         "description": "Defina la regla de positividad usada para el informe y luego descargue el resumen."
       }
     },
-
     "upload_card": {
       "title": "Archivos FCS (carpeta)",
       "uploaded_list_label": "Cargados (.fcs)"
     },
-
     "display_names": {
       "title": "Nombres mostrados",
       "use_file_names": "Usar nombres de archivo",
       "use_tube_names": "Usar nombres de tubo",
       "reading": "Leyendo etiquetas FCS…"
     },
-
     "sample_cards": {
       "title": "Tarjetas de muestra",
       "description": "El control negativo es obligatorio. El control positivo es opcional.",
       "drag_hint": "Arrastre los archivos cargados desde la lista izquierda a la tarjeta correcta."
     },
-
     "panel": {
       "title": "Panel",
       "files_uploaded": "{{count}} archivo(s) cargado(s)",
@@ -386,19 +336,16 @@
       "reading": "Leyendo panel desde archivos .fcs…",
       "no_igg_marker": "No se ha seleccionado ningún marcador IgG. Compruebe el panel antes de ejecutar."
     },
-
     "samples": {
       "title": "Muestras",
       "file_count": "{{count}} archivo",
       "file_count_plural": "{{count}} archivos"
     },
-
     "sample_types": {
       "negative_control": "Control negativo",
       "positive_control": "Control positivo",
       "sample": "Muestra"
     },
-
     "result_selection": {
       "title": "Selección de resultados",
       "selected_sample": "Muestra seleccionada",
@@ -407,7 +354,6 @@
       "no_files": "Sin archivos",
       "gate": "Gate"
     },
-
     "overview": {
       "title": "Resumen general",
       "description": "Curvas de densidad de IgG transformadas con asinh para controles y archivo seleccionado",
@@ -415,21 +361,17 @@
       "no_results_yet": "Aún no hay resultados.",
       "series_fallback": "Serie {{number}}"
     },
-
     "gating": {
       "title": "Estrategia de gating",
       "show": "Mostrar estrategia de gating",
       "no_plots_yet": "Aún no hay gráficos de gating."
     },
-
     "plots": {
       "vs": "{{x}} vs {{y}}"
     },
-
     "axes": {
       "igg": "IgG"
     },
-
     "metrics": {
       "igg_median": "Mediana de IgG",
       "events": "Eventos",
@@ -439,12 +381,10 @@
       "igg_positive_fraction": "Fracción IgG+",
       "percent_positive": "% pos"
     },
-
     "metrics_cards": {
       "selected_file": "Archivo seleccionado - {{label}}",
       "combined_sample": "Muestra combinada - {{label}}"
     },
-
     "report_settings": {
       "title": "Configuración del informe",
       "metric": "Métrica",
@@ -454,7 +394,6 @@
       "run_must_be_done": "La ejecución debe completarse antes de la descarga",
       "download_summary": "Descargar resumen"
     },
-
     "actions": {
       "reset_experiment": "Restablecer experimento",
       "add_sample": "Añadir muestra",
@@ -463,14 +402,12 @@
       "download_summary": "Descargar resumen",
       "preparing_summary": "Preparando resumen…"
     },
-
     "run_button_titles": {
       "panel_loading": "El panel aún se está cargando",
       "fix_panel_error": "Corrija primero el error del panel",
       "load_panel_first": "Cargue primero un panel",
       "run_analysis": "Ejecutar análisis"
     },
-
     "run_stages": {
       "default": "Ejecutando análisis.",
       "fit_qc": "Ejecutando CC de archivos.",
@@ -483,7 +420,6 @@
       "payload": "Generando paquete de resultados.",
       "plot_cache": "Generando caché de gráficos."
     },
-
     "messages": {
       "loading_results": "Cargando resultados…",
       "running_analysis": "Ejecutando análisis.",
@@ -503,12 +439,10 @@
   },
   "cdc_xm_app": {
     "toolbar_title": "AlloViewer - CDC-XM",
-
     "workflow": {
       "title": "Flujo de trabajo",
       "description": "Seleccione un paso. El área principal de trabajo permanece a la derecha."
     },
-
     "steps": {
       "upload": {
         "title": "Cargar imágenes",
@@ -535,7 +469,6 @@
         "summary_not_ready": "Disponible después de la ejecución"
       }
     },
-
     "panels": {
       "upload": {
         "heading": "Paso 1 · Cargar imágenes",
@@ -554,19 +487,16 @@
         "description": "Revise el resumen final después del análisis."
       }
     },
-
     "upload_cards": {
       "images": {
         "title": "Imágenes (carpeta)",
         "list_label": "Imágenes cargadas"
       }
     },
-
     "stats": {
       "images_uploaded": "Imágenes cargadas",
       "local_picked_files": "Archivos locales seleccionados"
     },
-
     "plate_checks": {
       "title": "Comprobaciones de placa",
       "sample_wells": "Pocillos de muestra",
@@ -575,7 +505,6 @@
       "igm_wells": "Pocillos IgM",
       "scan_order_wells": "Pocillos en el orden de escaneo"
     },
-
     "warnings": {
       "no_negative_controls": "No se han seleccionado pocillos de control negativo.",
       "no_positive_controls": "No se han seleccionado pocillos de control positivo.",
@@ -583,54 +512,45 @@
       "missing_ordered_images": "{{count}} pocillo(s) ordenado(s) no tienen imagen.",
       "unmapped_images": "{{count}} imagen(es) cargada(s) no están asignadas a pocillos."
     },
-
     "actions": {
       "reset_experiment": "Restablecer experimento",
       "run_analysis": "Ejecutar análisis",
       "running": "Ejecutando…"
     },
-
     "run_button_titles": {
       "upload_images_first": "Cargue primero las imágenes",
       "set_scan_order_first": "Defina primero el orden de escaneo",
       "missing_ordered_images": "Algunos pocillos ordenados no tienen imágenes",
       "run_analysis": "Ejecutar análisis"
     },
-
     "run_setup": {
       "title": "Configuración de ejecución",
       "images_uploaded": "Imágenes cargadas",
       "wells_to_process": "Pocillos a procesar",
       "cell_mode_columns": "Columnas de modo celular"
     },
-
     "cell_modes": {
       "t": "T",
       "b": "B",
       "tb": "T/B"
     },
-
     "summary_values": {
       "title": "Valores del resumen"
     },
-
     "plate_result": {
       "title": "Resultado de la placa"
     },
-
     "messages": {
       "analysis_done": "Análisis completado.",
       "analysis_done_no_result": "El análisis finalizó, pero no se devolvió ningún resultado.",
       "process_failed": "El proceso falló."
     },
-
     "status": {
       "waiting_to_start": "Esperando inicio.",
       "processing_plate_images": "Procesando imágenes de la placa.",
       "analysis_done": "Análisis completado.",
       "process_failed": "El proceso falló."
     },
-
     "stage_messages": {
       "default": "Procesando imágenes de la placa.",
       "segmentation": "Segmentando células.",
@@ -819,7 +739,6 @@
   "PlateGrid": {
     "title": "Placa (editor): Haga clic en un pocillo para seleccionar un tipo de muestra",
     "well_title": "{{well}} ({{role}})",
-
     "roles": {
       "positive": "control positivo",
       "negative": "control negativo",
@@ -827,7 +746,6 @@
       "empty": "vacío",
       "igm": "control IgM"
     },
-
     "actions": {
       "clear": "Borrar",
       "clear_title": "Marcar todos los pocillos como vacíos",
@@ -842,7 +760,10 @@
     "title": "Detalles del pocillo {{well}}",
     "description": "Imagen original y resultado de segmentación. Pase el cursor sobre la imagen original para revisar ambas vistas.",
     "actions": {
-      "close": "Cerrar"
+      "close": "Cerrar",
+      "declare_negative": "Declarar negativo",
+      "declare_positive": "Declarar positivo",
+      "restore_automated": "Restaurar la clasificación automática"
     },
     "images": {
       "original": {
@@ -865,6 +786,25 @@
       "original": "Original",
       "segmented": "Segmentada",
       "noSegmentation": "Sin segmentación"
+    },
+    "values": {
+      "corrected": "Fracción positiva corregida",
+      "raw": "Fracción positiva bruta"
+    },
+    "override": {
+      "automated_call": "Clasificación automática",
+      "effective_call": "Clasificación efectiva",
+      "active": "Anulación manual: {{call}}",
+      "active_description": "Esta declaración sustituye la clasificación automática en los resúmenes categóricos y en el PDF. Las fracciones brutas y corregidas no cambian.",
+      "sample_only": "La clasificación manual solo está disponible para pocillos de muestra completados.",
+      "updating": "Actualizando la clasificación y recalculando los resultados…",
+      "update_error": "No se pudo actualizar la clasificación del pocillo."
+    },
+    "calls": {
+      "positive": "Positivo",
+      "negative": "Negativo",
+      "borderline": "Limítrofe",
+      "not_available": "No disponible"
     }
   },
   "PlatePreview": {
@@ -875,19 +815,16 @@
     "no_loci": "No hay loci en el diseño para este pocillo.",
     "well_image_alt": "Pocillo {{well}}",
     "well_aria": "Pocillo {{well}} {{imageStatus}} {{positiveStatus}}",
-
     "image_status": {
       "has_image": "(tiene imagen)",
       "no_image": ""
     },
-
     "progress": {
       "queued": "Tarea en cola…",
       "running": "Procesando pocillos…",
       "done": "Finalizado",
       "error": "Error"
     },
-
     "fields": {
       "well": "Pocillo",
       "role": "Rol",
@@ -895,13 +832,22 @@
       "status": "Estado",
       "combo_id": "ID de combinación",
       "race": "Raza",
-      "hla_loci": "Loci HLA"
+      "hla_loci": "Loci HLA",
+      "automated_call": "Clasificación automática",
+      "effective_call": "Clasificación efectiva"
     },
-
     "actions": {
       "pin": "Fijar",
       "unpin": "Desfijar",
       "close": "Cerrar"
+    },
+    "user_override": "ANULACIÓN MANUAL",
+    "override": {
+      "hint": "Haga clic en el pocillo para fijar esta ventana y, a continuación, seleccione positivo o negativo.",
+      "pinned_hint": "Seleccione la clasificación efectiva para este pocillo de muestra.",
+      "unavailable": "La clasificación manual solo está disponible después de calcular una fracción corregida.",
+      "updating": "Actualizando la clasificación y recalculando los resultados…",
+      "update_error": "No se pudo actualizar la clasificación del pocillo."
     }
   },
   "Plots": {
@@ -963,7 +909,6 @@
   },
   "UploadCard": {
     "empty_value": "n/d",
-
     "actions": {
       "browse": "Buscar…",
       "select_file_first": "Seleccione primero un archivo",
@@ -974,21 +919,18 @@
       "remove": "Eliminar",
       "remove_named": "Eliminar {{file}}"
     },
-
     "instructions": {
       "excel_layout": "Cargue un diseño de placa de Excel (.xlsx o .xlsm).",
       "generic": "Arrastre y suelte {{target}} aquí, o haga clic en Buscar.",
       "folder": "una carpeta",
       "files": "archivo(s)"
     },
-
     "messages": {
       "skipped_files": "Se omitieron {{count}} archivo(s) no coincidente(s).",
       "layout_loaded": "Diseño cargado: {{lot}} • pocillos: {{wells}}",
       "uploaded_files": "{{count}} archivo(s) cargado(s).",
       "upload_failed": "Error al cargar"
     },
-
     "uploaded_list": {
       "default_label": "Cargado",
       "heading": "{{label}} (arrastrar a una tarjeta)",
@@ -1000,6 +942,11 @@
     "actions": {
       "close": "Cerrar"
     }
+  },
+  "common": {
+    "manual_override": {
+      "applied": "Clasificación manual aplicada al pocillo {{well}}: {{call}}.",
+      "restored": "Clasificación automática restaurada."
+    }
   }
 }
-

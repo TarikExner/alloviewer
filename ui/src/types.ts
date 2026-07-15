@@ -20,6 +20,23 @@ export type WellType = typeof WELL_TYPES[number];
 export type CrossmatchCellMode = typeof CROSSMATCH_CELL_MODES[number];
 export type CrossmatchResultCellMode = typeof CROSSMATCH_RESULT_CELL_MODES[number];
 export type CrossmatchColumnModes = Record<number, CrossmatchCellMode>;
+export type WellCall = "positive" | "negative" | "borderline" | "not_available";
+export type ManualWellCall = "positive" | "negative";
+
+export type WellClassificationOverride = {
+  call: ManualWellCall;
+  automated_call: WellCall;
+  created_at: string;
+};
+
+export type WellClassificationOverrideEvent = {
+  well_id: WellID;
+  action: "set" | "cleared";
+  previous_call: ManualWellCall | null;
+  new_call: ManualWellCall | null;
+  automated_call: WellCall;
+  created_at: string;
+};
 
 export type WellMap = Record<WellID, WellType>;
 
@@ -55,6 +72,9 @@ export type WellSummary = {
   store_paths?: Record<string, string>;
   preview_path?: string | null;
   segmented_image_url?: string | null;
+  automated_call?: WellCall | null;
+  effective_call?: WellCall | null;
+  manual_override?: WellClassificationOverride | null;
 };
 
 export type ProcessResponse = {
@@ -64,6 +84,8 @@ export type ProcessResponse = {
   wells?: Partial<Record<WellID, WellSummary>>;
   summary?: CDCSummary;
   pra_analysis?: PraAnalysis | null;
+  manual_overrides?: Partial<Record<WellID, WellClassificationOverride>>;
+  manual_override_history?: WellClassificationOverrideEvent[];
 };
 
 export type CDCControlStatus = "valid" | "warning" | "invalid";
@@ -104,6 +126,11 @@ export type CDCPRAResultSummary = {
   n_moderate_positive: number;
   n_strong_positive: number;
   positive_wells: string[];
+  manual_override_applied?: boolean;
+  manual_override_count?: number;
+  manual_override_wells?: string[];
+  effective_positive_wells?: string[];
+  effective_negative_wells?: string[];
 };
 
 export type CDCCrossmatchCellModeSummary = {
@@ -118,6 +145,12 @@ export type CDCCrossmatchCellModeSummary = {
   replicate_range: number;
   replicate_discordant: boolean;
   sample_wells: string[];
+  manual_override_applied?: boolean;
+  manual_override_count?: number;
+  manual_override_wells?: string[];
+  effective_positive_wells?: string[];
+  effective_negative_wells?: string[];
+  effective_borderline_wells?: string[];
 };
 
 export type CDCCrossmatchResultSummary = {
@@ -129,6 +162,12 @@ export type CDCCrossmatchResultSummary = {
   replicate_range: number;
   replicate_discordant: boolean;
   sample_wells: string[];
+  manual_override_applied?: boolean;
+  manual_override_count?: number;
+  manual_override_wells?: string[];
+  effective_positive_wells?: string[];
+  effective_negative_wells?: string[];
+  effective_borderline_wells?: string[];
   by_cell_mode?: Partial<
     Record<CrossmatchResultCellMode, CDCCrossmatchCellModeSummary>
   >;
@@ -140,6 +179,9 @@ export type CDCSummary = {
   assay_result: CDCPRAResultSummary | CDCCrossmatchResultSummary;
   qc: CDCQCSummary;
   column_modes?: Record<string, CrossmatchCellMode>;
+  manual_override_applied?: boolean;
+  manual_override_count?: number;
+  manual_override_wells?: string[];
 };
 
 export type AlleleReactivityEvidence = {
@@ -175,4 +217,3 @@ export type PraAnalysis = {
   reactivity_score: PraReactivityScore;
   alleles: AlleleReactivityEvidence[];
 };
-

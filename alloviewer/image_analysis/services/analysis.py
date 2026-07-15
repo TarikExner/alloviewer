@@ -51,8 +51,14 @@ def _normalize_well_set(well_ids: Optional[Iterable[str]]) -> Optional[set[str]]
     return {str(well_id).upper() for well_id in well_ids}
 
 
-def _well_positive_value(wr: WellResult) -> Optional[float]:
-    value = getattr(wr, "corrected_frac_pos", None)
+def _well_positive_value(wr: WellResult | Mapping[str, Any]) -> Optional[float]:
+    if isinstance(wr, Mapping):
+        value = wr.get("frac_pos_corrected")
+
+        if value is None:
+            value = wr.get("corrected_frac_pos")
+    else:
+        value = getattr(wr, "corrected_frac_pos", None)
 
     if value is None:
         return None
@@ -65,11 +71,67 @@ def _well_positive_value(wr: WellResult) -> Optional[float]:
     return value
 
 
+def _well_effective_call(
+    well_id: str,
+    wr: WellResult | Mapping[str, Any],
+    effective_calls: Optional[Mapping[str, str]],
+) -> Optional[str]:
+    normalized_well_id = str(well_id).upper()
+
+    if effective_calls is not None:
+        call = effective_calls.get(normalized_well_id)
+
+        if call is None:
+            call = effective_calls.get(str(well_id))
+
+        if call in {"positive", "negative"}:
+            return str(call)
+
+    if isinstance(wr, Mapping):
+        call = wr.get("effective_call")
+
+        if call in {"positive", "negative"}:
+            return str(call)
+
+        manual_override = wr.get("manual_override")
+
+        if isinstance(manual_override, Mapping):
+            call = manual_override.get("call")
+
+            if call in {"positive", "negative"}:
+                return str(call)
+
+    return None
+
+
+def _well_is_positive(
+    well_id: str,
+    wr: WellResult | Mapping[str, Any],
+    positivity_threshold: float,
+    effective_calls: Optional[Mapping[str, str]],
+) -> Optional[bool]:
+    call = _well_effective_call(well_id, wr, effective_calls)
+
+    if call == "positive":
+        return True
+
+    if call == "negative":
+        return False
+
+    value = _well_positive_value(wr)
+
+    if value is None:
+        return None
+
+    return value >= positivity_threshold
+
+
 def calculate_allele_reactivity_evidence(
     per_well: Mapping[str, WellResult],
     hla_layout: ParsedPlateLayout,
     positivity_threshold: float,
     include_well_ids: Optional[Iterable[str]] = None,
+    effective_calls: Optional[Mapping[str, str]] = None,
 ) -> list[dict[str, Any]]:
     """Report per-allele PRA reactivity.
 
@@ -126,9 +188,16 @@ def calculate_allele_reactivity_evidence(
             value = _well_positive_value(wr)
             well_values[well_id] = value
 
-            if value is None:
+            is_positive = _well_is_positive(
+                well_id,
+                wr,
+                positivity_threshold,
+                effective_calls,
+            )
+
+            if is_positive is None:
                 missing_result_wells.append(well_id)
-            elif value >= positivity_threshold:
+            elif is_positive:
                 positive_wells.append(well_id)
             else:
                 negative_wells.append(well_id)
@@ -177,6 +246,7 @@ def calculate_pra_reactivity_score(
     hla_layout: ParsedPlateLayout,
     positivity_threshold: float,
     include_well_ids: Optional[Iterable[str]] = None,
+    effective_calls: Optional[Mapping[str, str]] = None,
 ) -> dict[str, Any]:
     """Calculate temporary overall PRA reactivity.
 
@@ -212,11 +282,16 @@ def calculate_pra_reactivity_score(
             missing_result_wells.append(well_id)
             continue
 
-        value = _well_positive_value(wr)
+        is_positive = _well_is_positive(
+            well_id,
+            wr,
+            positivity_threshold,
+            effective_calls,
+        )
 
-        if value is None:
+        if is_positive is None:
             missing_result_wells.append(well_id)
-        elif value >= positivity_threshold:
+        elif is_positive:
             positive_wells.append(well_id)
         else:
             negative_wells.append(well_id)

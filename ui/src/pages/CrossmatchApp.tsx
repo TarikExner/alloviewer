@@ -11,6 +11,7 @@ import { ImageMappingTable } from "../components/ImageMappingTable";
 import { CrossmatchSummaryGrid } from "../components/PlateAssaySummaries";
 import {
   ALL_WELLS,
+  type ManualWellCall,
   type ProcessResponse,
   type WellID,
   type WellMap,
@@ -21,6 +22,7 @@ import {
   downloadCDCSummaryPdf,
   type BackendProgress,
 } from "../api/crossmatch";
+import { setWellClassificationOverride } from "../api/imageOverrides";
 import { API_BASE } from "../App";
 import {
   normalizeSavedNames,
@@ -265,6 +267,23 @@ export default function CrossmatchApp() {
 
     setSummaryBusy(false);
     setSummaryError(null);
+  }
+
+  async function onWellOverride(
+    wellId: WellID,
+    call: ManualWellCall | null,
+  ) {
+    if (!jobId) {
+      throw new Error("The image-analysis request is missing job_id.");
+    }
+
+    const updated = await setWellClassificationOverride(jobId, wellId, call);
+    setProc(updated);
+    setMsg(
+      call === null
+        ? t("common.manual_override.restored")
+        : t("common.manual_override.applied", { well: wellId, call }),
+    );
   }
 
   async function onDownloadSummary() {
@@ -779,6 +798,7 @@ export default function CrossmatchApp() {
                     jobStatus={jobStatus}
                     imageScores={imageScores}
                     columnLabels={displayedColumnModes}
+                    onWellOverride={onWellOverride}
                     key={flip ? "prev-flip-1" : "prev-flip-0"}
                   />
                 </div>
@@ -826,6 +846,7 @@ export default function CrossmatchApp() {
                     jobStatus={jobStatus}
                     imageScores={imageScores}
                     columnLabels={displayedColumnModes}
+                    onWellOverride={onWellOverride}
                     key={flip ? "summary-prev-flip-1" : "summary-prev-flip-0"}
                   />
                 </div>
@@ -837,4 +858,3 @@ export default function CrossmatchApp() {
     </div>
   );
 }
-

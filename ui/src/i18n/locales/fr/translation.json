@@ -5,34 +5,26 @@
     "use_policy": "Politique d’utilisation",
     "contact": "Contact"
   },
-
   "home": {
     "get_started": "Commencer",
     "disclaimer_strong": "Réservé à la recherche.",
     "disclaimer_text": "AlloViewer est un outil logiciel expérimental et n’est pas approuvé pour le diagnostic clinique, les décisions thérapeutiques, l’attribution de greffons ou la prise en charge des patients.",
     "disclaimer_link": "Lire la politique d’utilisation."
   },
-
   "use_policy": {
     "title": "Politique d’utilisation",
     "banner_strong": "Réservé à la recherche.",
     "banner_text": "AlloViewer est un outil logiciel expérimental. Il n’est ni certifié ni approuvé pour le diagnostic clinique, les décisions thérapeutiques, l’attribution de greffons ou la prise en charge des patients.",
-
     "research_heading": "Recherche et évaluation des flux de travail uniquement",
     "research_text": "AlloViewer est fourni pour un usage de recherche, le développement de méthodes, l’enseignement et l’évaluation des flux de travail. Le logiciel n’est pas destiné à remplacer les procédures de laboratoire établies, l’examen par des experts ou les parcours validés de décision clinique.",
-
     "no_clinical_heading": "Aucune utilisation clinique autonome",
     "no_clinical_text": "Les résultats générés par AlloViewer ne doivent pas être utilisés comme seule base pour le diagnostic clinique, l’évaluation de la compatibilité donneur-receveur, l’éligibilité à la transplantation, l’attribution d’organes, les décisions thérapeutiques ou la prise en charge des patients.",
-
     "review_heading": "Examen par des experts requis",
     "review_text": "Tous les résultats nécessitent un examen indépendant par des experts qualifiés de laboratoire ou des cliniciens. Les utilisateurs sont responsables de la vérification des données d’entrée, de la qualité de l’essai, de la performance des contrôles, des résultats du logiciel et de toute interprétation ultérieure.",
-
     "validation_heading": "Validation locale et responsabilité réglementaire",
     "validation_text": "Les utilisateurs sont responsables de la validation d’AlloViewer dans leur propre environnement de laboratoire avant toute utilisation opérationnelle. Les utilisateurs sont également responsables du respect des règles institutionnelles applicables, des systèmes de gestion de la qualité, des exigences de protection des données et des exigences réglementaires.",
-
     "liability_heading": "Responsabilité",
     "liability_text": "Les auteurs et développeurs n’acceptent aucune responsabilité pour les décisions cliniques, réglementaires, opérationnelles ou financières prises sur la base de résultats logiciels non validés. L’utilisation du logiciel se fait aux risques de l’utilisateur.",
-
     "data_heading": "Gestion des données",
     "data_text": "Les utilisateurs ne doivent pas téléverser de données identifiables de patients à moins de disposer de la base légale, institutionnelle et éthique requise pour le faire. Les fichiers téléversés doivent être vérifiés et dépersonnalisés si nécessaire avant utilisation."
   },
@@ -58,22 +50,16 @@
   },
   "about": {
     "title": "À propos d’AlloViewer",
-
     "purpose_heading": "Objectif",
     "purpose_text": "AlloViewer est une plateforme logicielle web destinée à l’interprétation standardisée et traçable du diagnostic des anticorps HLA. Elle prend en charge l’analyse automatisée des tests de cytotoxicité dépendante du complément (CDC) basés sur l’image et des données de crossmatch par cytométrie en flux (FCXM), dans le but de réduire l’interprétation dépendante de l’opérateur dans les tests physiques des anticorps HLA.",
-
     "workflows_heading": "Flux de travail pris en charge",
     "workflows_text": "AlloViewer prend actuellement en charge trois flux de travail d’analyse : l’analyse de la spécificité des anticorps HLA basée sur la CDC à l’aide de panels commerciaux de cellules test (CDC-PRA), l’analyse du crossmatch CDC et l’analyse FCXM. En CDC-PRA, les profils de cytotoxicité au niveau des puits sont associés à la disposition du panel de cellules test téléversé afin d’aider à déduire les spécificités possibles des anticorps HLA. Dans les tests de crossmatch CDC, les puits contenant des lymphocytes du donneur sont évalués pour leur cytotoxicité après incubation avec le sérum du receveur. En FCXM, les fichiers .fcs téléversés sont analysés par détection automatisée des populations et mesure de l’IgG spécifique à chaque population.",
-
     "why_heading": "Pourquoi c’est important",
     "why_text": "Les tests CDC et FCXM restent pertinents dans les tests d’histocompatibilité, mais leur interprétation peut dépendre fortement de l’examen manuel. La cotation microscopique de la CDC est souvent semi-quantitative, tandis que l’analyse FCXM dépend généralement du gating manuel des populations et d’une interprétation de la fluorescence définie par des experts. AlloViewer fournit des étapes d’analyse fixes et reproductibles, afin que les résultats puissent être comparés de manière plus cohérente entre opérateurs, séries d’analyse et formats de test.",
-
     "how_heading": "Fonctionnement",
     "how_text": "Pour la microscopie CDC, AlloViewer utilise une analyse d’images en pleine résolution avec un modèle U-Net entraîné par simulation pour détecter les lymphocytes. Les cellules détectées sont classées à l’aide de contrôles positifs et négatifs spécifiques à l’expérience dans l’espace de fluorescence rouge-vert, ce qui permet une cotation de la cytotoxicité au niveau des puits et une prise en compte explicite des cellules incertaines. Pour le FCXM, AlloViewer applique un contrôle qualité, une sélection des lymphocytes, une détection des populations guidée par les marqueurs et une extraction du signal IgG spécifique à chaque gate. Chaque flux de travail est accessible via une interface web propre au test et par un accès basé sur une API.",
-
     "dev_heading": "Développement",
     "dev_text": "AlloViewer a été principalement développé par {{cassian}} (Institut de médecine transfusionnelle et d’immunohématologie, Service de don du sang de la Croix-Rouge allemande Baden-Württemberg-Hessen, Francfort) et {{tarik}} (Division de rhumatologie, Département de médecine V, Hôpital universitaire de Heidelberg) dans le cadre d’un projet collaboratif (pour la liste complète des auteurs, voir notre article).",
-
     "license_heading": "Licence et utilisation",
     "license_text": "AlloViewer est mis à disposition sous la licence Creative Commons Attribution 4.0 International License (CC BY 4.0), sauf indication contraire. La version actuelle est destinée à un usage de recherche et à l’évaluation des flux de travail. Elle n’a pas été établie comme système autonome de décision clinique, et une validation prospective multicentrique est nécessaire avant toute utilisation régulière comme aide à la décision clinique."
   },
@@ -92,62 +78,48 @@
     "cdc_pra": {
       "title": "Analyse CDC-PRA",
       "intro": "Utilisez ce flux de travail pour l’analyse de la spécificité des anticorps HLA basée sur la CDC avec un panel commercial de cellules test. AlloViewer associe le profil de cytotoxicité observé à la disposition du panel téléversé et indique les spécificités d’anticorps candidates.",
-
       "step1_title": "1. Téléverser la disposition de la plaque",
       "step1_body": "Commencez par téléverser la disposition de la plaque au format .xlsx. Le fichier doit décrire le panel de cellules test et le typage HLA associé à chaque puits. La disposition est nécessaire, car les résultats CDC-PRA sont interprétés à partir du profil des puits positifs et négatifs dans l’ensemble du panel. Vous pouvez télécharger le fichier d’exemple ci-dessous pour vérifier si vous utilisez la même disposition. Veuillez utiliser la disposition officielle de l’entreprise chaque fois que possible.",
       "step1_alt": "Téléversement de la disposition de plaque CDC-PRA",
       "download_example": "Télécharger l’exemple de disposition .xlsx",
-
       "step2_title": "2. Téléverser le dossier d’images",
       "step2_body": "Téléversez le dossier contenant les images microscopiques de la plaque. Les images sont associées selon leur ordre dans la liste d’images téléversée et l’ordre de balayage sélectionné. Bien que les noms de fichiers soient utilisés pour le tri, veuillez vérifier soigneusement le tableau d’association des images avant de lancer l’analyse.",
       "step2_alt": "Téléversement des images CDC-PRA",
-
       "step3_title": "3. Vérifier la plaque et l’association des images",
       "step3_body": "Vérifiez les rôles des puits, l’ordre de balayage et l’association entre images et puits. Assurez-vous que chaque image téléversée est attribuée au bon puits. L’analyse ne doit être lancée que lorsque le nombre attendu de puits est associé et qu’aucune image requise ne manque.",
       "step3_alt": "Vérification de la plaque CDC-PRA",
-
       "step4_title": "4. Lancer l’analyse et vérifier les résultats",
       "step4_body": "Après le lancement de l’analyse, AlloViewer segmente les lymphocytes, classe les cellules à l’aide des contrôles positifs et négatifs, et calcule les valeurs de cytotoxicité au niveau des puits. Les résultats comprennent le résultat de la plaque, les valeurs au niveau des puits, les indicateurs de qualité et un résumé des profils de réactivité inférés pouvant être comparés à la disposition du panel téléversé.",
       "step4_alt": "Résultats CDC-PRA"
     },
-
     "cdc_xm": {
       "title": "Analyse CDC-XM",
       "intro": "Utilisez ce flux de travail pour l’analyse du crossmatch par cytotoxicité dépendante du complément basée sur l’image. AlloViewer traite les images microscopiques de lymphocytes du donneur incubés avec le sérum du receveur et indique les valeurs de cytotoxicité par puits et par mode cellulaire.",
-
       "step1_title": "1. Téléverser le dossier d’images",
       "step1_body": "Téléversez le dossier contenant les images microscopiques CDC-XM. Les puits peuvent être attribués comme échantillon, contrôle positif, contrôle négatif, contrôle IgM ou vide. Le contrôle IgM sert à vérifier si le traitement au dithiothréitol (DTT) réduit efficacement la réactivité médiée par les IgM, ce qui aide à distinguer le signal lié aux IgM de l’activation du complément médiée par les IgG, cliniquement pertinente.",
       "step1_alt": "Téléversement des images CDC-XM",
-
       "step2_title": "2. Vérifier la disposition de la plaque et les modes de colonne",
       "step2_body": "Vérifiez les rôles des puits et les modes de colonne avant de lancer l’analyse. T signifie lymphocytes T, B signifie lymphocytes B, et T/B signifie que les résultats des lymphocytes T et B sont représentés pour le mode de colonne sélectionné. Ajustez la disposition si le schéma de plaque par défaut ne correspond pas à l’expérience. Vérifiez ensuite que les images sont associées aux bons puits.",
       "step2_alt": "Disposition de plaque et modes de colonne CDC-XM",
-
       "step3_title": "3. Lancer l’analyse",
       "step3_body": "Lorsque tous les puits, contrôles, modes cellulaires, l’ordre de balayage et les associations d’images sont corrects, lancez l’analyse. AlloViewer détecte les cellules individuelles, classe les cellules viables et lysées à l’aide de contrôles internes, et calcule les fractions de cytotoxicité au niveau des puits.",
       "step3_alt": "Lancement de l’analyse CDC-XM",
-
       "step4_title": "4. Vérifier les résultats CDC-XM",
       "step4_body": "Après le traitement, vérifiez l’aperçu de la plaque, le statut des puits, les valeurs de cytotoxicité et le tableau récapitulatif. Les puits limites ou inattendus doivent être vérifiés manuellement, en particulier si les puits de contrôle ou le contrôle IgM suggèrent des problèmes d’essai.",
       "step4_alt": "Résultats CDC-XM"
     },
-
     "fcxm": {
       "title": "Analyse FC-XM",
       "intro": "Utilisez ce flux de travail pour l’analyse du crossmatch par cytométrie en flux à partir de fichiers .fcs. AlloViewer prend en charge l’extraction automatisée du panel, l’attribution des échantillons, la détection des populations et les mesures d’IgG spécifiques à chaque population.",
-
       "step1_title": "1. Téléverser et attribuer les fichiers .fcs",
       "step1_body": "Téléversez le dossier contenant les fichiers .fcs. Après le téléversement, attribuez les fichiers aux cartes d’échantillons correspondantes. Un contrôle négatif est requis. Des contrôles positifs peuvent être ajoutés s’ils sont disponibles, et des cartes d’échantillons peuvent être ajoutées pour les patients ou les échantillons de test. Les noms affichés peuvent correspondre aux noms de fichiers ou aux noms de tubes, selon les métadonnées FCS disponibles.",
       "step1_alt": "Téléversement FCS et attribution des échantillons FC-XM",
-
       "step2_title": "2. Vérifier le panel de marqueurs",
       "step2_body": "AlloViewer lit le panel de marqueurs à partir des fichiers .fcs téléversés. Vérifiez les canaux détectés, les anticorps, les rôles des marqueurs et les populations cibles avant de lancer l’analyse. Au moins un marqueur IgG doit être sélectionné, car l’interprétation finale FC-XM dépend de l’extraction du signal IgG spécifique à chaque population.",
       "step2_alt": "Vérification du panel de marqueurs FC-XM",
-
       "step3_title": "3. Lancer l’analyse et inspecter les résultats",
       "step3_body": "Lancez l’analyse après avoir vérifié les échantillons et le panel. AlloViewer effectue le contrôle qualité, la sélection des lymphocytes, la détection des populations guidée par les marqueurs et le calcul des mesures IgG spécifiques à chaque gate. La vue des résultats vous permet de sélectionner un échantillon, un fichier et un gate afin d’inspecter les diagrammes de dispersion, les courbes de densité IgG et les métriques par population.",
       "step3_alt": "Lancement et inspection des résultats FC-XM",
-
       "step4_title": "4. Définir la règle de rapport et télécharger le résumé",
       "step4_body": "Une fois l’analyse terminée, choisissez la métrique de positivité et le seuil utilisés pour le rapport. Les métriques disponibles comprennent le ratio médian, le décalage médian, l’indice de fluorescence et le pourcentage de cellules positives. Téléchargez le résumé uniquement après avoir vérifié que le gate sélectionné et les résultats au niveau des échantillons correspondent à la règle d’interprétation prévue.",
       "step4_alt": "Paramètres du rapport FC-XM"
@@ -155,12 +127,10 @@
   },
   "cdc_app": {
     "toolbar_title": "AlloViewer - Test de réactivité de panel CDC",
-
     "workflow": {
       "title": "Flux de travail",
       "description": "Sélectionnez une étape. La zone principale de travail reste à droite."
     },
-
     "steps": {
       "upload": {
         "title": "Téléverser les fichiers",
@@ -189,7 +159,6 @@
         "summary_not_ready": "Disponible après l’analyse"
       }
     },
-
     "panels": {
       "upload": {
         "heading": "Étape 1 · Téléverser les fichiers",
@@ -208,7 +177,6 @@
         "description": "Vérifiez le résumé final après l’analyse."
       }
     },
-
     "upload_cards": {
       "layout": {
         "title": "Disposition de la plaque (.xlsx)"
@@ -218,7 +186,6 @@
         "list_label": "Images téléversées"
       }
     },
-
     "stats": {
       "layout": {
         "label": "Disposition",
@@ -232,7 +199,6 @@
         "label": "Fichiers locaux sélectionnés"
       }
     },
-
     "plate_checks": {
       "title": "Contrôles de la plaque",
       "sample_wells": "Puits d’échantillon",
@@ -240,20 +206,17 @@
       "positive_controls": "Contrôles positifs",
       "scan_order_wells": "Puits dans l’ordre de balayage"
     },
-
     "warnings": {
       "no_negative_controls": "Aucun puits de contrôle négatif n’est sélectionné.",
       "no_positive_controls": "Aucun puits de contrôle positif n’est sélectionné.",
       "missing_ordered_images": "{{count}} puits dans l’ordre n’ont pas d’image.",
       "unmapped_images": "{{count}} image(s) téléversée(s) ne sont associées à aucun puits."
     },
-
     "actions": {
       "reset_experiment": "Réinitialiser l’expérience",
       "run_analysis": "Lancer l’analyse",
       "running": "En cours…"
     },
-
     "run_button_titles": {
       "upload_layout_first": "Téléversez d’abord la disposition Excel",
       "upload_images_first": "Téléversez d’abord les images",
@@ -261,7 +224,6 @@
       "missing_ordered_images": "Certains puits dans l’ordre n’ont pas d’images",
       "run_analysis": "Lancer l’analyse"
     },
-
     "run_setup": {
       "title": "Configuration de l’analyse",
       "images_uploaded": "Images téléversées",
@@ -269,28 +231,23 @@
       "template": "Modèle",
       "none": "Aucun"
     },
-
     "summary_values": {
       "title": "Valeurs du résumé"
     },
-
     "plate_result": {
       "title": "Résultat de la plaque"
     },
-
     "messages": {
       "analysis_done": "Analyse terminée.",
       "analysis_done_no_result": "L’analyse est terminée, mais aucun résultat n’a été renvoyé.",
       "process_failed": "Le processus a échoué."
     },
-
     "status": {
       "waiting_to_start": "En attente de démarrage.",
       "processing_plate_images": "Traitement des images de la plaque.",
       "analysis_done": "Analyse terminée.",
       "process_failed": "Le processus a échoué."
     },
-
     "stage_messages": {
       "default": "Traitement des images de la plaque.",
       "segmentation": "Segmentation des cellules.",
@@ -306,12 +263,10 @@
   "FCXM": {
     "toolbar_title": "AlloViewer - Crossmatch par cytométrie en flux",
     "empty_value": "—",
-
     "workflow": {
       "title": "Flux de travail",
       "description": "Sélectionnez une étape. La zone principale de travail reste à droite."
     },
-
     "steps": {
       "upload": {
         "title": "Téléverser et attribuer",
@@ -341,7 +296,6 @@
         "summary_not_ready": "Disponible après l’analyse"
       }
     },
-
     "panels": {
       "upload": {
         "heading": "Étape 1 · Téléverser et attribuer les fichiers",
@@ -360,25 +314,21 @@
         "description": "Définissez la règle de positivité utilisée pour le rapport, puis téléchargez le résumé."
       }
     },
-
     "upload_card": {
       "title": "Fichiers FCS (dossier)",
       "uploaded_list_label": "Téléversés (.fcs)"
     },
-
     "display_names": {
       "title": "Noms affichés",
       "use_file_names": "Utiliser les noms de fichiers",
       "use_tube_names": "Utiliser les noms de tubes",
       "reading": "Lecture des étiquettes FCS…"
     },
-
     "sample_cards": {
       "title": "Cartes d’échantillons",
       "description": "Le contrôle négatif est requis. Le contrôle positif est facultatif.",
       "drag_hint": "Glissez les fichiers téléversés depuis la liste de gauche vers la carte correspondante."
     },
-
     "panel": {
       "title": "Panel",
       "files_uploaded": "{{count}} fichier(s) téléversé(s)",
@@ -386,19 +336,16 @@
       "reading": "Lecture du panel à partir des fichiers .fcs…",
       "no_igg_marker": "Aucun marqueur IgG n’est sélectionné. Vérifiez le panel avant de lancer l’analyse."
     },
-
     "samples": {
       "title": "Échantillons",
       "file_count": "{{count}} fichier",
       "file_count_plural": "{{count}} fichiers"
     },
-
     "sample_types": {
       "negative_control": "Contrôle négatif",
       "positive_control": "Contrôle positif",
       "sample": "Échantillon"
     },
-
     "result_selection": {
       "title": "Sélection des résultats",
       "selected_sample": "Échantillon sélectionné",
@@ -407,7 +354,6 @@
       "no_files": "Aucun fichier",
       "gate": "Gate"
     },
-
     "overview": {
       "title": "Aperçu",
       "description": "Courbes de densité IgG transformées par asinh pour les contrôles et le fichier sélectionné",
@@ -415,21 +361,17 @@
       "no_results_yet": "Aucun résultat pour le moment.",
       "series_fallback": "Série {{number}}"
     },
-
     "gating": {
       "title": "Stratégie de gating",
       "show": "Afficher la stratégie de gating",
       "no_plots_yet": "Aucun graphique de gating pour le moment."
     },
-
     "plots": {
       "vs": "{{x}} vs {{y}}"
     },
-
     "axes": {
       "igg": "IgG"
     },
-
     "metrics": {
       "igg_median": "Médiane IgG",
       "events": "Événements",
@@ -439,12 +381,10 @@
       "igg_positive_fraction": "Fraction IgG+",
       "percent_positive": "% pos"
     },
-
     "metrics_cards": {
       "selected_file": "Fichier sélectionné - {{label}}",
       "combined_sample": "Échantillon combiné - {{label}}"
     },
-
     "report_settings": {
       "title": "Paramètres du rapport",
       "metric": "Métrique",
@@ -454,7 +394,6 @@
       "run_must_be_done": "L’analyse doit être terminée avant le téléchargement",
       "download_summary": "Télécharger le résumé"
     },
-
     "actions": {
       "reset_experiment": "Réinitialiser l’expérience",
       "add_sample": "Ajouter un échantillon",
@@ -463,14 +402,12 @@
       "download_summary": "Télécharger le résumé",
       "preparing_summary": "Préparation du résumé…"
     },
-
     "run_button_titles": {
       "panel_loading": "Le panel est encore en cours de chargement",
       "fix_panel_error": "Corrigez d’abord l’erreur du panel",
       "load_panel_first": "Chargez d’abord un panel",
       "run_analysis": "Lancer l’analyse"
     },
-
     "run_stages": {
       "default": "Analyse en cours.",
       "fit_qc": "CQ des fichiers en cours.",
@@ -483,7 +420,6 @@
       "payload": "Création du paquet de résultats.",
       "plot_cache": "Création du cache des graphiques."
     },
-
     "messages": {
       "loading_results": "Chargement des résultats…",
       "running_analysis": "Analyse en cours.",
@@ -503,12 +439,10 @@
   },
   "cdc_xm_app": {
     "toolbar_title": "AlloViewer - CDC-XM",
-
     "workflow": {
       "title": "Flux de travail",
       "description": "Sélectionnez une étape. La zone principale de travail reste à droite."
     },
-
     "steps": {
       "upload": {
         "title": "Téléverser les images",
@@ -535,7 +469,6 @@
         "summary_not_ready": "Disponible après l’analyse"
       }
     },
-
     "panels": {
       "upload": {
         "heading": "Étape 1 · Téléverser les images",
@@ -554,19 +487,16 @@
         "description": "Vérifiez le résumé final après l’analyse."
       }
     },
-
     "upload_cards": {
       "images": {
         "title": "Images (dossier)",
         "list_label": "Images téléversées"
       }
     },
-
     "stats": {
       "images_uploaded": "Images téléversées",
       "local_picked_files": "Fichiers locaux sélectionnés"
     },
-
     "plate_checks": {
       "title": "Contrôles de la plaque",
       "sample_wells": "Puits d’échantillon",
@@ -575,7 +505,6 @@
       "igm_wells": "Puits IgM",
       "scan_order_wells": "Puits dans l’ordre de balayage"
     },
-
     "warnings": {
       "no_negative_controls": "Aucun puits de contrôle négatif n’est sélectionné.",
       "no_positive_controls": "Aucun puits de contrôle positif n’est sélectionné.",
@@ -583,54 +512,45 @@
       "missing_ordered_images": "{{count}} puits dans l’ordre n’ont pas d’image.",
       "unmapped_images": "{{count}} image(s) téléversée(s) ne sont associées à aucun puits."
     },
-
     "actions": {
       "reset_experiment": "Réinitialiser l’expérience",
       "run_analysis": "Lancer l’analyse",
       "running": "En cours…"
     },
-
     "run_button_titles": {
       "upload_images_first": "Téléversez d’abord les images",
       "set_scan_order_first": "Définissez d’abord l’ordre de balayage",
       "missing_ordered_images": "Certains puits dans l’ordre n’ont pas d’images",
       "run_analysis": "Lancer l’analyse"
     },
-
     "run_setup": {
       "title": "Configuration de l’analyse",
       "images_uploaded": "Images téléversées",
       "wells_to_process": "Puits à traiter",
       "cell_mode_columns": "Colonnes de mode cellulaire"
     },
-
     "cell_modes": {
       "t": "T",
       "b": "B",
       "tb": "T/B"
     },
-
     "summary_values": {
       "title": "Valeurs du résumé"
     },
-
     "plate_result": {
       "title": "Résultat de la plaque"
     },
-
     "messages": {
       "analysis_done": "Analyse terminée.",
       "analysis_done_no_result": "L’analyse est terminée, mais aucun résultat n’a été renvoyé.",
       "process_failed": "Le processus a échoué."
     },
-
     "status": {
       "waiting_to_start": "En attente de démarrage.",
       "processing_plate_images": "Traitement des images de la plaque.",
       "analysis_done": "Analyse terminée.",
       "process_failed": "Le processus a échoué."
     },
-
     "stage_messages": {
       "default": "Traitement des images de la plaque.",
       "segmentation": "Segmentation des cellules.",
@@ -819,7 +739,6 @@
   "PlateGrid": {
     "title": "Plaque (éditeur) : cliquez sur un puits pour sélectionner un type d’échantillon",
     "well_title": "{{well}} ({{role}})",
-
     "roles": {
       "positive": "contrôle positif",
       "negative": "contrôle négatif",
@@ -827,7 +746,6 @@
       "empty": "vide",
       "igm": "contrôle IgM"
     },
-
     "actions": {
       "clear": "Effacer",
       "clear_title": "Définir tous les puits comme vides",
@@ -842,7 +760,10 @@
     "title": "Détails du puits {{well}}",
     "description": "Image originale et résultat de segmentation. Survolez l’image originale pour examiner les deux vues.",
     "actions": {
-      "close": "Fermer"
+      "close": "Fermer",
+      "declare_negative": "Déclarer négatif",
+      "declare_positive": "Déclarer positif",
+      "restore_automated": "Rétablir l’appel automatique"
     },
     "images": {
       "original": {
@@ -865,6 +786,25 @@
       "original": "Originale",
       "segmented": "Segmentée",
       "noSegmentation": "Aucune segmentation"
+    },
+    "values": {
+      "corrected": "Fraction positive corrigée",
+      "raw": "Fraction positive brute"
+    },
+    "override": {
+      "automated_call": "Appel automatique",
+      "effective_call": "Appel effectif",
+      "active": "Remplacement manuel : {{call}}",
+      "active_description": "Cette déclaration remplace l’appel automatique dans les résumés catégoriels et le PDF. Les fractions brutes et corrigées restent inchangées.",
+      "sample_only": "La classification manuelle est disponible uniquement pour les puits échantillons terminés.",
+      "updating": "Mise à jour de la classification et recalcul des résultats…",
+      "update_error": "Impossible de mettre à jour la classification du puits."
+    },
+    "calls": {
+      "positive": "Positif",
+      "negative": "Négatif",
+      "borderline": "Limite",
+      "not_available": "Non disponible"
     }
   },
   "PlatePreview": {
@@ -875,19 +815,16 @@
     "no_loci": "Aucun locus dans la disposition pour ce puits.",
     "well_image_alt": "Puits {{well}}",
     "well_aria": "Puits {{well}} {{imageStatus}} {{positiveStatus}}",
-
     "image_status": {
       "has_image": "(contient une image)",
       "no_image": ""
     },
-
     "progress": {
       "queued": "Tâche en file d’attente…",
       "running": "Traitement des puits…",
       "done": "Terminé",
       "error": "Erreur"
     },
-
     "fields": {
       "well": "Puits",
       "role": "Rôle",
@@ -895,13 +832,22 @@
       "status": "Statut",
       "combo_id": "ID combiné",
       "race": "Race",
-      "hla_loci": "Loci HLA"
+      "hla_loci": "Loci HLA",
+      "automated_call": "Appel automatique",
+      "effective_call": "Appel effectif"
     },
-
     "actions": {
       "pin": "Épingler",
       "unpin": "Désépingler",
       "close": "Fermer"
+    },
+    "user_override": "REMPLACEMENT MANUEL",
+    "override": {
+      "hint": "Cliquez sur le puits pour épingler cette fenêtre, puis sélectionnez positif ou négatif.",
+      "pinned_hint": "Sélectionnez la classification effective pour ce puits d’échantillon.",
+      "unavailable": "La classification manuelle n’est disponible qu’après le calcul d’une fraction corrigée.",
+      "updating": "Mise à jour de la classification et recalcul des résultats…",
+      "update_error": "La classification du puits n’a pas pu être mise à jour."
     }
   },
   "Plots": {
@@ -963,7 +909,6 @@
   },
   "UploadCard": {
     "empty_value": "n.d.",
-
     "actions": {
       "browse": "Parcourir…",
       "select_file_first": "Sélectionnez d’abord un fichier",
@@ -974,21 +919,18 @@
       "remove": "Supprimer",
       "remove_named": "Supprimer {{file}}"
     },
-
     "instructions": {
       "excel_layout": "Téléversez une disposition de plaque Excel (.xlsx ou .xlsm).",
       "generic": "Glissez-déposez {{target}} ici, ou cliquez sur Parcourir.",
       "folder": "un dossier",
       "files": "fichier(s)"
     },
-
     "messages": {
       "skipped_files": "{{count}} fichier(s) non correspondant(s) ignoré(s).",
       "layout_loaded": "Disposition chargée : {{lot}} • puits : {{wells}}",
       "uploaded_files": "{{count}} fichier(s) téléversé(s).",
       "upload_failed": "Échec du téléversement"
     },
-
     "uploaded_list": {
       "default_label": "Téléversé",
       "heading": "{{label}} (glisser dans une carte)",
@@ -1000,6 +942,11 @@
     "actions": {
       "close": "Fermer"
     }
+  },
+  "common": {
+    "manual_override": {
+      "applied": "Classification manuelle appliquée au puits {{well}} : {{call}}.",
+      "restored": "Classification automatique rétablie."
+    }
   }
 }
-

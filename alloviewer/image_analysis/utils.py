@@ -292,63 +292,102 @@ def build_pra_result(
     sample_corr: List[float],
     positive_cutoff: float,
     config: Dict[str, Any],
+    effective_calls: Dict[str, str] | None = None,
+    manual_override_wells: set[str] | None = None,
 ) -> Dict[str, Any]:
     """Build a PRA assay result summary.
 
-    Parameters
-    ----------
-    sample_ids : list of str
-        Sample well IDs.
-    sample_corr : list of float
-        Corrected positive fractions for sample wells.
-    positive_cutoff : float
-        Cutoff used to define positive panel wells.
-    config : dict
-        Assay configuration. Must contain ``"weak_positive"``,
-        ``"moderate_positive"``, and ``"strong_positive"``.
-
-    Returns
-    -------
-    dict
-        PRA summary with positive well count, valid well count, PRA percentage,
-        corrected fraction summaries, intensity class counts, and positive well
-        IDs.
+    Numerical fraction summaries always remain measurement-derived. When
+    ``effective_calls`` is provided, categorical positivity counts and PRA
+    percentage follow those effective calls so that explicit user overrides
+    propagate through downstream interpretation without altering raw data.
     """
     valid = [
         (wid, val)
         for wid, val in zip(sample_ids, sample_corr)
         if not np.isnan(val)
     ]
+    normalized_calls = {
+        str(well_id).upper(): str(call)
+        for well_id, call in (effective_calls or {}).items()
+    }
+    override_wells = {
+        str(well_id).upper()
+        for well_id in (manual_override_wells or set())
+    }
+
+    def effective_call(well_id: str, value: float) -> str:
+        call = normalized_calls.get(str(well_id).upper())
+
+        if call in {"positive", "negative"}:
+            return call
+
+        return "positive" if value >= positive_cutoff else "negative"
 
     valid_panel_wells = len(valid)
-    positive = [(wid, val) for wid, val in valid if val >= positive_cutoff]
+    positive = [
+        (well_id, value)
+        for well_id, value in valid
+        if effective_call(well_id, value) == "positive"
+    ]
+    negative = [
+        (well_id, value)
+        for well_id, value in valid
+        if effective_call(well_id, value) == "negative"
+    ]
 
     weak_cutoff = float(config["weak_positive"])
     moderate_cutoff = float(config["moderate_positive"])
     strong_cutoff = float(config["strong_positive"])
 
-    n_weak = sum(1 for _, v in valid if weak_cutoff <= v < moderate_cutoff)
-    n_moderate = sum(1 for _, v in valid if moderate_cutoff <= v < strong_cutoff)
-    n_strong = sum(1 for _, v in valid if v >= strong_cutoff)
+    n_weak = sum(
+        1
+        for _, value in positive
+        if value < moderate_cutoff
+    )
+    n_moderate = sum(
+        1
+        for _, value in positive
+        if moderate_cutoff <= value < strong_cutoff
+    )
+    n_strong = sum(
+        1
+        for _, value in positive
+        if value >= strong_cutoff
+    )
 
     pra_percent = (
         100.0 * len(positive) / valid_panel_wells
         if valid_panel_wells > 0
         else float("nan")
     )
+    active_override_wells = sorted(
+        well_id
+        for well_id, _ in valid
+        if str(well_id).upper() in override_wells
+    )
 
     return {
         "pra_percent": pra_percent,
         "positive_panel_wells": len(positive),
         "valid_panel_wells": valid_panel_wells,
-        "mean_corrected_frac_pos": _mean_or_nan([v for _, v in valid]),
-        "median_corrected_frac_pos": _median_or_nan([v for _, v in valid]),
-        "max_corrected_frac_pos": max([v for _, v in valid], default=float("nan")),
+        "mean_corrected_frac_pos": _mean_or_nan([value for _, value in valid]),
+        "median_corrected_frac_pos": _median_or_nan([value for _, value in valid]),
+        "max_corrected_frac_pos": max(
+            [value for _, value in valid],
+            default=float("nan"),
+        ),
         "n_weak_positive": n_weak,
         "n_moderate_positive": n_moderate,
         "n_strong_positive": n_strong,
-        "positive_wells": [wid for wid, _ in positive],
+        "positive_wells": [well_id for well_id, _ in positive],
+        "effective_positive_wells": [well_id for well_id, _ in positive],
+        "effective_negative_wells": [well_id for well_id, _ in negative],
+        "manual_override_applied": bool(active_override_wells),
+        "manual_override_count": len(active_override_wells),
+        "manual_override_wells": active_override_wells,
     }
+
 
 
 def _call_from_value(
@@ -385,6 +424,29 @@ def _call_from_value(
     return "positive"
 
 
+def automated_well_call(
+    value: Any,
+    *,
+    assay_type: str,
+    pra_positive_cutoff: float,
+    config: Dict[str, Any],
+) -> str:
+    """Return the automated categorical call for one measured sample well."""
+    measured = _safe_float(value)
+
+    if np.isnan(measured):
+        return "not_available"
+
+    if assay_type == "pra":
+        return "positive" if measured >= float(pra_positive_cutoff) else "negative"
+
+    return _call_from_value(
+        measured,
+        borderline_low=float(config["borderline_low"]),
+        borderline_high=float(config["borderline_high"]),
+    )
+
+
 def build_crossmatch_result(
     sample_ids: List[str],
     sample_raw: List[float],
@@ -393,54 +455,79 @@ def build_crossmatch_result(
     borderline_low: float,
     borderline_high: float,
     max_replicate_range: float,
+    effective_calls: Dict[str, str] | None = None,
+    manual_override_wells: set[str] | None = None,
 ) -> Dict[str, Any]:
-    """Build a crossmatch assay result summary.
+    """Build a crossmatch summary with optional user-adjusted calls.
 
-    Parameters
-    ----------
-    sample_ids : list of str
-        Sample well IDs.
-    sample_raw : list of float
-        Raw positive fractions for sample wells.
-    sample_corr : list of float
-        Corrected positive fractions for sample wells.
-    positive_cutoff : float
-        Positive cutoff used for margin reporting.
-    borderline_low : float
-        Lower threshold of the borderline interval.
-    borderline_high : float
-        Upper threshold of the borderline interval.
-    max_replicate_range : float
-        Maximum allowed range between replicate corrected fractions.
-
-    Returns
-    -------
-    dict
-        Crossmatch summary containing the final call, raw and corrected sample
-        means, cutoff margin, replicate metrics, discordance flag, and sample
-        well IDs.
+    Raw and corrected means, cutoff margin, replicate range, and replicate SD
+    remain measurement-derived. A manual well declaration changes only the
+    categorical interpretation. When at least one sample well is overridden,
+    the final result is aggregated from the effective replicate calls.
     """
-    valid_corr = [v for v in sample_corr if not np.isnan(v)]
-    valid_raw = [v for v in sample_raw if not np.isnan(v)]
-
+    valid_corr = [value for value in sample_corr if not np.isnan(value)]
+    valid_raw = [value for value in sample_raw if not np.isnan(value)]
     mean_corr = _mean_or_nan(valid_corr)
     mean_raw = _mean_or_nan(valid_raw)
-
     replicate_range = _range_or_nan(valid_corr)
     replicate_sd = _sd_or_nan(valid_corr)
-
     replicate_discordant = (
         not np.isnan(replicate_range)
         and replicate_range > max_replicate_range
     )
+    normalized_calls = {
+        str(well_id).upper(): str(call)
+        for well_id, call in (effective_calls or {}).items()
+    }
+    override_wells = {
+        str(well_id).upper()
+        for well_id in (manual_override_wells or set())
+    }
+    calls_by_well: Dict[str, str] = {}
 
+    for well_id, corrected_value in zip(sample_ids, sample_corr):
+        normalized_well_id = str(well_id).upper()
+        call = normalized_calls.get(normalized_well_id)
+
+        if call not in {"positive", "negative", "borderline", "not_available"}:
+            call = _call_from_value(
+                corrected_value,
+                borderline_low=borderline_low,
+                borderline_high=borderline_high,
+            )
+
+        calls_by_well[well_id] = call
+
+    active_override_wells = sorted(
+        well_id
+        for well_id in sample_ids
+        if str(well_id).upper() in override_wells
+    )
     final_call = _call_from_value(
         mean_corr,
         borderline_low=borderline_low,
         borderline_high=borderline_high,
     )
 
-    if replicate_discordant:
+    if active_override_wells:
+        valid_calls = [
+            call
+            for call in calls_by_well.values()
+            if call != "not_available"
+        ]
+        unique_calls = set(valid_calls)
+
+        if not valid_calls:
+            final_call = "not_available"
+        elif unique_calls == {"positive"}:
+            final_call = "positive"
+        elif unique_calls == {"negative"}:
+            final_call = "negative"
+        elif unique_calls == {"borderline"}:
+            final_call = "borderline"
+        else:
+            final_call = "needs_review"
+    elif replicate_discordant:
         final_call = "needs_review"
 
     return {
@@ -456,7 +543,20 @@ def build_crossmatch_result(
         "replicate_range": replicate_range,
         "replicate_discordant": replicate_discordant,
         "sample_wells": sample_ids,
+        "effective_positive_wells": [
+            well_id for well_id, call in calls_by_well.items() if call == "positive"
+        ],
+        "effective_negative_wells": [
+            well_id for well_id, call in calls_by_well.items() if call == "negative"
+        ],
+        "effective_borderline_wells": [
+            well_id for well_id, call in calls_by_well.items() if call == "borderline"
+        ],
+        "manual_override_applied": bool(active_override_wells),
+        "manual_override_count": len(active_override_wells),
+        "manual_override_wells": active_override_wells,
     }
+
 
 
 def _well_column(well_id: str) -> int | None:
@@ -561,6 +661,8 @@ def build_cdc_summary(
     config: Dict[str, Any],
     assay_type: str = "pra",
     column_modes: Dict[int, str] | None = None,
+    effective_calls: Dict[str, str] | None = None,
+    manual_override_wells: set[str] | None = None,
 ) -> Dict[str, Any]:
     """Build CDC run validity, assay-result, and QC summaries.
 
@@ -657,6 +759,8 @@ def build_cdc_summary(
             borderline_low=borderline_low,
             borderline_high=borderline_high,
             max_replicate_range=max_replicate_range,
+            effective_calls=effective_calls,
+            manual_override_wells=manual_override_wells,
         )
 
         by_cell_mode: Dict[str, Dict[str, Any]] = {}
@@ -695,6 +799,8 @@ def build_cdc_summary(
                 borderline_low=borderline_low,
                 borderline_high=borderline_high,
                 max_replicate_range=max_replicate_range,
+                effective_calls=effective_calls,
+                manual_override_wells=manual_override_wells,
             )
             mode_run_validity = _build_run_validity_summary(
                 pc_ids=mode_pc_ids,
@@ -719,6 +825,8 @@ def build_cdc_summary(
             sample_corr=sample_corr,
             positive_cutoff=positive_cutoff,
             config=config,
+            effective_calls=effective_calls,
+            manual_override_wells=manual_override_wells,
         )
 
     return {
@@ -730,6 +838,9 @@ def build_cdc_summary(
             str(column): mode
             for column, mode in normalized_column_modes.items()
         },
+        "manual_override_applied": bool(manual_override_wells),
+        "manual_override_count": len(manual_override_wells or set()),
+        "manual_override_wells": sorted(manual_override_wells or set()),
     }
 
 

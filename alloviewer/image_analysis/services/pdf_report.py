@@ -235,6 +235,82 @@ def _well_raw_value(well: Dict[str, Any]) -> Any:
     return well.get("frac_pos")
 
 
+def _well_manual_override(well: Dict[str, Any]) -> Dict[str, Any] | None:
+    override = well.get("manual_override")
+
+    if (
+        isinstance(override, dict)
+        and override.get("call") in {"positive", "negative"}
+    ):
+        return override
+
+    return None
+
+
+def _well_effective_call(
+    well: Dict[str, Any],
+    threshold: Optional[float],
+) -> str:
+    call = well.get("effective_call")
+
+    if call in {"positive", "negative", "borderline", "not_available"}:
+        return str(call)
+
+    override = _well_manual_override(well)
+
+    if override is not None:
+        return str(override["call"])
+
+    role = str(well.get("role") or "").lower()
+
+    if role == "positive":
+        return "positive"
+
+    if role == "negative":
+        return "negative"
+
+    value = _well_value(well)
+
+    if value is None or threshold is None:
+        return "not_available"
+
+    try:
+        return "positive" if float(value) >= float(threshold) else "negative"
+    except Exception:
+        return "not_available"
+
+
+def _active_manual_overrides(result: Dict[str, Any]) -> list[Dict[str, Any]]:
+    wells = result.get("wells", {}) or {}
+    rows: list[Dict[str, Any]] = []
+
+    for well_id, well in wells.items():
+        if not isinstance(well, dict):
+            continue
+
+        override = _well_manual_override(well)
+
+        if override is None:
+            continue
+
+        rows.append(
+            {
+                "well_id": str(well_id),
+                "automated_call": str(
+                    well.get("automated_call")
+                    or override.get("automated_call")
+                    or "not_available"
+                ),
+                "effective_call": str(override.get("call")),
+                "corrected": _well_value(well),
+                "raw": _well_raw_value(well),
+                "created_at": str(override.get("created_at") or "-"),
+            }
+        )
+
+    return sorted(rows, key=lambda row: row["well_id"])
+
+
 def _is_positive_well(
     well_id: str,
     result: Dict[str, Any],
@@ -242,16 +318,7 @@ def _is_positive_well(
 ) -> bool:
     wells = result.get("wells", {}) or {}
     well = wells.get(well_id, {}) or {}
-
-    value = _well_value(well)
-
-    if value is None or threshold is None:
-        return False
-
-    try:
-        return float(value) >= float(threshold)
-    except Exception:
-        return False
+    return _well_effective_call(well, threshold) == "positive"
 
 
 def _metric_table(
@@ -286,11 +353,69 @@ def _metric_table(
     return tbl
 
 
+def _manual_override_table(
+    overrides: list[Dict[str, Any]],
+    style_cell: ParagraphStyle,
+    style_th: ParagraphStyle,
+    usable_width: float,
+) -> Table:
+    displayed = overrides[:12]
+    data = [
+        [
+            _par("Well", style_th),
+            _par("Automated", style_th),
+            _par("User declaration", style_th),
+            _par("Corrected", style_th),
+            _par("Raw", style_th),
+            _par("Timestamp (UTC)", style_th),
+        ]
+    ]
+
+    for item in displayed:
+        data.append(
+            [
+                _par(item["well_id"], style_cell),
+                _par(_crossmatch_call_label(item["automated_call"]), style_cell),
+                _par(_crossmatch_call_label(item["effective_call"]), style_cell),
+                _par(_pct(item["corrected"], 1), style_cell),
+                _par(_pct(item["raw"], 1), style_cell),
+                _par(item["created_at"], style_cell),
+            ]
+        )
+
+    table = Table(
+        data,
+        colWidths=[
+            16 * mm,
+            28 * mm,
+            34 * mm,
+            24 * mm,
+            24 * mm,
+            usable_width - 126 * mm,
+        ],
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#ede9fe")),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#7c3aed")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]
+        )
+    )
+    return table
+
+
 def _well_cell(
     well_id: str,
     corrected_value: Any,
     raw_value: Any,
     role: Any,
+    manual_override: Dict[str, Any] | None,
     style_well_id: ParagraphStyle,
     style_cell: ParagraphStyle,
     style_role: ParagraphStyle,
@@ -299,11 +424,21 @@ def _well_cell(
     raw_text = _pct(raw_value, 1)
     fraction_text = f"{corrected_text} (raw: {raw_text})"
 
-    return [
+    cell = [
         _par(well_id, style_well_id),
         _par(fraction_text, style_cell),
         _par(role or "-", style_role),
     ]
+
+    if manual_override is not None:
+        cell.append(
+            _par(
+                f"USER OVERRIDE: {str(manual_override.get('call')).upper()}",
+                style_role,
+            )
+        )
+
+    return cell
 
 
 def _well_layout_table(
@@ -346,6 +481,7 @@ def _well_layout_table(
     ]
 
     backgrounds: list[tuple] = []
+    override_borders: list[tuple] = []
 
     for row_index, row in enumerate(plate_rows, start=2):
         output_row: list[Any] = [_par(row, style_th)]
@@ -356,6 +492,7 @@ def _well_layout_table(
             role = well.get("role") or "-"
             corrected_value = _well_value(well)
             raw_value = _well_raw_value(well)
+            manual_override = _well_manual_override(well)
 
             output_row.append(
                 _well_cell(
@@ -363,6 +500,7 @@ def _well_layout_table(
                     corrected_value=corrected_value,
                     raw_value=raw_value,
                     role=role,
+                    manual_override=manual_override,
                     style_well_id=style_well_id,
                     style_cell=style_cell,
                     style_role=style_role,
@@ -376,6 +514,17 @@ def _well_layout_table(
                 and str(role).lower() == "sample"
             ):
                 background = colors.HexColor("#fee2e2")
+
+            if manual_override is not None:
+                override_borders.append(
+                    (
+                        "BOX",
+                        (column_index, row_index),
+                        (column_index, row_index),
+                        1.5,
+                        colors.HexColor("#7c3aed"),
+                    )
+                )
 
             backgrounds.append(
                 (
@@ -391,7 +540,7 @@ def _well_layout_table(
     table = Table(
         data,
         colWidths=[12 * mm] + [22 * mm for _ in plate_cols],
-        rowHeights=[7 * mm, 7 * mm] + [20 * mm for _ in plate_rows],
+        rowHeights=[7 * mm, 7 * mm] + [23 * mm for _ in plate_rows],
     )
 
     table.setStyle(
@@ -400,6 +549,7 @@ def _well_layout_table(
                 ("BACKGROUND", (0, 0), (-1, 1), colors.lightgrey),
                 ("BACKGROUND", (0, 0), (0, -1), colors.lightgrey),
                 *backgrounds,
+                *override_borders,
                 ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("ALIGN", (0, 0), (-1, -1), "CENTER"),
@@ -510,6 +660,7 @@ def build_cdc_summary_pdf(
     column_modes = _normalized_column_modes(
         result.get("column_modes") or summary.get("column_modes")
     )
+    manual_overrides = _active_manual_overrides(result)
 
     threshold = pra.get("positivity_threshold")
     if threshold is None:
@@ -695,12 +846,62 @@ def build_cdc_summary_pdf(
     )
 
     story: list[Any] = []
+    usable_w = page_w - left_margin - right_margin
 
     # ---------------------------------------------------------------------
     # Page 1: editable fields + result summary only
     # ---------------------------------------------------------------------
     story.append(Spacer(1, 24 * mm))
     story.append(Paragraph(report_title, style_title))
+
+    if manual_overrides:
+        story.append(
+            Table(
+                [[
+                    _par(
+                        "MANUAL CLASSIFICATION OVERRIDES APPLIED — categorical "
+                        "results use the user-declared calls; measured raw and "
+                        "corrected fractions remain unchanged.",
+                        style_cell,
+                    )
+                ]],
+                colWidths=[usable_w],
+                style=TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#ede9fe")),
+                        ("BOX", (0, 0), (-1, -1), 1.0, colors.HexColor("#7c3aed")),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                        ("TOPPADDING", (0, 0), (-1, -1), 5),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                    ]
+                ),
+            )
+        )
+        story.append(Spacer(1, 1.5 * mm))
+        override_details = []
+
+        for item in manual_overrides[:10]:
+            timestamp = item["created_at"].replace("T", " ")
+            override_details.append(
+                f"{item['well_id']}: "
+                f"{_crossmatch_call_label(item['automated_call'])} -> "
+                f"{_crossmatch_call_label(item['effective_call'])} "
+                f"({timestamp})"
+            )
+
+        if len(manual_overrides) > 10:
+            override_details.append(
+                f"+{len(manual_overrides) - 10} additional override(s)"
+            )
+
+        story.append(
+            _par(
+                "Active overrides: " + "; ".join(override_details),
+                style_small,
+            )
+        )
+        story.append(Spacer(1, 2 * mm))
 
     run_rows = [
         ("Status", run.get("status", "-")),
@@ -744,8 +945,6 @@ def build_cdc_summary_pdf(
         ("High uncertain wells", len(qc.get("high_uncertain_wells") or [])),
     ]
 
-    usable_w = page_w - left_margin - right_margin
-
     if assay_type == "pra":
         reactivity = pra.get("reactivity_score", {}) or {}
 
@@ -769,6 +968,10 @@ def build_cdc_summary_pdf(
             ("Weak", assay.get("n_weak_positive", "-")),
             ("Moderate", assay.get("n_moderate_positive", "-")),
             ("Strong", assay.get("n_strong_positive", "-")),
+            (
+                "Manual overrides",
+                ", ".join(summary.get("manual_override_wells") or []) or "None",
+            ),
         ]
 
         third = usable_w / 3.0
@@ -855,6 +1058,10 @@ def build_cdc_summary_pdf(
                     f"{mode_run.get('n_negative_controls', '-')} NC",
                 ),
                 ("Final call", _crossmatch_call_label(mode_result.get("final_call"))),
+                (
+                    "User-adjusted wells",
+                    ", ".join(mode_result.get("manual_override_wells") or []) or "None",
+                ),
                 (
                     "Corrected % positive",
                     _pct(mode_result.get("sample_corrected_frac_pos"), 1),
@@ -960,8 +1167,9 @@ def build_cdc_summary_pdf(
         Paragraph(
             "Cells show well ID, corrected fraction positive with the raw fraction "
             "in brackets, and assigned role. Crossmatch column headers show T-cell, "
-            "B-cell, or combined T/B-cell assignments. Sample wells above the "
-            "corrected-fraction threshold are highlighted.",
+            "B-cell, or combined T/B-cell assignments. Sample wells with an "
+            "effective positive call are highlighted. User-overridden cells carry "
+            "a purple border and an explicit USER OVERRIDE label.",
             style_small,
         )
     )
@@ -983,7 +1191,10 @@ def build_cdc_summary_pdf(
         Paragraph(
             "Fractions positive were calibrated using the negative- and "
             "positive-control reference values. Raw fractions are shown in "
-            "brackets after the corrected values for interpretability.",
+            "brackets after the corrected values for interpretability. Manual "
+            "positive/negative declarations supersede the automated call only for "
+            "categorical downstream interpretation; measured fractions, control "
+            "calibration, run validity, and QC values remain unchanged.",
             style_small,
         )
     )
@@ -999,7 +1210,8 @@ def build_cdc_summary_pdf(
             Paragraph(
                 "Positive score means positive sample wells carrying the allele "
                 "divided by all tested sample wells carrying the allele. Controls "
-                "are excluded.",
+                "are excluded. Active user declarations are applied to the positive/"
+                "negative carrier-well classification and are listed on page 1.",
                 style_small,
             )
         )

@@ -34,6 +34,7 @@ from .structs import (
     WellResult,
 )
 from .utils import (
+    automated_well_call,
     build_cdc_summary,
     create_plate,
     frac_pos_raw,
@@ -1164,6 +1165,38 @@ def run_image_analysis(
         )
     )
 
+    def serialize_well(
+        well_id: str,
+        well_result: WellResult,
+    ) -> dict[str, Any]:
+        role = role_map.get(well_id)
+
+        if role == "positive":
+            automated_call = "positive"
+        elif role == "negative":
+            automated_call = "negative"
+        elif role == "sample":
+            automated_call = automated_well_call(
+                well_result.corrected_frac_pos,
+                assay_type=assay_type,
+                pra_positive_cutoff=pra_positivity_threshold,
+                config=CDC_SUMMARY_CONFIG,
+            )
+        else:
+            automated_call = None
+
+        return {
+            **well_result.summary(),
+            "role": role,
+            "cell_mode": normalized_column_modes.get(
+                _well_column(well_id)
+            ),
+            "segmented_image_url": f"{url_prefix}/{well_id}.png",
+            "automated_call": automated_call,
+            "effective_call": automated_call,
+            "manual_override": None,
+        }
+
     result = {
         "assay_type": assay_type,
         "calib": calibration,
@@ -1172,20 +1205,13 @@ def run_image_analysis(
             for column, mode in normalized_column_modes.items()
         },
         "wells": {
-            well_id: {
-                **well_result.summary(),
-                "role": role_map.get(well_id),
-                "cell_mode": normalized_column_modes.get(
-                    _well_column(well_id)
-                ),
-                "segmented_image_url": (
-                    f"{url_prefix}/{well_id}.png"
-                ),
-            }
+            well_id: serialize_well(well_id, well_result)
             for well_id, well_result in per_well.items()
         },
         "summary": summary,
         "pra_analysis": pra_analysis,
+        "manual_overrides": {},
+        "manual_override_history": [],
     }
 
     json_result = to_jsonable(

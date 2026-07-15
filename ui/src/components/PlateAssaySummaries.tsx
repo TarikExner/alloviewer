@@ -63,6 +63,26 @@ function CompactPanel({
 }
 
 
+function ManualOverrideBanner({ summary }: { summary: any }) {
+  const wells = Array.isArray(summary?.manual_override_wells)
+    ? summary.manual_override_wells
+    : [];
+  const count = Number(summary?.manual_override_count ?? wells.length);
+
+  if (!summary?.manual_override_applied || count <= 0) return null;
+
+  return (
+    <div className="rounded-2xl border border-violet-300 bg-violet-50 px-4 py-3 text-sm text-violet-950 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-100">
+      <div className="font-semibold">Manual classification overrides applied</div>
+      <div className="mt-1 text-xs opacity-85">
+        {count} sample well{count === 1 ? "" : "s"}: {wells.join(", ") || "—"}.
+        Categorical results use the declared calls; measured raw and corrected
+        fractions remain unchanged.
+      </div>
+    </div>
+  );
+}
+
 function AlleleEvidenceTable({ alleles }: { alleles: any[] }) {
   const topAlleles = [...(alleles ?? [])]
     .sort((a, b) => {
@@ -389,6 +409,8 @@ export function PRASummaryGrid({
 
   return (
     <div className="space-y-4">
+      <ManualOverrideBanner summary={summary} />
+
       <PRASummaryValuesPanel
         assay={assay}
         pra={pra}
@@ -493,9 +515,16 @@ function CrossmatchCellModeCard({
           </div>
         </div>
 
-        <span className="rounded-full border bg-white px-2 py-1 text-xs font-semibold dark:border-neutral-700 dark:bg-neutral-900">
-          {formatCrossmatchCall(result?.final_call)}
-        </span>
+        <div className="flex flex-col items-end gap-1">
+          <span className="rounded-full border bg-white px-2 py-1 text-xs font-semibold dark:border-neutral-700 dark:bg-neutral-900">
+            {formatCrossmatchCall(result?.final_call)}
+          </span>
+          {result?.manual_override_applied ? (
+            <span className="rounded-full border border-violet-300 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-800 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-200">
+              User-adjusted: {(result.manual_override_wells ?? []).join(", ")}
+            </span>
+          ) : null}
+        </div>
       </div>
 
       <div className="mt-3 text-xs font-medium text-neutral-700 dark:text-neutral-300">
@@ -752,6 +781,8 @@ export function CrossmatchSummaryGrid({
 
   return (
     <div className="space-y-4">
+      <ManualOverrideBanner summary={summary} />
+
       <CrossmatchCellModeResultsSection assay={assay} />
 
       <CrossmatchRunValiditySection run={run} />

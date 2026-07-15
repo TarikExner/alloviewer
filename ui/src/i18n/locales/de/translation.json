@@ -5,34 +5,26 @@
     "use_policy": "Nutzungsrichtlinie",
     "contact": "Kontakt"
   },
-
   "home": {
     "get_started": "Loslegen",
     "disclaimer_strong": "Nur für Forschungszwecke.",
     "disclaimer_text": "AlloViewer ist ein experimentelles Software-Tool und ist nicht für klinische Diagnostik, Therapieentscheidungen, Transplantationszuteilung oder Patientenmanagement zugelassen.",
     "disclaimer_link": "Nutzungsrichtlinie lesen."
   },
-
   "use_policy": {
     "title": "Nutzungsrichtlinie",
     "banner_strong": "Nur für Forschungszwecke.",
     "banner_text": "AlloViewer ist ein experimentelles Softwarewerkzeug. Es ist nicht für klinische Diagnostik, Therapieentscheidungen, Transplantationszuteilung oder Patientenmanagement zertifiziert oder zugelassen.",
-
     "research_heading": "Nur für Forschung und Arbeitsablauf-Evaluation",
     "research_text": "AlloViewer wird für Forschungszwecke, Methodenentwicklung, Lehre und Arbeitsablauf-Evaluation bereitgestellt. Die Software ist nicht dafür vorgesehen, etablierte Laborverfahren, fachliche Begutachtung oder validierte klinische Entscheidungswege zu ersetzen.",
-
     "no_clinical_heading": "Keine eigenständige klinische Nutzung",
     "no_clinical_text": "Von AlloViewer erzeugte Ausgaben dürfen nicht als alleinige Grundlage für klinische Diagnosen, die Bewertung der Donor-Empfänger-Kompatibilität, Transplantationseignung, Organzuteilung, Therapieentscheidungen oder Patientenmanagement verwendet werden.",
-
     "review_heading": "Fachliche Prüfung erforderlich",
     "review_text": "Alle Ergebnisse erfordern eine unabhängige Prüfung durch qualifizierte Labor- oder klinische Fachkräfte. Nutzer sind verantwortlich für die Prüfung der Eingabedaten, Assay-Qualität, Kontrollleistung, Softwareausgabe und jeder nachgelagerten Interpretation.",
-
     "validation_heading": "Lokale Validierung und regulatorische Verantwortung",
     "validation_text": "Nutzer sind dafür verantwortlich, AlloViewer vor jeder betrieblichen Nutzung in ihrer eigenen Laborumgebung zu validieren. Nutzer sind außerdem verantwortlich für die Einhaltung geltender institutioneller Vorgaben, Qualitätsmanagementsysteme, Datenschutzanforderungen und regulatorischer Anforderungen.",
-
     "liability_heading": "Verantwortung und Haftung",
     "liability_text": "Die Autoren und Entwickler übernehmen keine Verantwortung für klinische, regulatorische, betriebliche oder finanzielle Entscheidungen, die auf Grundlage nicht validierter Softwareausgaben getroffen werden. Die Nutzung der Software erfolgt auf eigenes Risiko des Nutzers.",
-
     "data_heading": "Datenverarbeitung",
     "data_text": "Nutzer sollten keine identifizierbaren Patientendaten hochladen, es sei denn, sie verfügen über die erforderliche rechtliche, institutionelle und ethische Grundlage dafür. Hochgeladene Dateien sollten vor der Nutzung geprüft und gegebenenfalls deidentifiziert werden."
   },
@@ -58,22 +50,16 @@
   },
   "about": {
     "title": "Über AlloViewer",
-
     "purpose_heading": "Zweck",
     "purpose_text": "AlloViewer ist eine webbasierte Softwareplattform zur standardisierten und nachvollziehbaren Interpretation der HLA-Antikörperdiagnostik. Sie unterstützt die automatisierte Analyse bildbasierter komplementabhängiger Zytotoxizitätsassays (CDC) und von Flow-Cytometry-Crossmatch-Daten (FCXM) mit dem Ziel, operatorabhängige Interpretationen in der physischen HLA-Antikörpertestung zu reduzieren.",
-
     "workflows_heading": "Unterstützte Arbeitsabläufe",
     "workflows_text": "AlloViewer unterstützt derzeit drei Assay-Arbeitsabläufe: CDC-basierte Analyse der HLA-Antikörperspezifität mit kommerziellen Testzell-Panels (CDC-PRA), CDC-Crossmatch-Analyse und FCXM-Analyse. Bei CDC-PRA werden Zytotoxizitätsmuster auf Well-Ebene dem Layout des hochgeladenen Testzell-Panels zugeordnet, um die Ableitung möglicher HLA-Antikörperspezifitäten zu unterstützen. Bei CDC-Crossmatch-Assays werden Wells mit Donor-Lymphozyten nach Inkubation mit Empfängerserum auf Zytotoxizität bewertet. Bei FCXM werden hochgeladene .fcs-Dateien durch automatisierte Populationserkennung und populationsspezifische IgG-Auslesung analysiert.",
-
     "why_heading": "Warum es wichtig ist",
     "why_text": "CDC- und FCXM-Assays bleiben in der Histokompatibilitätstestung relevant, ihre Interpretation kann jedoch stark von manueller Begutachtung abhängen. Die mikroskopische CDC-Bewertung ist häufig semiquantitativ, während die FCXM-Analyse meist von manuellem Population-Gating und expertenbasierter Fluoreszenzinterpretation abhängt. AlloViewer stellt feste, reproduzierbare Analyseschritte bereit, sodass Ergebnisse zwischen Operatoren, Läufen und Assay-Formaten konsistenter verglichen werden können.",
-
     "how_heading": "Funktionsweise",
     "how_text": "Für die CDC-Mikroskopie nutzt AlloViewer eine Vollauflösungs-Bildanalyse mit einem simulationsbasiert trainierten U-Net-Modell zur Erkennung von Lymphozyten. Erkannte Zellen werden anhand experimentspezifischer Positiv- und Negativkontrollen im Rot-Grün-Fluoreszenzraum klassifiziert. Dies ermöglicht eine Zytotoxizitätsbewertung auf Well-Ebene sowie den expliziten Umgang mit unsicheren Zellen. Für FCXM wendet AlloViewer Qualitätskontrolle, Lymphozytenselektion, markerinformierte Populationserkennung und gate-spezifische IgG-Signalextraktion an. Jeder Arbeitsablauf ist über eine assay-spezifische Weboberfläche und API-basierten Zugriff verfügbar.",
-
     "dev_heading": "Entwicklung",
     "dev_text": "AlloViewer wurde hauptsächlich von {{cassian}} (Institut für Transfusionsmedizin und Immunhämatologie, DRK-Blutspendedienst Baden-Württemberg-Hessen, Frankfurt) und {{tarik}} (Sektion Rheumatologie, Klinik für Innere Medizin V, Universitätsklinikum Heidelberg) im Rahmen eines gemeinsamen Projekts entwickelt (die vollständige Autorenliste finden Sie in unserer Publikation).",
-
     "license_heading": "Lizenz und Nutzung",
     "license_text": "AlloViewer wird, sofern nicht anders angegeben, unter der Creative Commons Attribution 4.0 International License (CC BY 4.0) bereitgestellt. Die aktuelle Version ist für Forschungszwecke und zur Evaluation von Arbeitsabläufen vorgesehen. Sie wurde nicht als eigenständiges klinisches Entscheidungssystem etabliert; vor einer routinemäßigen klinischen Entscheidungsunterstützung ist eine prospektive multizentrische Validierung erforderlich."
   },
@@ -92,62 +78,48 @@
     "cdc_pra": {
       "title": "CDC-PRA-Analyse",
       "intro": "Verwenden Sie diesen Arbeitsablauf für die CDC-basierte Analyse der HLA-Antikörperspezifität mit einem kommerziellen Testzell-Panel. AlloViewer ordnet das beobachtete Zytotoxizitätsmuster dem hochgeladenen Panel-Layout zu und berichtet mögliche Antikörperspezifitäten.",
-
       "step1_title": "1. Plattenlayout hochladen",
       "step1_body": "Beginnen Sie mit dem Hochladen des .xlsx-Plattenlayouts. Die Datei sollte das Testzell-Panel und die mit jedem Well verknüpfte HLA-Typisierung beschreiben. Das Layout ist erforderlich, da CDC-PRA-Ergebnisse anhand des Musters positiver und negativer Wells über das gesamte Panel hinweg interpretiert werden. Sie können die Beispieldatei unten herunterladen, um zu prüfen, ob Sie dasselbe Layout verwenden. Bitte verwenden Sie, wann immer möglich, das offizielle Layout des Unternehmens.",
       "step1_alt": "CDC-PRA-Plattenlayout hochladen",
       "download_example": "Beispiel-.xlsx-Layout herunterladen",
-
       "step2_title": "2. Bildordner hochladen",
       "step2_body": "Laden Sie den Ordner mit den Mikroskopiebildern der Platte hoch. Die Bilder werden anhand ihrer Reihenfolge in der hochgeladenen Bildliste dem ausgewählten Scan-Order zugeordnet. Obwohl Dateinamen zur Sortierung verwendet werden, prüfen Sie bitte die Tabelle zur Bildzuordnung sorgfältig, bevor Sie die Analyse starten.",
       "step2_alt": "CDC-PRA-Bilder hochladen",
-
       "step3_title": "3. Platte und Bildzuordnung prüfen",
       "step3_body": "Prüfen Sie die Well-Rollen, den Scan-Order und die Zuordnung von Bildern zu Wells. Stellen Sie sicher, dass jedes hochgeladene Bild dem richtigen Well zugeordnet ist. Die Analyse sollte erst gestartet werden, wenn die erwartete Anzahl an Wells zugeordnet ist und keine erforderlichen Bilder fehlen.",
       "step3_alt": "CDC-PRA-Plattenprüfung",
-
       "step4_title": "4. Analyse starten und Ergebnisse prüfen",
       "step4_body": "Nach dem Start der Analyse segmentiert AlloViewer Lymphozyten, klassifiziert Zellen anhand positiver und negativer Kontrollen und berechnet Zytotoxizitätswerte auf Well-Ebene. Die Ausgabe umfasst das Plattenergebnis, Werte auf Well-Ebene, Qualitätsindikatoren und eine Zusammenfassung der abgeleiteten Reaktivitätsmuster, die mit dem hochgeladenen Panel-Layout verglichen werden können.",
       "step4_alt": "CDC-PRA-Ergebnisanzeige"
     },
-
     "cdc_xm": {
       "title": "CDC-XM-Analyse",
       "intro": "Verwenden Sie diesen Arbeitsablauf für die bildbasierte Komplement-abhängige Zytotoxizitäts-Crossmatch-Analyse. AlloViewer verarbeitet Mikroskopiebilder von Donor-Lymphozyten, die mit Empfängerserum inkubiert wurden, und berichtet Zytotoxizitätswerte nach Well und Zellmodus.",
-
       "step1_title": "1. Bildordner hochladen",
       "step1_body": "Laden Sie den Ordner mit den CDC-XM-Mikroskopiebildern hoch. Wells können als Probe, positive Kontrolle, negative Kontrolle, IgM-Kontrolle oder leer zugewiesen werden. Die IgM-Kontrolle wird verwendet, um zu prüfen, ob die Behandlung mit Dithiothreitol (DTT) die IgM-vermittelte Reaktivität wirksam reduziert. Dies hilft, IgM-bezogene Signale von klinisch relevanter IgG-vermittelter Komplementaktivierung zu trennen.",
       "step1_alt": "CDC-XM-Bilder hochladen",
-
       "step2_title": "2. Plattenlayout und Spaltenmodi prüfen",
       "step2_body": "Prüfen Sie die Well-Rollen und Spaltenmodi vor dem Start. T steht für T-Zellen, B steht für B-Zellen, und T/B bedeutet, dass sowohl T-Zell- als auch B-Zell-Ergebnisse für den ausgewählten Spaltenmodus dargestellt werden. Passen Sie das Layout an, falls das Standardplattenschema nicht zum Experiment passt. Prüfen Sie anschließend, ob die Bilder den richtigen Wells zugeordnet sind.",
       "step2_alt": "CDC-XM-Plattenlayout und Spaltenmodi",
-
       "step3_title": "3. Analyse starten",
       "step3_body": "Wenn alle Wells, Kontrollen, Zellmodi, der Scan-Order und die Bildzuordnungen korrekt sind, starten Sie die Analyse. AlloViewer erkennt einzelne Zellen, klassifiziert vitale und lysierte Zellen anhand interner Kontrollen und berechnet Zytotoxizitätsfraktionen auf Well-Ebene.",
       "step3_alt": "CDC-XM-Analyse starten",
-
       "step4_title": "4. CDC-XM-Ergebnisse prüfen",
       "step4_body": "Prüfen Sie nach der Verarbeitung die Plattenvorschau, den Well-Status, die Zytotoxizitätswerte und die Übersichtstabelle. Grenzwertige oder unerwartete Wells sollten manuell geprüft werden, insbesondere wenn die Kontroll-Wells oder die IgM-Kontrolle auf Assay-Probleme hinweisen.",
       "step4_alt": "CDC-XM-Ergebnisanzeige"
     },
-
     "fcxm": {
       "title": "FC-XM-Analyse",
       "intro": "Verwenden Sie diesen Arbeitsablauf für die Flow-Cytometry-Crossmatch-Analyse aus .fcs-Dateien. AlloViewer unterstützt die automatisierte Panel-Extraktion, Probenzuordnung, Populationserkennung und populationsspezifische IgG-Auslesung.",
-
       "step1_title": "1. .fcs-Dateien hochladen und zuordnen",
       "step1_body": "Laden Sie den Ordner mit den .fcs-Dateien hoch. Ordnen Sie die Dateien nach dem Hochladen den richtigen Probenkarten zu. Eine negative Kontrolle ist erforderlich. Positiv-Kontrollen können hinzugefügt werden, falls vorhanden, und Probenkarten können für Patienten- oder Testproben ergänzt werden. Anzeigenamen können je nach verfügbaren FCS-Metadaten als Dateinamen oder Röhrchennamen angezeigt werden.",
       "step1_alt": "FC-XM-FCS-Upload und Probenzuordnung",
-
       "step2_title": "2. Markerpanel prüfen",
       "step2_body": "AlloViewer liest das Markerpanel aus den hochgeladenen .fcs-Dateien aus. Prüfen Sie die erkannten Kanäle, Antikörper, Markerrollen und Zielpopulationen vor dem Start. Mindestens ein IgG-Marker sollte ausgewählt sein, da die finale FC-XM-Interpretation von der populationsspezifischen IgG-Signalextraktion abhängt.",
       "step2_alt": "FC-XM-Markerpanel prüfen",
-
       "step3_title": "3. Analyse starten und Ergebnisse prüfen",
       "step3_body": "Starten Sie die Analyse, nachdem Proben und Panel geprüft wurden. AlloViewer führt Qualitätskontrolle, Lymphozytenselektion, markerinformierte Populationserkennung und die Berechnung gate-spezifischer IgG-Auslesungen durch. In der Ergebnisansicht können Sie eine Probe, eine Datei und ein Gate auswählen, um Streudiagramme, IgG-Dichtekurven und populationsbezogene Metriken zu prüfen.",
       "step3_alt": "FC-XM-Analyse und Ergebnisprüfung",
-
       "step4_title": "4. Berichtsregel festlegen und Zusammenfassung herunterladen",
       "step4_body": "Wählen Sie nach Abschluss des Laufs die Positivitätsmetrik und den Schwellenwert für den Bericht aus. Verfügbare Metriken umfassen medianes Verhältnis, mediane Verschiebung, Fluoreszenzindex und Anteil positiver Zellen. Laden Sie die Zusammenfassung erst herunter, nachdem Sie geprüft haben, dass das ausgewählte Gate und die Ergebnisse auf Probenebene zur vorgesehenen Interpretationsregel passen.",
       "step4_alt": "FC-XM-Berichtseinstellungen"
@@ -155,12 +127,10 @@
   },
   "cdc_app": {
     "toolbar_title": "AlloViewer - CDC-Panel-Reaktivitätsassay",
-
     "workflow": {
       "title": "Arbeitsablauf",
       "description": "Wählen Sie einen Schritt aus. Der Hauptarbeitsbereich bleibt rechts."
     },
-
     "steps": {
       "upload": {
         "title": "Dateien hochladen",
@@ -189,7 +159,6 @@
         "summary_not_ready": "Nach der Analyse verfügbar"
       }
     },
-
     "panels": {
       "upload": {
         "heading": "Schritt 1 · Dateien hochladen",
@@ -208,7 +177,6 @@
         "description": "Prüfen Sie nach der Analyse die finale Zusammenfassung."
       }
     },
-
     "upload_cards": {
       "layout": {
         "title": "Plattenlayout (.xlsx)"
@@ -218,7 +186,6 @@
         "list_label": "Hochgeladene Bilder"
       }
     },
-
     "stats": {
       "layout": {
         "label": "Layout",
@@ -232,7 +199,6 @@
         "label": "Lokal ausgewählte Dateien"
       }
     },
-
     "plate_checks": {
       "title": "Plattenprüfungen",
       "sample_wells": "Proben-Wells",
@@ -240,20 +206,17 @@
       "positive_controls": "Positiv-Kontrollen",
       "scan_order_wells": "Wells in Scan-Reihenfolge"
     },
-
     "warnings": {
       "no_negative_controls": "Es sind keine Wells für negative Kontrollen ausgewählt.",
       "no_positive_controls": "Es sind keine Wells für positive Kontrollen ausgewählt.",
       "missing_ordered_images": "{{count}} Well(s) in der Reihenfolge haben kein Bild.",
       "unmapped_images": "{{count}} hochgeladene(s) Bild(er) sind keinen Wells zugeordnet."
     },
-
     "actions": {
       "reset_experiment": "Experiment zurücksetzen",
       "run_analysis": "Analyse starten",
       "running": "Läuft…"
     },
-
     "run_button_titles": {
       "upload_layout_first": "Laden Sie zuerst das Excel-Layout hoch",
       "upload_images_first": "Laden Sie zuerst Bilder hoch",
@@ -261,7 +224,6 @@
       "missing_ordered_images": "Einige Wells in der Reihenfolge haben keine Bilder",
       "run_analysis": "Analyse starten"
     },
-
     "run_setup": {
       "title": "Analyse-Einrichtung",
       "images_uploaded": "Hochgeladene Bilder",
@@ -269,28 +231,23 @@
       "template": "Vorlage",
       "none": "Keine"
     },
-
     "summary_values": {
       "title": "Zusammenfassungswerte"
     },
-
     "plate_result": {
       "title": "Plattenergebnis"
     },
-
     "messages": {
       "analysis_done": "Analyse abgeschlossen.",
       "analysis_done_no_result": "Die Analyse wurde abgeschlossen, aber es wurde kein Ergebnis zurückgegeben.",
       "process_failed": "Prozess fehlgeschlagen."
     },
-
     "status": {
       "waiting_to_start": "Wartet auf Start.",
       "processing_plate_images": "Plattenbilder werden verarbeitet.",
       "analysis_done": "Analyse abgeschlossen.",
       "process_failed": "Prozess fehlgeschlagen."
     },
-
     "stage_messages": {
       "default": "Plattenbilder werden verarbeitet.",
       "segmentation": "Zellen werden segmentiert.",
@@ -306,12 +263,10 @@
   "FCXM": {
     "toolbar_title": "AlloViewer - Flow-Cytometry-Crossmatch",
     "empty_value": "—",
-
     "workflow": {
       "title": "Arbeitsablauf",
       "description": "Wählen Sie einen Schritt aus. Der Hauptarbeitsbereich bleibt rechts."
     },
-
     "steps": {
       "upload": {
         "title": "Hochladen und zuordnen",
@@ -341,7 +296,6 @@
         "summary_not_ready": "Nach der Analyse verfügbar"
       }
     },
-
     "panels": {
       "upload": {
         "heading": "Schritt 1 · Dateien hochladen und zuordnen",
@@ -360,25 +314,21 @@
         "description": "Legen Sie die Positivitätsregel für den Bericht fest und laden Sie anschließend die Zusammenfassung herunter."
       }
     },
-
     "upload_card": {
       "title": "FCS-Dateien (Ordner)",
       "uploaded_list_label": "Hochgeladen (.fcs)"
     },
-
     "display_names": {
       "title": "Anzeigenamen",
       "use_file_names": "Dateinamen verwenden",
       "use_tube_names": "Röhrchennamen verwenden",
       "reading": "FCS-Bezeichnungen werden gelesen…"
     },
-
     "sample_cards": {
       "title": "Probenkarten",
       "description": "Negative Kontrolle ist erforderlich. Positive Kontrolle ist optional.",
       "drag_hint": "Ziehen Sie hochgeladene Dateien aus der linken Liste in die passende Karte."
     },
-
     "panel": {
       "title": "Panel",
       "files_uploaded": "{{count}} Datei(en) hochgeladen",
@@ -386,19 +336,16 @@
       "reading": "Panel wird aus .fcs-Dateien gelesen…",
       "no_igg_marker": "Es ist kein IgG-Marker ausgewählt. Prüfen Sie das Panel vor dem Start."
     },
-
     "samples": {
       "title": "Proben",
       "file_count": "{{count}} Datei",
       "file_count_plural": "{{count}} Dateien"
     },
-
     "sample_types": {
       "negative_control": "Negative Kontrolle",
       "positive_control": "Positive Kontrolle",
       "sample": "Probe"
     },
-
     "result_selection": {
       "title": "Ergebnisauswahl",
       "selected_sample": "Ausgewählte Probe",
@@ -407,7 +354,6 @@
       "no_files": "Keine Dateien",
       "gate": "Gate"
     },
-
     "overview": {
       "title": "Übersicht",
       "description": "Asinh-transformierte IgG-Dichtekurven für Kontrollen und ausgewählte Datei",
@@ -415,21 +361,17 @@
       "no_results_yet": "Noch keine Ergebnisse.",
       "series_fallback": "Serie {{number}}"
     },
-
     "gating": {
       "title": "Gating-Strategie",
       "show": "Gating-Strategie anzeigen",
       "no_plots_yet": "Noch keine Gating-Plots."
     },
-
     "plots": {
       "vs": "{{x}} gegen {{y}}"
     },
-
     "axes": {
       "igg": "IgG"
     },
-
     "metrics": {
       "igg_median": "IgG-Median",
       "events": "Events",
@@ -439,12 +381,10 @@
       "igg_positive_fraction": "IgG+-Fraktion",
       "percent_positive": "% pos"
     },
-
     "metrics_cards": {
       "selected_file": "Ausgewählte Datei - {{label}}",
       "combined_sample": "Kombinierte Probe - {{label}}"
     },
-
     "report_settings": {
       "title": "Berichtseinstellungen",
       "metric": "Metrik",
@@ -454,7 +394,6 @@
       "run_must_be_done": "Der Lauf muss vor dem Download abgeschlossen sein",
       "download_summary": "Zusammenfassung herunterladen"
     },
-
     "actions": {
       "reset_experiment": "Experiment zurücksetzen",
       "add_sample": "Probe hinzufügen",
@@ -463,14 +402,12 @@
       "download_summary": "Zusammenfassung herunterladen",
       "preparing_summary": "Zusammenfassung wird vorbereitet…"
     },
-
     "run_button_titles": {
       "panel_loading": "Panel wird noch geladen",
       "fix_panel_error": "Beheben Sie zuerst den Panel-Fehler",
       "load_panel_first": "Laden Sie zuerst ein Panel",
       "run_analysis": "Analyse starten"
     },
-
     "run_stages": {
       "default": "Analyse läuft.",
       "fit_qc": "Datei-QC läuft.",
@@ -483,7 +420,6 @@
       "payload": "Ergebnispaket wird erstellt.",
       "plot_cache": "Plot-Cache wird erstellt."
     },
-
     "messages": {
       "loading_results": "Ergebnisse werden geladen…",
       "running_analysis": "Analyse läuft.",
@@ -503,12 +439,10 @@
   },
   "cdc_xm_app": {
     "toolbar_title": "AlloViewer - CDC-XM",
-
     "workflow": {
       "title": "Arbeitsablauf",
       "description": "Wählen Sie einen Schritt aus. Der Hauptarbeitsbereich bleibt rechts."
     },
-
     "steps": {
       "upload": {
         "title": "Bilder hochladen",
@@ -535,7 +469,6 @@
         "summary_not_ready": "Nach der Analyse verfügbar"
       }
     },
-
     "panels": {
       "upload": {
         "heading": "Schritt 1 · Bilder hochladen",
@@ -554,19 +487,16 @@
         "description": "Prüfen Sie nach der Analyse die finale Zusammenfassung."
       }
     },
-
     "upload_cards": {
       "images": {
         "title": "Bilder (Ordner)",
         "list_label": "Hochgeladene Bilder"
       }
     },
-
     "stats": {
       "images_uploaded": "Hochgeladene Bilder",
       "local_picked_files": "Lokal ausgewählte Dateien"
     },
-
     "plate_checks": {
       "title": "Plattenprüfungen",
       "sample_wells": "Proben-Wells",
@@ -575,7 +505,6 @@
       "igm_wells": "IgM-Wells",
       "scan_order_wells": "Wells in Scan-Reihenfolge"
     },
-
     "warnings": {
       "no_negative_controls": "Es sind keine Wells für negative Kontrollen ausgewählt.",
       "no_positive_controls": "Es sind keine Wells für positive Kontrollen ausgewählt.",
@@ -583,54 +512,45 @@
       "missing_ordered_images": "{{count}} Well(s) in der Reihenfolge haben kein Bild.",
       "unmapped_images": "{{count}} hochgeladene(s) Bild(er) sind keinen Wells zugeordnet."
     },
-
     "actions": {
       "reset_experiment": "Experiment zurücksetzen",
       "run_analysis": "Analyse starten",
       "running": "Läuft…"
     },
-
     "run_button_titles": {
       "upload_images_first": "Laden Sie zuerst Bilder hoch",
       "set_scan_order_first": "Legen Sie zuerst die Scan-Reihenfolge fest",
       "missing_ordered_images": "Einige Wells in der Reihenfolge haben keine Bilder",
       "run_analysis": "Analyse starten"
     },
-
     "run_setup": {
       "title": "Analyse-Einrichtung",
       "images_uploaded": "Hochgeladene Bilder",
       "wells_to_process": "Zu verarbeitende Wells",
       "cell_mode_columns": "Zellmodus-Spalten"
     },
-
     "cell_modes": {
       "t": "T",
       "b": "B",
       "tb": "T/B"
     },
-
     "summary_values": {
       "title": "Zusammenfassungswerte"
     },
-
     "plate_result": {
       "title": "Plattenergebnis"
     },
-
     "messages": {
       "analysis_done": "Analyse abgeschlossen.",
       "analysis_done_no_result": "Die Analyse wurde abgeschlossen, aber es wurde kein Ergebnis zurückgegeben.",
       "process_failed": "Prozess fehlgeschlagen."
     },
-
     "status": {
       "waiting_to_start": "Wartet auf Start.",
       "processing_plate_images": "Plattenbilder werden verarbeitet.",
       "analysis_done": "Analyse abgeschlossen.",
       "process_failed": "Prozess fehlgeschlagen."
     },
-
     "stage_messages": {
       "default": "Plattenbilder werden verarbeitet.",
       "segmentation": "Zellen werden segmentiert.",
@@ -819,7 +739,6 @@
   "PlateGrid": {
     "title": "Platte (Editor): Klicken Sie auf ein Well, um einen Probentyp auszuwählen",
     "well_title": "{{well}} ({{role}})",
-
     "roles": {
       "positive": "positive Kontrolle",
       "negative": "negative Kontrolle",
@@ -827,7 +746,6 @@
       "empty": "leer",
       "igm": "IgM-Kontrolle"
     },
-
     "actions": {
       "clear": "Leeren",
       "clear_title": "Alle Wells auf leer setzen",
@@ -842,7 +760,10 @@
     "title": "Details zu Well {{well}}",
     "description": "Originalbild und Segmentierungsergebnis. Bewegen Sie den Mauszeiger über das Originalbild, um beide Ansichten zu prüfen.",
     "actions": {
-      "close": "Schließen"
+      "close": "Schließen",
+      "declare_negative": "Als negativ festlegen",
+      "declare_positive": "Als positiv festlegen",
+      "restore_automated": "Automatische Bewertung wiederherstellen"
     },
     "images": {
       "original": {
@@ -865,6 +786,25 @@
       "original": "Original",
       "segmented": "Segmentiert",
       "noSegmentation": "Keine Segmentierung"
+    },
+    "values": {
+      "corrected": "Korrigierte positive Fraktion",
+      "raw": "Rohe positive Fraktion"
+    },
+    "override": {
+      "automated_call": "Automatische Bewertung",
+      "effective_call": "Wirksame Bewertung",
+      "active": "Manuelle Überschreibung: {{call}}",
+      "active_description": "Diese Festlegung ersetzt die automatische Bewertung in kategorialen Zusammenfassungen und im PDF. Rohe und korrigierte Messwerte bleiben unverändert.",
+      "sample_only": "Eine manuelle Bewertung ist nur für abgeschlossene Proben-Wells möglich.",
+      "updating": "Bewertung wird aktualisiert und Ergebnisse werden neu berechnet…",
+      "update_error": "Die Well-Bewertung konnte nicht aktualisiert werden."
+    },
+    "calls": {
+      "positive": "Positiv",
+      "negative": "Negativ",
+      "borderline": "Grenzwertig",
+      "not_available": "Nicht verfügbar"
     }
   },
   "PlatePreview": {
@@ -875,19 +815,16 @@
     "no_loci": "Keine Loci im Layout für dieses Well.",
     "well_image_alt": "Well {{well}}",
     "well_aria": "Well {{well}} {{imageStatus}} {{positiveStatus}}",
-
     "image_status": {
       "has_image": "(hat Bild)",
       "no_image": ""
     },
-
     "progress": {
       "queued": "Auftrag in Warteschlange…",
       "running": "Wells werden verarbeitet…",
       "done": "Abgeschlossen",
       "error": "Fehler"
     },
-
     "fields": {
       "well": "Well",
       "role": "Rolle",
@@ -895,13 +832,22 @@
       "status": "Status",
       "combo_id": "Kombi-ID",
       "race": "Race",
-      "hla_loci": "HLA-Loci"
+      "hla_loci": "HLA-Loci",
+      "automated_call": "Automatische Bewertung",
+      "effective_call": "Wirksame Bewertung"
     },
-
     "actions": {
       "pin": "Anheften",
       "unpin": "Lösen",
       "close": "Schließen"
+    },
+    "user_override": "MANUELLE ÜBERSCHREIBUNG",
+    "override": {
+      "hint": "Klicken Sie auf die Vertiefung, um dieses Fenster anzuheften, und wählen Sie anschließend positiv oder negativ.",
+      "pinned_hint": "Wählen Sie die wirksame Klassifikation für diese Probenvertiefung.",
+      "unavailable": "Eine manuelle Klassifikation ist erst möglich, nachdem ein korrigierter Anteil berechnet wurde.",
+      "updating": "Klassifikation wird aktualisiert und Ergebnisse werden neu berechnet…",
+      "update_error": "Die Klassifikation der Vertiefung konnte nicht aktualisiert werden."
     }
   },
   "Plots": {
@@ -963,7 +909,6 @@
   },
   "UploadCard": {
     "empty_value": "k. A.",
-
     "actions": {
       "browse": "Durchsuchen…",
       "select_file_first": "Wählen Sie zuerst eine Datei aus",
@@ -974,21 +919,18 @@
       "remove": "Entfernen",
       "remove_named": "{{file}} entfernen"
     },
-
     "instructions": {
       "excel_layout": "Laden Sie ein Excel-Plattenlayout hoch (.xlsx oder .xlsm).",
       "generic": "{{target}} hierher ziehen und ablegen oder auf Durchsuchen klicken.",
       "folder": "einen Ordner",
       "files": "Datei(en)"
     },
-
     "messages": {
       "skipped_files": "{{count}} nicht passende Datei(en) übersprungen.",
       "layout_loaded": "Layout geladen: {{lot}} • Wells: {{wells}}",
       "uploaded_files": "{{count}} Datei(en) hochgeladen.",
       "upload_failed": "Upload fehlgeschlagen"
     },
-
     "uploaded_list": {
       "default_label": "Hochgeladen",
       "heading": "{{label}} (in eine Karte ziehen)",
@@ -1000,6 +942,11 @@
     "actions": {
       "close": "Schließen"
     }
+  },
+  "common": {
+    "manual_override": {
+      "applied": "Manuelle Bewertung für Well {{well}} gesetzt: {{call}}.",
+      "restored": "Automatische Bewertung wiederhergestellt."
+    }
   }
 }
-

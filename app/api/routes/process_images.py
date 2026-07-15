@@ -1,18 +1,25 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 import shutil
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from alloviewer.image_analysis.services.pdf_report import build_cdc_summary_pdf
 
 from app.config import IMAGE_EXTENSIONS
-from app.models import ProcessRequest, ProcessStartResponse, ProgressResponse
+from app.models import (
+    ProcessRequest,
+    ProcessStartResponse,
+    ProgressResponse,
+    WellClassificationOverrideRequest,
+)
+from app.services.image_overrides import apply_well_classification_override
 from app.services.job_paths import JobPathError, get_job_paths, resolve_job_path
 from app.services.job_registry import require_job_type, update_job, write_json_atomic
 from app.services.job_state import (
@@ -20,6 +27,7 @@ from app.services.job_state import (
     get_image_progress,
     get_image_result,
     set_image_progress,
+    set_image_result,
 )
 from app.workers.tasks_image import run_image_analysis_task
 
@@ -33,6 +41,37 @@ router = APIRouter(
 
 WELL_ID_PATTERN = re.compile(r"^[A-Za-z]+\d+$")
 ALLOWED_CROSSMATCH_CELL_MODES = {"T", "B", "T/B", "empty"}
+
+
+def _json_response_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+
+    if isinstance(value, dict):
+        return {
+            str(key): _json_response_safe(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, (list, tuple, set)):
+        return [_json_response_safe(item) for item in value]
+
+    if hasattr(value, "item"):
+        try:
+            return _json_response_safe(value.item())
+        except (TypeError, ValueError):
+            pass
+
+    if hasattr(value, "tolist"):
+        try:
+            return _json_response_safe(value.tolist())
+        except (TypeError, ValueError):
+            pass
+
+    return _json_response_safe(jsonable_encoder(value))
 
 
 def _require_image_job(job_id: str) -> dict[str, Any]:
@@ -336,6 +375,74 @@ async def get_process(job_id: str):
         "support_id": progress.get("support_id") or job_id,
         "result": result,
     }
+
+
+@router.patch("/wells/{well_id}/classification")
+async def set_well_classification_override(
+    job_id: str,
+    well_id: str,
+    req: WellClassificationOverrideRequest,
+):
+    _require_image_job(job_id)
+
+    if not WELL_ID_PATTERN.fullmatch(well_id):
+        raise HTTPException(status_code=400, detail="Invalid well ID.")
+
+    progress = get_image_progress(job_id)
+
+    if progress is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Progress information was not found for this job.",
+        )
+
+    if progress.get("status") != "done":
+        raise HTTPException(
+            status_code=409,
+            detail="Well classifications can only be changed after analysis has completed.",
+        )
+
+    result = get_image_result(job_id)
+
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=404, detail="Analysis result not found.")
+
+    try:
+        updated = apply_well_classification_override(
+            job_id=job_id,
+            result=result,
+            well_id=well_id,
+            call=req.call,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception(
+            "Could not apply well-classification override: job_id=%s well=%s",
+            job_id,
+            well_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "The well classification could not be updated. "
+                f"Job ID: {job_id}"
+            ),
+        ) from exc
+
+    set_image_result(job_id, updated)
+    paths = get_job_paths(job_id, create=True)
+    paths.summary_pdf.unlink(missing_ok=True)
+
+    for summary_path in paths.reports.glob("summary*.pdf"):
+        summary_path.unlink(missing_ok=True)
+
+    return JSONResponse(
+        content=_json_response_safe(updated),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/segmented/{well_id}.png")
