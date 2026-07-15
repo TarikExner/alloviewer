@@ -228,10 +228,11 @@ def _well_value(well: Dict[str, Any]) -> Any:
     if value is None:
         value = well.get("corrected_frac_pos")
 
-    if value is None:
-        value = well.get("frac_pos")
-
     return value
+
+
+def _well_raw_value(well: Dict[str, Any]) -> Any:
+    return well.get("frac_pos")
 
 
 def _is_positive_well(
@@ -287,15 +288,20 @@ def _metric_table(
 
 def _well_cell(
     well_id: str,
-    value: Any,
+    corrected_value: Any,
+    raw_value: Any,
     role: Any,
     style_well_id: ParagraphStyle,
     style_cell: ParagraphStyle,
     style_role: ParagraphStyle,
 ) -> list[Any]:
+    corrected_text = _pct(corrected_value, 1)
+    raw_text = _pct(raw_value, 1)
+    fraction_text = f"{corrected_text} (raw: {raw_text})"
+
     return [
         _par(well_id, style_well_id),
-        _par(_pct(value, 1), style_cell),
+        _par(fraction_text, style_cell),
         _par(role or "-", style_role),
     ]
 
@@ -348,12 +354,14 @@ def _well_layout_table(
             well_id = f"{row}{column}"
             well = wells.get(well_id, {}) or {}
             role = well.get("role") or "-"
-            value = _well_value(well)
+            corrected_value = _well_value(well)
+            raw_value = _well_raw_value(well)
 
             output_row.append(
                 _well_cell(
                     well_id=well_id,
-                    value=value,
+                    corrected_value=corrected_value,
+                    raw_value=raw_value,
                     role=role,
                     style_well_id=style_well_id,
                     style_cell=style_cell,
@@ -383,7 +391,7 @@ def _well_layout_table(
     table = Table(
         data,
         colWidths=[12 * mm] + [22 * mm for _ in plate_cols],
-        rowHeights=[7 * mm, 7 * mm] + [17 * mm for _ in plate_rows],
+        rowHeights=[7 * mm, 7 * mm] + [20 * mm for _ in plate_rows],
     )
 
     table.setStyle(
@@ -950,9 +958,10 @@ def build_cdc_summary_pdf(
     story.append(Paragraph("Well layout", style_title))
     story.append(
         Paragraph(
-            "Cells show well ID, corrected fraction positive, and assigned role. "
-            "Crossmatch column headers show T-cell, B-cell, or combined T/B-cell "
-            "assignments. Sample wells above threshold are highlighted.",
+            "Cells show well ID, corrected fraction positive with the raw fraction "
+            "in brackets, and assigned role. Crossmatch column headers show T-cell, "
+            "B-cell, or combined T/B-cell assignments. Sample wells above the "
+            "corrected-fraction threshold are highlighted.",
             style_small,
         )
     )
@@ -967,6 +976,15 @@ def build_cdc_summary_pdf(
             threshold=threshold,
             flip_vertical=flip_vertical,
             column_modes=column_modes,
+        )
+    )
+    story.append(Spacer(1, 2.5 * mm))
+    story.append(
+        Paragraph(
+            "Fractions positive were calibrated using the negative- and "
+            "positive-control reference values. Raw fractions are shown in "
+            "brackets after the corrected values for interpretability.",
+            style_small,
         )
     )
 

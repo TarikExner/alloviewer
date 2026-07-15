@@ -11,34 +11,33 @@ type HoverPoint = {
 const MAGNIFICATION = 5;
 const MAG_BOX_SIZE = 260;
 
+function formatFraction(value: number | null): string {
+  return value === null ? "—" : `${value.toFixed(1)}%`;
+}
+
 export function PlatePopupWindow({
   well,
   imageUrl,
   segmentedImageUrl,
+  correctedFraction,
+  rawFraction,
   onClose,
 }: {
   well: WellID;
   imageUrl: string | null;
   segmentedImageUrl: string | null;
+  correctedFraction: number | null;
+  rawFraction: number | null;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-
   const originalWrapRef = useRef<HTMLDivElement | null>(null);
   const [hoverPoint, setHoverPoint] = useState<HoverPoint | null>(null);
-  const [hoverWindowPos, setHoverWindowPos] = useState<{
-    left: number;
-    top: number;
-  }>({
-    left: 0,
-    top: 0,
-  });
+  const [hoverWindowPos, setHoverWindowPos] = useState({ left: 0, top: 0 });
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        onClose();
-      }
+      if (e.key === "Escape") onClose();
     }
 
     window.addEventListener("keydown", handleKeyDown);
@@ -50,10 +49,8 @@ export function PlatePopupWindow({
     if (!el) return;
 
     const rect = el.getBoundingClientRect();
-
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-
     const xPct = Math.max(0, Math.min(100, (x / rect.width) * 100));
     const yPct = Math.max(0, Math.min(100, (y / rect.height) * 100));
 
@@ -62,7 +59,6 @@ export function PlatePopupWindow({
     const margin = 16;
     const windowWidth = MAG_BOX_SIZE * 2 + 12;
     const windowHeight = MAG_BOX_SIZE + 38;
-
     let left = e.clientX + margin;
     let top = e.clientY + margin;
 
@@ -105,13 +101,28 @@ export function PlatePopupWindow({
             <p className="text-xs text-neutral-500 dark:text-neutral-400">
               {t("PlatePopupWindow.description")}
             </p>
+            <div className="mt-2 text-sm text-neutral-800 dark:text-neutral-200">
+              <div>
+                <span className="text-neutral-500 dark:text-neutral-400">
+                  Frac. pos. corrected:
+                </span>{" "}
+                <span className="font-medium">
+                  {formatFraction(correctedFraction)}
+                </span>
+              </div>
+              <div>
+                <span className="text-neutral-500 dark:text-neutral-400">
+                  Frac. pos. raw:
+                </span>{" "}
+                <span className="font-medium">{formatFraction(rawFraction)}</span>
+              </div>
+            </div>
           </div>
 
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 rounded-md border text-sm bg-white hover:bg-neutral-50
-                       dark:bg-neutral-900 dark:hover:bg-neutral-800 dark:border-neutral-700"
+            className="px-3 py-1.5 rounded-md border text-sm bg-white hover:bg-neutral-50 dark:bg-neutral-900 dark:hover:bg-neutral-800 dark:border-neutral-700"
             aria-label={t("PlatePopupWindow.actions.close")}
           >
             {t("PlatePopupWindow.actions.close")}
@@ -130,8 +141,7 @@ export function PlatePopupWindow({
                   ref={originalWrapRef}
                   onMouseMove={handleImageMouseMove}
                   onMouseLeave={handleImageMouseLeave}
-                  className="relative h-[72vh] w-full overflow-hidden border rounded-lg bg-white
-                             dark:bg-neutral-900 dark:border-neutral-700"
+                  className="relative h-[72vh] w-full overflow-hidden border rounded-lg bg-white dark:bg-neutral-900 dark:border-neutral-700"
                 >
                   <img
                     src={imageUrl}
@@ -151,10 +161,7 @@ export function PlatePopupWindow({
                   )}
                 </div>
               ) : (
-                <div
-                  className="h-[72vh] w-full grid place-items-center text-xs text-neutral-500 border rounded-lg bg-neutral-50
-                             dark:bg-neutral-900 dark:text-neutral-400 dark:border-neutral-700"
-                >
+                <div className="h-[72vh] w-full grid place-items-center text-xs text-neutral-500 border rounded-lg bg-neutral-50 dark:bg-neutral-900 dark:text-neutral-400 dark:border-neutral-700">
                   {t("PlatePopupWindow.images.original.empty")}
                 </div>
               )}
@@ -166,10 +173,7 @@ export function PlatePopupWindow({
               </div>
 
               {segmentedImageUrl ? (
-                <div
-                  className="relative h-[72vh] w-full overflow-hidden border rounded-lg bg-white
-                             dark:bg-neutral-900 dark:border-neutral-700"
-                >
+                <div className="relative h-[72vh] w-full overflow-hidden border rounded-lg bg-white dark:bg-neutral-900 dark:border-neutral-700">
                   <img
                     src={segmentedImageUrl}
                     alt={t("PlatePopupWindow.images.segmented.alt", { well })}
@@ -188,10 +192,7 @@ export function PlatePopupWindow({
                   )}
                 </div>
               ) : (
-                <div
-                  className="h-[72vh] w-full grid place-items-center text-xs text-neutral-500 border rounded-lg bg-neutral-50
-                             dark:bg-neutral-900 dark:text-neutral-400 dark:border-neutral-700"
-                >
+                <div className="h-[72vh] w-full grid place-items-center text-xs text-neutral-500 border rounded-lg bg-neutral-50 dark:bg-neutral-900 dark:text-neutral-400 dark:border-neutral-700">
                   {t("PlatePopupWindow.images.segmented.empty")}
                 </div>
               )}
@@ -201,12 +202,10 @@ export function PlatePopupWindow({
                   <span className="h-3 w-3 rounded-sm bg-orange-400 border border-black/10" />
                   <span>{t("PlatePopupWindow.legend.positive")}</span>
                 </div>
-
                 <div className="inline-flex items-center gap-1.5">
                   <span className="h-3 w-3 rounded-sm bg-green-600 border border-black/10" />
                   <span>{t("PlatePopupWindow.legend.negative")}</span>
                 </div>
-
                 <div className="inline-flex items-center gap-1.5">
                   <span className="h-3 w-3 rounded-sm bg-blue-500 border border-black/10" />
                   <span>{t("PlatePopupWindow.legend.uncertain")}</span>
@@ -220,10 +219,7 @@ export function PlatePopupWindow({
       {hoverPoint && magnifiedBackgroundStyle && imageUrl && (
         <div
           className="fixed z-50 rounded-xl border shadow-2xl bg-white p-2 dark:bg-neutral-900 dark:border-neutral-700"
-          style={{
-            left: hoverWindowPos.left,
-            top: hoverWindowPos.top,
-          }}
+          style={{ left: hoverWindowPos.left, top: hoverWindowPos.top }}
         >
           <div className="mb-2 grid grid-cols-2 gap-3 text-xs font-medium text-neutral-600 dark:text-neutral-300">
             <div>{t("PlatePopupWindow.magnifier.original")}</div>
@@ -253,12 +249,8 @@ export function PlatePopupWindow({
               />
             ) : (
               <div
-                className="grid place-items-center border rounded-lg bg-neutral-50 text-xs text-neutral-500
-                           dark:bg-neutral-900 dark:text-neutral-400 dark:border-neutral-700"
-                style={{
-                  width: MAG_BOX_SIZE,
-                  height: MAG_BOX_SIZE,
-                }}
+                className="grid place-items-center border rounded-lg bg-neutral-50 text-xs text-neutral-500 dark:bg-neutral-900 dark:text-neutral-400 dark:border-neutral-700"
+                style={{ width: MAG_BOX_SIZE, height: MAG_BOX_SIZE }}
               >
                 {t("PlatePopupWindow.magnifier.noSegmentation")}
               </div>

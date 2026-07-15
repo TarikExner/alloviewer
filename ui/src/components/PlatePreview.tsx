@@ -96,34 +96,45 @@ export function PlatePreview({
     [imagesByWell],
   );
 
-  function fracOf(well: WellID): number | null {
+  function finiteNumber(value: unknown): number | null {
+    if (value === null || value === undefined || value === "") return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function correctedFracOf(well: WellID): number | null {
     if (imageScores) {
       const url = imagesByWell[well];
 
       if (url) {
         const encodedFilename = url.substring(url.lastIndexOf("/") + 1);
         const filename = decodeURIComponent(encodedFilename);
-        const score = imageScores[filename];
-        if (typeof score === "number") return score;
+        const score = finiteNumber(imageScores[filename]);
+        if (score !== null) return score;
       }
     }
 
-    if (!result) return null;
-
-    if (Array.isArray(result?.results)) {
-      const wellResult = result.results.find((item: any) => item.well === well);
-      return typeof wellResult?.score === "number" ? wellResult.score : null;
+    const wellResult = result?.wells?.[well];
+    if (wellResult) {
+      return (
+        finiteNumber(wellResult.frac_pos_corrected) ??
+        finiteNumber(wellResult.corrected_frac_pos)
+      );
     }
 
-    const wellResult = result?.wells?.[well];
-    return typeof wellResult?.frac_pos === "number" ? wellResult.frac_pos : null;
+    return null;
+  }
+
+  function rawFracOf(well: WellID): number | null {
+    return finiteNumber(result?.wells?.[well]?.frac_pos);
   }
 
   const data = useMemo(() => {
     if (!hoverWell) return null;
 
     const img = imagesByWell[hoverWell] || null;
-    const frac = fracOf(hoverWell);
+    const correctedFrac = correctedFracOf(hoverWell);
+    const rawFrac = rawFracOf(hoverWell);
     let role: string | null = null;
     let status = "ok";
 
@@ -175,10 +186,21 @@ export function PlatePreview({
       return indexA - indexB;
     });
 
-    return { img, role, frac, status, race, comboId, loci, orderedLoci };
+    return {
+      img,
+      role,
+      correctedFrac,
+      rawFrac,
+      status,
+      race,
+      comboId,
+      loci,
+      orderedLoci,
+    };
   }, [hoverWell, imagesByWell, result, layout, imageScores]);
 
-  const isHoverPositive = !!data && data.frac !== null && data.frac > 20;
+  const isHoverPositive =
+    !!data && data.correctedFrac !== null && data.correctedFrac > 20;
   const CARD_W = 520;
   const CARD_H = 340;
   const MARGIN = 8;
@@ -384,8 +406,9 @@ export function PlatePreview({
               {COLS.map((column) => {
                 const id = `${row}${column}` as WellID;
                 const url = imagesByWell[id] || null;
-                const fraction = fracOf(id);
-                const isPositive = fraction !== null && fraction > 20;
+                const correctedFraction = correctedFracOf(id);
+                const isPositive =
+                  correctedFraction !== null && correctedFraction > 20;
                 const status = wellStatus?.[id] ?? "idle";
                 const isRunning = status === "running";
                 const isDone = status === "done" || (jobStatus === "done" && !!url);
@@ -486,7 +509,7 @@ export function PlatePreview({
             <div className="text-sm text-neutral-900 dark:text-neutral-100">
               <div className="font-medium mb-1">
                 {t("PlatePreview.fields.well")}: {hoverWell}
-                {data.frac !== null && data.frac > 20 && (
+                {data.correctedFrac !== null && data.correctedFrac > 20 && (
                   <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
                     {t("PlatePreview.positive")}
                   </span>
@@ -504,11 +527,20 @@ export function PlatePreview({
 
               <div>
                 <span className="text-neutral-600 dark:text-neutral-400">
-                  {t("PlatePreview.fields.frac_pos")}:
+                  Frac. pos. corrected:
                 </span>{" "}
-                {data.frac === null
+                {data.correctedFrac === null
                   ? t("PlatePreview.empty_value")
-                  : `${Math.round(data.frac)}%`}
+                  : `${data.correctedFrac.toFixed(1)}%`}
+              </div>
+
+              <div>
+                <span className="text-neutral-600 dark:text-neutral-400">
+                  Frac. pos. raw:
+                </span>{" "}
+                {data.rawFrac === null
+                  ? t("PlatePreview.empty_value")
+                  : `${data.rawFrac.toFixed(1)}%`}
               </div>
 
               <div>
@@ -592,6 +624,8 @@ export function PlatePreview({
           well={detailWell}
           imageUrl={imagesByWell[detailWell] || null}
           segmentedImageUrl={detailSegmentedImageUrl}
+          correctedFraction={correctedFracOf(detailWell)}
+          rawFraction={rawFracOf(detailWell)}
           onClose={() => setDetailWell(null)}
         />
       )}
