@@ -55,7 +55,7 @@ services:
       PLATE_LAYOUT_STORE: "/data/plate_layouts"
       C_FORCE_ROOT: "true"
       TORCH_DEVICE: "cpu"
-      IMAGE_ANALYSIS_CPU_WORKERS: "3"
+      IMAGE_ANALYSIS_CPU_WORKERS: "${IMAGE_ANALYSIS_CPU_WORKERS:-5}"
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
@@ -79,31 +79,7 @@ services:
       PLATE_LAYOUT_STORE: "/data/plate_layouts"
       C_FORCE_ROOT: "true"
       TORCH_DEVICE: "cpu"
-      IMAGE_ANALYSIS_CPU_WORKERS: "3"
-      OMP_NUM_THREADS: "1"
-      MKL_NUM_THREADS: "1"
-      OPENBLAS_NUM_THREADS: "1"
-      NUMEXPR_NUM_THREADS: "1"
-    volumes:
-      - "${HOST_DATA_DIR}:/data"
-    depends_on:
-      - redis
-
-  worker_image_cpu_3:
-    image: ${BACKEND_IMAGE:-alloviewer-backend:local}
-    build: .
-    container_name: alloviewer_worker_image_cpu_3
-    restart: unless-stopped
-    profiles:
-      - cpu
-    command: celery -A app.workers.celery_app.celery_app worker -Q image --loglevel=info --pool=solo --concurrency=1 --prefetch-multiplier=1 -n image_cpu_3@%h
-    environment:
-      DATA_DIR: "/data"
-      REDIS_URL: "redis://redis:6379/0"
-      PLATE_LAYOUT_STORE: "/data/plate_layouts"
-      C_FORCE_ROOT: "true"
-      TORCH_DEVICE: "cpu"
-      IMAGE_ANALYSIS_CPU_WORKERS: "3"
+      IMAGE_ANALYSIS_CPU_WORKERS: "${IMAGE_ANALYSIS_CPU_WORKERS:-5}"
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
