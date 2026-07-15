@@ -477,7 +477,7 @@ async def fcxm_run(
 
     queued_progress = {
         "status": "queued",
-        "message": "Queued.",
+        "message": "Queued. Currently waiting for other jobs to finish...",
         "stage": "queued",
         "total_files": total_work,
         "done_files": 0,
