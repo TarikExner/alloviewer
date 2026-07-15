@@ -29,6 +29,7 @@ type PlatePreviewProps = {
   progressPercent?: number;
   jobStatus?: JobRunStatus;
   imageScores?: Record<string, number>;
+  columnLabels?: Partial<Record<number, string>>;
 };
 
 export function PlatePreview({
@@ -40,6 +41,7 @@ export function PlatePreview({
   progressPercent,
   jobStatus = "idle",
   imageScores,
+  columnLabels,
 }: PlatePreviewProps) {
   const { t } = useTranslation();
   const gridWrapRef = useRef<HTMLDivElement | null>(null);
@@ -351,14 +353,27 @@ export function PlatePreview({
         >
           <div />
 
-          {COLS.map((column) => (
-            <div
-              key={`col-${column}`}
-              className="text-xs text-center text-neutral-600 dark:text-neutral-400"
-            >
-              {column}
-            </div>
-          ))}
+          {COLS.map((column) => {
+            const rawLabel = columnLabels?.[column];
+            const label = rawLabel && rawLabel !== "empty" ? rawLabel : "";
+
+            return (
+              <div
+                key={`col-${column}`}
+                className="min-h-[34px] text-center text-neutral-600 dark:text-neutral-400"
+              >
+                <div className="text-xs">{column}</div>
+                <div
+                  className={[
+                    "mt-0.5 text-[10px] font-semibold leading-3",
+                    label ? "visible" : "invisible",
+                  ].join(" ")}
+                >
+                  {label || "T/B"}
+                </div>
+              </div>
+            );
+          })}
 
           {rowsToRender.map((row) => (
             <React.Fragment key={`row-${row}`}>

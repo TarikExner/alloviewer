@@ -197,6 +197,45 @@ def _make_progress_callback(
     return progress
 
 
+
+ALLOWED_CROSSMATCH_CELL_MODES = {"T", "B", "T/B", "empty"}
+
+
+def _normalize_column_modes(value: Any) -> dict[int, str]:
+    if value is None:
+        return {}
+
+    if not isinstance(value, dict):
+        raise ValueError(
+            "The image-analysis request contains invalid crossmatch column modes."
+        )
+
+    normalized: dict[int, str] = {}
+
+    for raw_column, raw_mode in value.items():
+        try:
+            column = int(raw_column)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid crossmatch column index: {raw_column!r}"
+            ) from exc
+
+        mode = str(raw_mode)
+
+        if column < 1 or column > 10:
+            raise ValueError(
+                f"Crossmatch column index must be between 1 and 10: {column}"
+            )
+
+        if mode not in ALLOWED_CROSSMATCH_CELL_MODES:
+            raise ValueError(
+                f"Unsupported crossmatch cell mode for column {column}: {mode}"
+            )
+
+        normalized[column] = mode
+
+    return normalized
+
 def _validate_request(
     request: dict[str, Any],
 ) -> tuple[
@@ -204,6 +243,7 @@ def _validate_request(
     list[str],
     list[str],
     float,
+    dict[int, str],
 ]:
     layout_data = request.get(
         "layout"
@@ -280,11 +320,16 @@ def _validate_request(
         )
     )
 
+    column_modes = _normalize_column_modes(
+        request.get("column_modes")
+    )
+
     return (
         layout,
         image_order,
         image_filenames,
         positivity_threshold,
+        column_modes,
     )
 
 
@@ -340,6 +385,7 @@ def run_image_job(
             image_order,
             image_filenames,
             positivity_threshold,
+            column_modes,
         ) = _validate_request(
             request
         )
@@ -397,6 +443,7 @@ def run_image_job(
             pra_positivity_threshold=(
                 positivity_threshold
             ),
+            column_modes=column_modes,
         )
 
         if not isinstance(

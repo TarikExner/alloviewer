@@ -1,6 +1,8 @@
 export const ROWS = ["A", "B", "C", "D", "E", "F"] as const;
 export const COLS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 export const WELL_TYPES = ["positive", "negative", "sample", "empty", "igm"] as const;
+export const CROSSMATCH_CELL_MODES = ["T", "B", "T/B", "empty"] as const;
+export const CROSSMATCH_RESULT_CELL_MODES = ["T", "B", "T/B"] as const;
 
 export type PlateLayout = {
   wells: WellMap;
@@ -11,10 +13,13 @@ export type Col = typeof COLS[number];
 export type WellID = `${Row}${Col}`;
 
 export const ALL_WELLS: WellID[] = ROWS.flatMap((r) =>
-  COLS.map((c) => `${r}${c}` as WellID)
+  COLS.map((c) => `${r}${c}` as WellID),
 );
 
 export type WellType = typeof WELL_TYPES[number];
+export type CrossmatchCellMode = typeof CROSSMATCH_CELL_MODES[number];
+export type CrossmatchResultCellMode = typeof CROSSMATCH_RESULT_CELL_MODES[number];
+export type CrossmatchColumnModes = Record<number, CrossmatchCellMode>;
 
 export type WellMap = Record<WellID, WellType>;
 
@@ -32,11 +37,10 @@ export type ProcessStartResponse = {
 export const ROLE_LABEL: Record<WellType, string> = {
   positive: "positive control",
   negative: "negative control",
-  sample:   "sample",
-  igm:      "IgM control",
-  empty:    "empty",
+  sample: "sample",
+  igm: "IgM control",
+  empty: "empty",
 };
-
 
 export type WellSummary = {
   well_id: WellID;
@@ -44,6 +48,9 @@ export type WellSummary = {
   n_pos: number;
   frac_pos: number;
   frac_pos_corrected?: number | null;
+  corrected_frac_pos?: number | null;
+  role?: WellType | null;
+  cell_mode?: CrossmatchCellMode | null;
   qc?: Record<string, unknown>;
   store_paths?: Record<string, string>;
   preview_path?: string | null;
@@ -51,14 +58,15 @@ export type WellSummary = {
 };
 
 export type ProcessResponse = {
+  assay_type?: CDCAssayType | string;
   calib?: unknown;
+  column_modes?: Record<string, CrossmatchCellMode>;
   wells?: Partial<Record<WellID, WellSummary>>;
   summary?: CDCSummary;
   pra_analysis?: PraAnalysis | null;
 };
 
 export type CDCControlStatus = "valid" | "warning" | "invalid";
-
 export type CDCAssayType = "pra" | "crossmatch";
 
 export type CDCRunValiditySummary = {
@@ -70,6 +78,8 @@ export type CDCRunValiditySummary = {
   nc_replicate_range?: number;
   n_positive_controls: number;
   n_negative_controls: number;
+  positive_control_wells?: string[];
+  negative_control_wells?: string[];
   control_warnings: string[];
 };
 
@@ -96,7 +106,10 @@ export type CDCPRAResultSummary = {
   positive_wells: string[];
 };
 
-export type CDCCrossmatchResultSummary = {
+export type CDCCrossmatchCellModeSummary = {
+  cell_mode: CrossmatchResultCellMode;
+  columns: number[];
+  run_validity: CDCRunValiditySummary;
   final_call: string;
   sample_corrected_frac_pos: number;
   sample_raw_frac_pos: number;
@@ -107,29 +120,40 @@ export type CDCCrossmatchResultSummary = {
   sample_wells: string[];
 };
 
+export type CDCCrossmatchResultSummary = {
+  final_call: string;
+  sample_corrected_frac_pos: number;
+  sample_raw_frac_pos: number;
+  margin_from_cutoff: number;
+  replicate_sd: number;
+  replicate_range: number;
+  replicate_discordant: boolean;
+  sample_wells: string[];
+  by_cell_mode?: Partial<
+    Record<CrossmatchResultCellMode, CDCCrossmatchCellModeSummary>
+  >;
+};
+
 export type CDCSummary = {
   assay_type: CDCAssayType | string;
   run_validity: CDCRunValiditySummary;
   assay_result: CDCPRAResultSummary | CDCCrossmatchResultSummary;
   qc: CDCQCSummary;
+  column_modes?: Record<string, CrossmatchCellMode>;
 };
 
 export type AlleleReactivityEvidence = {
   allele_key: string;
   locus: string;
   allele: string;
-
   positive_well_count: number;
   total_well_count: number;
   negative_well_count: number;
-
   positive_fraction: number;
   positive_ratio: string;
-
   positive_wells: string[];
   negative_wells: string[];
   missing_result_wells: string[];
-
   well_values: Record<string, number | null>;
 };
 
@@ -151,3 +175,4 @@ export type PraAnalysis = {
   reactivity_score: PraReactivityScore;
   alleles: AlleleReactivityEvidence[];
 };
+

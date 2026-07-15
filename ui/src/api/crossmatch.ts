@@ -1,4 +1,9 @@
-import type { ProcessStartResponse, WellID, WellMap } from "../types";
+import type {
+  CrossmatchColumnModes,
+  ProcessStartResponse,
+  WellID,
+  WellMap,
+} from "../types";
 import { API_BASE } from "../App";
 
 export type BackendProgress = {
@@ -18,6 +23,7 @@ export type BackendProgress = {
 
 export type RunProcessOptions = {
   imageFilenames: string[];
+  columnModes: CrossmatchColumnModes;
   flipVertical?: boolean;
 };
 
@@ -37,7 +43,6 @@ function formatValidationError(error: FastApiValidationError): string {
   const location = Array.isArray(error.loc)
     ? error.loc.filter((part) => part !== "body").map(String).join(".")
     : "";
-
   const message = error.msg?.trim() || "Invalid request value";
   return location ? `${location}: ${message}` : message;
 }
@@ -84,7 +89,10 @@ function extractApiErrorMessage(body: unknown): string {
   return formatErrorDetail(data.error);
 }
 
-async function readApiError(response: Response, fallbackMessage: string): Promise<string> {
+async function readApiError(
+  response: Response,
+  fallbackMessage: string,
+): Promise<string> {
   const text = await response.text().catch(() => "");
 
   if (!text.trim()) {
@@ -143,6 +151,7 @@ export async function runProcess(
     image_order: order,
     image_filenames: options.imageFilenames,
     pra_positivity_threshold: 20.0,
+    column_modes: options.columnModes,
     flip_vertical: options.flipVertical ?? false,
   };
 
@@ -192,7 +201,7 @@ export async function downloadCDCSummaryPdf(
 
   if (!response.ok) {
     throw new Error(
-      await readApiError(response, "Could not download CDC summary"),
+      await readApiError(response, "Could not download crossmatch summary"),
     );
   }
 
@@ -200,7 +209,7 @@ export async function downloadCDCSummaryPdf(
   const objectUrl = window.URL.createObjectURL(blob);
   const filename = extractDownloadFilename(
     response,
-    `cdc_summary_${jobId}.pdf`,
+    `crossmatch_summary_${jobId}.pdf`,
   );
 
   const anchor = document.createElement("a");
@@ -215,3 +224,4 @@ export async function downloadCDCSummaryPdf(
     window.URL.revokeObjectURL(objectUrl);
   }, 0);
 }
+

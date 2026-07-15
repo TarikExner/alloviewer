@@ -445,6 +445,178 @@ function formatPercentWithRange(
   return `${main} (range: ${n.toFixed(digits)}%)`;
 }
 
+const CROSSMATCH_CELL_MODE_ORDER = ["T", "B", "T/B"] as const;
+
+function formatCrossmatchCall(value: unknown) {
+  const call = String(value ?? "not_available");
+
+  const labels: Record<string, string> = {
+    positive: "Positive",
+    negative: "Negative",
+    borderline: "Borderline",
+    needs_review: "Needs review",
+    not_available: "Not available",
+  };
+
+  return labels[call] ?? call;
+}
+
+function CrossmatchCellModeCard({
+  cellMode,
+  result,
+}: {
+  cellMode: "T" | "B" | "T/B";
+  result: any;
+}) {
+  const title =
+    cellMode === "T"
+      ? "T-cell crossmatch"
+      : cellMode === "B"
+        ? "B-cell crossmatch"
+        : "T/B-cell crossmatch";
+
+  const columns = Array.isArray(result?.columns) ? result.columns : [];
+  const sampleWells = Array.isArray(result?.sample_wells)
+    ? result.sample_wells
+    : [];
+  const run = result?.run_validity ?? {};
+
+  return (
+    <section className="rounded-xl border bg-neutral-50 p-3 dark:border-neutral-800 dark:bg-neutral-950">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div className="text-sm font-semibold text-neutral-950 dark:text-neutral-50">
+            {title}
+          </div>
+          <div className="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-400">
+            Columns {columns.length ? columns.join(", ") : "—"}
+          </div>
+        </div>
+
+        <span className="rounded-full border bg-white px-2 py-1 text-xs font-semibold dark:border-neutral-700 dark:bg-neutral-900">
+          {formatCrossmatchCall(result?.final_call)}
+        </span>
+      </div>
+
+      <div className="mt-3 text-xs font-medium text-neutral-700 dark:text-neutral-300">
+        Run validity
+      </div>
+
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <CompactMetric label="Status" value={run.status ?? "—"} />
+        <CompactMetric
+          label="Positive Control % positive"
+          value={formatPercentWithRange(
+            run.pc_mean_raw,
+            run.pc_replicate_range,
+            1
+          )}
+        />
+        <CompactMetric
+          label="Negative Control % positive"
+          value={formatPercentWithRange(
+            run.nc_mean_raw,
+            run.nc_replicate_range,
+            1
+          )}
+        />
+        <CompactMetric
+          label="Dynamic range between Positive and Negative Control"
+          value={formatPercent(run.dynamic_range, 1)}
+        />
+        <CompactMetric
+          label="Controls"
+          value={`${run.n_positive_controls ?? "—"} PC · ${
+            run.n_negative_controls ?? "—"
+          } NC`}
+          sub={[
+            ...(Array.isArray(run.positive_control_wells)
+              ? run.positive_control_wells
+              : []),
+            ...(Array.isArray(run.negative_control_wells)
+              ? run.negative_control_wells
+              : []),
+          ].join(", ") || undefined}
+        />
+      </div>
+
+      {run.control_warnings?.length ? (
+        <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+          {run.control_warnings.join(", ")}
+        </div>
+      ) : null}
+
+      <div className="mt-3 text-xs font-medium text-neutral-700 dark:text-neutral-300">
+        Crossmatch result
+      </div>
+
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <CompactMetric
+          label="Corrected % positive"
+          value={formatPercent(result?.sample_corrected_frac_pos, 1)}
+        />
+        <CompactMetric
+          label="Raw % positive"
+          value={formatPercent(result?.sample_raw_frac_pos, 1)}
+        />
+        <CompactMetric
+          label="Margin from cutoff"
+          value={`${formatNumber(result?.margin_from_cutoff, 1)} pp`}
+        />
+        <CompactMetric
+          label="Replicate range"
+          value={`${formatNumber(result?.replicate_range, 1)} pp`}
+          sub={
+            result?.replicate_discordant
+              ? "Replicates require review"
+              : undefined
+          }
+        />
+        <CompactMetric
+          label="Replicate SD"
+          value={formatNumber(result?.replicate_sd, 2)}
+        />
+        <CompactMetric
+          label="Sample wells"
+          value={sampleWells.length}
+          sub={sampleWells.join(", ") || "No sample wells assigned"}
+        />
+      </div>
+    </section>
+  );
+}
+
+function CrossmatchCellModeResultsSection({ assay }: { assay: any }) {
+  const byCellMode = assay?.by_cell_mode ?? {};
+  const availableModes = CROSSMATCH_CELL_MODE_ORDER.filter(
+    (cellMode) => byCellMode[cellMode],
+  );
+
+  if (!availableModes.length) {
+    return (
+      <CompactPanel title="Crossmatch results by cell type">
+        <div className="rounded-xl border px-3 py-3 text-sm text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
+          No cell-type-specific crossmatch results are available.
+        </div>
+      </CompactPanel>
+    );
+  }
+
+  return (
+    <CompactPanel title="Crossmatch results by cell type">
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+        {availableModes.map((cellMode) => (
+          <CrossmatchCellModeCard
+            key={cellMode}
+            cellMode={cellMode}
+            result={byCellMode[cellMode]}
+          />
+        ))}
+      </div>
+    </CompactPanel>
+  );
+}
+
 function CrossmatchRunValiditySection({ run }: { run: any }) {
   return (
     <>
@@ -575,10 +747,13 @@ export function CrossmatchSummaryGrid({
   if (!summary) return <EmptySummary />;
 
   const run = summary.run_validity ?? {};
+  const assay = summary.assay_result ?? {};
   const qc = summary.qc ?? {};
 
   return (
     <div className="space-y-4">
+      <CrossmatchCellModeResultsSection assay={assay} />
+
       <CrossmatchRunValiditySection run={run} />
 
       <CrossmatchQCSection qc={qc} />

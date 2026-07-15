@@ -48,6 +48,50 @@ ProgressEvent = dict[str, Any]
 ProgressCallback = Callable[[ProgressEvent], None]
 
 
+ALLOWED_CROSSMATCH_CELL_MODES = {"T", "B", "T/B", "empty"}
+
+
+def _normalize_column_modes(
+    column_modes: dict[int, str] | None,
+) -> dict[int, str]:
+    if not column_modes:
+        return {}
+
+    normalized: dict[int, str] = {}
+
+    for raw_column, raw_mode in column_modes.items():
+        column = int(raw_column)
+        mode = str(raw_mode)
+
+        if column < 1 or column > 10:
+            raise ValueError(
+                f"Crossmatch column index must be between 1 and 10: {column}"
+            )
+
+        if mode not in ALLOWED_CROSSMATCH_CELL_MODES:
+            raise ValueError(
+                f"Unsupported crossmatch cell mode for column {column}: {mode}"
+            )
+
+        normalized[column] = mode
+
+    return normalized
+
+
+def _well_column(well_id: str) -> int | None:
+    digits = ""
+
+    for character in reversed(str(well_id)):
+        if not character.isdigit():
+            break
+        digits = character + digits
+
+    if not digits:
+        return None
+
+    return int(digits)
+
+
 def _emit_progress(
     progress_cb: ProgressCallback | None,
     **values: Any,
@@ -646,6 +690,7 @@ def run_image_analysis(
     assay_type: str = "pra",
     hla_layout: ParsedPlateLayout | None = None,
     pra_positivity_threshold: float = 20.0,
+    column_modes: dict[int, str] | None = None,
 ) -> dict[str, Any]:
     """
     Run CDC image analysis.
@@ -677,6 +722,9 @@ def run_image_analysis(
         Parsed HLA layout required for PRA analysis.
     pra_positivity_threshold
         Positivity threshold used for PRA calculations.
+    column_modes
+        Optional mapping from plate column number to ``"T"``, ``"B"``,
+        ``"T/B"``, or ``"empty"``. Used for CDC crossmatch summaries.
 
     Returns
     -------
@@ -694,6 +742,13 @@ def run_image_analysis(
     }:
         raise ValueError(
             "assay_type must be either 'pra' or 'crossmatch'."
+        )
+
+    normalized_column_modes = _normalize_column_modes(column_modes)
+
+    if assay_type == "crossmatch" and not normalized_column_modes:
+        raise ValueError(
+            "Crossmatch analysis requires column_modes."
         )
 
     if (
@@ -1039,6 +1094,7 @@ def run_image_analysis(
         plate=plate,
         config=CDC_SUMMARY_CONFIG,
         assay_type=assay_type,
+        column_modes=normalized_column_modes,
     )
 
     pra_analysis = None
@@ -1111,21 +1167,22 @@ def run_image_analysis(
     result = {
         "assay_type": assay_type,
         "calib": calibration,
+        "column_modes": {
+            str(column): mode
+            for column, mode in normalized_column_modes.items()
+        },
         "wells": {
             well_id: {
                 **well_result.summary(),
-                "role": role_map.get(
-                    well_id
+                "role": role_map.get(well_id),
+                "cell_mode": normalized_column_modes.get(
+                    _well_column(well_id)
                 ),
                 "segmented_image_url": (
                     f"{url_prefix}/{well_id}.png"
                 ),
             }
-            for (
-                well_id,
-                well_result,
-            )
-            in per_well.items()
+            for well_id, well_result in per_well.items()
         },
         "summary": summary,
         "pra_analysis": pra_analysis,

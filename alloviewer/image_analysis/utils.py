@@ -459,32 +459,114 @@ def build_crossmatch_result(
     }
 
 
+def _well_column(well_id: str) -> int | None:
+    digits = ""
+
+    for character in reversed(str(well_id)):
+        if not character.isdigit():
+            break
+        digits = character + digits
+
+    if not digits:
+        return None
+
+    return int(digits)
+
+
+def _normalize_crossmatch_column_modes(
+    column_modes: Dict[int, str] | None,
+) -> Dict[int, str]:
+    if not column_modes:
+        return {}
+
+    allowed = {"T", "B", "T/B", "empty"}
+    normalized: Dict[int, str] = {}
+
+    for raw_column, raw_mode in column_modes.items():
+        column = int(raw_column)
+        mode = str(raw_mode)
+
+        if column < 1 or column > 10:
+            raise ValueError(
+                f"Crossmatch column index must be between 1 and 10: {column}"
+            )
+
+        if mode not in allowed:
+            raise ValueError(
+                f"Unsupported crossmatch cell mode for column {column}: {mode}"
+            )
+
+        normalized[column] = mode
+
+    return normalized
+
+
+def _build_run_validity_summary(
+    *,
+    pc_ids: List[str],
+    nc_ids: List[str],
+    raw_frac: Callable[[str], float],
+    min_dynamic_range: float,
+    max_replicate_range: float,
+    qc_warnings: List[str] | None = None,
+) -> Dict[str, Any]:
+    pc_raw = [raw_frac(well_id) for well_id in pc_ids]
+    nc_raw = [raw_frac(well_id) for well_id in nc_ids]
+    pc_mean = _mean_or_nan(pc_raw)
+    nc_mean = _mean_or_nan(nc_raw)
+    dynamic_range = (
+        pc_mean - nc_mean
+        if not np.isnan(pc_mean) and not np.isnan(nc_mean)
+        else float("nan")
+    )
+    pc_range = _range_or_nan(pc_raw)
+    nc_range = _range_or_nan(nc_raw)
+    control_warnings: List[str] = []
+
+    if not pc_ids:
+        control_warnings.append("No positive control wells.")
+
+    if not nc_ids:
+        control_warnings.append("No negative control wells.")
+
+    if np.isnan(dynamic_range) or dynamic_range < min_dynamic_range:
+        control_warnings.append("Poor positive/negative control separation.")
+
+    if not np.isnan(pc_range) and pc_range > max_replicate_range:
+        control_warnings.append("Positive control replicates differ strongly.")
+
+    if not np.isnan(nc_range) and nc_range > max_replicate_range:
+        control_warnings.append("Negative control replicates differ strongly.")
+
+    status = "invalid" if control_warnings else "warning" if qc_warnings else "valid"
+
+    return {
+        "status": status,
+        "pc_mean_raw": pc_mean,
+        "nc_mean_raw": nc_mean,
+        "dynamic_range": dynamic_range,
+        "pc_replicate_range": pc_range,
+        "nc_replicate_range": nc_range,
+        "n_positive_controls": len(pc_ids),
+        "n_negative_controls": len(nc_ids),
+        "positive_control_wells": pc_ids,
+        "negative_control_wells": nc_ids,
+        "control_warnings": control_warnings,
+    }
+
+
 def build_cdc_summary(
     per_well: Dict[str, WellResult],
     plate: Plate,
     config: Dict[str, Any],
     assay_type: str = "pra",
+    column_modes: Dict[int, str] | None = None,
 ) -> Dict[str, Any]:
-    """Build a CDC assay summary with run validity and QC fields.
+    """Build CDC run validity, assay-result, and QC summaries.
 
-    Parameters
-    ----------
-    per_well : dict
-        Mapping from well ID to :class:`WellResult`.
-    plate : Plate
-        Plate object containing positive control, negative control, and sample
-        wells.
-    config : dict
-        Assay configuration containing cutoffs and QC thresholds.
-    assay_type : str, optional
-        Assay type. Supported values are ``"pra"`` and ``"crossmatch"``. Any
-        other value falls back to ``"pra"``.
-
-    Returns
-    -------
-    dict
-        Summary containing assay type, run validity, assay result, and QC
-        fields.
+    For crossmatch assays, ``column_modes`` groups sample wells into T-cell,
+    B-cell, and combined T/B-cell result summaries while retaining the overall
+    crossmatch result for compatibility and auditing.
     """
     positive_cutoff = float(config["positive_cutoff"])
     borderline_low = float(config["borderline_low"])
@@ -494,67 +576,44 @@ def build_cdc_summary(
     min_dynamic_range = float(config["min_dynamic_range"])
     max_replicate_range = float(config["max_replicate_range"])
 
-    pc_ids = [w.well_id for w in plate.get("positive")]
-    nc_ids = [w.well_id for w in plate.get("negative")]
-    sample_ids = [w.well_id for w in plate.get("sample")]
+    pc_ids = [well.well_id for well in plate.get("positive")]
+    nc_ids = [well.well_id for well in plate.get("negative")]
+    sample_ids = [well.well_id for well in plate.get("sample")]
 
-    def raw_frac(wid: str) -> float:
-        return frac_pos_raw(per_well[wid]) if wid in per_well else float("nan")
+    def raw_frac(well_id: str) -> float:
+        return (
+            frac_pos_raw(per_well[well_id])
+            if well_id in per_well
+            else float("nan")
+        )
 
-    def corr_frac(wid: str) -> float:
-        if wid not in per_well:
+    def corr_frac(well_id: str) -> float:
+        if well_id not in per_well:
             return float("nan")
-        return _safe_float(per_well[wid].corrected_frac_pos)
 
-    pc_raw = [raw_frac(wid) for wid in pc_ids]
-    nc_raw = [raw_frac(wid) for wid in nc_ids]
-    sample_raw = [raw_frac(wid) for wid in sample_ids]
-    sample_corr = [corr_frac(wid) for wid in sample_ids]
+        return _safe_float(per_well[well_id].corrected_frac_pos)
 
-    pc_mean = _mean_or_nan(pc_raw)
-    nc_mean = _mean_or_nan(nc_raw)
-
-    dynamic_range = (
-        pc_mean - nc_mean
-        if not np.isnan(pc_mean) and not np.isnan(nc_mean)
-        else float("nan")
-    )
+    sample_raw = [raw_frac(well_id) for well_id in sample_ids]
+    sample_corr = [corr_frac(well_id) for well_id in sample_ids]
 
     all_ids = list(per_well.keys())
-    low_roi_wells = []
-    high_uncertain_wells = []
+    low_roi_wells: List[str] = []
+    high_uncertain_wells: List[str] = []
 
-    for wid, wr in per_well.items():
-        counts = _roi_label_counts(wr)
-        unc_frac = _uncertain_fraction(wr)
+    for well_id, well_result in per_well.items():
+        counts = _roi_label_counts(well_result)
+        uncertain_fraction = _uncertain_fraction(well_result)
 
         if counts["n_total"] < min_rois:
-            low_roi_wells.append(wid)
+            low_roi_wells.append(well_id)
 
-        if not np.isnan(unc_frac) and unc_frac > max_uncertain_fraction:
-            high_uncertain_wells.append(wid)
+        if (
+            not np.isnan(uncertain_fraction)
+            and uncertain_fraction > max_uncertain_fraction
+        ):
+            high_uncertain_wells.append(well_id)
 
-    control_warnings = []
-
-    if len(pc_ids) == 0:
-        control_warnings.append("No positive control wells.")
-
-    if len(nc_ids) == 0:
-        control_warnings.append("No negative control wells.")
-
-    if np.isnan(dynamic_range) or dynamic_range < min_dynamic_range:
-        control_warnings.append("Poor positive/negative control separation.")
-
-    pc_range = _range_or_nan(pc_raw)
-    nc_range = _range_or_nan(nc_raw)
-
-    if not np.isnan(pc_range) and pc_range > max_replicate_range:
-        control_warnings.append("Positive control replicates differ strongly.")
-
-    if not np.isnan(nc_range) and nc_range > max_replicate_range:
-        control_warnings.append("Negative control replicates differ strongly.")
-
-    qc_warnings = []
+    qc_warnings: List[str] = []
 
     if low_roi_wells:
         qc_warnings.append(f"{len(low_roi_wells)} well(s) have low ROI count.")
@@ -564,24 +623,14 @@ def build_cdc_summary(
             f"{len(high_uncertain_wells)} well(s) have high uncertain fraction."
         )
 
-    run_status = "valid"
-
-    if control_warnings:
-        run_status = "invalid"
-    elif qc_warnings:
-        run_status = "warning"
-
-    run_validity = {
-        "status": run_status,
-        "pc_mean_raw": pc_mean,
-        "nc_mean_raw": nc_mean,
-        "dynamic_range": dynamic_range,
-        "pc_replicate_range": pc_range,
-        "nc_replicate_range": nc_range,
-        "n_positive_controls": len(pc_ids),
-        "n_negative_controls": len(nc_ids),
-        "control_warnings": control_warnings,
-    }
+    run_validity = _build_run_validity_summary(
+        pc_ids=pc_ids,
+        nc_ids=nc_ids,
+        raw_frac=raw_frac,
+        min_dynamic_range=min_dynamic_range,
+        max_replicate_range=max_replicate_range,
+        qc_warnings=qc_warnings,
+    )
 
     qc_summary = {
         "total_wells": len(all_ids),
@@ -589,13 +638,15 @@ def build_cdc_summary(
         "low_roi_wells": low_roi_wells,
         "high_uncertain_wells": high_uncertain_wells,
         "mean_n_rois": _mean_or_nan(
-            [float(len(wr.rois)) for wr in per_well.values()]
+            [float(len(well_result.rois)) for well_result in per_well.values()]
         ),
         "mean_uncertain_fraction": _mean_or_nan(
-            [_uncertain_fraction(wr) for wr in per_well.values()]
+            [_uncertain_fraction(well_result) for well_result in per_well.values()]
         ),
         "warnings": qc_warnings,
     }
+
+    normalized_column_modes = _normalize_crossmatch_column_modes(column_modes)
 
     if assay_type == "crossmatch":
         assay_result = build_crossmatch_result(
@@ -607,6 +658,60 @@ def build_cdc_summary(
             borderline_high=borderline_high,
             max_replicate_range=max_replicate_range,
         )
+
+        by_cell_mode: Dict[str, Dict[str, Any]] = {}
+
+        for cell_mode in ("T", "B", "T/B"):
+            columns = sorted(
+                column
+                for column, mode in normalized_column_modes.items()
+                if mode == cell_mode
+            )
+
+            if not columns:
+                continue
+
+            mode_sample_ids = [
+                well_id
+                for well_id in sample_ids
+                if _well_column(well_id) in columns
+            ]
+            mode_pc_ids = [
+                well_id
+                for well_id in pc_ids
+                if _well_column(well_id) in columns
+            ]
+            mode_nc_ids = [
+                well_id
+                for well_id in nc_ids
+                if _well_column(well_id) in columns
+            ]
+
+            mode_result = build_crossmatch_result(
+                sample_ids=mode_sample_ids,
+                sample_raw=[raw_frac(well_id) for well_id in mode_sample_ids],
+                sample_corr=[corr_frac(well_id) for well_id in mode_sample_ids],
+                positive_cutoff=positive_cutoff,
+                borderline_low=borderline_low,
+                borderline_high=borderline_high,
+                max_replicate_range=max_replicate_range,
+            )
+            mode_run_validity = _build_run_validity_summary(
+                pc_ids=mode_pc_ids,
+                nc_ids=mode_nc_ids,
+                raw_frac=raw_frac,
+                min_dynamic_range=min_dynamic_range,
+                max_replicate_range=max_replicate_range,
+            )
+
+            by_cell_mode[cell_mode] = {
+                "cell_mode": cell_mode,
+                "columns": columns,
+                "run_validity": mode_run_validity,
+                **mode_result,
+            }
+
+        assay_result["by_cell_mode"] = by_cell_mode
     else:
         assay_type = "pra"
         assay_result = build_pra_result(
@@ -621,6 +726,10 @@ def build_cdc_summary(
         "run_validity": run_validity,
         "assay_result": assay_result,
         "qc": qc_summary,
+        "column_modes": {
+            str(column): mode
+            for column, mode in normalized_column_modes.items()
+        },
     }
 
 

@@ -122,6 +122,7 @@ def _pct(value: Any, digits: int = 1) -> str:
     return f"{x:.{digits}f}%"
 
 
+
 def _finite_float(value: Any) -> float | None:
     try:
         number = float(value)
@@ -155,6 +156,39 @@ def _control_percent_with_range(
         return f"{main} (range: {range_number:.{digits}f}%)"
 
     return main
+
+
+def _crossmatch_call_label(value: Any) -> str:
+    key = str(value or "not_available")
+
+    return {
+        "positive": "Positive",
+        "negative": "Negative",
+        "borderline": "Borderline",
+        "needs_review": "Needs review",
+        "not_available": "Not available",
+    }.get(key, key)
+
+
+def _normalized_column_modes(value: Any) -> dict[int, str]:
+    if not isinstance(value, dict):
+        return {}
+
+    normalized: dict[int, str] = {}
+
+    for raw_column, raw_mode in value.items():
+        try:
+            column = int(raw_column)
+        except (TypeError, ValueError):
+            continue
+
+        mode = str(raw_mode)
+
+        if 1 <= column <= 10 and mode in {"T", "B", "T/B", "empty"}:
+            normalized[column] = mode
+
+    return normalized
+
 
 def _safe_text(value: Any) -> str:
     text = "" if value is None else str(value)
@@ -273,34 +307,50 @@ def _well_layout_table(
     style_well_id: ParagraphStyle,
     style_role: ParagraphStyle,
     threshold: Optional[float],
-    flip_vertical: bool = False
+    flip_vertical: bool = False,
+    column_modes: Optional[Dict[int, str]] = None,
 ) -> Table:
     wells = result.get("wells", {}) or {}
-
     plate_rows = ["A", "B", "C", "D", "E", "F"]
 
     if flip_vertical:
         plate_rows.reverse()
 
     plate_cols = list(range(1, 11))
+    normalized_modes = _normalized_column_modes(column_modes)
+    has_column_labels = any(
+        mode in {"T", "B", "T/B"}
+        for mode in normalized_modes.values()
+    )
 
     data: list[list[Any]] = [
-        [_par("", style_th)] + [_par(str(c), style_th) for c in plate_cols]
+        [_par("", style_th)] + [_par(str(column), style_th) for column in plate_cols],
+        [
+            _par("Cell type" if has_column_labels else "", style_th),
+            *[
+                _par(
+                    normalized_modes.get(column, "")
+                    if normalized_modes.get(column) != "empty"
+                    else "",
+                    style_th,
+                )
+                for column in plate_cols
+            ],
+        ],
     ]
 
     backgrounds: list[tuple] = []
 
-    for r_idx, row in enumerate(plate_rows, start=1):
-        out_row: list[Any] = [_par(row, style_th)]
+    for row_index, row in enumerate(plate_rows, start=2):
+        output_row: list[Any] = [_par(row, style_th)]
 
-        for c_idx, col in enumerate(plate_cols, start=1):
-            well_id = f"{row}{col}"
+        for column_index, column in enumerate(plate_cols, start=1):
+            well_id = f"{row}{column}"
             well = wells.get(well_id, {}) or {}
-
             role = well.get("role") or "-"
             value = _well_value(well)
 
-            out_row.append(
+            output_row.append(
                 _well_cell(
                     well_id=well_id,
                     value=value,
@@ -311,28 +361,35 @@ def _well_layout_table(
                 )
             )
 
-            bg = _role_color(role)
+            background = _role_color(role)
 
             if (
                 _is_positive_well(well_id, result, threshold)
                 and str(role).lower() == "sample"
             ):
-                bg = colors.HexColor("#fee2e2")
+                background = colors.HexColor("#fee2e2")
 
-            backgrounds.append(("BACKGROUND", (c_idx, r_idx), (c_idx, r_idx), bg))
+            backgrounds.append(
+                (
+                    "BACKGROUND",
+                    (column_index, row_index),
+                    (column_index, row_index),
+                    background,
+                )
+            )
 
-        data.append(out_row)
+        data.append(output_row)
 
-    tbl = Table(
+    table = Table(
         data,
         colWidths=[12 * mm] + [22 * mm for _ in plate_cols],
-        rowHeights=[8 * mm] + [17 * mm for _ in plate_rows],
+        rowHeights=[7 * mm, 7 * mm] + [17 * mm for _ in plate_rows],
     )
 
-    tbl.setStyle(
+    table.setStyle(
         TableStyle(
             [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                ("BACKGROUND", (0, 0), (-1, 1), colors.lightgrey),
                 ("BACKGROUND", (0, 0), (0, -1), colors.lightgrey),
                 *backgrounds,
                 ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
@@ -346,8 +403,7 @@ def _well_layout_table(
         )
     )
 
-    return tbl
-
+    return table
 
 def _allele_table(
     alleles: Iterable[Dict[str, Any]],
@@ -432,7 +488,7 @@ def _allele_table(
 def build_cdc_summary_pdf(
     result: Dict[str, Any],
     job_id: str,
-    flip_vertical: bool
+    flip_vertical: bool = False,
 ) -> bytes:
     summary = result.get("summary", {}) or {}
     assay_type = str(
@@ -443,6 +499,9 @@ def build_cdc_summary_pdf(
     assay = summary.get("assay_result", {}) or {}
     qc = summary.get("qc", {}) or {}
     pra = result.get("pra_analysis", {}) or {}
+    column_modes = _normalized_column_modes(
+        result.get("column_modes") or summary.get("column_modes")
+    )
 
     threshold = pra.get("positivity_threshold")
     if threshold is None:
@@ -677,7 +736,7 @@ def build_cdc_summary_pdf(
         ("High uncertain wells", len(qc.get("high_uncertain_wells") or [])),
     ]
 
-    sections: list[tuple[str, list[tuple[str, Any]]]] = []
+    usable_w = page_w - left_margin - right_margin
 
     if assay_type == "pra":
         reactivity = pra.get("reactivity_score", {}) or {}
@@ -704,43 +763,171 @@ def build_cdc_summary_pdf(
             ("Strong", assay.get("n_strong_positive", "-")),
         ]
 
-        sections.append(("Summary values", result_rows))
+        third = usable_w / 3.0
+        story.append(Paragraph("Summary values", style_h2))
 
-    sections.extend(
-        [
-            ("Run validity", run_rows),
-            ("QC", qc_rows),
-        ]
-    )
-
-    usable_w = page_w - left_margin - right_margin
-    column_width = usable_w / len(sections)
-    label_width = min(64 * mm, column_width * 0.62)
-
-    section_cells: list[Any] = []
-
-    for section_title, section_rows in sections:
-        section_cells.append(
+        overview = Table(
             [
-                Paragraph(section_title, style_h2),
-                _metric_table(
-                    section_rows,
-                    style_cell,
-                    style_th,
+                [
                     [
-                        label_width,
-                        column_width - label_width - 6,
+                        Paragraph("Summary values", style_h2),
+                        _metric_table(
+                            result_rows,
+                            style_cell,
+                            style_th,
+                            [34 * mm, third - 34 * mm - 6],
+                        ),
                     ],
+                    [
+                        Paragraph("Run validity", style_h2),
+                        _metric_table(
+                            run_rows,
+                            style_cell,
+                            style_th,
+                            [42 * mm, third - 42 * mm - 6],
+                        ),
+                    ],
+                    [
+                        Paragraph("QC", style_h2),
+                        _metric_table(
+                            qc_rows,
+                            style_cell,
+                            style_th,
+                            [38 * mm, third - 38 * mm - 6],
+                        ),
+                    ],
+                ]
+            ],
+            colWidths=[third, third, third],
+        )
+    else:
+        by_cell_mode = assay.get("by_cell_mode", {}) or {}
+        mode_specs = [
+            ("T", "T-cell crossmatch"),
+            ("B", "B-cell crossmatch"),
+            ("T/B", "T/B-cell crossmatch"),
+        ]
+        mode_cells: list[Any] = []
+
+        for mode, title in mode_specs:
+            mode_result = by_cell_mode.get(mode, {}) or {}
+            mode_run = mode_result.get("run_validity", {}) or {}
+            columns = mode_result.get("columns") or []
+            title_with_columns = (
+                f"{title} (columns {', '.join(map(str, columns))})"
+                if columns
+                else title
+            )
+
+            mode_rows = [
+                ("Run status", mode_run.get("status", "-")),
+                (
+                    "Positive Control % positive",
+                    _control_percent_with_range(
+                        mode_run.get("pc_mean_raw"),
+                        range_value=mode_run.get("pc_replicate_range"),
+                        digits=1,
+                    ),
+                ),
+                (
+                    "Negative Control % positive",
+                    _control_percent_with_range(
+                        mode_run.get("nc_mean_raw"),
+                        range_value=mode_run.get("nc_replicate_range"),
+                        digits=1,
+                    ),
+                ),
+                (
+                    "Dynamic range between Positive and Negative Control",
+                    _pct(mode_run.get("dynamic_range"), 1),
+                ),
+                (
+                    "Controls",
+                    f"{mode_run.get('n_positive_controls', '-')} PC; "
+                    f"{mode_run.get('n_negative_controls', '-')} NC",
+                ),
+                ("Final call", _crossmatch_call_label(mode_result.get("final_call"))),
+                (
+                    "Corrected % positive",
+                    _pct(mode_result.get("sample_corrected_frac_pos"), 1),
+                ),
+                (
+                    "Raw % positive",
+                    _pct(mode_result.get("sample_raw_frac_pos"), 1),
+                ),
+                (
+                    "Margin from cutoff",
+                    f"{_fmt(mode_result.get('margin_from_cutoff'), 1)} pp",
+                ),
+                (
+                    "Replicate range",
+                    f"{_fmt(mode_result.get('replicate_range'), 1)} pp",
+                ),
+                ("Replicate SD", _fmt(mode_result.get("replicate_sd"), 2)),
+                (
+                    "Sample wells",
+                    ", ".join(mode_result.get("sample_wells") or []) or "-",
                 ),
             ]
+
+            mode_cells.append(
+                [
+                    Paragraph(title_with_columns, style_h2),
+                    _metric_table(
+                        mode_rows,
+                        style_cell,
+                        style_th,
+                        [34 * mm, usable_w / 3.0 - 34 * mm - 6],
+                    ),
+                ]
+            )
+
+        story.append(Paragraph("Crossmatch results by cell type", style_h2))
+
+        cell_results = Table(
+            [mode_cells],
+            colWidths=[usable_w / 3.0] * 3,
         )
+        cell_results.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+        story.append(cell_results)
+        story.append(Spacer(1, 3 * mm))
 
-    story.append(Paragraph("Summary values", style_h2))
-
-    overview = Table(
-        [section_cells],
-        colWidths=[column_width for _ in sections],
-    )
+        half = usable_w / 2.0
+        overview = Table(
+            [
+                [
+                    [
+                        Paragraph("Run validity", style_h2),
+                        _metric_table(
+                            run_rows,
+                            style_cell,
+                            style_th,
+                            [62 * mm, half - 62 * mm - 6],
+                        ),
+                    ],
+                    [
+                        Paragraph("QC", style_h2),
+                        _metric_table(
+                            qc_rows,
+                            style_cell,
+                            style_th,
+                            [48 * mm, half - 48 * mm - 6],
+                        ),
+                    ],
+                ]
+            ],
+            colWidths=[half, half],
+        )
 
     overview.setStyle(
         TableStyle(
@@ -755,6 +942,7 @@ def build_cdc_summary_pdf(
     )
 
     story.append(overview)
+
     # ---------------------------------------------------------------------
     # Page 2: plate only
     # ---------------------------------------------------------------------
@@ -763,7 +951,8 @@ def build_cdc_summary_pdf(
     story.append(
         Paragraph(
             "Cells show well ID, corrected fraction positive, and assigned role. "
-            "Sample wells above threshold are highlighted.",
+            "Crossmatch column headers show T-cell, B-cell, or combined T/B-cell "
+            "assignments. Sample wells above threshold are highlighted.",
             style_small,
         )
     )
@@ -777,6 +966,7 @@ def build_cdc_summary_pdf(
             style_role=style_role,
             threshold=threshold,
             flip_vertical=flip_vertical,
+            column_modes=column_modes,
         )
     )
 

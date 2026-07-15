@@ -134,6 +134,20 @@ export default function CrossmatchApp() {
 
   const summary = computeSummary(proc);
 
+  const resultColumnModes = useMemo(() => {
+    const stored = proc?.column_modes;
+    if (!stored) return null;
+
+    return Object.fromEntries(
+      Object.entries(stored).map(([column, mode]) => [Number(column), mode]),
+    ) as Record<number, CellMode>;
+  }, [proc]);
+
+  const displayedColumnModes =
+    jobStatus === "done" && resultColumnModes
+      ? resultColumnModes
+      : columnModes;
+
   const hasImages = imageSavedNames.length > 0;
   const hasOrder = imageOrder.length > 0;
 
@@ -290,6 +304,7 @@ export default function CrossmatchApp() {
 
       const { job_id } = await runProcess(activeJobId, wells, imageOrder, {
         imageFilenames: imageSavedNames,
+        columnModes,
         flipVertical: flip,
       });
 
@@ -303,17 +318,20 @@ export default function CrossmatchApp() {
           const pct = clampPercent(prog.done, prog.total);
           if (pct !== null) setProgressPercent(pct);
 
-          setWellStatus((prev) => {
-            const next = { ...prev };
+          setWellStatus(() => {
+            const next = buildInitialWellStatus(imageOrder);
+            const doneWells = new Set((prog.done_wells ?? []).map(String));
 
-            if (prog.done_wells) {
-              prog.done_wells.forEach((w) => {
-                next[w as WellID] = "done";
-              });
+            for (const wellId of doneWells) {
+              next[wellId as WellID] = "done";
             }
 
-            if (prog.current_well) {
-              next[prog.current_well as WellID] = "running";
+            const currentWell = prog.current_well
+              ? String(prog.current_well)
+              : null;
+
+            if (currentWell && !doneWells.has(currentWell)) {
+              next[currentWell as WellID] = "running";
             }
 
             return next;
@@ -760,6 +778,7 @@ export default function CrossmatchApp() {
                     progressPercent={progressPercent ?? undefined}
                     jobStatus={jobStatus}
                     imageScores={imageScores}
+                    columnLabels={displayedColumnModes}
                     key={flip ? "prev-flip-1" : "prev-flip-0"}
                   />
                 </div>
@@ -806,6 +825,7 @@ export default function CrossmatchApp() {
                     progressPercent={progressPercent ?? undefined}
                     jobStatus={jobStatus}
                     imageScores={imageScores}
+                    columnLabels={displayedColumnModes}
                     key={flip ? "summary-prev-flip-1" : "summary-prev-flip-0"}
                   />
                 </div>

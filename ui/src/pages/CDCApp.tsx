@@ -263,7 +263,7 @@ export default function CDCApp() {
     setSummaryError(null);
 
     try {
-      await downloadCDCSummaryPdf(jobId);
+      await downloadCDCSummaryPdf(jobId, flip);
     } catch (err: any) {
       setSummaryError(err?.message || "Could not download summary PDF.");
     } finally {
@@ -775,6 +775,7 @@ export default function CDCApp() {
                     progressPercent={progressPercent ?? undefined}
                     jobStatus={jobStatus}
                     imageScores={imageScores}
+                    key={flip ? "prev-flip-1" : "prev-flip-0"}
                   />
                 </div>
               </div>
@@ -818,6 +819,7 @@ export default function CDCApp() {
                     progressPercent={progressPercent ?? undefined}
                     jobStatus={jobStatus}
                     imageScores={imageScores}
+                    key={flip ? "summary-prev-flip-1" : "summary-prev-flip-0"}
                   />
                 </div>
               </div>
