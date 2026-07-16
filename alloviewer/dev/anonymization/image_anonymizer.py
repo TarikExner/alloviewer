@@ -563,30 +563,67 @@ def _write_clean_png(source: Path, output: Path) -> None:
     image, expected_array, expected_mode = _load_oriented_pillow_image(source)
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    save_kwargs: dict[str, object] = {"format": "PNG", "compress_level": 9, "optimize": False}
-    if image.mode == "P" and "transparency" in image.info:
-        save_kwargs["transparency"] = image.info["transparency"]
+    # Palette transparency affects the decoded appearance and therefore has to
+    # be preserved. All other source metadata, including ICC profiles, EXIF,
+    # timestamps, comments, and device information, must be discarded.
+    transparency = (
+        image.info.get("transparency")
+        if image.mode == "P"
+        else None
+    )
 
-    image.save(output, **save_kwargs)
+    clean_image = image.copy()
+    clean_image.info.clear()
+
+    save_kwargs: dict[str, object] = {
+        "format": "PNG",
+        "compress_level": 9,
+        "optimize": False,
+    }
+
+    if transparency is not None:
+        save_kwargs["transparency"] = transparency
+
+    clean_image.save(output, **save_kwargs)
 
     with Image.open(output) as rewritten:
         rewritten.load()
+
         actual_array = np.array(rewritten)
         actual_mode = rewritten.mode
-        metadata_keys = set(rewritten.info) - {"transparency"}
+
+        # Some Pillow versions may expose empty metadata fields such as
+        # icc_profile=None. Only non-empty metadata counts as retained.
+        metadata_keys = {
+            key
+            for key, value in rewritten.info.items()
+            if key != "transparency"
+            and value not in (None, b"", "")
+        }
 
     if metadata_keys:
         raise ImageAnonymizationError(
             f"PNG metadata remains in '{output}': {sorted(metadata_keys)}"
         )
+
     if actual_mode != expected_mode:
         raise ImageAnonymizationError(
-            f"PNG image mode changed for '{source}': {expected_mode} -> {actual_mode}."
+            f"PNG image mode changed for '{source}': "
+            f"{expected_mode} -> {actual_mode}."
         )
-    if expected_array.shape != actual_array.shape or expected_array.dtype != actual_array.dtype:
-        raise ImageAnonymizationError(f"PNG decoded structure changed for '{source}'.")
+
+    if (
+        expected_array.shape != actual_array.shape
+        or expected_array.dtype != actual_array.dtype
+    ):
+        raise ImageAnonymizationError(
+            f"PNG decoded structure changed for '{source}'."
+        )
+
     if not np.array_equal(expected_array, actual_array):
-        raise ImageAnonymizationError(f"PNG pixel values changed for '{source}'.")
+        raise ImageAnonymizationError(
+            f"PNG pixel values changed for '{source}'."
+        )
 
 
 def _source_format(path: Path) -> str:
