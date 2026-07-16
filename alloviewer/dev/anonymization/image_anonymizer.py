@@ -7,10 +7,11 @@ import os
 import secrets
 import shutil
 import tempfile
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 import numpy as np
 import tifffile
@@ -119,6 +120,33 @@ class _TiffPageSpec:
     extrasamples: tuple[object, ...] | None
     colormap: np.ndarray | None
     bits_per_sample: tuple[int, ...]
+
+
+class _ProgressReporter:
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        callback: Callable[[str], None] | None,
+    ) -> None:
+        self.enabled = enabled
+        self.callback = callback or (lambda message: print(message, flush=True))
+        self.started = time.perf_counter()
+
+    def log(self, message: str) -> None:
+        if not self.enabled:
+            return
+        elapsed = time.perf_counter() - self.started
+        self.callback(f"[image-anonymizer +{elapsed:7.1f}s] {message}")
+
+
+def _format_bytes(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024.0 or unit == "TiB":
+            return f"{value:.1f} {unit}"
+        value /= 1024.0
+    return f"{size} B"
 
 
 def _utc_now() -> str:
@@ -619,6 +647,9 @@ def anonymize_image_tree(
     copy_non_images: bool = False,
     reuse_existing_mappings: bool = True,
     reject_symlinks: bool = True,
+    verbose: bool = True,
+    progress_every: int = 1,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> AnonymizationReport:
     """Anonymize an image directory tree while preserving image measurements.
 
@@ -633,6 +664,11 @@ def anonymize_image_tree(
     against the decoded, correctly oriented source pixels.
     """
 
+    if progress_every < 1:
+        raise ValueError("progress_every must be at least 1.")
+
+    progress = _ProgressReporter(enabled=verbose, callback=progress_callback)
+
     input_root = Path(input_folder).expanduser().resolve()
     output_root = Path(output_folder).expanduser().resolve()
     mapping_root = (
@@ -643,15 +679,26 @@ def anonymize_image_tree(
     folder_mapping_csv = mapping_root / "ext_images_folder_mapping.csv"
     file_mapping_csv = mapping_root / "ext_images_file_mapping.csv"
 
+    progress.log(f"Input root: {input_root}")
+    progress.log(f"Output root: {output_root}")
+    progress.log(f"Private mapping root: {mapping_root}")
+    progress.log("Validating input/output locations.")
     _validate_roots(input_root, output_root, mapping_root)
     if reject_symlinks:
+        progress.log("Scanning the input tree for symbolic links.")
         _assert_no_symlinks(input_root)
+        progress.log("Symbolic-link scan completed.")
 
     if output_root.exists() and not overwrite:
         raise FileExistsError(
             f"Output folder already exists: {output_root}. Pass overwrite=True to replace it."
         )
 
+    progress.log(
+        "Loading existing private mappings."
+        if reuse_existing_mappings
+        else "Existing private mappings will not be reused."
+    )
     existing_folder_rows = (
         _load_csv_by_key(folder_mapping_csv, "original_relative_path")
         if reuse_existing_mappings
@@ -673,10 +720,12 @@ def anonymize_image_tree(
     folder_map: dict[str, Path] = {".": Path(".")}
     folder_rows: dict[str, dict[str, str]] = {}
 
+    progress.log("Enumerating directories.")
     directories = sorted(
         (path for path in input_root.rglob("*") if path.is_dir()),
         key=lambda path: (len(path.relative_to(input_root).parts), path.as_posix().casefold()),
     )
+    progress.log(f"Found {len(directories)} directories below the input root.")
 
     for directory in directories:
         relative = directory.relative_to(input_root)
@@ -714,6 +763,7 @@ def anonymize_image_tree(
     staging_root = Path(
         tempfile.mkdtemp(prefix=f".{output_root.name}.anonymizing-", dir=staging_parent)
     )
+    progress.log(f"Created temporary staging directory: {staging_root}")
 
     report = AnonymizationReport(
         input_root=input_root,
@@ -728,11 +778,21 @@ def anonymize_image_tree(
         for anonymous_directory in folder_map.values():
             (staging_root / anonymous_directory).mkdir(parents=True, exist_ok=True)
 
+        progress.log("Enumerating files.")
         files = sorted(
             (path for path in input_root.rglob("*") if path.is_file()),
             key=lambda path: path.relative_to(input_root).as_posix().casefold(),
         )
+        image_total = sum(
+            1 for path in files if path.suffix.casefold() in SUPPORTED_EXTENSIONS
+        )
+        non_image_total = len(files) - image_total
+        progress.log(
+            f"Found {len(files)} files: {image_total} supported images and "
+            f"{non_image_total} other files."
+        )
 
+        processed_images = 0
         for source in files:
             relative = source.relative_to(input_root)
             relative_key = relative.as_posix()
@@ -746,9 +806,27 @@ def anonymize_image_tree(
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(source, destination)
                     report.copied_non_images.append(source)
+                    progress.log(f"COPIED non-image file: {relative_key}")
                 else:
                     report.skipped_non_images.append(source)
+                    progress.log(f"SKIPPED non-image file: {relative_key}")
                 continue
+
+            processed_images += 1
+            file_started = time.perf_counter()
+            should_report_file = (
+                processed_images == 1
+                or processed_images == image_total
+                or processed_images % progress_every == 0
+            )
+            if should_report_file:
+                progress.log(
+                    f"[{processed_images}/{image_total}] START {relative_key} "
+                    f"({_format_bytes(source.stat().st_size)})."
+                )
+                progress.log(
+                    f"[{processed_images}/{image_total}] Computing source SHA-256 and selecting output policy."
+                )
 
             source_hash = _sha256(source)
             output_suffix, expected_output_format, expected_conversion = _output_policy(source)
@@ -777,6 +855,11 @@ def anonymize_image_tree(
                 created_utc = _utc_now()
 
             destination = staging_root / anonymous_relative
+            if should_report_file:
+                progress.log(
+                    f"[{processed_images}/{image_total}] Writing {anonymous_relative.as_posix()} "
+                    f"using: {expected_conversion}."
+                )
             source_format, output_format, conversion = _process_image(source, destination)
             if output_format != expected_output_format or conversion != expected_conversion:
                 raise ImageAnonymizationError(
@@ -807,18 +890,40 @@ def anonymize_image_tree(
                     output_sha256=output_hash,
                 )
             )
+            if should_report_file:
+                file_elapsed = time.perf_counter() - file_started
+                progress.log(
+                    f"[{processed_images}/{image_total}] DONE in {file_elapsed:.1f}s: "
+                    f"{source_format} -> {output_format}, "
+                    f"output {_format_bytes(destination.stat().st_size)}."
+                )
 
+        progress.log("All files passed conversion and verification.")
         if output_root.exists():
+            progress.log(f"Removing existing output tree because overwrite=True: {output_root}")
             shutil.rmtree(output_root)
+        progress.log("Publishing the completed staging tree to the final output location.")
         os.replace(staging_root, output_root)
+        progress.log("Output tree published successfully.")
 
         sorted_folder_rows = [folder_rows[key] for key in sorted(folder_rows, key=str.casefold)]
         sorted_file_rows = [file_rows[key] for key in sorted(file_rows, key=str.casefold)]
+        progress.log("Writing private folder and file mapping CSVs.")
         _write_csv_atomic(folder_mapping_csv, FOLDER_MAPPING_FIELDS, sorted_folder_rows)
         _write_csv_atomic(file_mapping_csv, FILE_MAPPING_FIELDS, sorted_file_rows)
+        progress.log(
+            f"FINISHED: {report.image_count} images anonymized, "
+            f"{len(report.copied_non_images)} non-image files copied, "
+            f"{len(report.skipped_non_images)} non-image files skipped."
+        )
+        progress.log(f"Folder mapping CSV: {folder_mapping_csv}")
+        progress.log(f"File mapping CSV: {file_mapping_csv}")
 
         return report
-    except Exception:
+    except Exception as exc:
+        progress.log(
+            f"FAILED: {type(exc).__name__}: {exc}. Removing temporary staging output."
+        )
         shutil.rmtree(staging_root, ignore_errors=True)
         raise
 
@@ -833,6 +938,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--copy-non-images", action="store_true")
     parser.add_argument("--no-reuse-mappings", action="store_true")
+    parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--progress-every", type=int, default=1)
     return parser
 
 
@@ -845,6 +952,8 @@ def main() -> None:
         overwrite=args.overwrite,
         copy_non_images=args.copy_non_images,
         reuse_existing_mappings=not args.no_reuse_mappings,
+        verbose=not args.quiet,
+        progress_every=args.progress_every,
     )
     print(f"Anonymized images: {report.image_count}")
     print(f"Output: {report.output_root}")
