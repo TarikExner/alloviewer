@@ -31,6 +31,26 @@ EXT_IMAGES_FOLDERS = [
     "./ext_images/20260507_XM1_mono_rgb",
 ]
 
+NEW_EXT_IMAGES_FOLDERS = [
+    './ext_images/RUN_E3D485B679B8',
+    './ext_images/RUN_0E41007D6AD1',
+    './ext_images/RUN_9F17E3445802',
+    './ext_images/RUN_A0BA087114AF',
+    './ext_images/RUN_EF4293E06F29',
+    './ext_images/RUN_E44B44BD58D3',
+    './ext_images/RUN_17A7AE91A22F',
+    './ext_images/RUN_609C1D30150F',
+    './ext_images/RUN_3CE14774E520',
+    './ext_images/RUN_FCEC3886DD87',
+    './ext_images/RUN_2B97E768DF92',
+    './ext_images/RUN_C7AAF95B2EF9',
+    './ext_images/RUN_7C1C97246793'
+]
+
+EXT_IMAGES_FOLDER_MAPPING = dict(
+    zip(EXT_IMAGES_FOLDERS, NEW_EXT_IMAGES_FOLDERS, strict=True)
+)
+
 MONOCHROME_IMAGES_FOLDERS_INPUT = [
     "./ext_images/20260504_AM1_mono",
     "./ext_images/20260504_Auto1_mono",

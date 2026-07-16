@@ -32,8 +32,6 @@ Video tutorials:
 
 [AlloViewer video tutorials](https://www.youtube.com/@AlloViewer)
 
-Replace the YouTube URL above with the final channel URL.
-
 ---
 
 ## Purpose

@@ -979,6 +979,592 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--progress-every", type=int, default=1)
     return parser
 
+def anonymize_ordered_image_folders(
+    folders: Iterable[str | os.PathLike[str]],
+    input_root: str | os.PathLike[str] = "./ext_images",
+    output_folder: str | os.PathLike[str] = "../final/ext_images",
+    *,
+    mapping_folder: str | os.PathLike[str] | None = None,
+    overwrite: bool = True,
+    reuse_existing_mappings: bool = True,
+    reject_symlinks: bool = True,
+    verbose: bool = True,
+    progress_callback: Callable[[str], None] | None = None,
+    code_path_prefix: str = "./ext_images",
+) -> list[str]:
+    """
+    Anonymize an ordered list of image folders while preserving image filenames.
+
+    The supplied folder order is retained exactly. Each top-level source folder
+    receives a random RUN_* identifier and is copied into ``output_folder``.
+
+    Images are rewritten through the existing image-anonymization functions:
+
+      - TIFF: metadata-free TIFF rewrite with exact pixel verification.
+      - JPEG: lossless metadata stripping without recompression.
+      - PNG: metadata-free PNG rewrite.
+      - Formats that require a filename-extension change are rejected because
+        this function promises to preserve image filenames exactly.
+
+    The function updates:
+
+      - ext_images_folder_mapping.csv
+      - ext_images_file_mapping.csv
+      - ext_images_ordered_folder_mapping.csv
+
+    Returns
+    -------
+    list[str]
+        Replacement paths in exactly the same order as ``folders``, formatted
+        for direct use in EXT_IMAGES_FOLDERS.
+    """
+
+    progress = _ProgressReporter(
+        enabled=verbose,
+        callback=progress_callback,
+    )
+
+    source_root = Path(input_root).expanduser().resolve()
+    output_root = Path(output_folder).expanduser().resolve()
+    mapping_root = (
+        Path(mapping_folder).expanduser().resolve()
+        if mapping_folder is not None
+        else (output_root.parent / "private_mappings").resolve()
+    )
+
+    _validate_roots(source_root, output_root, mapping_root)
+
+    folder_mapping_csv = mapping_root / "ext_images_folder_mapping.csv"
+    file_mapping_csv = mapping_root / "ext_images_file_mapping.csv"
+    ordered_mapping_csv = (
+        mapping_root / "ext_images_ordered_folder_mapping.csv"
+    )
+
+    supplied_folders = list(folders)
+    if not supplied_folders:
+        raise ValueError("At least one source folder must be supplied.")
+
+    progress.log(
+        f"Preparing {len(supplied_folders)} ordered image folders."
+    )
+    progress.log(f"Input root: {source_root}")
+    progress.log(f"Output root: {output_root}")
+    progress.log(f"Mapping root: {mapping_root}")
+
+    selected_folders: list[tuple[str, Path, Path]] = []
+    seen_relative_paths: set[str] = set()
+
+    for position, folder_value in enumerate(supplied_folders, start=1):
+        source_folder = Path(folder_value).expanduser().resolve()
+
+        if not source_folder.is_dir():
+            raise FileNotFoundError(
+                f"Source folder does not exist: {source_folder}"
+            )
+
+        if not _is_relative_to(source_folder, source_root):
+            raise ValueError(
+                f"Source folder is outside input_root: {source_folder}"
+            )
+
+        relative_folder = source_folder.relative_to(source_root)
+
+        if len(relative_folder.parts) != 1:
+            raise ValueError(
+                "This function expects top-level folders directly below "
+                f"'{source_root}', but received '{relative_folder.as_posix()}'."
+            )
+
+        relative_key = relative_folder.as_posix()
+
+        if relative_key in seen_relative_paths:
+            raise ValueError(
+                f"Source folder was supplied more than once: {relative_key}"
+            )
+
+        seen_relative_paths.add(relative_key)
+
+        if reject_symlinks:
+            if source_folder.is_symlink():
+                raise ImageAnonymizationError(
+                    f"Source folder is a symbolic link: {source_folder}"
+                )
+            _assert_no_symlinks(source_folder)
+
+        nested_directories = sorted(
+            path
+            for path in source_folder.iterdir()
+            if path.is_dir()
+        )
+        if nested_directories:
+            raise ImageAnonymizationError(
+                "Nested directories are not accepted because their original "
+                "names could disclose identifying information. Found in "
+                f"'{source_folder}': "
+                + ", ".join(path.name for path in nested_directories[:10])
+            )
+
+        selected_folders.append(
+            (
+                str(folder_value),
+                source_folder,
+                relative_folder,
+            )
+        )
+
+        progress.log(
+            f"[{position}/{len(supplied_folders)}] Selected "
+            f"{relative_key}"
+        )
+
+    existing_folder_rows = (
+        _load_csv_by_key(
+            folder_mapping_csv,
+            "original_relative_path",
+        )
+        if reuse_existing_mappings
+        else {}
+    )
+    existing_file_rows = (
+        _load_csv_by_key(
+            file_mapping_csv,
+            "original_relative_path",
+        )
+        if reuse_existing_mappings
+        else {}
+    )
+
+    used_folder_names = {
+        Path(row["anonymous_relative_path"]).parts[0]
+        for row in existing_folder_rows.values()
+        if (row.get("anonymous_relative_path") or "").strip()
+    }
+
+    if output_root.exists():
+        used_folder_names.update(
+            path.name
+            for path in output_root.iterdir()
+            if path.is_dir()
+        )
+
+    folder_assignments: list[
+        tuple[str, Path, Path, str, str]
+    ] = []
+    selected_folder_rows: dict[str, dict[str, str]] = {}
+    replacement_paths: list[str] = []
+    ordered_rows: list[dict[str, str]] = []
+
+    normalized_code_prefix = code_path_prefix.rstrip("/\\")
+
+    for position, (
+        original_argument,
+        source_folder,
+        relative_folder,
+    ) in enumerate(selected_folders, start=1):
+        relative_key = relative_folder.as_posix()
+        existing = existing_folder_rows.get(relative_key)
+
+        if existing is not None:
+            anonymous_relative = Path(
+                existing["anonymous_relative_path"]
+            )
+
+            if len(anonymous_relative.parts) != 1:
+                raise ImageAnonymizationError(
+                    "The existing folder mapping is not a top-level mapping "
+                    f"for '{relative_key}': "
+                    f"{anonymous_relative.as_posix()}"
+                )
+
+            anonymous_folder_name = anonymous_relative.name
+            created_utc = (
+                existing.get("created_utc")
+                or _utc_now()
+            )
+        else:
+            anonymous_folder_name = _new_identifier(
+                "RUN",
+                used_folder_names,
+            )
+            anonymous_relative = Path(anonymous_folder_name)
+            created_utc = _utc_now()
+
+        replacement_code_path = (
+            f"{normalized_code_prefix}/{anonymous_folder_name}"
+        )
+
+        folder_assignments.append(
+            (
+                relative_key,
+                source_folder,
+                anonymous_relative,
+                anonymous_folder_name,
+                created_utc,
+            )
+        )
+        replacement_paths.append(replacement_code_path)
+
+        selected_folder_rows[relative_key] = {
+            "original_relative_path": relative_key,
+            "anonymous_relative_path": (
+                anonymous_relative.as_posix()
+            ),
+            "original_name": source_folder.name,
+            "anonymous_name": anonymous_folder_name,
+            "folder_kind": "run",
+            "created_utc": created_utc,
+        }
+
+        ordered_rows.append(
+            {
+                "position": str(position),
+                "original_argument": original_argument,
+                "original_relative_path": relative_key,
+                "original_folder_name": source_folder.name,
+                "anonymous_folder_name": anonymous_folder_name,
+                "anonymous_relative_path": (
+                    anonymous_relative.as_posix()
+                ),
+                "replacement_code_path": replacement_code_path,
+                "created_utc": created_utc,
+            }
+        )
+
+    staging_parent = output_root.parent
+    staging_parent.mkdir(parents=True, exist_ok=True)
+
+    staging_root = Path(
+        tempfile.mkdtemp(
+            prefix=f".{output_root.name}.ordered-anonymizing-",
+            dir=staging_parent,
+        )
+    )
+    backup_root = staging_root / "__backups__"
+    backup_root.mkdir(parents=True, exist_ok=True)
+
+    progress.log(
+        f"Created staging directory: {staging_root}"
+    )
+
+    selected_file_rows: dict[str, dict[str, str]] = {}
+
+    published_targets: list[Path] = []
+    backed_up_targets: dict[Path, Path] = {}
+
+    mapping_files = (
+        folder_mapping_csv,
+        file_mapping_csv,
+        ordered_mapping_csv,
+    )
+    original_mapping_contents: dict[Path, bytes | None] = {
+        path: path.read_bytes() if path.exists() else None
+        for path in mapping_files
+    }
+
+    def restore_mapping_files() -> None:
+        for path, original_content in original_mapping_contents.items():
+            if original_content is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = path.with_name(
+                    f".{path.name}.{secrets.token_hex(8)}.restore"
+                )
+                temporary.write_bytes(original_content)
+                os.replace(temporary, path)
+
+    def rollback_published_folders() -> None:
+        for target in reversed(published_targets):
+            if target.exists():
+                shutil.rmtree(target)
+
+        for target, backup in backed_up_targets.items():
+            if backup.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(backup, target)
+
+    try:
+        total_images = 0
+
+        for _, source_folder, _, _, _ in folder_assignments:
+            total_images += sum(
+                1
+                for path in source_folder.iterdir()
+                if (
+                    path.is_file()
+                    and path.suffix.casefold()
+                    in SUPPORTED_EXTENSIONS
+                )
+            )
+
+        progress.log(
+            f"Found {total_images} supported images."
+        )
+
+        processed_images = 0
+
+        for folder_position, (
+            relative_folder_key,
+            source_folder,
+            anonymous_relative,
+            anonymous_folder_name,
+            folder_created_utc,
+        ) in enumerate(folder_assignments, start=1):
+            staging_folder = staging_root / anonymous_relative
+            staging_folder.mkdir(parents=True, exist_ok=True)
+
+            source_files = sorted(
+                (
+                    path
+                    for path in source_folder.iterdir()
+                    if path.is_file()
+                ),
+                key=lambda path: path.name.casefold(),
+            )
+
+            image_files = [
+                path
+                for path in source_files
+                if path.suffix.casefold()
+                in SUPPORTED_EXTENSIONS
+            ]
+            skipped_files = [
+                path
+                for path in source_files
+                if path.suffix.casefold()
+                not in SUPPORTED_EXTENSIONS
+            ]
+
+            progress.log(
+                f"[folder {folder_position}/"
+                f"{len(folder_assignments)}] "
+                f"{source_folder.name} -> "
+                f"{anonymous_folder_name}: "
+                f"{len(image_files)} images."
+            )
+
+            for skipped in skipped_files:
+                progress.log(
+                    f"SKIPPED non-image file: "
+                    f"{relative_folder_key}/{skipped.name}"
+                )
+
+            if not image_files:
+                raise ImageAnonymizationError(
+                    f"No supported images found in '{source_folder}'."
+                )
+
+            for source_image in image_files:
+                processed_images += 1
+                started = time.perf_counter()
+
+                source_suffix = source_image.suffix.casefold()
+                _, expected_output_format, expected_conversion = (
+                    _output_policy(source_image)
+                )
+
+                filename_can_be_preserved = (
+                    (
+                        expected_output_format == "TIFF"
+                        and source_suffix in {".tif", ".tiff"}
+                    )
+                    or (
+                        expected_output_format == "JPEG"
+                        and source_suffix in {".jpg", ".jpeg"}
+                    )
+                    or (
+                        expected_output_format == "PNG"
+                        and source_suffix == ".png"
+                    )
+                )
+
+                if not filename_can_be_preserved:
+                    raise ImageAnonymizationError(
+                        "The image cannot be anonymized while preserving its "
+                        "exact filename because the safe output format would "
+                        f"change. Source: '{source_image}'. Required operation: "
+                        f"{expected_conversion}. Rename or convert this file "
+                        "separately before using this strict function."
+                    )
+
+                original_relative_file = (
+                    Path(relative_folder_key)
+                    / source_image.name
+                )
+                anonymous_relative_file = (
+                    anonymous_relative
+                    / source_image.name
+                )
+                destination = (
+                    staging_root
+                    / anonymous_relative_file
+                )
+
+                progress.log(
+                    f"[{processed_images}/{total_images}] "
+                    f"{original_relative_file.as_posix()} -> "
+                    f"{anonymous_relative_file.as_posix()}"
+                )
+
+                source_hash = _sha256(source_image)
+
+                source_format, output_format, conversion = (
+                    _process_image(
+                        source_image,
+                        destination,
+                    )
+                )
+
+                if output_format != expected_output_format:
+                    raise ImageAnonymizationError(
+                        "Unexpected output format while processing "
+                        f"'{source_image}': "
+                        f"{expected_output_format} expected, "
+                        f"{output_format} produced."
+                    )
+
+                output_hash = _sha256(destination)
+
+                existing_file = existing_file_rows.get(
+                    original_relative_file.as_posix()
+                )
+                file_created_utc = (
+                    existing_file.get("created_utc")
+                    if existing_file
+                    else None
+                ) or folder_created_utc
+
+                selected_file_rows[
+                    original_relative_file.as_posix()
+                ] = {
+                    "original_relative_path": (
+                        original_relative_file.as_posix()
+                    ),
+                    "anonymous_relative_path": (
+                        anonymous_relative_file.as_posix()
+                    ),
+                    "original_filename": source_image.name,
+                    "anonymous_filename": source_image.name,
+                    "source_format": source_format,
+                    "output_format": output_format,
+                    "conversion": conversion,
+                    "source_sha256": source_hash,
+                    "output_sha256": output_hash,
+                    "created_utc": file_created_utc,
+                }
+
+                elapsed = time.perf_counter() - started
+                progress.log(
+                    f"[{processed_images}/{total_images}] "
+                    f"DONE in {elapsed:.1f}s; "
+                    f"{_format_bytes(destination.stat().st_size)}."
+                )
+
+        progress.log(
+            "All selected images passed anonymization and verification."
+        )
+
+        output_root.mkdir(parents=True, exist_ok=True)
+
+        for (
+            _,
+            _,
+            anonymous_relative,
+            anonymous_folder_name,
+            _,
+        ) in folder_assignments:
+            staged_folder = staging_root / anonymous_relative
+            final_folder = output_root / anonymous_relative
+
+            if final_folder.exists():
+                if not overwrite:
+                    raise FileExistsError(
+                        f"Output folder already exists: {final_folder}"
+                    )
+
+                backup_folder = (
+                    backup_root / anonymous_folder_name
+                )
+                os.replace(final_folder, backup_folder)
+                backed_up_targets[final_folder] = backup_folder
+
+            os.replace(staged_folder, final_folder)
+            published_targets.append(final_folder)
+
+        merged_folder_rows = dict(existing_folder_rows)
+        merged_folder_rows.update(selected_folder_rows)
+
+        merged_file_rows = dict(existing_file_rows)
+        merged_file_rows.update(selected_file_rows)
+
+        _write_csv_atomic(
+            folder_mapping_csv,
+            FOLDER_MAPPING_FIELDS,
+            (
+                merged_folder_rows[key]
+                for key in sorted(
+                    merged_folder_rows,
+                    key=str.casefold,
+                )
+            ),
+        )
+        _write_csv_atomic(
+            file_mapping_csv,
+            FILE_MAPPING_FIELDS,
+            (
+                merged_file_rows[key]
+                for key in sorted(
+                    merged_file_rows,
+                    key=str.casefold,
+                )
+            ),
+        )
+        _write_csv_atomic(
+            ordered_mapping_csv,
+            (
+                "position",
+                "original_argument",
+                "original_relative_path",
+                "original_folder_name",
+                "anonymous_folder_name",
+                "anonymous_relative_path",
+                "replacement_code_path",
+                "created_utc",
+            ),
+            ordered_rows,
+        )
+
+        shutil.rmtree(staging_root, ignore_errors=True)
+
+        progress.log(
+            f"Finished: {len(folder_assignments)} folders and "
+            f"{processed_images} images."
+        )
+        progress.log(
+            f"Ordered mapping CSV: {ordered_mapping_csv}"
+        )
+
+        if verbose:
+            print("", flush=True)
+            print(
+                "EXT_IMAGES_FOLDERS = [",
+                flush=True,
+            )
+            for replacement_path in replacement_paths:
+                print(
+                    f'    "{replacement_path}",',
+                    flush=True,
+                )
+            print("]", flush=True)
+
+        return replacement_paths
+
+    except Exception:
+        rollback_published_folders()
+        restore_mapping_files()
+        shutil.rmtree(staging_root, ignore_errors=True)
+        raise
+
 
 def main() -> None:
     args = _build_parser().parse_args()
