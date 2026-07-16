@@ -1,0 +1,859 @@
+from __future__ import annotations
+
+import argparse
+import csv
+import hashlib
+import os
+import secrets
+import shutil
+import tempfile
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterable
+
+import numpy as np
+import tifffile
+from PIL import Image, ImageOps
+
+
+SUPPORTED_EXTENSIONS = {
+    ".tif",
+    ".tiff",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".bmp",
+    ".webp",
+    ".heic",
+    ".heif",
+}
+
+TIFF_SENSITIVE_TAGS = {
+    "artist",
+    "copyright",
+    "datetime",
+    "documentname",
+    "hostcomputer",
+    "imagedescription",
+    "make",
+    "model",
+    "pagename",
+    "software",
+    "uniquecameramodel",
+    "xpauthor",
+    "xpcomment",
+    "xpkeywords",
+    "xpsubject",
+    "xptitle",
+}
+
+JPEG_ALLOWED_APP_MARKERS = {0xE0, 0xEE}  # JFIF and Adobe color-transform markers.
+JPEG_STRIPPED_MARKERS = set(range(0xE1, 0xEE)) | {0xEF, 0xFE}
+JPEG_STANDALONE_MARKERS = {0x01, 0xD8, 0xD9, *range(0xD0, 0xD8)}
+
+FOLDER_MAPPING_FIELDS = (
+    "original_relative_path",
+    "anonymous_relative_path",
+    "original_name",
+    "anonymous_name",
+    "folder_kind",
+    "created_utc",
+)
+
+FILE_MAPPING_FIELDS = (
+    "original_relative_path",
+    "anonymous_relative_path",
+    "original_filename",
+    "anonymous_filename",
+    "source_format",
+    "output_format",
+    "conversion",
+    "source_sha256",
+    "output_sha256",
+    "created_utc",
+)
+
+
+class ImageAnonymizationError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class ImageResult:
+    source: Path
+    output: Path
+    source_format: str
+    output_format: str
+    conversion: str
+    source_sha256: str
+    output_sha256: str
+
+
+@dataclass
+class AnonymizationReport:
+    input_root: Path
+    output_root: Path
+    mapping_root: Path
+    folder_mapping_csv: Path
+    file_mapping_csv: Path
+    images: list[ImageResult] = field(default_factory=list)
+    skipped_non_images: list[Path] = field(default_factory=list)
+    copied_non_images: list[Path] = field(default_factory=list)
+
+    @property
+    def image_count(self) -> int:
+        return len(self.images)
+
+    @property
+    def folder_count(self) -> int:
+        with self.folder_mapping_csv.open("r", encoding="utf-8", newline="") as handle:
+            return sum(1 for _ in csv.DictReader(handle))
+
+
+@dataclass(frozen=True)
+class _TiffPageSpec:
+    data: np.ndarray
+    photometric: object | None
+    planarconfig: object | None
+    extrasamples: tuple[object, ...] | None
+    colormap: np.ndarray | None
+    bits_per_sample: tuple[int, ...]
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(chunk_size):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _validate_roots(input_root: Path, output_root: Path, mapping_root: Path) -> None:
+    if not input_root.is_dir():
+        raise ValueError(f"Input folder does not exist or is not a directory: {input_root}")
+
+    if input_root == output_root:
+        raise ValueError("Input and output folders must be different.")
+
+    if _is_relative_to(output_root, input_root):
+        raise ValueError("The output folder must not be inside the input folder.")
+
+    if _is_relative_to(mapping_root, input_root):
+        raise ValueError("The private mapping folder must not be inside the input folder.")
+
+    if _is_relative_to(mapping_root, output_root):
+        raise ValueError(
+            "The private mapping folder must not be inside the shareable output folder."
+        )
+
+
+def _load_csv_by_key(path: Path, key: str) -> dict[str, dict[str, str]]:
+    if not path.exists():
+        return {}
+
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+
+    result: dict[str, dict[str, str]] = {}
+    for row in rows:
+        value = (row.get(key) or "").strip()
+        if not value:
+            raise ImageAnonymizationError(
+                f"Mapping file '{path}' contains a row without '{key}'."
+            )
+        if value in result:
+            raise ImageAnonymizationError(
+                f"Mapping file '{path}' contains duplicate key '{value}'."
+            )
+        result[value] = row
+    return result
+
+
+def _write_csv_atomic(path: Path, fields: Iterable[str], rows: Iterable[dict[str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(fields), extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _new_identifier(prefix: str, used: set[str]) -> str:
+    while True:
+        candidate = f"{prefix}_{secrets.token_hex(6).upper()}"
+        if candidate not in used:
+            used.add(candidate)
+            return candidate
+
+
+def _assert_no_symlinks(input_root: Path) -> None:
+    for path in input_root.rglob("*"):
+        if path.is_symlink():
+            raise ImageAnonymizationError(
+                f"Symbolic links are not accepted in anonymization input: {path}"
+            )
+
+
+def _normalise_bits_per_sample(value: object, samples: int) -> tuple[int, ...]:
+    if isinstance(value, tuple):
+        return tuple(int(item) for item in value)
+    if isinstance(value, list):
+        return tuple(int(item) for item in value)
+    if value is None:
+        return tuple()
+    return tuple([int(value)] * max(1, samples))
+
+
+def _read_tiff_pages(path: Path) -> tuple[list[_TiffPageSpec], bool]:
+    specs: list[_TiffPageSpec] = []
+    with tifffile.TiffFile(path) as tif:
+        is_bigtiff = bool(tif.is_bigtiff)
+        for page_index, page in enumerate(tif.pages):
+            orientation_tag = page.tags.get("Orientation")
+            orientation = int(orientation_tag.value) if orientation_tag is not None else 1
+            if orientation != 1:
+                raise ImageAnonymizationError(
+                    f"TIFF '{path}' page {page_index} uses Orientation={orientation}. "
+                    "Refusing to remove the orientation tag without an explicit pixel transform."
+                )
+
+            try:
+                data = page.asarray()
+            except ValueError as exc:
+                if "imagecodecs" in str(exc).casefold():
+                    raise ImageAnonymizationError(
+                        f"TIFF '{path}' page {page_index} uses compression that requires "
+                        "the optional 'imagecodecs' package. Install it with: "
+                        "pip install imagecodecs"
+                    ) from exc
+                raise
+            samples = int(getattr(page, "samplesperpixel", 1) or 1)
+            bits = _normalise_bits_per_sample(page.bitspersample, samples)
+            expected_bits = int(data.dtype.itemsize * 8)
+            if not bits or any(bit != expected_bits for bit in bits):
+                raise ImageAnonymizationError(
+                    f"TIFF '{path}' page {page_index} stores {bits or 'unknown'} bits per "
+                    f"sample but decodes to {data.dtype}. Packed or unusual TIFF bit depths "
+                    "are intentionally rejected to prevent silent conversion."
+                )
+
+            extrasamples = None
+            if getattr(page, "extrasamples", None):
+                extrasamples = tuple(page.extrasamples)
+
+            colormap = None
+            if getattr(page, "colormap", None) is not None:
+                colormap = np.array(page.colormap, copy=True)
+
+            specs.append(
+                _TiffPageSpec(
+                    data=np.array(data, copy=True),
+                    photometric=getattr(page, "photometric", None),
+                    planarconfig=getattr(page, "planarconfig", None),
+                    extrasamples=extrasamples,
+                    colormap=colormap,
+                    bits_per_sample=bits,
+                )
+            )
+
+    if not specs:
+        raise ImageAnonymizationError(f"TIFF contains no image pages: {path}")
+    return specs, is_bigtiff
+
+
+def _write_clean_tiff(source: Path, output: Path) -> None:
+    source_pages, is_bigtiff = _read_tiff_pages(source)
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    with tifffile.TiffWriter(output, bigtiff=is_bigtiff) as writer:
+        for page in source_pages:
+            writer.write(
+                page.data,
+                photometric=page.photometric,
+                planarconfig=page.planarconfig,
+                extrasamples=page.extrasamples,
+                colormap=page.colormap,
+                bitspersample=page.bits_per_sample[0],
+                compression=None,
+                predictor=False,
+                metadata=None,
+                description=None,
+                datetime=False,
+                software=False,
+            )
+
+    output_pages, output_is_bigtiff = _read_tiff_pages(output)
+    if output_is_bigtiff != is_bigtiff:
+        raise ImageAnonymizationError(f"BigTIFF status changed while rewriting '{source}'.")
+    if len(output_pages) != len(source_pages):
+        raise ImageAnonymizationError(f"TIFF page count changed while rewriting '{source}'.")
+
+    for page_index, (before, after) in enumerate(zip(source_pages, output_pages, strict=True)):
+        if before.data.shape != after.data.shape:
+            raise ImageAnonymizationError(
+                f"TIFF page shape changed for '{source}', page {page_index}."
+            )
+        if before.data.dtype != after.data.dtype:
+            raise ImageAnonymizationError(
+                f"TIFF dtype changed for '{source}', page {page_index}: "
+                f"{before.data.dtype} -> {after.data.dtype}."
+            )
+        if before.bits_per_sample != after.bits_per_sample:
+            raise ImageAnonymizationError(
+                f"TIFF bit depth changed for '{source}', page {page_index}: "
+                f"{before.bits_per_sample} -> {after.bits_per_sample}."
+            )
+        if not np.array_equal(before.data, after.data):
+            raise ImageAnonymizationError(
+                f"TIFF pixel values changed for '{source}', page {page_index}."
+            )
+
+    with tifffile.TiffFile(output) as tif:
+        for page_index, page in enumerate(tif.pages):
+            present = {str(tag.name).casefold() for tag in page.tags.values()}
+            retained = sorted(TIFF_SENSITIVE_TAGS & present)
+            if retained:
+                raise ImageAnonymizationError(
+                    f"Sensitive TIFF tags remain in '{output}', page {page_index}: {retained}"
+                )
+
+
+def _jpeg_exif_orientation(path: Path) -> int:
+    with Image.open(path) as image:
+        try:
+            return int(image.getexif().get(274, 1) or 1)
+        except Exception:
+            return 1
+
+
+def _strip_jpeg_segments(data: bytes) -> tuple[bytes, tuple[int, ...]]:
+    if len(data) < 4 or data[:2] != b"\xFF\xD8":
+        raise ImageAnonymizationError("Input is not a valid JPEG stream.")
+
+    output = bytearray(data[:2])
+    stripped: list[int] = []
+    index = 2
+    saw_eoi = False
+
+    while index < len(data):
+        if data[index] != 0xFF:
+            raise ImageAnonymizationError(
+                f"Malformed JPEG marker stream at byte offset {index}."
+            )
+
+        marker_start = index
+        while index < len(data) and data[index] == 0xFF:
+            index += 1
+        if index >= len(data):
+            raise ImageAnonymizationError("JPEG ends inside a marker prefix.")
+
+        marker = data[index]
+        index += 1
+        marker_prefix = data[marker_start:index]
+
+        if marker == 0xD9:
+            output.extend(marker_prefix)
+            saw_eoi = True
+            break
+
+        if marker in JPEG_STANDALONE_MARKERS:
+            output.extend(marker_prefix)
+            continue
+
+        if index + 2 > len(data):
+            raise ImageAnonymizationError("JPEG ends before a segment length field.")
+        segment_length = int.from_bytes(data[index:index + 2], "big")
+        if segment_length < 2:
+            raise ImageAnonymizationError("JPEG contains an invalid segment length.")
+        segment_end = index + segment_length
+        if segment_end > len(data):
+            raise ImageAnonymizationError("JPEG segment extends beyond the end of the file.")
+
+        segment = data[marker_start:segment_end]
+        index = segment_end
+
+        if marker == 0xDA:  # Start of Scan
+            output.extend(segment)
+            scan_start = index
+            while index < len(data):
+                if data[index] != 0xFF:
+                    index += 1
+                    continue
+
+                next_index = index + 1
+                while next_index < len(data) and data[next_index] == 0xFF:
+                    next_index += 1
+                if next_index >= len(data):
+                    raise ImageAnonymizationError("JPEG ends inside entropy-coded data.")
+
+                next_marker = data[next_index]
+                if next_marker == 0x00 or 0xD0 <= next_marker <= 0xD7:
+                    index = next_index + 1
+                    continue
+
+                output.extend(data[scan_start:index])
+                break
+            continue
+
+        if 0xE0 <= marker <= 0xEF or marker == 0xFE:
+            if marker in JPEG_ALLOWED_APP_MARKERS:
+                output.extend(segment)
+            else:
+                stripped.append(marker)
+            continue
+
+        output.extend(segment)
+
+    if not saw_eoi:
+        raise ImageAnonymizationError("JPEG does not contain an End-of-Image marker.")
+
+    return bytes(output), tuple(stripped)
+
+
+def _jpeg_metadata_markers(path: Path) -> tuple[int, ...]:
+    data = path.read_bytes()
+    if data[:2] != b"\xFF\xD8":
+        raise ImageAnonymizationError(f"Not a JPEG file: {path}")
+
+    markers: list[int] = []
+    index = 2
+    while index < len(data):
+        if data[index] != 0xFF:
+            raise ImageAnonymizationError(f"Malformed JPEG marker stream in '{path}'.")
+        while index < len(data) and data[index] == 0xFF:
+            index += 1
+        if index >= len(data):
+            break
+        marker = data[index]
+        index += 1
+        if marker == 0xD9:
+            break
+        if marker in JPEG_STANDALONE_MARKERS:
+            continue
+        if index + 2 > len(data):
+            break
+        length = int.from_bytes(data[index:index + 2], "big")
+        end = index + length
+        if marker == 0xDA:
+            index = end
+            while index < len(data):
+                if data[index] != 0xFF:
+                    index += 1
+                    continue
+                probe = index + 1
+                while probe < len(data) and data[probe] == 0xFF:
+                    probe += 1
+                if probe >= len(data):
+                    return tuple(markers)
+                code = data[probe]
+                if code == 0x00 or 0xD0 <= code <= 0xD7:
+                    index = probe + 1
+                    continue
+                break
+            continue
+        if 0xE0 <= marker <= 0xEF or marker == 0xFE:
+            markers.append(marker)
+        index = end
+    return tuple(markers)
+
+
+def _decoded_array(path: Path, *, apply_orientation: bool) -> tuple[np.ndarray, str]:
+    with Image.open(path) as image:
+        image.load()
+        converted = ImageOps.exif_transpose(image) if apply_orientation else image
+        converted.load()
+        return np.array(converted), converted.mode
+
+
+def _write_lossless_clean_jpeg(source: Path, output: Path) -> None:
+    before_array, before_mode = _decoded_array(source, apply_orientation=False)
+    cleaned, _ = _strip_jpeg_segments(source.read_bytes())
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(cleaned)
+
+    remaining_markers = set(_jpeg_metadata_markers(output))
+    forbidden = remaining_markers - JPEG_ALLOWED_APP_MARKERS
+    if forbidden:
+        marker_names = [f"0x{marker:02X}" for marker in sorted(forbidden)]
+        raise ImageAnonymizationError(
+            f"JPEG metadata markers remain in '{output}': {marker_names}"
+        )
+
+    after_array, after_mode = _decoded_array(output, apply_orientation=False)
+    if before_mode != after_mode:
+        raise ImageAnonymizationError(
+            f"JPEG image mode changed for '{source}': {before_mode} -> {after_mode}."
+        )
+    if before_array.shape != after_array.shape or before_array.dtype != after_array.dtype:
+        raise ImageAnonymizationError(f"JPEG decoded structure changed for '{source}'.")
+    if not np.array_equal(before_array, after_array):
+        raise ImageAnonymizationError(
+            f"JPEG decoded pixels changed while stripping metadata from '{source}'."
+        )
+
+
+def _register_heif_support() -> None:
+    try:
+        import pillow_heif
+    except ImportError as exc:
+        raise ImageAnonymizationError(
+            "HEIC/HEIF input requires 'pillow-heif'. Install it with: pip install pillow-heif"
+        ) from exc
+    pillow_heif.register_heif_opener()
+
+
+def _load_oriented_pillow_image(source: Path) -> tuple[Image.Image, np.ndarray, str]:
+    if source.suffix.casefold() in {".heic", ".heif"}:
+        _register_heif_support()
+
+    with Image.open(source) as image:
+        image.load()
+        oriented = ImageOps.exif_transpose(image)
+        oriented.load()
+        clean = oriented.copy()
+        return clean, np.array(clean), clean.mode
+
+
+def _write_clean_png(source: Path, output: Path) -> None:
+    image, expected_array, expected_mode = _load_oriented_pillow_image(source)
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    save_kwargs: dict[str, object] = {"format": "PNG", "compress_level": 9, "optimize": False}
+    if image.mode == "P" and "transparency" in image.info:
+        save_kwargs["transparency"] = image.info["transparency"]
+
+    image.save(output, **save_kwargs)
+
+    with Image.open(output) as rewritten:
+        rewritten.load()
+        actual_array = np.array(rewritten)
+        actual_mode = rewritten.mode
+        metadata_keys = set(rewritten.info) - {"transparency"}
+
+    if metadata_keys:
+        raise ImageAnonymizationError(
+            f"PNG metadata remains in '{output}': {sorted(metadata_keys)}"
+        )
+    if actual_mode != expected_mode:
+        raise ImageAnonymizationError(
+            f"PNG image mode changed for '{source}': {expected_mode} -> {actual_mode}."
+        )
+    if expected_array.shape != actual_array.shape or expected_array.dtype != actual_array.dtype:
+        raise ImageAnonymizationError(f"PNG decoded structure changed for '{source}'.")
+    if not np.array_equal(expected_array, actual_array):
+        raise ImageAnonymizationError(f"PNG pixel values changed for '{source}'.")
+
+
+def _source_format(path: Path) -> str:
+    suffix = path.suffix.casefold()
+    return {
+        ".tif": "TIFF",
+        ".tiff": "TIFF",
+        ".jpg": "JPEG",
+        ".jpeg": "JPEG",
+        ".png": "PNG",
+        ".bmp": "BMP",
+        ".webp": "WEBP",
+        ".heic": "HEIC",
+        ".heif": "HEIF",
+    }.get(suffix, suffix.lstrip(".").upper())
+
+
+def _output_policy(source: Path) -> tuple[str, str, str]:
+    suffix = source.suffix.casefold()
+    if suffix in {".tif", ".tiff"}:
+        return ".tif", "TIFF", "metadata-free TIFF rewrite"
+    if suffix in {".jpg", ".jpeg"}:
+        orientation = _jpeg_exif_orientation(source)
+        if orientation == 1:
+            return ".jpg", "JPEG", "lossless JPEG metadata stripping"
+        return ".png", "PNG", f"JPEG orientation {orientation} applied; converted to PNG"
+    if suffix == ".png":
+        return ".png", "PNG", "metadata-free PNG rewrite"
+    if suffix == ".bmp":
+        return ".png", "PNG", "BMP decoded and stored losslessly as PNG"
+    if suffix == ".webp":
+        return ".png", "PNG", "WebP decoded and stored losslessly as PNG"
+    if suffix in {".heic", ".heif"}:
+        return ".png", "PNG", "HEIC/HEIF decoded, oriented, and stored as PNG"
+    raise ImageAnonymizationError(f"Unsupported image format: {source}")
+
+
+def _process_image(source: Path, output: Path) -> tuple[str, str, str]:
+    source_format = _source_format(source)
+    _, output_format, conversion = _output_policy(source)
+
+    if source_format == "TIFF":
+        _write_clean_tiff(source, output)
+    elif source_format == "JPEG" and output_format == "JPEG":
+        _write_lossless_clean_jpeg(source, output)
+    else:
+        _write_clean_png(source, output)
+
+    return source_format, output_format, conversion
+
+
+def anonymize_image_tree(
+    input_folder: str | os.PathLike[str] = "./ext_images",
+    output_folder: str | os.PathLike[str] = "../final/ext_images",
+    *,
+    mapping_folder: str | os.PathLike[str] | None = None,
+    overwrite: bool = False,
+    copy_non_images: bool = False,
+    reuse_existing_mappings: bool = True,
+    reject_symlinks: bool = True,
+) -> AnonymizationReport:
+    """Anonymize an image directory tree while preserving image measurements.
+
+    Every directory and image filename is replaced with a random identifier. The
+    private CSV mappings are stored outside the shareable output directory.
+
+    TIFF files are decoded and rewritten as metadata-free TIFF while requiring
+    exact page, shape, dtype, bit-depth, and pixel equality. JPEG files without a
+    nontrivial EXIF orientation are stripped losslessly by removing identifying
+    APP/COM marker segments without recompressing the image. Oriented JPEG, HEIC,
+    HEIF, PNG, BMP, and WebP inputs are written as metadata-free PNG and verified
+    against the decoded, correctly oriented source pixels.
+    """
+
+    input_root = Path(input_folder).expanduser().resolve()
+    output_root = Path(output_folder).expanduser().resolve()
+    mapping_root = (
+        Path(mapping_folder).expanduser().resolve()
+        if mapping_folder is not None
+        else (output_root.parent / "private_mappings").resolve()
+    )
+    folder_mapping_csv = mapping_root / "ext_images_folder_mapping.csv"
+    file_mapping_csv = mapping_root / "ext_images_file_mapping.csv"
+
+    _validate_roots(input_root, output_root, mapping_root)
+    if reject_symlinks:
+        _assert_no_symlinks(input_root)
+
+    if output_root.exists() and not overwrite:
+        raise FileExistsError(
+            f"Output folder already exists: {output_root}. Pass overwrite=True to replace it."
+        )
+
+    existing_folder_rows = (
+        _load_csv_by_key(folder_mapping_csv, "original_relative_path")
+        if reuse_existing_mappings
+        else {}
+    )
+    existing_file_rows = (
+        _load_csv_by_key(file_mapping_csv, "original_relative_path")
+        if reuse_existing_mappings
+        else {}
+    )
+
+    used_folder_names = {
+        Path(row["anonymous_relative_path"]).name for row in existing_folder_rows.values()
+    }
+    used_file_names = {
+        Path(row["anonymous_relative_path"]).name for row in existing_file_rows.values()
+    }
+
+    folder_map: dict[str, Path] = {".": Path(".")}
+    folder_rows: dict[str, dict[str, str]] = {}
+
+    directories = sorted(
+        (path for path in input_root.rglob("*") if path.is_dir()),
+        key=lambda path: (len(path.relative_to(input_root).parts), path.as_posix().casefold()),
+    )
+
+    for directory in directories:
+        relative = directory.relative_to(input_root)
+        relative_key = relative.as_posix()
+        parent_key = relative.parent.as_posix() if relative.parent != Path(".") else "."
+        anonymous_parent = folder_map[parent_key]
+
+        existing = existing_folder_rows.get(relative_key)
+        if existing:
+            anonymous_relative = Path(existing["anonymous_relative_path"])
+            if anonymous_relative.parent != anonymous_parent:
+                raise ImageAnonymizationError(
+                    f"Existing folder mapping has an inconsistent parent for '{relative_key}'."
+                )
+            anonymous_name = anonymous_relative.name
+            created_utc = existing.get("created_utc") or _utc_now()
+        else:
+            prefix = "RUN" if len(relative.parts) == 1 else "DIR"
+            anonymous_name = _new_identifier(prefix, used_folder_names)
+            anonymous_relative = anonymous_parent / anonymous_name
+            created_utc = _utc_now()
+
+        folder_map[relative_key] = anonymous_relative
+        folder_rows[relative_key] = {
+            "original_relative_path": relative_key,
+            "anonymous_relative_path": anonymous_relative.as_posix(),
+            "original_name": directory.name,
+            "anonymous_name": anonymous_name,
+            "folder_kind": "run" if len(relative.parts) == 1 else "nested",
+            "created_utc": created_utc,
+        }
+
+    staging_parent = output_root.parent
+    staging_parent.mkdir(parents=True, exist_ok=True)
+    staging_root = Path(
+        tempfile.mkdtemp(prefix=f".{output_root.name}.anonymizing-", dir=staging_parent)
+    )
+
+    report = AnonymizationReport(
+        input_root=input_root,
+        output_root=output_root,
+        mapping_root=mapping_root,
+        folder_mapping_csv=folder_mapping_csv,
+        file_mapping_csv=file_mapping_csv,
+    )
+    file_rows: dict[str, dict[str, str]] = {}
+
+    try:
+        for anonymous_directory in folder_map.values():
+            (staging_root / anonymous_directory).mkdir(parents=True, exist_ok=True)
+
+        files = sorted(
+            (path for path in input_root.rglob("*") if path.is_file()),
+            key=lambda path: path.relative_to(input_root).as_posix().casefold(),
+        )
+
+        for source in files:
+            relative = source.relative_to(input_root)
+            relative_key = relative.as_posix()
+            parent_key = relative.parent.as_posix() if relative.parent != Path(".") else "."
+            anonymous_parent = folder_map[parent_key]
+
+            if source.suffix.casefold() not in SUPPORTED_EXTENSIONS:
+                if copy_non_images:
+                    anonymous_name = _new_identifier("FILE", used_file_names) + source.suffix.casefold()
+                    destination = staging_root / anonymous_parent / anonymous_name
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(source, destination)
+                    report.copied_non_images.append(source)
+                else:
+                    report.skipped_non_images.append(source)
+                continue
+
+            source_hash = _sha256(source)
+            output_suffix, expected_output_format, expected_conversion = _output_policy(source)
+            existing = existing_file_rows.get(relative_key)
+
+            if existing:
+                prior_hash = (existing.get("source_sha256") or "").strip()
+                if prior_hash and prior_hash != source_hash:
+                    raise ImageAnonymizationError(
+                        f"Source file changed since its mapping was created: {source}"
+                    )
+                anonymous_relative = Path(existing["anonymous_relative_path"])
+                if anonymous_relative.parent != anonymous_parent:
+                    raise ImageAnonymizationError(
+                        f"Existing file mapping has an inconsistent parent for '{relative_key}'."
+                    )
+                if anonymous_relative.suffix.casefold() != output_suffix:
+                    raise ImageAnonymizationError(
+                        f"Existing file mapping output extension no longer matches policy for '{source}'."
+                    )
+                anonymous_name = anonymous_relative.name
+                created_utc = existing.get("created_utc") or _utc_now()
+            else:
+                anonymous_name = _new_identifier("IMG", used_file_names) + output_suffix
+                anonymous_relative = anonymous_parent / anonymous_name
+                created_utc = _utc_now()
+
+            destination = staging_root / anonymous_relative
+            source_format, output_format, conversion = _process_image(source, destination)
+            if output_format != expected_output_format or conversion != expected_conversion:
+                raise ImageAnonymizationError(
+                    f"Internal output-policy mismatch while processing '{source}'."
+                )
+            output_hash = _sha256(destination)
+
+            file_rows[relative_key] = {
+                "original_relative_path": relative_key,
+                "anonymous_relative_path": anonymous_relative.as_posix(),
+                "original_filename": source.name,
+                "anonymous_filename": anonymous_name,
+                "source_format": source_format,
+                "output_format": output_format,
+                "conversion": conversion,
+                "source_sha256": source_hash,
+                "output_sha256": output_hash,
+                "created_utc": created_utc,
+            }
+            report.images.append(
+                ImageResult(
+                    source=source,
+                    output=output_root / anonymous_relative,
+                    source_format=source_format,
+                    output_format=output_format,
+                    conversion=conversion,
+                    source_sha256=source_hash,
+                    output_sha256=output_hash,
+                )
+            )
+
+        if output_root.exists():
+            shutil.rmtree(output_root)
+        os.replace(staging_root, output_root)
+
+        sorted_folder_rows = [folder_rows[key] for key in sorted(folder_rows, key=str.casefold)]
+        sorted_file_rows = [file_rows[key] for key in sorted(file_rows, key=str.casefold)]
+        _write_csv_atomic(folder_mapping_csv, FOLDER_MAPPING_FIELDS, sorted_folder_rows)
+        _write_csv_atomic(file_mapping_csv, FILE_MAPPING_FIELDS, sorted_file_rows)
+
+        return report
+    except Exception:
+        shutil.rmtree(staging_root, ignore_errors=True)
+        raise
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Anonymize an external image dataset and create private CSV mappings."
+    )
+    parser.add_argument("input_folder", nargs="?", default="./ext_images")
+    parser.add_argument("output_folder", nargs="?", default="../final/ext_images")
+    parser.add_argument("--mapping-folder", default=None)
+    parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--copy-non-images", action="store_true")
+    parser.add_argument("--no-reuse-mappings", action="store_true")
+    return parser
+
+
+def main() -> None:
+    args = _build_parser().parse_args()
+    report = anonymize_image_tree(
+        args.input_folder,
+        args.output_folder,
+        mapping_folder=args.mapping_folder,
+        overwrite=args.overwrite,
+        copy_non_images=args.copy_non_images,
+        reuse_existing_mappings=not args.no_reuse_mappings,
+    )
+    print(f"Anonymized images: {report.image_count}")
+    print(f"Output: {report.output_root}")
+    print(f"Folder mapping: {report.folder_mapping_csv}")
+    print(f"File mapping: {report.file_mapping_csv}")
+    if report.skipped_non_images:
+        print(f"Skipped non-image files: {len(report.skipped_non_images)}")
+
+
+if __name__ == "__main__":
+    main()
+
