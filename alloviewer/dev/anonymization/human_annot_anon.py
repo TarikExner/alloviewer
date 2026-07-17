@@ -721,7 +721,7 @@ def prepare_human_annotations(
     human_output_folder: str | os.PathLike[str] = "../final/human_annotations",
     translation_file: str | os.PathLike[str] = "../final/private_mappings/ext_images_file_mapping.csv",
     *,
-    experimental_output_folder: str | os.PathLike[str] = "../final/experimental_readout_images",
+    experimental_output_folder: str | os.PathLike[str] = "../final/experiment_readout_images",
     anonymized_images_folder: str | os.PathLike[str] = "../final/ext_images",
     overwrite: bool = False,
     reject_symlinks: bool = True,
