@@ -544,7 +544,7 @@ def score_unet_folders(
             segmented_url_prefix = "",
             unet_config=unet_config,
             qc=False,
-            assay_type="crossmatch"
+            assay_type="pra"
         )
 
         well_res = res["wells"]
