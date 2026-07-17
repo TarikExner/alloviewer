@@ -539,8 +539,9 @@ def score_unet_folders(
             layout=layout,
             image_order=image_order,
             image_filenames=image_names,
-            template_filename="template",
-            data_dir=str(image_storage_dir),
+            input_root=str(image_storage_dir),
+            segmented_output_dir = "./tmp",
+            segmented_url_prefix = "",
             unet_config=unet_config,
             qc=False,
             assay_type="crossmatch"

@@ -32,19 +32,19 @@ EXT_IMAGES_FOLDERS = [
 ]
 
 NEW_EXT_IMAGES_FOLDERS = [
-    './ext_images/RUN_E3D485B679B8',
-    './ext_images/RUN_0E41007D6AD1',
-    './ext_images/RUN_9F17E3445802',
-    './ext_images/RUN_A0BA087114AF',
-    './ext_images/RUN_EF4293E06F29',
-    './ext_images/RUN_E44B44BD58D3',
-    './ext_images/RUN_17A7AE91A22F',
-    './ext_images/RUN_609C1D30150F',
-    './ext_images/RUN_3CE14774E520',
-    './ext_images/RUN_FCEC3886DD87',
-    './ext_images/RUN_2B97E768DF92',
-    './ext_images/RUN_C7AAF95B2EF9',
-    './ext_images/RUN_7C1C97246793'
+    './show_images/RUN_70EE2A2429DF',
+    './show_images/RUN_5EDD30B72B08',
+    './show_images/RUN_878792BCA9FA',
+    './show_images/RUN_BF6B72531957',
+    './show_images/RUN_10ADA6AA6BF3',
+    './show_images/RUN_FE2D8B514F58',
+    './show_images/RUN_1DF168DEDCE3',
+    './show_images/RUN_744317DAE9FA',
+    './show_images/RUN_09BBFFDB23CA',
+    './show_images/RUN_00A085F20BD4',
+    './show_images/RUN_35E9DC45B645',
+    './show_images/RUN_DB00056249B5',
+    './show_images/RUN_793B6CA77F84'
 ]
 
 EXT_IMAGES_FOLDER_MAPPING = dict(
