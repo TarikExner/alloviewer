@@ -17,6 +17,8 @@ import numpy as np
 import tifffile
 from PIL import Image, ImageOps
 
+from .anonymization_order import natural_sort_key, ordered_anonymous_filename
+
 
 SUPPORTED_EXTENSIONS = {
     ".tif",
@@ -72,6 +74,7 @@ FILE_MAPPING_FIELDS = (
     "conversion",
     "source_sha256",
     "output_sha256",
+    "order_index",
     "created_utc",
 )
 
@@ -229,6 +232,33 @@ def _new_identifier(prefix: str, used: set[str]) -> str:
         if candidate not in used:
             used.add(candidate)
             return candidate
+
+
+def _build_image_order_indices(
+    input_root: Path,
+    files: Iterable[Path],
+) -> dict[str, int]:
+    """Map every image to its one-based natural-sort position within its folder."""
+    images_by_parent: dict[str, list[Path]] = {}
+
+    for path in files:
+        if path.suffix.casefold() not in SUPPORTED_EXTENSIONS:
+            continue
+        relative = path.relative_to(input_root)
+        parent_key = (
+            relative.parent.as_posix()
+            if relative.parent != Path(".")
+            else "."
+        )
+        images_by_parent.setdefault(parent_key, []).append(path)
+
+    order_indices: dict[str, int] = {}
+    for images in images_by_parent.values():
+        ordered = sorted(images, key=lambda path: natural_sort_key(path.name))
+        for position, path in enumerate(ordered, start=1):
+            order_indices[path.relative_to(input_root).as_posix()] = position
+
+    return order_indices
 
 
 def _assert_no_symlinks(input_root: Path) -> None:
@@ -690,7 +720,9 @@ def anonymize_image_tree(
 ) -> AnonymizationReport:
     """Anonymize an image directory tree while preserving image measurements.
 
-    Every directory and image filename is replaced with a random identifier. The
+    Every directory is replaced with a random identifier. Image filenames use
+    order-preserving identifiers such as IMG_0001.tif so natural filename sorting
+    retains the original acquisition order. The
     private CSV mappings are stored outside the shareable output directory.
 
     TIFF files are decoded and rewritten as metadata-free TIFF while requiring
@@ -818,8 +850,12 @@ def anonymize_image_tree(
         progress.log("Enumerating files.")
         files = sorted(
             (path for path in input_root.rglob("*") if path.is_file()),
-            key=lambda path: path.relative_to(input_root).as_posix().casefold(),
+            key=lambda path: (
+                path.relative_to(input_root).parent.as_posix().casefold(),
+                natural_sort_key(path.name),
+            ),
         )
+        image_order_indices = _build_image_order_indices(input_root, files)
         image_total = sum(
             1 for path in files if path.suffix.casefold() in SUPPORTED_EXTENSIONS
         )
@@ -867,6 +903,12 @@ def anonymize_image_tree(
 
             source_hash = _sha256(source)
             output_suffix, expected_output_format, expected_conversion = _output_policy(source)
+            order_index = image_order_indices[relative_key]
+            expected_anonymous_name = ordered_anonymous_filename(
+                order_index,
+                output_suffix,
+            )
+            expected_anonymous_relative = anonymous_parent / expected_anonymous_name
             existing = existing_file_rows.get(relative_key)
 
             if existing:
@@ -876,19 +918,25 @@ def anonymize_image_tree(
                         f"Source file changed since its mapping was created: {source}"
                     )
                 anonymous_relative = Path(existing["anonymous_relative_path"])
-                if anonymous_relative.parent != anonymous_parent:
+                if anonymous_relative != expected_anonymous_relative:
                     raise ImageAnonymizationError(
-                        f"Existing file mapping has an inconsistent parent for '{relative_key}'."
+                        "Existing file mappings do not use the required "
+                        "order-preserving filenames. Remove "
+                        f"'{file_mapping_csv}' and rerun the anonymization. "
+                        f"Expected '{expected_anonymous_relative.as_posix()}' "
+                        f"for '{relative_key}', found "
+                        f"'{anonymous_relative.as_posix()}'."
                     )
-                if anonymous_relative.suffix.casefold() != output_suffix:
+                existing_order = (existing.get("order_index") or "").strip()
+                if existing_order and int(existing_order) != order_index:
                     raise ImageAnonymizationError(
-                        f"Existing file mapping output extension no longer matches policy for '{source}'."
+                        f"Existing order_index is inconsistent for '{relative_key}'."
                     )
                 anonymous_name = anonymous_relative.name
                 created_utc = existing.get("created_utc") or _utc_now()
             else:
-                anonymous_name = _new_identifier("IMG", used_file_names) + output_suffix
-                anonymous_relative = anonymous_parent / anonymous_name
+                anonymous_name = expected_anonymous_name
+                anonymous_relative = expected_anonymous_relative
                 created_utc = _utc_now()
 
             destination = staging_root / anonymous_relative
@@ -914,6 +962,7 @@ def anonymize_image_tree(
                 "conversion": conversion,
                 "source_sha256": source_hash,
                 "output_sha256": output_hash,
+                "order_index": str(order_index),
                 "created_utc": created_utc,
             }
             report.images.append(
@@ -990,7 +1039,7 @@ def anonymize_ordered_image_folders(
     reject_symlinks: bool = True,
     verbose: bool = True,
     progress_callback: Callable[[str], None] | None = None,
-    code_path_prefix: str = "./ext_images",
+    code_path_prefix: str = "./show_images",
     preserve_metadata_folder_markers: tuple[str, ...] = (
         "iphone",
         "googlepixel",
@@ -1500,9 +1549,7 @@ def anonymize_ordered_image_folders(
                     for path in source_folder.iterdir()
                     if path.is_file()
                 ),
-                key=lambda path: (
-                    path.name.casefold()
-                ),
+                key=lambda path: natural_sort_key(path.name),
             )
 
             image_files = [
@@ -1823,7 +1870,7 @@ def anonymize_ordered_image_folders(
         if verbose:
             print("", flush=True)
             print(
-                "EXT_IMAGES_FOLDERS = [",
+                "SHOW_IMAGES_FOLDERS = [",
                 flush=True,
             )
 

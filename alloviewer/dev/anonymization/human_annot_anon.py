@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable, Mapping
 
+from .anonymization_order import natural_sort_key, ordered_anonymous_filename
+
 
 HUMAN_ANNOTATIONS_CSV = "human_annotations.csv"
 SCORING_SHEET_CSV = "Expert_Scoring_Sheet_CDC-PRA.csv"
@@ -45,6 +47,7 @@ IMAGE_COLUMN_ALIASES = {
 FILE_MAPPING_REQUIRED_COLUMNS = {
     "original_relative_path",
     "anonymous_relative_path",
+    "order_index",
 }
 
 
@@ -107,6 +110,7 @@ class _FileMapping:
     anonymous_folder: str
     original_filename: str
     anonymous_filename: str
+    order_index: int
     output_sha256: str | None
 
 
@@ -296,6 +300,7 @@ def _load_translation_file(
 
     original_relative_field = normalised_fields["original_relative_path"]
     anonymous_relative_field = normalised_fields["anonymous_relative_path"]
+    order_index_field = normalised_fields["order_index"]
     output_hash_field = normalised_fields.get("output_sha256")
 
     file_by_original_path: dict[str, _FileMapping] = {}
@@ -319,6 +324,32 @@ def _load_translation_file(
         anonymous_path = PurePosixPath(anonymous_relative)
         original_folder = original_path.parent.as_posix()
         anonymous_folder = anonymous_path.parent.as_posix()
+        order_index_text = row.get(order_index_field, "").strip()
+        try:
+            order_index = int(order_index_text)
+        except ValueError as exc:
+            raise HumanAnnotationsAnonymizationError(
+                f"Invalid order_index '{order_index_text}' in '{path}' "
+                f"at line {line_number}."
+            ) from exc
+        if order_index < 1:
+            raise HumanAnnotationsAnonymizationError(
+                f"order_index must be positive in '{path}' at line "
+                f"{line_number}."
+            )
+
+        expected_anonymous_filename = ordered_anonymous_filename(
+            order_index,
+            anonymous_path.suffix,
+        )
+        if anonymous_path.name != expected_anonymous_filename:
+            raise HumanAnnotationsAnonymizationError(
+                "Translation file does not use order-preserving anonymous "
+                f"filenames at line {line_number}: expected "
+                f"'{expected_anonymous_filename}', found "
+                f"'{anonymous_path.name}'."
+            )
+
         output_hash = (
             row.get(output_hash_field, "").strip()
             if output_hash_field
@@ -332,6 +363,7 @@ def _load_translation_file(
             anonymous_folder=anonymous_folder,
             original_filename=original_path.name,
             anonymous_filename=anonymous_path.name,
+            order_index=order_index,
             output_sha256=output_hash,
         )
 
@@ -358,6 +390,36 @@ def _load_translation_file(
         files_by_original_filename.setdefault(
             original_path.name.casefold(), []
         ).append(mapping)
+
+    mappings_by_folder: dict[str, list[_FileMapping]] = {}
+    for mapping in file_by_original_path.values():
+        mappings_by_folder.setdefault(mapping.original_folder, []).append(mapping)
+
+    for original_folder, mappings in mappings_by_folder.items():
+        by_original_name = sorted(
+            mappings,
+            key=lambda item: natural_sort_key(item.original_filename),
+        )
+        expected_indices = list(range(1, len(mappings) + 1))
+        observed_indices = [item.order_index for item in by_original_name]
+        if observed_indices != expected_indices:
+            raise HumanAnnotationsAnonymizationError(
+                "Image order mapping is inconsistent for original folder "
+                f"'{original_folder}'. Expected order indices "
+                f"{expected_indices[:10]}..., found "
+                f"{observed_indices[:10]}...."
+            )
+
+        by_anonymous_name = sorted(
+            mappings,
+            key=lambda item: natural_sort_key(item.anonymous_filename),
+        )
+        anonymous_indices = [item.order_index for item in by_anonymous_name]
+        if anonymous_indices != expected_indices:
+            raise HumanAnnotationsAnonymizationError(
+                "Natural sorting of anonymous filenames does not preserve "
+                f"image order for folder '{original_folder}'."
+            )
 
     if not file_by_original_path:
         raise HumanAnnotationsAnonymizationError(
@@ -623,7 +685,10 @@ def _copy_referenced_images(
 ) -> list[CopiedImageResult]:
     ordered = sorted(
         mappings.values(),
-        key=lambda item: item.anonymous_relative_path.casefold(),
+        key=lambda item: (
+            item.anonymous_folder.casefold(),
+            item.order_index,
+        ),
     )
     copied: list[CopiedImageResult] = []
 
@@ -721,7 +786,7 @@ def prepare_human_annotations(
     human_output_folder: str | os.PathLike[str] = "../final/human_annotations",
     translation_file: str | os.PathLike[str] = "../final/private_mappings/ext_images_file_mapping.csv",
     *,
-    experimental_output_folder: str | os.PathLike[str] = "../final/experiment_readout_images",
+    experimental_output_folder: str | os.PathLike[str] = "../final/experimental_readout_images",
     anonymized_images_folder: str | os.PathLike[str] = "../final/ext_images",
     overwrite: bool = False,
     reject_symlinks: bool = True,
