@@ -668,36 +668,22 @@ def build_total_result_dataframe(
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
-    Build one long dataframe containing manual, ImageJ, and UNet scores.
+    Full pipeline that returns one long dataframe containing:
+        manual annotators + imageJ + unet
 
     Final schema:
-        Folder | well | image_name | role | Annotator |
-        score | adjusted_score
+        Folder | well | image_name | role | Annotator | score | adjusted_score
     """
-
-    manual_df_path: Optional[str] = None
-    imagej_df_path: Optional[str] = None
-    unet_df_path: Optional[str] = None
-
     if output_csv_path is not None:
-        save_path = os.path.dirname(output_csv_path) or "."
-        os.makedirs(save_path, exist_ok=True)
-
+        save_path = os.path.dirname(output_csv_path)
         manual_df_path = os.path.join(save_path, "manual_df.csv")
         imagej_df_path = os.path.join(save_path, "imagej_df.csv")
         unet_df_path = os.path.join(save_path, "unet_df.csv")
 
     imagej_classifier_kwargs = imagej_classifier_kwargs or {}
 
-    # -----------------------------------------------------------------
-    # Manual annotations
-    # -----------------------------------------------------------------
-
-    if manual_df_path is not None and os.path.isfile(manual_df_path):
-        manual_df = pd.read_csv(
-            manual_df_path,
-            index_col=False,
-        )
+    if os.path.isfile(manual_df_path):
+        manual_df = pd.read_csv(manual_df_path, index_col = False)
     else:
         manual_df = reshape_scores_with_images(
             score_sheet_file_path,
@@ -710,87 +696,20 @@ def build_total_result_dataframe(
             verbose=verbose,
         )
 
-    # This experiment appears twice in the source score sheet with PRA values
-    # 3 and 5 while referring to the same folder and the same 60 images.
-    # Retain the PRA=5 entry and remove the duplicate PRA=3 entry.
-    if {"Folder", "PRA"}.issubset(manual_df.columns):
-        pra_numeric = pd.to_numeric(
-            manual_df["PRA"],
-            errors="coerce",
-        )
-
-        exclusion_mask = (
-            manual_df["Folder"]
-            .astype(str)
-            .eq("20251021_25720338")
-            & pra_numeric.eq(3.0)
-        )
-
-        removed_rows = int(exclusion_mask.sum())
-
-        if removed_rows and verbose:
-            print(
-                "Removing "
-                f"{removed_rows} duplicate manual-annotation rows for "
-                "Folder=20251021_25720338 and PRA=3."
-            )
-
-        manual_df = (
-            manual_df.loc[~exclusion_mask]
-            .copy()
-            .reset_index(drop=True)
-        )
-
-    manual_duplicate_key = [
-        column
-        for column in [
-            "Folder",
-            "well",
-            "image_name",
-            "Annotator",
+        # we skip this folder as we do not know if thats a real folder
+        manual_df = manual_df.loc[
+            ~((manual_df["Folder"] == "20251021_25720338") & (manual_df["PRA"] == 3.0))
         ]
-        if column in manual_df.columns
-    ]
+        manual_df = manual_df.loc[
+            ~((manual_df["Folder"] == "RUN_F6681F983769") & (manual_df["PRA"] == 3.0))
+        ]
 
-    if len(manual_duplicate_key) == 4:
-        duplicate_mask = manual_df.duplicated(
-            subset=manual_duplicate_key,
-            keep=False,
-        )
+        if output_csv_path is not None:
+            manual_df.to_csv(manual_df_path, index = False)
 
-        if duplicate_mask.any():
-            examples = (
-                manual_df.loc[
-                    duplicate_mask,
-                    manual_duplicate_key,
-                ]
-                .drop_duplicates()
-                .head(10)
-            )
-
-            raise ValueError(
-                "Duplicate manual-annotation rows remain after applying "
-                "the known exclusions.\n"
-                f"Examples:\n{examples}"
-            )
-
-    # Save even when the dataframe came from an existing cache. This repairs
-    # an older cached manual_df.csv that still contains the duplicate block.
-    if manual_df_path is not None:
-        manual_df.to_csv(
-            manual_df_path,
-            index=False,
-        )
-
-    # -----------------------------------------------------------------
-    # ImageJ
-    # -----------------------------------------------------------------
-
-    if imagej_df_path is not None and os.path.isfile(imagej_df_path):
-        imagej_df = pd.read_csv(
-            imagej_df_path,
-            index_col=False,
-        )
+    
+    if os.path.isfile(imagej_df_path):
+        imagej_df = pd.read_csv(imagej_df_path, index_col = False)
     else:
         imagej_scored = score_imagej_rois(
             imagej_csv_path,
@@ -808,36 +727,15 @@ def build_total_result_dataframe(
             annotator_name=imagej_annotator_name,
         )
 
-        if imagej_df_path is not None:
-            imagej_df.to_csv(
-                imagej_df_path,
-                index=False,
-            )
+        if output_csv_path is not None:
+            imagej_df.to_csv(imagej_df_path, index = False)
 
-    # -----------------------------------------------------------------
-    # UNet
-    # -----------------------------------------------------------------
-
-    if unet_df_path is not None and os.path.isfile(unet_df_path):
-        unet_df = pd.read_csv(
-            unet_df_path,
-            index_col=False,
-        )
+    if os.path.isfile(unet_df_path):
+        unet_df = pd.read_csv(unet_df_path, index_col = False)
     else:
-        mapping_df = (
-            concat_annotator_frames(
-                [manual_df, imagej_df]
-            )[
-                [
-                    "Folder",
-                    "well",
-                    "image_name",
-                    "role",
-                ]
-            ]
-            .drop_duplicates()
-            .reset_index(drop=True)
-        )
+        mapping_df = concat_annotator_frames([manual_df, imagej_df])[
+            ["Folder", "well", "image_name", "role"]
+        ].drop_duplicates()
 
         unet_df = score_unet_folders(
             mapping_df,
@@ -848,27 +746,16 @@ def build_total_result_dataframe(
             annotator_name=unet_annotator_name,
         )
 
-        if unet_df_path is not None:
-            unet_df.to_csv(
-                unet_df_path,
-                index=False,
-            )
+        if output_csv_path is not None:
+            unet_df.to_csv(unet_df_path, index = False)
 
-    # -----------------------------------------------------------------
-    # Combined result
-    # -----------------------------------------------------------------
-
-    total_df = concat_annotator_frames(
-        [manual_df, imagej_df, unet_df]
-    )
+    total_df = concat_annotator_frames([manual_df, imagej_df, unet_df])
 
     if output_csv_path is not None:
-        total_df.to_csv(
-            output_csv_path,
-            index=False,
-        )
+        total_df.to_csv(output_csv_path, index=False)
 
     return total_df
+
 
 def run_external_experiments(
     score_sheet_file_path: str,
