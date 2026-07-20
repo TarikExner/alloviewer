@@ -63,8 +63,8 @@ INSET_COORDS = {
     "simulated_image": (250, 120),
     "simulated_segmentation": (250, 120),
 
-    "microscopy_image": (150, 150),
-    "microscopy_segmentation": (150, 150),
+    "microscopy_image": (240, 340),
+    "microscopy_segmentation": (240, 340),
 
     "googlepixel_image": (70, 200),
     "googlepixel_segmentation": (70, 200),

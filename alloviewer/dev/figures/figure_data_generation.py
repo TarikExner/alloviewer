@@ -1426,35 +1426,35 @@ def load_or_create_figure_1_image_cache(
 
     sim_img = _load_crop_resize_image(
         file_name="000008.tif",
-        base_dir="../scripts/image_datasets/imgs",
+        base_dir="../final/image_datasets/imgs",
         crop_params=(500, 200, 1200),
         scale=True,
     )
 
     mic_img = _load_crop_resize_image(
-        file_name="IMG_0001.tif",
-        base_dir="../final/experiment_readout_images/RUN_3A8602BB4DDC",
-        crop_params=(600, 150, 1450),
+        file_name="Bild_3267.tif",
+        base_dir="../final/show_images/RUN_D83E90DC4784",
+        crop_params=(500, 64, 1500),
         scale=True,
     )
 
     gp_img = _load_crop_resize_image(
-        file_name="IMG_0003.jpg",
-        base_dir="../final/ext_images/RUN_D944EDBFC912",
+        file_name="PXL_20251107_130141300.jpg",
+        base_dir="../final/show_images/RUN_458944AD0ED8",
         crop_params=(300, 1100, 2700),
         scale=True,
     )
 
     iphone_img = _load_crop_resize_image(
-        file_name="IMG_0003.png",
-        base_dir="../final/ext_images/RUN_9F977A2A3E55",
+        file_name="IMG_3859.jpeg",
+        base_dir="../final/show_images/RUN_7FD3D36FCDD5",
         crop_params=(1200, 50, 2500),
         scale=True,
     )
 
     monochrome_img = _load_crop_resize_image(
-        file_name="IMG_0002.tif",
-        base_dir="../final/ext_images/RUN_A3B8F4AF1C56",
+        file_name="xm1_+dtt_1b.tif",
+        base_dir="../final/show_images/RUN_F9AD9432FA3F",
         crop_params=(0, 0, 1440),
         scale=True,
     )
