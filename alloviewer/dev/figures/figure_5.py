@@ -817,7 +817,7 @@ def figure_5_generation(
     )
 
     panel_b_experiment = "val_exp_15"
-    panel_b_sample_name = "Worklist_001_FCXM_Routine_V2 UD_26204459_004_20260310_125733.fcs"
+    panel_b_sample_name = "FCS_000151.fcs"
 
     panel_b_algorithm = "parc"
     panel_b_resolution_parameter = 4.0
