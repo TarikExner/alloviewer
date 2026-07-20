@@ -36,7 +36,7 @@ __all__ = [
 ]
 
 
-DIRECTORIES = {
+_DIRECTORIES_PREANON = {
     "h5_path": "../scripts/image_datasets",
     "model_output_dir": "../scripts/models",
 
@@ -46,6 +46,18 @@ DIRECTORIES = {
     "ext_images_dir": "../scripts/ext_images",
     "sketch_dir": "./sketches/",
     "flow_data_dir": "../scripts/flow_data/"
+}
+
+DIRECTORIES = {
+    "h5_path": "../final/image_datasets",
+    "model_output_dir": "../final/models",
+
+    "figure_output_dir": "./figures",
+    "figure_data_dir": "./figure_data",
+    "validation_results_dir": "../final/results",
+    "ext_images_dir": "../final/ext_images",
+    "sketch_dir": "./sketches/",
+    "flow_data_dir": "../final/flow_data/"
 }
 
 def generate_all_figures(DIRECTORIES: dict):

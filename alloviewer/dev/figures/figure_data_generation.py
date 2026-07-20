@@ -1139,8 +1139,8 @@ class Inset:
 
 
 MICROSCOPY_IMAGE_CONFIG = {
-    "base_dir": "20251014_25719852",
-    "image_path": "Bild_323.tif",
+    "base_dir": "RUN_DEBB704A2449",
+    "image_path": "IMG_0001.tif",
     "inset": Inset(x=1200, y=100, size=512),
 }
 
@@ -1403,7 +1403,7 @@ def _load_crop_resize_image(
 
 def load_or_create_figure_1_image_cache(
     cache_path: str,
-    model_dir: str = "../scripts/models",
+    model_dir: str = "../final/models",
     model_file: str = "best_small_tiles_S512_seed187.pth",
     force_recompute: bool = False,
 ) -> dict[str, np.ndarray]:
@@ -1432,29 +1432,29 @@ def load_or_create_figure_1_image_cache(
     )
 
     mic_img = _load_crop_resize_image(
-        file_name="Bild_696.tif",
-        base_dir="../scripts/experiment_readout_images/20251021_25720330",
+        file_name="IMG_0001.tif",
+        base_dir="../final/experiment_readout_images/RUN_3A8602BB4DDC",
         crop_params=(600, 150, 1450),
         scale=True,
     )
 
     gp_img = _load_crop_resize_image(
-        file_name="PXL_20251107_130141300.jpg",
-        base_dir="../scripts/ext_images/20251107_25065521_GooglePixel/",
+        file_name="IMG_0003.jpg",
+        base_dir="../final/ext_images/RUN_D944EDBFC912",
         crop_params=(300, 1100, 2700),
         scale=True,
     )
 
     iphone_img = _load_crop_resize_image(
-        file_name="IMG_3859.jpeg",
-        base_dir="../scripts/ext_images/20251106_25065441_iPhone_XR_JPEG/",
+        file_name="IMG_0003.png",
+        base_dir="../final/ext_images/RUN_9F977A2A3E55",
         crop_params=(1200, 50, 2500),
         scale=True,
     )
 
     monochrome_img = _load_crop_resize_image(
-        file_name="xm1_+dtt_1b.tif",
-        base_dir="../scripts/ext_images/20260507_XM1_+DTT_mono_rgb/",
+        file_name="IMG_0002.tif",
+        base_dir="../final/ext_images/RUN_A3B8F4AF1C56",
         crop_params=(0, 0, 1440),
         scale=True,
     )
@@ -1487,20 +1487,6 @@ def load_or_create_figure_1_image_cache(
     np.savez_compressed(cache_path, **data)
 
     return data
-
-def _prepare_segmentation_for_display(segmentation: np.ndarray) -> np.ndarray:
-    seg = _prepare_image(segmentation, is_segmentation=True)
-
-    if seg.ndim == 3 and seg.shape[2] == 3:
-        if seg.dtype != np.uint8:
-            seg = np.clip(seg, 0, 255).astype(np.uint8)
-        return seg
-
-    if seg.ndim == 2:
-        return instance_labels_to_rgb(seg)
-
-    raise ValueError("Unsupported segmentation shape")
-
 
 def _read_rgb_image(image_path: str) -> np.ndarray:
     img = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
@@ -1751,7 +1737,7 @@ def fill_and_recalculate_frac_pos_from_scores_random(
 
     return df_out, refs
 
-def get_score_frame():
+def get_score_frame(validation_results_dir):
 
     from ..validation.experiment_readouts import concat_annotator_frames
 
@@ -1764,11 +1750,13 @@ def get_score_frame():
     TE 26.04.2026
     """
 
-    manual = pd.read_csv("../scripts/results/manual_df.csv", index_col = None)
-    imagej = pd.read_csv("../scripts/results/imagej_df.csv", index_col = None)
-    unet = pd.  read_csv("../scripts/results/unet_df.csv", index_col = None)
+    manual = pd.read_csv(os.path.join(validation_results_dir, "manual_df.csv"), index_col = None)
+    imagej = pd.read_csv(os.path.join(validation_results_dir, "imagej_df.csv"), index_col = None)
+    unet = pd.read_csv(os.path.join(validation_results_dir, "unet_df.csv"), index_col = None)
+
     df = concat_annotator_frames([manual, imagej, unet])
     df = df[~(df["Folder"] == "20251028_25720349_+DTT")]
+    df = df[~(df["Folder"] == "RUN_A9F6C7B995D6")]
     df = df[~df["score"].isin([0,11])]
     df["Annotator"] = df["Annotator"].astype(str)
 

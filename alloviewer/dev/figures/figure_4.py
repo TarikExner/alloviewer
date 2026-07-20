@@ -962,11 +962,11 @@ def _generate_main_figure(
 
 def figure_4_generation(
     figure_output_dir: str,
-    figure_data_dir: str,
+    validation_results_dir: str,
     **kwargs,
 ) -> None:
 
-    data_path = os.path.join(figure_data_dir, "calibration_data.dict")
+    data_path = os.path.join(validation_results_dir, "calibration_data.dict")
 
     with open(data_path, "rb") as f:
         data = pickle.load(f)
@@ -974,7 +974,7 @@ def figure_4_generation(
     plate = data["plate"]
     results_df = data["res_df"]
 
-    scoring_df = kwargs.get("scoring_df", get_score_frame())
+    scoring_df = kwargs.get("scoring_df", get_score_frame(validation_results_dir))
 
     _generate_main_figure(
         results_df=results_df,
