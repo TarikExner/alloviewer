@@ -445,18 +445,17 @@ def _build_quantile_folders(ext_images_dir: str | Path) -> list[str]:
     ext_images_dir = Path(ext_images_dir)
 
     return [
-        str(ext_images_dir / "20251106_25065441_iPhone_XR_JPEG"),
-        str(ext_images_dir / "20251106_25722169_iPhone_XR_JPEG"),
-        str(ext_images_dir / "20251106_25722269_iPhone_XR_JPEG"),
-        str(ext_images_dir / "20251107_25065521_GooglePixel"),
-        str(ext_images_dir / "20251107_25722332_GooglePixel"),
-        str(ext_images_dir / "20251014_25719960"),
-        str(ext_images_dir / "20251014_25720084"),
-        str(ext_images_dir / "20251107_25065521"),
-        str(ext_images_dir / "20251107_25722332"),
-        str(ext_images_dir / "20260507_XM1_+DTT_mono_rgb"),
+        str(ext_images_dir / "RUN_9F977A2A3E55"),
+        str(ext_images_dir / "RUN_029FEB4E7D18"),
+        str(ext_images_dir / "RUN_C0A34C0B6C66"),
+        str(ext_images_dir / "RUN_D944EDBFC912"),
+        str(ext_images_dir / "RUN_66DED820020A"),
+        str(ext_images_dir / "RUN_3B8FC234B127"),
+        str(ext_images_dir / "RUN_D863C8B07C7F"),
+        str(ext_images_dir / "RUN_0C78F976B1C1"),
+        str(ext_images_dir / "RUN_026CB1DD63FB"),
+        str(ext_images_dir / "RUN_A3B8F4AF1C56"),
     ]
-
 
 def _generate_main_figure(
     mic_img,
@@ -637,6 +636,7 @@ def _generate_main_figure(
 
 def figure_2_generation(
     validation_results_dir: str,
+    show_images_dir,
     ext_images_dir,
     figure_output_dir,
     **kwargs,
@@ -648,30 +648,30 @@ def figure_2_generation(
     style_cache_path = os.path.join(validation_results_dir, "style_cache.cache")
 
     mic, _ = load_image(
-        "IMG_0001.tif",
-        base_dir=os.path.join(ext_images_dir, "RUN_A3FF8F438131"),
+        "Bild_3280.tif",
+        base_dir=os.path.join(show_images_dir, "RUN_D83E90DC4784"),
         as_chw=False,
     )
-    mic = crop_image(mic, 150, 0, 1750, 1500)
+    mic = crop_image(mic, 400, 50, 1750, 1500)
 
     iphone, _ = load_image(
-        "IMG_0001.png",
-        base_dir=os.path.join(ext_images_dir, "RUN_9F977A2A3E55"),
+        "IMG_3857.jpeg",
+        base_dir=os.path.join(show_images_dir, "RUN_7FD3D36FCDD5"),
         as_chw=False,
     )
     iphone = crop_image(iphone, 1000, 100, 2700, 2500)
 
     gp, _ = load_image(
-        "IMG_0005.jpg",
-        base_dir=os.path.join(ext_images_dir, "RUN_D944EDBFC912"),
+        "PXL_20251107_130200415.jpg",
+        base_dir=os.path.join(show_images_dir, "RUN_458944AD0ED8"),
         as_chw=False,
     )
     gp = np.transpose(gp, (1, 0, 2))
     gp = crop_image(gp, 1100, 300, 2900, 2700)
 
     mono, _ = load_image(
-        "IMG_0020.tif",
-        base_dir=os.path.join(ext_images_dir, "RUN_2509E0D79BD6"),
+        "auto1_4b.tif",
+        base_dir=os.path.join(show_images_dir, "RUN_6C3B8BAEA1D9"),
         as_chw=False,
     )
 
@@ -683,7 +683,9 @@ def figure_2_generation(
     q_band_cache = load_or_build_quantile_band_cache(
         folders=_build_quantile_folders(ext_images_dir),
         annotations_dir="../final/region_annotations",
-        cache_path=os.path.join(validation_results_dir, "camera_quantile_band_cache.pkl"),
+        cache_path=os.path.join(
+            validation_results_dir, "camera_quantile_band_cache.pkl"
+        ),
     )
 
     style_registry_strict = with_histogram_adherence(

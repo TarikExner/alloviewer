@@ -251,7 +251,6 @@ def figure_S7_generation(
     figure_output_dir: str,
     model_output_dir: str,
     validation_results_dir: str,
-    figure_data_dir: str,
     h5_path: str,
     **kwargs,
 ):

@@ -57,7 +57,8 @@ DIRECTORIES = {
     "validation_results_dir": "../final/results",
     "ext_images_dir": "../final/ext_images",
     "sketch_dir": "./sketches/",
-    "flow_data_dir": "../final/flow_data/"
+    "flow_data_dir": "../final/flow_data/",
+    "show_images_dir": "../final/show_images/"
 }
 
 def generate_all_figures(DIRECTORIES: dict):
