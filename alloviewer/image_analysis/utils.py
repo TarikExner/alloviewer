@@ -287,6 +287,31 @@ def _uncertain_fraction(wr: WellResult) -> float:
     return counts["n_uncertain"] / counts["n_total"]
 
 
+def is_borderline_value(
+    value: Any,
+    *,
+    borderline_low: float,
+    borderline_high: float,
+) -> bool:
+    """Return whether a measured corrected fraction is in the review band."""
+    measured = _safe_float(value)
+
+    return (
+        not np.isnan(measured)
+        and float(borderline_low) <= measured <= float(borderline_high)
+    )
+
+
+def binary_call_from_value(value: Any, *, positive_cutoff: float) -> str:
+    """Classify a measured fraction by the positivity cutoff."""
+    measured = _safe_float(value)
+
+    if np.isnan(measured):
+        return "not_available"
+
+    return "positive" if measured >= float(positive_cutoff) else "negative"
+
+
 def build_pra_result(
     sample_ids: List[str],
     sample_corr: List[float],
@@ -297,10 +322,9 @@ def build_pra_result(
 ) -> Dict[str, Any]:
     """Build a PRA assay result summary.
 
-    Numerical fraction summaries always remain measurement-derived. When
-    ``effective_calls`` is provided, categorical positivity counts and PRA
-    percentage follow those effective calls so that explicit user overrides
-    propagate through downstream interpretation without altering raw data.
+    Positive/negative classification follows the configured positivity cutoff.
+    The borderline band is retained as a separate measurement-derived flag so
+    a well can be reported as, for example, "positive, borderline".
     """
     valid = [
         (wid, val)
@@ -315,6 +339,8 @@ def build_pra_result(
         str(well_id).upper()
         for well_id in (manual_override_wells or set())
     }
+    borderline_low = float(config["borderline_low"])
+    borderline_high = float(config["borderline_high"])
 
     def effective_call(well_id: str, value: float) -> str:
         call = normalized_calls.get(str(well_id).upper())
@@ -322,7 +348,7 @@ def build_pra_result(
         if call in {"positive", "negative"}:
             return call
 
-        return "positive" if value >= positive_cutoff else "negative"
+        return binary_call_from_value(value, positive_cutoff=positive_cutoff)
 
     valid_panel_wells = len(valid)
     positive = [
@@ -335,26 +361,27 @@ def build_pra_result(
         for well_id, value in valid
         if effective_call(well_id, value) == "negative"
     ]
+    borderline = [
+        (well_id, value)
+        for well_id, value in valid
+        if is_borderline_value(
+            value,
+            borderline_low=borderline_low,
+            borderline_high=borderline_high,
+        )
+    ]
+    borderline_ids = {well_id for well_id, _ in borderline}
 
-    weak_cutoff = float(config["weak_positive"])
     moderate_cutoff = float(config["moderate_positive"])
     strong_cutoff = float(config["strong_positive"])
 
-    n_weak = sum(
-        1
-        for _, value in positive
-        if value < moderate_cutoff
-    )
+    n_weak = sum(1 for _, value in positive if value < moderate_cutoff)
     n_moderate = sum(
         1
         for _, value in positive
         if moderate_cutoff <= value < strong_cutoff
     )
-    n_strong = sum(
-        1
-        for _, value in positive
-        if value >= strong_cutoff
-    )
+    n_strong = sum(1 for _, value in positive if value >= strong_cutoff)
 
     pra_percent = (
         100.0 * len(positive) / valid_panel_wells
@@ -383,45 +410,18 @@ def build_pra_result(
         "positive_wells": [well_id for well_id, _ in positive],
         "effective_positive_wells": [well_id for well_id, _ in positive],
         "effective_negative_wells": [well_id for well_id, _ in negative],
+        "borderline_panel_wells": len(borderline),
+        "borderline_wells": [well_id for well_id, _ in borderline],
+        "positive_borderline_wells": [
+            well_id for well_id, _ in positive if well_id in borderline_ids
+        ],
+        "negative_borderline_wells": [
+            well_id for well_id, _ in negative if well_id in borderline_ids
+        ],
         "manual_override_applied": bool(active_override_wells),
         "manual_override_count": len(active_override_wells),
         "manual_override_wells": active_override_wells,
     }
-
-
-
-def _call_from_value(
-    value: float,
-    borderline_low: float,
-    borderline_high: float,
-) -> str:
-    """Convert a corrected fraction into a categorical assay call.
-
-    Parameters
-    ----------
-    value : float
-        Corrected positive fraction.
-    borderline_low : float
-        Lower threshold of the borderline interval.
-    borderline_high : float
-        Upper threshold of the borderline interval.
-
-    Returns
-    -------
-    str
-        One of ``"not_available"``, ``"negative"``, ``"borderline"``, or
-        ``"positive"``.
-    """
-    if np.isnan(value):
-        return "not_available"
-
-    if value < borderline_low:
-        return "negative"
-
-    if value <= borderline_high:
-        return "borderline"
-
-    return "positive"
 
 
 def automated_well_call(
@@ -431,19 +431,46 @@ def automated_well_call(
     pra_positive_cutoff: float,
     config: Dict[str, Any],
 ) -> str:
-    """Return the automated categorical call for one measured sample well."""
-    measured = _safe_float(value)
+    """Return the binary automated call for one measured well."""
+    positive_cutoff = (
+        float(pra_positive_cutoff)
+        if str(assay_type).lower() == "pra"
+        else float(config["positive_cutoff"])
+    )
 
-    if np.isnan(measured):
-        return "not_available"
+    return binary_call_from_value(value, positive_cutoff=positive_cutoff)
 
-    if assay_type == "pra":
-        return "positive" if measured >= float(pra_positive_cutoff) else "negative"
 
-    return _call_from_value(
-        measured,
-        borderline_low=float(config["borderline_low"]),
-        borderline_high=float(config["borderline_high"]),
+def _aggregate_effective_calls(
+    calls: List[str],
+    *,
+    tie_break_calls: List[str] | None,
+    fallback_value: float,
+    positive_cutoff: float,
+) -> str:
+    """Aggregate binary well calls without returning a review-only class."""
+    positive_count = sum(call == "positive" for call in calls)
+    negative_count = sum(call == "negative" for call in calls)
+
+    if positive_count > negative_count:
+        return "positive"
+
+    if negative_count > positive_count:
+        return "negative"
+
+    if tie_break_calls:
+        tie_positive_count = sum(call == "positive" for call in tie_break_calls)
+        tie_negative_count = sum(call == "negative" for call in tie_break_calls)
+
+        if tie_positive_count > tie_negative_count:
+            return "positive"
+
+        if tie_negative_count > tie_positive_count:
+            return "negative"
+
+    return binary_call_from_value(
+        fallback_value,
+        positive_cutoff=positive_cutoff,
     )
 
 
@@ -458,12 +485,14 @@ def build_crossmatch_result(
     effective_calls: Dict[str, str] | None = None,
     manual_override_wells: set[str] | None = None,
 ) -> Dict[str, Any]:
-    """Build a crossmatch summary with optional user-adjusted calls.
+    """Build a binary crossmatch result with separate borderline flags.
 
-    Raw and corrected means, cutoff margin, replicate range, and replicate SD
-    remain measurement-derived. A manual well declaration changes only the
-    categorical interpretation. When at least one sample well is overridden,
-    the final result is aggregated from the effective replicate calls.
+    A user declaration replaces the automated call for that well. When at least
+    one declaration is active, the final result is recalculated from all effective
+    replicate calls. The majority is used; ties are resolved first by the manual
+    declarations and then by the measured mean at the positivity cutoff. Replicate
+    disagreement stays visible as QC information but does not replace the binary
+    result.
     """
     valid_corr = [value for value in sample_corr if not np.isnan(value)]
     valid_raw = [value for value in sample_raw if not np.isnan(value)]
@@ -484,54 +513,69 @@ def build_crossmatch_result(
         for well_id in (manual_override_wells or set())
     }
     calls_by_well: Dict[str, str] = {}
+    borderline_wells: List[str] = []
 
     for well_id, corrected_value in zip(sample_ids, sample_corr):
         normalized_well_id = str(well_id).upper()
         call = normalized_calls.get(normalized_well_id)
 
-        if call not in {"positive", "negative", "borderline", "not_available"}:
-            call = _call_from_value(
+        if call not in {"positive", "negative", "not_available"}:
+            call = binary_call_from_value(
                 corrected_value,
-                borderline_low=borderline_low,
-                borderline_high=borderline_high,
+                positive_cutoff=positive_cutoff,
             )
 
         calls_by_well[well_id] = call
+
+        if is_borderline_value(
+            corrected_value,
+            borderline_low=borderline_low,
+            borderline_high=borderline_high,
+        ):
+            borderline_wells.append(well_id)
 
     active_override_wells = sorted(
         well_id
         for well_id in sample_ids
         if str(well_id).upper() in override_wells
     )
-    final_call = _call_from_value(
+    final_call = binary_call_from_value(
+        mean_corr,
+        positive_cutoff=positive_cutoff,
+    )
+    final_call_source = "measured_mean"
+
+    if active_override_wells:
+        effective_calls_for_result = [
+            call
+            for call in calls_by_well.values()
+            if call in {"positive", "negative"}
+        ]
+        manual_calls = [
+            calls_by_well[well_id]
+            for well_id in active_override_wells
+            if calls_by_well.get(well_id) in {"positive", "negative"}
+        ]
+
+        if effective_calls_for_result:
+            final_call = _aggregate_effective_calls(
+                effective_calls_for_result,
+                tie_break_calls=manual_calls,
+                fallback_value=mean_corr,
+                positive_cutoff=positive_cutoff,
+            )
+            final_call_source = "effective_well_calls"
+
+    final_borderline = is_borderline_value(
         mean_corr,
         borderline_low=borderline_low,
         borderline_high=borderline_high,
     )
 
-    if active_override_wells:
-        valid_calls = [
-            call
-            for call in calls_by_well.values()
-            if call != "not_available"
-        ]
-        unique_calls = set(valid_calls)
-
-        if not valid_calls:
-            final_call = "not_available"
-        elif unique_calls == {"positive"}:
-            final_call = "positive"
-        elif unique_calls == {"negative"}:
-            final_call = "negative"
-        elif unique_calls == {"borderline"}:
-            final_call = "borderline"
-        else:
-            final_call = "needs_review"
-    elif replicate_discordant:
-        final_call = "needs_review"
-
     return {
         "final_call": final_call,
+        "final_borderline": final_borderline,
+        "final_call_source": final_call_source,
         "sample_corrected_frac_pos": mean_corr,
         "sample_raw_frac_pos": mean_raw,
         "margin_from_cutoff": (
@@ -542,6 +586,7 @@ def build_crossmatch_result(
         "replicate_sd": replicate_sd,
         "replicate_range": replicate_range,
         "replicate_discordant": replicate_discordant,
+        "requires_review": replicate_discordant,
         "sample_wells": sample_ids,
         "effective_positive_wells": [
             well_id for well_id, call in calls_by_well.items() if call == "positive"
@@ -549,9 +594,8 @@ def build_crossmatch_result(
         "effective_negative_wells": [
             well_id for well_id, call in calls_by_well.items() if call == "negative"
         ],
-        "effective_borderline_wells": [
-            well_id for well_id, call in calls_by_well.items() if call == "borderline"
-        ],
+        "borderline_wells": borderline_wells,
+        "effective_borderline_wells": borderline_wells,
         "manual_override_applied": bool(active_override_wells),
         "manual_override_count": len(active_override_wells),
         "manual_override_wells": active_override_wells,

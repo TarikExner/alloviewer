@@ -19,3 +19,5 @@ LAYOUT_EXTENSIONS = {
     ".xlsx",
     ".xlsm",
 }
+
+CLEANUP_PERIOD_HOURS = 24.0

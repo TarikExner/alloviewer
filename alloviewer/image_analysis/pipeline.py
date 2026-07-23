@@ -38,6 +38,7 @@ from .utils import (
     build_cdc_summary,
     create_plate,
     frac_pos_raw,
+    is_borderline_value,
     save_segmented_preview,
     to_jsonable,
 )
@@ -1170,20 +1171,17 @@ def run_image_analysis(
         well_result: WellResult,
     ) -> dict[str, Any]:
         role = role_map.get(well_id)
-
-        if role == "positive":
-            automated_call = "positive"
-        elif role == "negative":
-            automated_call = "negative"
-        elif role == "sample":
-            automated_call = automated_well_call(
-                well_result.corrected_frac_pos,
-                assay_type=assay_type,
-                pra_positive_cutoff=pra_positivity_threshold,
-                config=CDC_SUMMARY_CONFIG,
-            )
-        else:
-            automated_call = None
+        automated_call = automated_well_call(
+            well_result.corrected_frac_pos,
+            assay_type=assay_type,
+            pra_positive_cutoff=pra_positivity_threshold,
+            config=CDC_SUMMARY_CONFIG,
+        )
+        borderline = is_borderline_value(
+            well_result.corrected_frac_pos,
+            borderline_low=float(CDC_SUMMARY_CONFIG["borderline_low"]),
+            borderline_high=float(CDC_SUMMARY_CONFIG["borderline_high"]),
+        )
 
         return {
             **well_result.summary(),
@@ -1194,6 +1192,7 @@ def run_image_analysis(
             "segmented_image_url": f"{url_prefix}/{well_id}.png",
             "automated_call": automated_call,
             "effective_call": automated_call,
+            "borderline": borderline,
             "manual_override": None,
         }
 

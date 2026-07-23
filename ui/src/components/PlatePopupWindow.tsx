@@ -26,6 +26,7 @@ export function PlatePopupWindow({
   rawFraction,
   automatedCall,
   effectiveCall,
+  borderline,
   manualOverride,
   onClose,
 }: {
@@ -36,6 +37,7 @@ export function PlatePopupWindow({
   rawFraction: number | null;
   automatedCall: WellCall | null;
   effectiveCall: WellCall | null;
+  borderline: boolean;
   manualOverride: WellClassificationOverride | null;
   onClose: () => void;
 }) {
@@ -145,6 +147,11 @@ export function PlatePopupWindow({
                     ? t(`PlatePopupWindow.calls.${effectiveCall}`)
                     : "—"}
                 </span>
+                {borderline ? (
+                  <span className="ml-2 rounded-full border border-amber-400 bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+                    {t("PlatePopupWindow.calls.borderline")}
+                  </span>
+                ) : null}
               </div>
             </div>
 

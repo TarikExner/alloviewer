@@ -18,7 +18,12 @@ celery_app = Celery(
 celery_app.conf.task_routes = {
     "app.workers.tasks_fcxm.run_fcxm_job_task": {"queue": "cpu"},
     "app.workers.tasks_image.run_image_analysis_task": {"queue": "image"},
-    "app.workers.tasks_cleanup.cleanup_runtime_data_task": {"queue": "maintenance"},
+    "app.workers.tasks_cleanup.cleanup_runtime_data_task": {
+        "queue": "maintenance"
+    },
+    "app.workers.tasks_cleanup.cleanup_low_disk_space_task": {
+        "queue": "maintenance"
+    },
 }
 
 celery_app.conf.task_track_started = True
@@ -35,5 +40,9 @@ celery_app.conf.beat_schedule = {
     "cleanup-runtime-data-daily": {
         "task": "app.workers.tasks_cleanup.cleanup_runtime_data_task",
         "schedule": crontab(hour=3, minute=0),
+    },
+    "cleanup-low-disk-space-every-15-minutes": {
+        "task": "app.workers.tasks_cleanup.cleanup_low_disk_space_task",
+        "schedule": crontab(minute="*/15"),
     },
 }

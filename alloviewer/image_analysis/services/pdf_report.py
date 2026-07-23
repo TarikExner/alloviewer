@@ -201,7 +201,10 @@ def _safe_text(value: Any) -> str:
 
 
 def _par(value: Any, style: ParagraphStyle) -> Paragraph:
-    return Paragraph(_safe_text(value), style)
+    # ReportLab paragraphs ignore plain newline characters. Escape the text
+    # first, then convert intentional newlines to explicit line breaks.
+    text = _safe_text(value).replace("\n", "<br/>")
+    return Paragraph(text, style)
 
 
 def _role_color(role: Optional[str]) -> colors.Color:
@@ -253,21 +256,13 @@ def _well_effective_call(
 ) -> str:
     call = well.get("effective_call")
 
-    if call in {"positive", "negative", "borderline", "not_available"}:
+    if call in {"positive", "negative", "not_available"}:
         return str(call)
 
     override = _well_manual_override(well)
 
     if override is not None:
         return str(override["call"])
-
-    role = str(well.get("role") or "").lower()
-
-    if role == "positive":
-        return "positive"
-
-    if role == "negative":
-        return "negative"
 
     value = _well_value(well)
 
@@ -278,6 +273,17 @@ def _well_effective_call(
         return "positive" if float(value) >= float(threshold) else "negative"
     except Exception:
         return "not_available"
+
+
+def _well_is_borderline(well: Dict[str, Any]) -> bool:
+    explicit = well.get("borderline")
+
+    if isinstance(explicit, bool):
+        return explicit
+
+    value = _finite_float(_well_value(well))
+
+    return value is not None and 15.0 <= value <= 25.0
 
 
 def _active_manual_overrides(result: Dict[str, Any]) -> list[Dict[str, Any]]:
@@ -319,6 +325,70 @@ def _is_positive_well(
     wells = result.get("wells", {}) or {}
     well = wells.get(well_id, {}) or {}
     return _well_effective_call(well, threshold) == "positive"
+
+
+def _well_column_number(well_id: Any) -> int | None:
+    digits = ""
+
+    for character in reversed(str(well_id)):
+        if not character.isdigit():
+            break
+        digits = character + digits
+
+    if not digits:
+        return None
+
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
+def _positive_well_counts_by_role(
+    result: Dict[str, Any],
+    threshold: Optional[float],
+    *,
+    columns: Iterable[int] | None = None,
+) -> list[tuple[str, int, int]]:
+    """Count effective positive calls by role, optionally within plate columns.
+
+    Manual declarations are included because ``_well_effective_call`` resolves
+    the effective call before falling back to the measured value. For crossmatch
+    reports, ``columns`` limits the count to one cell type. IgM is omitted only
+    when the selected columns contain no IgM control wells.
+    """
+    wells = result.get("wells", {}) or {}
+    selected_columns = None if columns is None else {int(column) for column in columns}
+    role_specs = [
+        ("positive", "PC", False),
+        ("igm", "IgM", True),
+        ("negative", "NC", False),
+        ("sample", "Samples", False),
+    ]
+    counts: list[tuple[str, int, int]] = []
+
+    for role_key, label, omit_when_empty in role_specs:
+        role_wells = [
+            well
+            for well_id, well in wells.items()
+            if isinstance(well, dict)
+            and str(well.get("role") or "").lower() == role_key
+            and (
+                selected_columns is None
+                or _well_column_number(well_id) in selected_columns
+            )
+        ]
+
+        if omit_when_empty and not role_wells:
+            continue
+
+        positive_count = sum(
+            _well_effective_call(well, threshold) == "positive"
+            for well in role_wells
+        )
+        counts.append((label, positive_count, len(role_wells)))
+
+    return counts
 
 
 def _metric_table(
@@ -415,6 +485,8 @@ def _well_cell(
     corrected_value: Any,
     raw_value: Any,
     role: Any,
+    effective_call: str,
+    borderline: bool,
     manual_override: Dict[str, Any] | None,
     style_well_id: ParagraphStyle,
     style_cell: ParagraphStyle,
@@ -422,18 +494,34 @@ def _well_cell(
 ) -> list[Any]:
     corrected_text = _pct(corrected_value, 1)
     raw_text = _pct(raw_value, 1)
-    fraction_text = f"{corrected_text} (raw: {raw_text})"
+    role_key = str(role or "-").lower()
+    role_label = {
+        "positive": "Positive",
+        "negative": "Negative",
+        "igm": "IgM",
+        "sample": "Sample",
+    }.get(role_key, str(role or "-"))
 
     cell = [
         _par(well_id, style_well_id),
-        _par(fraction_text, style_cell),
-        _par(role or "-", style_role),
+        _par(corrected_text, style_cell),
+        _par(f"(raw: {raw_text})", style_role),
+        _par(f"Role: {role_label}", style_role),
+        _par(f"Call: {_crossmatch_call_label(effective_call)}", style_role),
     ]
+
+    if borderline:
+        cell.append(
+            _par(
+                "BORDERLINE",
+                style_role,
+            )
+        )
 
     if manual_override is not None:
         cell.append(
             _par(
-                f"USER OVERRIDE: {str(manual_override.get('call')).upper()}",
+                f"OVERRIDE: {str(manual_override.get('call')).upper()}",
                 style_role,
             )
         )
@@ -493,6 +581,8 @@ def _well_layout_table(
             corrected_value = _well_value(well)
             raw_value = _well_raw_value(well)
             manual_override = _well_manual_override(well)
+            effective_call = _well_effective_call(well, threshold)
+            borderline = _well_is_borderline(well)
 
             output_row.append(
                 _well_cell(
@@ -500,6 +590,8 @@ def _well_layout_table(
                     corrected_value=corrected_value,
                     raw_value=raw_value,
                     role=role,
+                    effective_call=effective_call,
+                    borderline=borderline,
                     manual_override=manual_override,
                     style_well_id=style_well_id,
                     style_cell=style_cell,
@@ -514,6 +606,11 @@ def _well_layout_table(
                 and str(role).lower() == "sample"
             ):
                 background = colors.HexColor("#fee2e2")
+
+            # Borderline is a separate flag from the binary positive/negative
+            # call and takes visual priority over the role/call background.
+            if borderline:
+                background = colors.HexColor("#fff7cc")
 
             if manual_override is not None:
                 override_borders.append(
@@ -540,7 +637,7 @@ def _well_layout_table(
     table = Table(
         data,
         colWidths=[12 * mm] + [22 * mm for _ in plate_cols],
-        rowHeights=[7 * mm, 7 * mm] + [23 * mm for _ in plate_rows],
+        rowHeights=[7 * mm, 7 * mm] + [22 * mm for _ in plate_rows],
     )
 
     table.setStyle(
@@ -859,7 +956,7 @@ def build_cdc_summary_pdf(
             Table(
                 [[
                     _par(
-                        "MANUAL CLASSIFICATION OVERRIDES APPLIED — categorical "
+                        "MANUAL CLASSIFICATION OVERRIDES APPLIED - categorical "
                         "results use the user-declared calls; measured raw and "
                         "corrected fractions remain unchanged.",
                         style_cell,
@@ -903,6 +1000,8 @@ def build_cdc_summary_pdf(
         )
         story.append(Spacer(1, 2 * mm))
 
+    positive_well_counts = _positive_well_counts_by_role(result, threshold)
+
     run_rows = [
         ("Status", run.get("status", "-")),
         (
@@ -929,11 +1028,6 @@ def build_cdc_summary_pdf(
             "Dynamic range between Positive and Negative Control",
             _pct(run.get("dynamic_range"), 1),
         ),
-        (
-            "Controls",
-            f"{run.get('n_positive_controls', '-')} positive control(s); "
-            f"{run.get('n_negative_controls', '-')} negative control(s)",
-        ),
     ]
 
     qc_rows = [
@@ -946,6 +1040,12 @@ def build_cdc_summary_pdf(
     ]
 
     if assay_type == "pra":
+        positive_well_count_text = "\n".join(
+            f"{label} {positive} / {total}"
+            for label, positive, total in positive_well_counts
+        )
+        run_rows.append(("Positive wells", positive_well_count_text or "-"))
+
         reactivity = pra.get("reactivity_score", {}) or {}
 
         result_rows = [
@@ -965,6 +1065,10 @@ def build_cdc_summary_pdf(
             ("Median corrected", _fmt(assay.get("median_corrected_frac_pos"), 1)),
             ("Max corrected", _fmt(assay.get("max_corrected_frac_pos"), 1)),
             ("Threshold", _fmt(threshold, 1)),
+            (
+                "Borderline wells",
+                ", ".join(assay.get("borderline_wells") or []) or "None",
+            ),
             ("Weak", assay.get("n_weak_positive", "-")),
             ("Moderate", assay.get("n_moderate_positive", "-")),
             ("Strong", assay.get("n_strong_positive", "-")),
@@ -1029,6 +1133,15 @@ def build_cdc_summary_pdf(
                 if columns
                 else title
             )
+            mode_positive_counts = _positive_well_counts_by_role(
+                result,
+                threshold,
+                columns=columns,
+            )
+            mode_positive_count_text = "\n".join(
+                f"{label} {positive} / {total}"
+                for label, positive, total in mode_positive_counts
+            )
 
             mode_rows = [
                 ("Run status", mode_run.get("status", "-")),
@@ -1053,11 +1166,22 @@ def build_cdc_summary_pdf(
                     _pct(mode_run.get("dynamic_range"), 1),
                 ),
                 (
-                    "Controls",
-                    f"{mode_run.get('n_positive_controls', '-')} PC; "
-                    f"{mode_run.get('n_negative_controls', '-')} NC",
+                    "Positive wells",
+                    mode_positive_count_text or "-",
                 ),
-                ("Final call", _crossmatch_call_label(mode_result.get("final_call"))),
+                (
+                    "Final call",
+                    (
+                        f"{_crossmatch_call_label(mode_result.get('final_call'))} "
+                        "(borderline)"
+                        if mode_result.get("final_borderline")
+                        else _crossmatch_call_label(mode_result.get("final_call"))
+                    ),
+                ),
+                (
+                    "Borderline wells",
+                    ", ".join(mode_result.get("borderline_wells") or []) or "None",
+                ),
                 (
                     "User-adjusted wells",
                     ", ".join(mode_result.get("manual_override_wells") or []) or "None",
@@ -1165,11 +1289,13 @@ def build_cdc_summary_pdf(
     story.append(Paragraph("Well layout", style_title))
     story.append(
         Paragraph(
-            "Cells show well ID, corrected fraction positive with the raw fraction "
-            "in brackets, and assigned role. Crossmatch column headers show T-cell, "
-            "B-cell, or combined T/B-cell assignments. Sample wells with an "
-            "effective positive call are highlighted. User-overridden cells carry "
-            "a purple border and an explicit USER OVERRIDE label.",
+            "Cells show well ID, corrected fraction positive, the raw fraction on "
+            "the following line in brackets, and the assigned role. Crossmatch "
+            "column headers show T-cell, B-cell, or combined T/B-cell assignments. "
+            "Borderline wells have a light yellow background. Non-borderline sample "
+            "wells with an effective positive call are highlighted in light red. "
+            "User-overridden cells carry a purple border and an explicit override "
+            "label.",
             style_small,
         )
     )
@@ -1186,12 +1312,12 @@ def build_cdc_summary_pdf(
             column_modes=column_modes,
         )
     )
-    story.append(Spacer(1, 2.5 * mm))
+    story.append(Spacer(1, 1.5 * mm))
     story.append(
         Paragraph(
             "Fractions positive were calibrated using the negative- and "
             "positive-control reference values. Raw fractions are shown in "
-            "brackets after the corrected values for interpretability. Manual "
+            "brackets on a separate line for interpretability. Manual "
             "positive/negative declarations supersede the automated call only for "
             "categorical downstream interpretation; measured fractions, control "
             "calibration, run validity, and QC values remain unchanged.",

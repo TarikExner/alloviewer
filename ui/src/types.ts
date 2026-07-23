@@ -74,6 +74,7 @@ export type WellSummary = {
   segmented_image_url?: string | null;
   automated_call?: WellCall | null;
   effective_call?: WellCall | null;
+  borderline?: boolean;
   manual_override?: WellClassificationOverride | null;
 };
 
@@ -131,6 +132,10 @@ export type CDCPRAResultSummary = {
   manual_override_wells?: string[];
   effective_positive_wells?: string[];
   effective_negative_wells?: string[];
+  borderline_panel_wells?: number;
+  borderline_wells?: string[];
+  positive_borderline_wells?: string[];
+  negative_borderline_wells?: string[];
 };
 
 export type CDCCrossmatchCellModeSummary = {
@@ -138,6 +143,8 @@ export type CDCCrossmatchCellModeSummary = {
   columns: number[];
   run_validity: CDCRunValiditySummary;
   final_call: string;
+  final_borderline?: boolean;
+  final_call_source?: string;
   sample_corrected_frac_pos: number;
   sample_raw_frac_pos: number;
   margin_from_cutoff: number;
@@ -151,10 +158,14 @@ export type CDCCrossmatchCellModeSummary = {
   effective_positive_wells?: string[];
   effective_negative_wells?: string[];
   effective_borderline_wells?: string[];
+  borderline_wells?: string[];
+  requires_review?: boolean;
 };
 
 export type CDCCrossmatchResultSummary = {
   final_call: string;
+  final_borderline?: boolean;
+  final_call_source?: string;
   sample_corrected_frac_pos: number;
   sample_raw_frac_pos: number;
   margin_from_cutoff: number;
@@ -168,6 +179,8 @@ export type CDCCrossmatchResultSummary = {
   effective_positive_wells?: string[];
   effective_negative_wells?: string[];
   effective_borderline_wells?: string[];
+  borderline_wells?: string[];
+  requires_review?: boolean;
   by_cell_mode?: Partial<
     Record<CrossmatchResultCellMode, CDCCrossmatchCellModeSummary>
   >;

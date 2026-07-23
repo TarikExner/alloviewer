@@ -796,7 +796,7 @@
       "effective_call": "Clasificación efectiva",
       "active": "Anulación manual: {{call}}",
       "active_description": "Esta declaración sustituye la clasificación automática en los resúmenes categóricos y en el PDF. Las fracciones brutas y corregidas no cambian.",
-      "sample_only": "La clasificación manual solo está disponible para pocillos de muestra completados.",
+      "sample_only": "La clasificación manual solo está disponible para pocillos completados.",
       "updating": "Actualizando la clasificación y recalculando los resultados…",
       "update_error": "No se pudo actualizar la clasificación del pocillo."
     },
@@ -844,7 +844,7 @@
     "user_override": "ANULACIÓN MANUAL",
     "override": {
       "hint": "Haga clic en el pocillo para fijar esta ventana y, a continuación, seleccione positivo o negativo.",
-      "pinned_hint": "Seleccione la clasificación efectiva para este pocillo de muestra.",
+      "pinned_hint": "Seleccione la clasificación efectiva para este pocillo.",
       "unavailable": "La clasificación manual solo está disponible después de calcular una fracción corregida.",
       "updating": "Actualizando la clasificación y recalculando los resultados…",
       "update_error": "No se pudo actualizar la clasificación del pocillo."

@@ -796,7 +796,7 @@
       "effective_call": "Effective call",
       "active": "User override: {{call}}",
       "active_description": "This declaration supersedes the automated call in categorical summaries and the PDF. Measured raw and corrected fractions remain unchanged.",
-      "sample_only": "Manual classification is available only for completed sample wells.",
+      "sample_only": "Manual classification is available only for completed wells.",
       "updating": "Updating classification and recalculating results…",
       "update_error": "Could not update the well classification."
     },
@@ -844,7 +844,7 @@
     "user_override": "USER OVERRIDE",
     "override": {
       "hint": "Click the well to pin this window, then select positive or negative.",
-      "pinned_hint": "Select the effective classification for this sample well.",
+      "pinned_hint": "Select the effective classification for this well.",
       "unavailable": "Manual classification is available only after a corrected fraction has been calculated.",
       "updating": "Updating classification and recalculating results…",
       "update_error": "Could not update the well classification."

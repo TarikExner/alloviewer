@@ -796,7 +796,7 @@
       "effective_call": "Wirksame Bewertung",
       "active": "Manuelle Überschreibung: {{call}}",
       "active_description": "Diese Festlegung ersetzt die automatische Bewertung in kategorialen Zusammenfassungen und im PDF. Rohe und korrigierte Messwerte bleiben unverändert.",
-      "sample_only": "Eine manuelle Bewertung ist nur für abgeschlossene Proben-Wells möglich.",
+      "sample_only": "Eine manuelle Bewertung ist nur für abgeschlossene Wells möglich.",
       "updating": "Bewertung wird aktualisiert und Ergebnisse werden neu berechnet…",
       "update_error": "Die Well-Bewertung konnte nicht aktualisiert werden."
     },
@@ -843,11 +843,11 @@
     },
     "user_override": "MANUELLE ÜBERSCHREIBUNG",
     "override": {
-      "hint": "Klicken Sie auf die Vertiefung, um dieses Fenster anzuheften, und wählen Sie anschließend positiv oder negativ.",
-      "pinned_hint": "Wählen Sie die wirksame Klassifikation für diese Probenvertiefung.",
+      "hint": "Klicken Sie auf das Well, um dieses Fenster anzuheften, und wählen Sie anschließend positiv oder negativ.",
+      "pinned_hint": "Wählen Sie die wirksame Klassifikation für dieses Well.",
       "unavailable": "Eine manuelle Klassifikation ist erst möglich, nachdem ein korrigierter Anteil berechnet wurde.",
       "updating": "Klassifikation wird aktualisiert und Ergebnisse werden neu berechnet…",
-      "update_error": "Die Klassifikation der Vertiefung konnte nicht aktualisiert werden."
+      "update_error": "Die Klassifikation des Wells konnte nicht aktualisiert werden."
     }
   },
   "Plots": {

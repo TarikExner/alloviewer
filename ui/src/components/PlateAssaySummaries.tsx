@@ -75,7 +75,7 @@ function ManualOverrideBanner({ summary }: { summary: any }) {
     <div className="rounded-2xl border border-violet-300 bg-violet-50 px-4 py-3 text-sm text-violet-950 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-100">
       <div className="font-semibold">Manual classification overrides applied</div>
       <div className="mt-1 text-xs opacity-85">
-        {count} sample well{count === 1 ? "" : "s"}: {wells.join(", ") || "—"}.
+        {count} well{count === 1 ? "" : "s"}: {wells.join(", ") || "—"}.
         Categorical results use the declared calls; measured raw and corrected
         fractions remain unchanged.
       </div>
@@ -330,7 +330,7 @@ function PRASummaryValuesPanel({
   return (
     <CompactPanel title="Summary values">
       <div className="overflow-x-auto">
-        <div className="grid min-w-[1700px] grid-cols-9 gap-2">
+        <div className="grid min-w-[1850px] grid-cols-10 gap-2">
           <CompactMetric
             label="Panel reactivity"
             value={formatPercent(praPercent, 1)}
@@ -367,6 +367,12 @@ function PRASummaryValuesPanel({
           <CompactMetric
             label="Threshold"
             value={pra?.positivity_threshold ?? "—"}
+          />
+
+          <CompactMetric
+            label="Borderline wells"
+            value={assay.borderline_panel_wells ?? 0}
+            sub={(assay.borderline_wells ?? []).join(", ") || "None"}
           />
 
           <CompactMetric label="Weak" value={assay.n_weak_positive ?? 0} />
@@ -518,6 +524,7 @@ function CrossmatchCellModeCard({
         <div className="flex flex-col items-end gap-1">
           <span className="rounded-full border bg-white px-2 py-1 text-xs font-semibold dark:border-neutral-700 dark:bg-neutral-900">
             {formatCrossmatchCall(result?.final_call)}
+            {result?.final_borderline ? " (borderline)" : ""}
           </span>
           {result?.manual_override_applied ? (
             <span className="rounded-full border border-violet-300 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-800 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-200">
@@ -530,6 +537,13 @@ function CrossmatchCellModeCard({
       <div className="mt-3 text-xs font-medium text-neutral-700 dark:text-neutral-300">
         Run validity
       </div>
+
+      {Array.isArray(result?.borderline_wells) && result.borderline_wells.length ? (
+        <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+          Borderline wells: {result.borderline_wells.join(", ")}. Each well is still
+          classified as positive or negative at the 20% cutoff.
+        </div>
+      ) : null}
 
       <div className="mt-2 grid grid-cols-2 gap-2">
         <CompactMetric label="Status" value={run.status ?? "—"} />

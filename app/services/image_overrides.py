@@ -16,6 +16,7 @@ from alloviewer.image_analysis.utils import (
     automated_well_call,
     build_crossmatch_result,
     build_pra_result,
+    is_borderline_value,
 )
 
 from app.services.job_paths import get_job_paths
@@ -26,7 +27,6 @@ ALLOWED_MANUAL_CALLS = {"positive", "negative"}
 ALLOWED_EFFECTIVE_CALLS = {
     "positive",
     "negative",
-    "borderline",
     "not_available",
 }
 
@@ -165,37 +165,20 @@ def _synchronize_well_calls(
         if not isinstance(well, dict):
             continue
 
-        role = str(well.get("role") or "").lower()
-
-        if role == "positive":
-            well["automated_call"] = "positive"
-            well["effective_call"] = "positive"
-            well["manual_override"] = None
-            continue
-
-        if role == "negative":
-            well["automated_call"] = "negative"
-            well["effective_call"] = "negative"
-            well["manual_override"] = None
-            continue
-
-        if role != "sample":
-            well["automated_call"] = None
-            well["effective_call"] = None
-            well["manual_override"] = None
-            continue
-
-        automated_call = well.get("automated_call")
-
-        if automated_call not in ALLOWED_EFFECTIVE_CALLS:
-            automated_call = automated_well_call(
-                _corrected_fraction(well),
-                assay_type=assay_type,
-                pra_positive_cutoff=pra_threshold,
-                config=CDC_SUMMARY_CONFIG,
-            )
+        corrected_fraction = _corrected_fraction(well)
+        automated_call = automated_well_call(
+            corrected_fraction,
+            assay_type=assay_type,
+            pra_positive_cutoff=pra_threshold,
+            config=CDC_SUMMARY_CONFIG,
+        )
 
         well["automated_call"] = automated_call
+        well["borderline"] = is_borderline_value(
+            corrected_fraction,
+            borderline_low=float(CDC_SUMMARY_CONFIG["borderline_low"]),
+            borderline_high=float(CDC_SUMMARY_CONFIG["borderline_high"]),
+        )
         override = existing_overrides.get(well_id)
 
         if override is None:
@@ -420,11 +403,6 @@ def apply_well_classification_override(
 
     if not isinstance(well, dict):
         raise ValueError(f"Well result is invalid: {actual_well_id}")
-
-    if str(well.get("role") or "").lower() != "sample":
-        raise ValueError(
-            "Manual classification overrides are restricted to sample wells."
-        )
 
     if np.isnan(_corrected_fraction(well)):
         raise ValueError(

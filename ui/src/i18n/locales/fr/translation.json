@@ -796,7 +796,7 @@
       "effective_call": "Appel effectif",
       "active": "Remplacement manuel : {{call}}",
       "active_description": "Cette déclaration remplace l’appel automatique dans les résumés catégoriels et le PDF. Les fractions brutes et corrigées restent inchangées.",
-      "sample_only": "La classification manuelle est disponible uniquement pour les puits échantillons terminés.",
+      "sample_only": "La classification manuelle est disponible uniquement pour les puits terminés.",
       "updating": "Mise à jour de la classification et recalcul des résultats…",
       "update_error": "Impossible de mettre à jour la classification du puits."
     },
@@ -844,7 +844,7 @@
     "user_override": "REMPLACEMENT MANUEL",
     "override": {
       "hint": "Cliquez sur le puits pour épingler cette fenêtre, puis sélectionnez positif ou négatif.",
-      "pinned_hint": "Sélectionnez la classification effective pour ce puits d’échantillon.",
+      "pinned_hint": "Sélectionnez la classification effective pour ce puits.",
       "unavailable": "La classification manuelle n’est disponible qu’après le calcul d’une fraction corrigée.",
       "updating": "Mise à jour de la classification et recalcul des résultats…",
       "update_error": "La classification du puits n’a pas pu être mise à jour."

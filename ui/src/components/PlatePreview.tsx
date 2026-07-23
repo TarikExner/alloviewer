@@ -158,23 +158,25 @@ export function PlatePreview({
     if (
       explicit === "positive" ||
       explicit === "negative" ||
-      explicit === "borderline" ||
       explicit === "not_available"
     ) {
       return explicit;
     }
-
-    const role = String(wellResult?.role ?? "").toLowerCase();
-
-    if (role === "positive") return "positive";
-    if (role === "negative") return "negative";
-    if (role !== "sample") return null;
 
     const corrected = correctedFracOf(well);
     if (corrected === null) return "not_available";
 
     const threshold = finiteNumber(result?.pra_analysis?.positivity_threshold) ?? 20;
     return corrected >= threshold ? "positive" : "negative";
+  }
+
+  function borderlineOf(well: WellID): boolean {
+    const explicit = wellResultOf(well)?.borderline;
+
+    if (typeof explicit === "boolean") return explicit;
+
+    const corrected = correctedFracOf(well);
+    return corrected !== null && corrected >= 15 && corrected <= 25;
   }
 
   function manualOverrideOf(
@@ -198,7 +200,6 @@ export function PlatePreview({
     if (
       explicit === "positive" ||
       explicit === "negative" ||
-      explicit === "borderline" ||
       explicit === "not_available"
     ) {
       return explicit;
@@ -215,6 +216,7 @@ export function PlatePreview({
     const rawFrac = rawFracOf(hoverWell);
     const automatedCall = automatedCallOf(hoverWell);
     const effectiveCall = effectiveCallOf(hoverWell);
+    const borderline = borderlineOf(hoverWell);
     const manualOverride = manualOverrideOf(hoverWell);
     let role: string | null = null;
     let status = "ok";
@@ -274,6 +276,7 @@ export function PlatePreview({
       rawFrac,
       automatedCall,
       effectiveCall,
+      borderline,
       manualOverride,
       status,
       race,
@@ -286,7 +289,7 @@ export function PlatePreview({
   const isHoverPositive = !!data && data.effectiveCall === "positive";
   const canOverrideHoveredWell =
     !!hoverWell &&
-    data?.role === "sample" &&
+    data !== null &&
     data.correctedFrac !== null &&
     !!onWellOverride;
   const CARD_W = 520;
@@ -512,6 +515,7 @@ export function PlatePreview({
                 const id = `${row}${column}` as WellID;
                 const url = imagesByWell[id] || null;
                 const isPositive = effectiveCallOf(id) === "positive";
+                const isBorderline = borderlineOf(id);
                 const manualOverride = manualOverrideOf(id);
                 const status = wellStatus?.[id] ?? "idle";
                 const isRunning = status === "running";
@@ -570,6 +574,11 @@ export function PlatePreview({
                     title={id}
                     aria-label={wellAriaLabel(id, !!url, isPositive)}
                   >
+                    {isBorderline ? (
+                      <span className="absolute left-0.5 top-0.5 grid h-5 min-w-5 place-items-center rounded-full border border-amber-700 bg-amber-400 px-1 text-[10px] font-bold text-amber-950 shadow">
+                        B
+                      </span>
+                    ) : null}
                     {manualOverride ? (
                       <span className="absolute right-0.5 top-0.5 grid h-5 min-w-5 place-items-center rounded-full border border-violet-700 bg-violet-600 px-1 text-[10px] font-bold text-white shadow">
                         U
@@ -624,6 +633,11 @@ export function PlatePreview({
                     {t("PlatePreview.positive")}
                   </span>
                 )}
+                {data.borderline ? (
+                  <span className="ml-2 inline-flex items-center rounded-md border border-amber-400 bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+                    {t("PlatePopupWindow.calls.borderline")}
+                  </span>
+                ) : null}
               </div>
 
               {data.role && (
@@ -651,6 +665,11 @@ export function PlatePreview({
                 {data.effectiveCall
                   ? t(`PlatePopupWindow.calls.${data.effectiveCall}`)
                   : t("PlatePreview.empty_value")}
+                {data.borderline ? (
+                  <span className="ml-1 text-xs font-semibold text-amber-700 dark:text-amber-300">
+                    ({t("PlatePopupWindow.calls.borderline")})
+                  </span>
+                ) : null}
                 {data.manualOverride ? (
                   <span className="ml-2 rounded-full border border-violet-300 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-800 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-200">
                     {t("PlatePreview.user_override")}
@@ -683,7 +702,7 @@ export function PlatePreview({
                 {data.status}
               </div>
 
-              {data.role === "sample" && onWellOverride ? (
+              {onWellOverride ? (
                 <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-2.5 dark:border-blue-900 dark:bg-blue-950/40">
                   <div className="text-xs text-blue-800 dark:text-blue-200">
                     {pinned
@@ -838,6 +857,7 @@ export function PlatePreview({
           rawFraction={rawFracOf(detailWell)}
           automatedCall={automatedCallOf(detailWell)}
           effectiveCall={effectiveCallOf(detailWell)}
+          borderline={borderlineOf(detailWell)}
           manualOverride={manualOverrideOf(detailWell)}
           onClose={() => setDetailWell(null)}
         />
