@@ -190,7 +190,7 @@ export default function CrossmatchApp() {
     : !hasOrder
       ? "needs_attention"
       : !plateVisited
-        ? "needs_review"
+        ? "review_plate"
         : missingImageCount > 0
           ? "needs_attention"
           : "done";
@@ -547,6 +547,15 @@ export default function CrossmatchApp() {
               </div>
               <div className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
                 {t("cdc_xm_app.panels.upload.description")}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4 mb-4">
+              <div className="font-medium">
+                {t("cdc_xm_app.panels.upload.order_notice.title")}
+              </div>
+              <div className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+                {t("cdc_xm_app.panels.upload.order_notice.description")}
               </div>
             </div>
 

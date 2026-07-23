@@ -162,7 +162,11 @@
     "panels": {
       "upload": {
         "heading": "Schritt 1 · Dateien hochladen",
-        "description": "Laden Sie das Plattenlayout und den Bildordner hoch, bevor Sie die Platte prüfen."
+        "description": "Laden Sie das Plattenlayout und den Bildordner hoch, bevor Sie die Platte prüfen.",
+        "order_notice": {
+          "title": "Reihenfolge der Bilder",
+          "description": "Laden Sie die Bilder in der Reihenfolge hoch, in der sie aufgenommen wurden. In Schritt 2 können Sie diese Reihenfolge anpassen und jedes Bild dem richtigen Well der Platte zuordnen."
+        }
       },
       "review": {
         "heading": "Schritt 2 · Platte und Scan-Reihenfolge prüfen",
@@ -472,7 +476,11 @@
     "panels": {
       "upload": {
         "heading": "Schritt 1 · Bilder hochladen",
-        "description": "Laden Sie den CDC-XM-Bildordner hoch. Die Bilder werden anhand der Upload-Reihenfolge der ausgewählten Scan-Reihenfolge zugeordnet."
+        "description": "Laden Sie den CDC-XM-Bildordner hoch. Die Bilder werden anhand der Upload-Reihenfolge der ausgewählten Scan-Reihenfolge zugeordnet.",
+        "order_notice": {
+          "title": "Reihenfolge der Bilder",
+          "description": "Laden Sie die Bilder in der Reihenfolge hoch, in der sie aufgenommen wurden. In Schritt 2 können Sie diese Reihenfolge anpassen und jedes Bild dem richtigen Well der Platte zuordnen."
+        }
       },
       "review": {
         "heading": "Schritt 2 · Platte und Scan-Reihenfolge prüfen",
@@ -843,11 +851,11 @@
     },
     "user_override": "MANUELLE ÜBERSCHREIBUNG",
     "override": {
-      "hint": "Klicken Sie auf das Well, um dieses Fenster anzuheften, und wählen Sie anschließend positiv oder negativ.",
-      "pinned_hint": "Wählen Sie die wirksame Klassifikation für dieses Well.",
+      "hint": "Klicken Sie auf die Vertiefung, um dieses Fenster anzuheften, und wählen Sie anschließend positiv oder negativ.",
+      "pinned_hint": "Wählen Sie die wirksame Klassifikation für diese Vertiefung.",
       "unavailable": "Eine manuelle Klassifikation ist erst möglich, nachdem ein korrigierter Anteil berechnet wurde.",
       "updating": "Klassifikation wird aktualisiert und Ergebnisse werden neu berechnet…",
-      "update_error": "Die Klassifikation des Wells konnte nicht aktualisiert werden."
+      "update_error": "Die Klassifikation der Vertiefung konnte nicht aktualisiert werden."
     }
   },
   "Plots": {
@@ -887,6 +895,7 @@
       "not_started": "Nicht gestartet",
       "needs_attention": "Benötigt Aufmerksamkeit",
       "needs_review": "Benötigt Prüfung",
+      "review_plate": "Platte prüfen",
       "ready": "Bereit",
       "running": "Läuft",
       "done": "Erledigt",

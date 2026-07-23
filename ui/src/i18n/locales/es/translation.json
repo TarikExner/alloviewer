@@ -162,7 +162,11 @@
     "panels": {
       "upload": {
         "heading": "Paso 1 · Cargar archivos",
-        "description": "Cargue el diseño de la placa y la carpeta de imágenes antes de revisar la placa."
+        "description": "Cargue el diseño de la placa y la carpeta de imágenes antes de revisar la placa.",
+        "order_notice": {
+          "title": "Orden de carga de las imágenes",
+          "description": "Cargue las imágenes en el orden en que fueron adquiridas. En el paso 2 podrá ajustar esta secuencia y asignar cada imagen al pocillo correcto de la placa."
+        }
       },
       "review": {
         "heading": "Paso 2 · Revisar placa y orden de escaneo",
@@ -472,7 +476,11 @@
     "panels": {
       "upload": {
         "heading": "Paso 1 · Cargar imágenes",
-        "description": "Cargue la carpeta de imágenes CDC-XM. Las imágenes se asignan según el orden de carga y el orden de escaneo seleccionado."
+        "description": "Cargue la carpeta de imágenes CDC-XM. Las imágenes se asignan según el orden de carga y el orden de escaneo seleccionado.",
+        "order_notice": {
+          "title": "Orden de carga de las imágenes",
+          "description": "Cargue las imágenes en el orden en que fueron adquiridas. En el paso 2 podrá ajustar esta secuencia y asignar cada imagen al pocillo correcto de la placa."
+        }
       },
       "review": {
         "heading": "Paso 2 · Revisar placa y orden de escaneo",
@@ -887,6 +895,7 @@
       "not_started": "No iniciado",
       "needs_attention": "Requiere atención",
       "needs_review": "Requiere revisión",
+      "review_plate": "Revisar placa",
       "ready": "Listo",
       "running": "En ejecución",
       "done": "Hecho",

@@ -162,7 +162,11 @@
     "panels": {
       "upload": {
         "heading": "Step 1 · Upload files",
-        "description": "Upload the plate layout and the image folder before checking the plate."
+        "description": "Upload the plate layout and the image folder before checking the plate.",
+        "order_notice": {
+          "title": "Image upload order",
+          "description": "Upload the images in the order in which they were acquired. In Step 2, you can adjust this sequence and assign each image to the correct plate well."
+        }
       },
       "review": {
         "heading": "Step 2 · Review plate and scan order",
@@ -472,7 +476,11 @@
     "panels": {
       "upload": {
         "heading": "Step 1 · Upload images",
-        "description": "Upload the CDC-XM image folder. Images are assigned by upload order against the selected scan order."
+        "description": "Upload the CDC-XM image folder. Images are assigned by upload order against the selected scan order.",
+        "order_notice": {
+          "title": "Image upload order",
+          "description": "Upload the images in the order in which they were acquired. In Step 2, you can adjust this sequence and assign each image to the correct plate well."
+        }
       },
       "review": {
         "heading": "Step 2 · Review plate and scan order",
@@ -887,6 +895,7 @@
       "not_started": "Not started",
       "needs_attention": "Needs attention",
       "needs_review": "Needs review",
+      "review_plate": "Review plate",
       "ready": "Ready",
       "running": "Running",
       "done": "Done",

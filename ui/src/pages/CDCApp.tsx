@@ -539,6 +539,15 @@ export default function CDCApp() {
               </div>
             </div>
 
+            <div className="rounded-2xl border bg-white dark:bg-neutral-900 dark:border-neutral-800 p-4 mb-4">
+              <div className="font-medium">
+                {t("cdc_app.panels.upload.order_notice.title")}
+              </div>
+              <div className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+                {t("cdc_app.panels.upload.order_notice.description")}
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
               <UploadCard
                 key={`layout-${uploadResetKey}`}

@@ -162,7 +162,11 @@
     "panels": {
       "upload": {
         "heading": "Étape 1 · Téléverser les fichiers",
-        "description": "Téléversez la disposition de la plaque et le dossier d’images avant de vérifier la plaque."
+        "description": "Téléversez la disposition de la plaque et le dossier d’images avant de vérifier la plaque.",
+        "order_notice": {
+          "title": "Ordre de téléversement des images",
+          "description": "Téléversez les images dans l’ordre de leur acquisition. À l’étape 2, vous pourrez ajuster cette séquence et attribuer chaque image au puits correspondant de la plaque."
+        }
       },
       "review": {
         "heading": "Étape 2 · Vérifier la plaque et l’ordre de balayage",
@@ -472,7 +476,11 @@
     "panels": {
       "upload": {
         "heading": "Étape 1 · Téléverser les images",
-        "description": "Téléversez le dossier d’images CDC-XM. Les images sont associées selon l’ordre de téléversement et l’ordre de balayage sélectionné."
+        "description": "Téléversez le dossier d’images CDC-XM. Les images sont associées selon l’ordre de téléversement et l’ordre de balayage sélectionné.",
+        "order_notice": {
+          "title": "Ordre de téléversement des images",
+          "description": "Téléversez les images dans l’ordre de leur acquisition. À l’étape 2, vous pourrez ajuster cette séquence et attribuer chaque image au puits correspondant de la plaque."
+        }
       },
       "review": {
         "heading": "Étape 2 · Vérifier la plaque et l’ordre de balayage",
@@ -887,6 +895,7 @@
       "not_started": "Non commencé",
       "needs_attention": "Nécessite une attention",
       "needs_review": "Nécessite une vérification",
+      "review_plate": "Vérifier la plaque",
       "ready": "Prêt",
       "running": "En cours",
       "done": "Terminé",
