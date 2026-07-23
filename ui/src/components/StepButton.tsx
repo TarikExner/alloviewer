@@ -4,6 +4,7 @@ export type StepState =
   | "not_started"
   | "needs_attention"
   | "needs_review"
+  | "review_plate"
   | "ready"
   | "running"
   | "done"
