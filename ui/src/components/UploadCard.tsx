@@ -11,12 +11,15 @@ import {
   parseLayout,
   uploadWithProgress,
   type JobUploadKind,
+  type SavedFile,
 } from "../api";
-
-
-type FileWithRelativePath = File & {
-  __relativePath?: string;
-};
+import {
+  findDuplicateFilenames,
+  getFileRelativePath,
+  getUploadedFilename,
+  sortFilesNaturally,
+  type FileOrderDirection,
+} from "../lib/upload";
 
 
 type DroppedEntry = {
@@ -284,18 +287,8 @@ function selectedFileKey(
   file: File,
   index: number
 ): string {
-  const extended =
-    file as FileWithRelativePath & {
-      webkitRelativePath?: string;
-    };
-
-  const relativePath =
-    extended.__relativePath ||
-    extended.webkitRelativePath ||
-    file.name;
-
   return [
-    relativePath,
+    getFileRelativePath(file),
     file.size,
     file.lastModified,
     index,
@@ -339,8 +332,16 @@ export function UploadCard({
   const [uploading, setUploading] =
     useState(false);
 
+  const [orderDirection, setOrderDirection] =
+    useState<FileOrderDirection>(
+      "ascending"
+    );
+
   const [uploadedItems, setUploadedItems] =
-    useState<any[]>([]);
+    useState<SavedFile[]>([]);
+
+  const [uploadedJobId, setUploadedJobId] =
+    useState<string | null>(null);
 
   const fileInputRef =
     useRef<HTMLInputElement | null>(
@@ -363,6 +364,10 @@ export function UploadCard({
     t(
       "UploadCard.uploaded_list.default_label"
     );
+
+  const usesNaturalImageOrder =
+    mode === "generic" &&
+    uploadKind === "images";
 
 
   useEffect(() => {
@@ -434,9 +439,22 @@ export function UploadCard({
     (files: File[]) => {
       setSelected(files);
       setUploadedItems([]);
+
+      if (uploadedJobId) {
+        onUploaded?.(
+          [],
+          uploadedJobId
+        );
+      }
+
+      setUploadedJobId(null);
       onPicked(files);
     },
-    [onPicked]
+    [
+      onPicked,
+      onUploaded,
+      uploadedJobId,
+    ]
   );
 
 
@@ -474,6 +492,61 @@ export function UploadCard({
     );
 
 
+  const prepareFiles =
+    useCallback(
+      (
+        rawFiles: File[]
+      ): File[] | null => {
+        const filtered =
+          applyFileFilter(
+            rawFiles
+          );
+
+        if (
+          !usesNaturalImageOrder
+        ) {
+          return filtered;
+        }
+
+        const duplicates =
+          findDuplicateFilenames(
+            filtered
+          );
+
+        if (
+          duplicates.length > 0
+        ) {
+          setMessage(
+            t(
+              "UploadCard.messages.duplicate_filenames",
+              {
+                names:
+                  duplicates.join(
+                    ", "
+                  ),
+                defaultValue:
+                  "Duplicate filenames are not allowed: {{names}}",
+              }
+            )
+          );
+
+          return null;
+        }
+
+        return sortFilesNaturally(
+          filtered,
+          orderDirection
+        );
+      },
+      [
+        applyFileFilter,
+        orderDirection,
+        t,
+        usesNaturalImageOrder,
+      ]
+    );
+
+
   const onBrowse =
     useCallback(() => {
       fileInputRef.current?.click();
@@ -505,8 +578,15 @@ export function UploadCard({
           return;
         }
 
+        setMessage(null);
+
         const files =
-          applyFileFilter(rawFiles);
+          prepareFiles(rawFiles);
+
+        if (files === null) {
+          syncParent([]);
+          return;
+        }
 
         if (
           files.length === 0
@@ -522,8 +602,8 @@ export function UploadCard({
         );
       },
       [
-        applyFileFilter,
         mode,
+        prepareFiles,
         syncParent,
       ]
     );
@@ -647,9 +727,14 @@ export function UploadCard({
           }
 
           const files =
-            applyFileFilter(
+            prepareFiles(
               rawFiles
             );
+
+          if (files === null) {
+            syncParent([]);
+            return;
+          }
 
           if (
             files.length === 0
@@ -676,10 +761,74 @@ export function UploadCard({
       },
       [
         allowDirectory,
-        applyFileFilter,
         mode,
+        prepareFiles,
         syncParent,
         t,
+      ]
+    );
+
+
+  const changeOrderDirection =
+    useCallback(
+      (
+        nextDirection: FileOrderDirection
+      ) => {
+        if (
+          uploading ||
+          !usesNaturalImageOrder ||
+          nextDirection ===
+            orderDirection
+        ) {
+          return;
+        }
+
+        const nextSelected =
+          sortFilesNaturally(
+            selected,
+            nextDirection
+          );
+
+        const nextUploadedItems =
+          uploadedItems.length > 0
+            ? [
+                ...uploadedItems,
+              ].reverse()
+            : uploadedItems;
+
+        setOrderDirection(
+          nextDirection
+        );
+        setSelected(
+          nextSelected
+        );
+        onPicked(
+          nextSelected
+        );
+
+        if (
+          nextUploadedItems.length > 0 &&
+          uploadedJobId
+        ) {
+          setUploadedItems(
+            nextUploadedItems
+          );
+
+          onUploaded?.(
+            nextUploadedItems,
+            uploadedJobId
+          );
+        }
+      },
+      [
+        onPicked,
+        onUploaded,
+        orderDirection,
+        selected,
+        uploadedItems,
+        uploadedJobId,
+        uploading,
+        usesNaturalImageOrder,
       ]
     );
 
@@ -747,7 +896,7 @@ export function UploadCard({
           );
         }
 
-        const names =
+        const savedFiles =
           await uploadWithProgress(
             jobId,
             uploadKind,
@@ -759,20 +908,24 @@ export function UploadCard({
           );
 
         setUploadedItems(
-          names || []
+          savedFiles
+        );
+        setUploadedJobId(
+          jobId
         );
 
         setMessage(
           t(
             "UploadCard.messages.uploaded_files",
             {
-              count: names.length,
+              count:
+                savedFiles.length,
             }
           )
         );
 
         onUploaded?.(
-          names,
+          savedFiles,
           jobId
         );
       } catch (error) {
@@ -893,6 +1046,78 @@ export function UploadCard({
         </h3>
 
         <div className="flex items-center gap-2">
+          {usesNaturalImageOrder ? (
+            <div
+              className="inline-flex items-center gap-1 rounded-lg border p-0.5 dark:border-neutral-700"
+              role="group"
+              aria-label={t(
+                "UploadCard.order.label",
+                {
+                  defaultValue:
+                    "Filename order",
+                }
+              )}
+            >
+              <button
+                type="button"
+                disabled={uploading}
+                onClick={() =>
+                  changeOrderDirection(
+                    "ascending"
+                  )
+                }
+                className={[
+                  "rounded-md px-2 py-1 text-xs",
+                  orderDirection ===
+                  "ascending"
+                    ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
+                    : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800",
+                  uploading
+                    ? "opacity-50 cursor-not-allowed"
+                    : "",
+                ].join(" ")}
+                title={t(
+                  "UploadCard.order.ascending",
+                  {
+                    defaultValue:
+                      "Natural filename order, ascending",
+                  }
+                )}
+              >
+                A–Z
+              </button>
+
+              <button
+                type="button"
+                disabled={uploading}
+                onClick={() =>
+                  changeOrderDirection(
+                    "descending"
+                  )
+                }
+                className={[
+                  "rounded-md px-2 py-1 text-xs",
+                  orderDirection ===
+                  "descending"
+                    ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
+                    : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800",
+                  uploading
+                    ? "opacity-50 cursor-not-allowed"
+                    : "",
+                ].join(" ")}
+                title={t(
+                  "UploadCard.order.descending",
+                  {
+                    defaultValue:
+                      "Natural filename order, descending",
+                  }
+                )}
+              >
+                Z–A
+              </button>
+            </div>
+          ) : null}
+
           <button
             type="button"
             onClick={onBrowse}
@@ -1040,19 +1265,9 @@ export function UploadCard({
                     className="flex items-center justify-between gap-3 px-2 py-1"
                   >
                     <span className="truncate">
-                      {(
-                        file as FileWithRelativePath & {
-                          webkitRelativePath?: string;
-                        }
-                      )
-                        .__relativePath ||
-                        (
-                          file as File & {
-                            webkitRelativePath?: string;
-                          }
-                        )
-                          .webkitRelativePath ||
-                        file.name}
+                      {getFileRelativePath(
+                        file
+                      )}
                     </span>
 
                     <button
@@ -1121,16 +1336,17 @@ export function UploadCard({
             <ul className="text-xs divide-y dark:divide-neutral-800">
               {uploadedItems
                 .map(
-                  (item: any) =>
-                    typeof item ===
-                    "string"
-                      ? item
-                      : item?.filename
+                  getUploadedFilename
                 )
-                .filter(Boolean)
                 .filter(
                   (
-                    filename: string
+                    filename
+                  ): filename is string =>
+                    Boolean(filename)
+                )
+                .filter(
+                  (
+                    filename
                   ) =>
                     !(
                       hideAssigned &&

@@ -1,5 +1,7 @@
 // src/api.ts
 
+import { getFileRelativePath } from "./lib/upload";
+
 const BASE =
   import.meta.env.VITE_API_BASE ??
   "http://127.0.0.1:8000";
@@ -23,7 +25,10 @@ export type JobResponse = {
 };
 
 export type SavedFile = {
+  index: number;
   filename: string;
+  original_filename: string;
+  relative_path: string;
   size_mb: number;
 };
 
@@ -69,11 +74,6 @@ type FastApiErrorBody = {
   detail?: unknown;
   message?: unknown;
   error?: unknown;
-};
-
-type FileWithRelativePath = File & {
-  __relativePath?: string;
-  webkitRelativePath?: string;
 };
 
 
@@ -232,22 +232,6 @@ function readXhrError(
 }
 
 
-function relativePathForFile(
-  file: File
-): string {
-  const extended =
-    file as FileWithRelativePath;
-
-  const relativePath =
-    extended.__relativePath ||
-    extended.webkitRelativePath ||
-    file.name;
-
-  return relativePath
-    .replace(/\\/g, "/")
-    .replace(/^\/+/, "");
-}
-
 
 export async function createJob(
   jobType: JobType,
@@ -403,7 +387,7 @@ export function uploadWithProgress(
     percent: number
   ) => void,
   base = BASE
-): Promise<string[]> {
+): Promise<SavedFile[]> {
   return new Promise(
     (resolve, reject) => {
       if (!jobId) {
@@ -434,7 +418,7 @@ export function uploadWithProgress(
 
         form.append(
           "relative_paths",
-          relativePathForFile(file)
+          getFileRelativePath(file)
         );
       });
 
@@ -509,7 +493,7 @@ export function uploadWithProgress(
       };
 
       const resolveOnce = (
-        names: string[]
+        savedFiles: SavedFile[]
       ) => {
         if (settled) {
           return;
@@ -518,7 +502,7 @@ export function uploadWithProgress(
         settled = true;
         stopFakeProgress();
         report(100);
-        resolve(names);
+        resolve(savedFiles);
       };
 
       xhr.upload.onloadstart = () => {
@@ -584,7 +568,11 @@ export function uploadWithProgress(
           xhr.responseText || "";
 
         if (!text.trim()) {
-          resolveOnce([]);
+          rejectOnce(
+            new Error(
+              "The upload endpoint returned an empty response."
+            )
+          );
           return;
         }
 
@@ -594,21 +582,91 @@ export function uploadWithProgress(
               text
             ) as UploadResponse;
 
-          const names = (
-            response.saved || []
-          )
-            .map(
-              (saved) =>
-                saved.filename
+          if (
+            !response ||
+            !Array.isArray(
+              response.saved
             )
-            .filter(Boolean);
+          ) {
+            throw new Error(
+              "The upload endpoint returned an invalid saved-file list."
+            );
+          }
 
-          resolveOnce(names);
-        } catch {
-          rejectOnce(
-            new Error(
-              "The upload endpoint returned invalid JSON."
+          const savedFiles =
+            response.saved
+              .map(
+                (
+                  saved,
+                  fallbackIndex
+                ) => ({
+                  ...saved,
+                  index:
+                    Number.isInteger(
+                      saved.index
+                    )
+                      ? saved.index
+                      : fallbackIndex,
+                })
+              )
+              .sort(
+                (left, right) =>
+                  left.index -
+                  right.index
+              );
+
+          if (
+            savedFiles.length !==
+            files.length
+          ) {
+            throw new Error(
+              `The upload endpoint returned ${savedFiles.length} files for ${files.length} uploads.`
+            );
+          }
+
+          const returnedIndexes =
+            new Set(
+              savedFiles.map(
+                (saved) =>
+                  saved.index
+              )
+            );
+
+          const indexesAreComplete =
+            savedFiles.every(
+              (saved, index) =>
+                saved.index === index
+            );
+
+          if (
+            returnedIndexes.size !==
+              savedFiles.length ||
+            !indexesAreComplete
+          ) {
+            throw new Error(
+              "The upload endpoint returned invalid file indexes."
+            );
+          }
+
+          if (
+            savedFiles.some(
+              (saved) =>
+                !saved.filename
             )
+          ) {
+            throw new Error(
+              "The upload endpoint returned a file without a saved filename."
+            );
+          }
+
+          resolveOnce(savedFiles);
+        } catch (error) {
+          rejectOnce(
+            error instanceof Error
+              ? error
+              : new Error(
+                  "The upload endpoint returned invalid JSON."
+                )
           );
         }
       };
