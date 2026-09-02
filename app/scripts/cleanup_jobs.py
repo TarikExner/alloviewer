@@ -258,6 +258,22 @@ def cleanup_runtime_data(
             continue
 
         metadata = _read_job_metadata(job_dir)
+
+        status = (
+            str(metadata.get("status") or "").strip().lower()
+            if metadata is not None
+            else ""
+        )
+
+        if status in ACTIVE_JOB_STATUSES:
+            logger.info(
+                "Retaining active job %s because its status is %s.",
+                job_id,
+                status,
+            )
+            result["job_dirs_retained"] += 1
+            continue
+
         last_updated = _job_last_updated(
             job_dir,
             metadata,
@@ -276,6 +292,24 @@ def cleanup_runtime_data(
             continue
 
         is_orphan = metadata is None
+
+        # Re-read job state immediately before deletion. The job may have
+        # become queued or running since the first metadata check.
+        current_metadata = _read_job_metadata(job_dir)
+        current_status = (
+            str(current_metadata.get("status") or "").strip().lower()
+            if current_metadata is not None
+            else ""
+        )
+
+        if current_status in ACTIVE_JOB_STATUSES:
+            logger.info(
+                "Retaining active job %s because its current status is %s.",
+                job_id,
+                current_status,
+            )
+            result["job_dirs_retained"] += 1
+            continue
 
         deleted = _remove_job_directory(
             job_dir,
