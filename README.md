@@ -118,7 +118,13 @@ The FC-XM workflow includes:
 
 ---
 
-## Local setup
+## Installation
+
+### Requirements
+
+- Git
+- Python 3.10, 3.11, or 3.12 and pip
+- Node.js and npm for the frontend
 
 ### Clone the repository
 
@@ -127,7 +133,43 @@ git clone https://github.com/TarikExner/alloviewer.git
 cd alloviewer
 ```
 
-Replace the URL with the actual GitHub repository URL.
+### Install the Python backend
+
+From the repository root, create a virtual environment and install the package in editable mode:
+
+```bash
+python -m venv .venv
+```
+
+Activate the virtual environment on Linux/macOS:
+
+```bash
+source .venv/bin/activate
+```
+
+Or on Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Then install the Python package:
+
+```bash
+python -m pip install --editable .
+```
+
+### Install the frontend
+
+From the repository root:
+
+```bash
+cd ui
+npm install
+cd ..
+```
+
+The backend and frontend are installed separately. See the development commands below for running the application locally.
 
 ---
 
@@ -150,6 +192,19 @@ Recommended temporary storage pattern:
 ```
 
 Do not store uploaded user files inside the Git repository.
+
+---
+
+## Data availability
+
+The following datasets and figure source data associated with the AlloViewer study are publicly available on Zenodo:
+
+- **Subset of simulated microscopy image data:** [![Zenodo DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20855843.svg)](https://doi.org/10.5281/zenodo.20855843)
+- **Acquired microscopy data used for analysis (including Figure 4) or referenced by the figures:** [![Zenodo DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20963451.svg)](https://doi.org/10.5281/zenodo.20963451)
+- **Flow cytometry raw data:** [![Zenodo DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21396263.svg)](https://doi.org/10.5281/zenodo.21396263)
+- **Source data used to generate the figures:** [![Zenodo DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20963490.svg)](https://doi.org/10.5281/zenodo.20963490)
+
+These Zenodo records provide research datasets and figure source data; they are not an archived release of this source-code repository.
 
 ---
 
@@ -176,7 +231,6 @@ The authors and developers do not accept responsibility for clinical, regulatory
 
 ---
 
-
 ## Known limitations
 
 - The current version is intended for research and workflow evaluation.
@@ -202,10 +256,10 @@ npm run build
 
 ### Backend
 
+From the repository root, with the Python environment activated:
+
 ```bash
-cd backend
-poetry install
-poetry run uvicorn app.main:app --reload --port 8000
+python -m uvicorn app.main:app --reload --port 8000
 ```
 
 ---
@@ -251,10 +305,9 @@ Website contact page:
 
 ## Citation
 
-A formal citation will be added once the manuscript or preprint record is finalized.
+If you use AlloViewer in your work, please cite the associated preprint:
 
-For now, cite the project website and repository when referring to AlloViewer.
-
+Afting C, Semmler A-L, Oulghazi S, Ries JI, Lichtenberg AE, Jaeger JF, Merk C, Fuerst D, Lorenz H-M, Tonn T, Seidl C, Exner T. **Simulation-Trained Deep Learning for Automated Cell-Based HLA Antibody Assay Interpretation in Pre-Transplant Diagnostics.** *medRxiv*. 2026. [https://doi.org/10.64898/2026.07.23.26358785](https://doi.org/10.64898/2026.07.23.26358785) ([version 1](https://www.medrxiv.org/content/10.64898/2026.07.23.26358785v1)).
 
 ---
 
@@ -263,3 +316,4 @@ For now, cite the project website and repository when referring to AlloViewer.
 AlloViewer is intended to be made available under the Creative Commons Attribution 4.0 International License, or CC BY 4.0, unless stated otherwise.
 
 Please verify the final license against the manuscript, preprint server, journal, and repository license file before public release.
+
