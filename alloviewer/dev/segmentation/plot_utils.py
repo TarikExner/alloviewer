@@ -18,32 +18,39 @@ def vis_tile_and_heads(
 
     Parameters
     ----------
-    h5_path:
+    h5_path : str
         Path to the .h5 file.
-
-    image_idx:
-        Index along the image/sample axis.
-
-    tile_idx:
-        Index along the tile axis.
-
-    head_names:
-        Names for the 4 target channels in /tgts.
-
-    figsize:
-        Figure size passed to matplotlib.
-
-    image_percentile_clip:
+    image_idx : int
+        Index along the image/sample axis. Default is ``0``.
+    tile_idx : int
+        Index along the tile axis. Default is ``0``.
+    head_names : tuple
+        Names for the 4 target channels in /tgts. Default is ``('cell', 'boundary',
+        'center', 'energy')``.
+    figsize : tuple
+        Figure size passed to matplotlib. Default is ``(18, 4)``.
+    image_percentile_clip : tuple
         Percentile range used to display the RGB image robustly.
-        Set to None to only clip image values to [0, 1].
-
-    cmap:
-        Colormap for target heads.
+        Set to None to only clip image values to [0, 1]. Default is ``(1, 99)``.
+    cmap : str
+        Colormap for target heads. Default is ``'magma'``.
 
     Returns
     -------
     fig, axes
         Matplotlib figure and axes.
+
+    Raises
+    ------
+    KeyError
+        Missing dataset '{key}' in HDF5 file.
+    ValueError
+        Expected /imgs shape [N,T,C,H,W], got {imgs.shape} Expected /tgts shape [N,T,C,H,W],
+        got {tgts.shape} Expected at least 4 target heads in /tgts, got {c_tgt} Unsupported
+        image channel count: {c_img}
+    IndexError
+        image_idx={image_idx} out of range. Valid: 0..{n_images - 1} tile_idx={tile_idx} out
+        of range for image_idx={image_idx}. Valid: 0..{t_real - 1}
     """
 
     with h5py.File(h5_path, "r", libver="latest", swmr=True) as f:

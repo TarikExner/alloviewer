@@ -36,6 +36,25 @@ ImageSource = Literal["opencv", "tifffile"]
 def _require_image_job(
     job_id: str,
 ) -> dict[str, Any]:
+    """
+    Require an existing PRA or crossmatch job and map lookup errors to HTTP errors.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    dict[str, Any]
+        Computed value of ``require_job_type(job_id, {'pra', 'crossmatch'})``.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 404 for the corresponding request validation, job-state, or processing error.
+        HTTP 409 for the corresponding request validation, job-state, or processing error.
+    """
     try:
         return require_job_type(
             job_id,
@@ -58,6 +77,28 @@ def _resolve_source_image(
     job_id: str,
     image_path: str,
 ) -> Path:
+    """
+    Resolve an uploaded image within the job's image upload folder.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    image_path : str
+        Image path relative to the job root.
+
+    Returns
+    -------
+    Path
+        Computed value of ``source``.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 400 for the corresponding request validation, job-state, or processing error.
+        HTTP 404 for the corresponding request validation, job-state, or processing error.
+        HTTP 415 for the corresponding request validation, job-state, or processing error.
+    """
     paths = get_job_paths(job_id)
 
     try:
@@ -103,6 +144,21 @@ def _read_image(
 ) -> tuple[np.ndarray, ImageSource]:
     """
     Read an image using OpenCV first and tifffile as a TIFF fallback.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+
+    Returns
+    -------
+    tuple[numpy.ndarray, ImageSource]
+        An image using OpenCV first and tifffile as a TIFF fallback.
+
+    Raises
+    ------
+    ValueError
+        Could not decode image: {path.name} Decoded image is empty: {path.name}
     """
     image = cv2.imread(
         str(path),
@@ -136,6 +192,21 @@ def _prepare_dimensions(
 ) -> np.ndarray:
     """
     Convert common TIFF layouts to H×W or H×W×C.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``array``.
+
+    Raises
+    ------
+    ValueError
+        Unsupported image shape: {array.shape}
     """
     array = np.asarray(image)
     array = np.squeeze(array)
@@ -173,6 +244,18 @@ def _to_uint8(
 ) -> np.ndarray:
     """
     Convert integer or floating-point microscopy data to displayable uint8.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``array``, ``array.astype(np.uint8) *
+        255``, ``np.zeros(array.shape, dtype=np.uint8)``, ``np.clip(array, 0,
+        255).astype(np.uint8)``.
     """
     array = np.asarray(image)
 
@@ -255,6 +338,21 @@ def _to_opencv_color(
 ) -> np.ndarray:
     """
     Convert color images to the BGR representation expected by OpenCV.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+    source : ImageSource
+        Reader identifier indicating whether the image came from cv2 or tifffile.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``image``, ``image[..., 0]``,
+        ``cv2.cvtColor(image, cv2.COLOR_RGB2BGR)``, ``cv2.cvtColor(image,
+        cv2.COLOR_RGBA2BGR)``, ``cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)``, ``image[...,
+        :3]``.
     """
     if image.ndim == 2:
         return image
@@ -292,6 +390,25 @@ def _to_opencv_color(
 def _resize_thumbnail(
     image: np.ndarray,
 ) -> np.ndarray:
+    """
+    Shrink an image to the configured longest side while preserving aspect ratio.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``image``, ``cv2.resize(image,
+        (target_width, target_height), interpolation=cv2.INTER_AREA)``.
+
+    Raises
+    ------
+    ValueError
+        Image has invalid dimensions.
+    """
     height, width = image.shape[:2]
 
     if height <= 0 or width <= 0:
@@ -336,6 +453,26 @@ def _thumbnail_path(
     job_id: str,
     source: Path,
 ) -> Path:
+    """
+    Build a JPEG cache path matching the uploaded image's relative folders.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    source : Path
+        Source file path read by this operation.
+
+    Returns
+    -------
+    Path
+        A JPEG cache path matching the uploaded image's relative folders.
+
+    Raises
+    ------
+    RuntimeError
+        Resolved source image is outside the job image directory.
+    """
     paths = get_job_paths(
         job_id,
         create=True,
@@ -368,6 +505,21 @@ def _thumbnail_is_current(
     source: Path,
     thumbnail: Path,
 ) -> bool:
+    """
+    Check whether a cached thumbnail is at least as new as its source.
+
+    Parameters
+    ----------
+    source : Path
+        Source file path read by this operation.
+    thumbnail : Path
+        Path to the cached thumbnail JPEG.
+
+    Returns
+    -------
+    bool
+        True when a cached thumbnail is at least as new as its source; False otherwise.
+    """
     if not thumbnail.exists():
         return False
 
@@ -388,6 +540,21 @@ def _write_thumbnail(
     source: Path,
     destination: Path,
 ) -> None:
+    """
+    Read an image, convert it for display, and atomically save a JPEG thumbnail.
+
+    Parameters
+    ----------
+    source : Path
+        Source file path read by this operation.
+    destination : Path
+        Output file path.
+
+    Raises
+    ------
+    ValueError
+        Could not encode thumbnail for {source.name}.
+    """
     image, image_source = _read_image(
         source
     )
@@ -444,6 +611,26 @@ async def get_thumbnail(
     job_id: str,
     image_path: str,
 ):
+    """
+    Serve a cached JPEG thumbnail, rebuilding it when absent or older than its source.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    image_path : str
+        Image path relative to the job root.
+
+    Returns
+    -------
+    FileResponse
+        JPEG thumbnail with a private one-hour cache header.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 500 for the corresponding request validation, job-state, or processing error.
+    """
     _require_image_job(job_id)
 
     source = _resolve_source_image(

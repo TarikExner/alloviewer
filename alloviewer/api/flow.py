@@ -233,6 +233,28 @@ PathLike = Union[str, Path]
 
 @dataclass
 class FCXMRun:
+    """
+    Keep the dataset, fitted gate model, results, and plotting data from an FCXM run.
+
+    Attributes
+    ----------
+    dataset : Dataset
+        Flow-cytometry dataset containing samples, their file paths, and metadata.
+    panel : Panel
+        Mapping of scatter, population-marker, and IgG channels.
+    gater : Gater
+        Gater instance used to analyze files with the fitted state.
+    fitted : FittedGater
+        Fitted gating state with calibration, clusterer, and control statistics.
+    results : List[SampleResult]
+        Per-sample flow-cytometry analysis results.
+    payload : Dict[str, Any]
+        Serialized flow-analysis result mapping containing samples and population metrics.
+    plot_cache : Dict[str, Any]
+        Cached per-file FCXM plotting data.
+    marker_to_population : Dict[str, str]
+        Mapping from marker names to population display labels.
+    """
     dataset: Dataset
     panel: Panel
     gater: Gater
@@ -244,10 +266,36 @@ class FCXMRun:
 
 
 def read_metadata(input_file: PathLike) -> Metadata:
+    """
+    Read sample metadata from a supported tabular file.
+
+    Parameters
+    ----------
+    input_file : PathLike
+        Input metadata file path.
+
+    Returns
+    -------
+    Metadata
+        Sample metadata from a supported tabular file.
+    """
     return Metadata(input_file)
 
 
 def create_metadata(df: pd.DataFrame) -> Metadata:
+    """
+    Create sample metadata from a pandas DataFrame.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Dataframe containing the input observations and metadata.
+
+    Returns
+    -------
+    Metadata
+        Sample metadata from a pandas DataFrame.
+    """
     return Metadata.from_df(df)
 
 
@@ -255,6 +303,32 @@ def create_dataset(
     file_input_dir: PathLike,
     metadata: Metadata,
 ) -> Dataset:
+    """
+    Build one FCS sample per metadata row and load the dataset.
+
+    Parameters
+    ----------
+    file_input_dir : PathLike
+        Base directory joined to metadata file names.
+    metadata : Metadata
+        Metadata object whose table identifies file names, sample roles, and optional sample
+        names.
+
+    Returns
+    -------
+    Dataset
+        One FCS sample per metadata row and load the dataset.
+
+    Raises
+    ------
+    ValueError
+        Metadata is missing required columns: {sorted(missing)} Invalid role for
+        {file_name}: {role}. Allowed roles are NC, PC, SAMPLE.
+
+    Notes
+    -----
+    Metadata must contain file_name and role. Roles are normalized to NC, PC, or SAMPLE. A missing sample_name uses the file stem. Each row creates a separate Sample containing one file.
+    """
     df = metadata.get_df()
 
     required = {"file_name", "role"}
@@ -293,10 +367,46 @@ def create_dataset(
 
 
 def create_panel(markers: Dict[str, Any]) -> Panel:
+    """
+    Create a channel panel from its marker mapping.
+
+    Parameters
+    ----------
+    markers : Dict[str, Any]
+        Panel configuration with scatter and IgG channels and a markers mapping.
+
+    Returns
+    -------
+    Panel
+        A channel panel from its marker mapping.
+    """
     return Panel.from_dict(markers)
 
 
 def infer_panel_from_dataset(ds: Dataset) -> Panel:
+    """
+    Infer scatter, IgG, and population channels from matching FCS channel tables.
+
+    Parameters
+    ----------
+    ds : Dataset
+        Dataset of FCS samples and controls.
+
+    Returns
+    -------
+    Panel
+        Scatter, IgG, and population channels from matching FCS channel tables.
+
+    Raises
+    ------
+    ValueError
+        Could not infer panel. FCSFile does not expose a channel table. Dataset contains no
+        FCS files. Panels in the dataset are not the same.
+
+    Notes
+    -----
+    Only the first FCS file of each nonempty sample is inspected. Those channel tables must match. IgG is recognized from the supported PnS names; other nonempty non-scatter PnS names become population markers.
+    """
     channel_frames = []
 
     for sample in ds.samples:
@@ -363,6 +473,30 @@ def process_dataset(
     max_points: int = 5000,
     seed: int = 0,
 ) -> FCXMRun:
+    """
+    Fit gating on a dataset, apply it, and prepare results and plotting caches.
+
+    Parameters
+    ----------
+    ds : Dataset
+        Dataset of FCS samples and controls.
+    panel : Panel
+        Mapping of scatter, population-marker, and IgG channels.
+    config : Optional[GatingConfig]
+        Flow-cytometry gating and clustering configuration. Default is ``None``.
+    marker_to_population : Optional[Dict[str, str]]
+        Mapping from marker names to population display labels. Default is ``None``.
+    max_points : int
+        Maximum number of sampled scatter points used for plotting. Default is ``5000``.
+    seed : int
+        Random seed for reproducible sampling. Default is ``0``.
+
+    Returns
+    -------
+    FCXMRun
+        Run container holding the dataset, panel, gater, fitted model, sample results,
+        frontend payload, plotting cache, and marker-to-population mapping.
+    """
     gater = Gater(panel, config or GatingConfig())
 
     fitted = gater.fit(ds)
@@ -403,6 +537,27 @@ def create_output_pdf(
     ratio_score_rules: Optional[Iterable[RatioRule]] = None,
     page_size_mode: str = PAGE_SIZE_MODE_DEFAULT,
 ) -> bytes:
+    """
+    Build the FCXM report in memory and return its PDF bytes.
+
+    Parameters
+    ----------
+    run : FCXMRun
+        Completed FCXM run containing fitted gating, results, and plotting data.
+    meta : Optional[ReportMeta]
+        Report metadata and positivity settings; None uses the report defaults.
+    score_rules : Optional[Iterable[ScoreRule]]
+        Forwarded to the PDF builder; currently ignored there. Default is ``None``.
+    ratio_score_rules : Optional[Iterable[RatioRule]]
+        Forwarded to the PDF builder; currently ignored there. Default is ``None``.
+    page_size_mode : str
+        Page-size mode used by the PDF report. Default is ``PAGE_SIZE_MODE_DEFAULT``.
+
+    Returns
+    -------
+    bytes
+        The FCXM report in memory and return its PDF bytes.
+    """
     return build_fcxm_summary_pdf(
         payload=run.payload,
         plot_cache=run.plot_cache,
@@ -422,6 +577,29 @@ def save_output_pdf(
     ratio_score_rules: Optional[Iterable[RatioRule]] = None,
     page_size_mode: str = PAGE_SIZE_MODE_DEFAULT,
 ) -> Path:
+    """
+    Build the FCXM report, create its parent folder, and write the PDF.
+
+    Parameters
+    ----------
+    run : FCXMRun
+        Completed FCXM run containing fitted gating, results, and plotting data.
+    output_file : PathLike
+        Destination file path.
+    meta : Optional[ReportMeta]
+        Report metadata and positivity settings; None uses the report defaults.
+    score_rules : Optional[Iterable[ScoreRule]]
+        Forwarded to the PDF builder; currently ignored there. Default is ``None``.
+    ratio_score_rules : Optional[Iterable[RatioRule]]
+        Forwarded to the PDF builder; currently ignored there. Default is ``None``.
+    page_size_mode : str
+        Page-size mode used by the PDF report. Default is ``PAGE_SIZE_MODE_DEFAULT``.
+
+    Returns
+    -------
+    Path
+        The FCXM report, create its parent folder, and write the PDF.
+    """
     output_path = Path(output_file)
 
     pdf_bytes = create_output_pdf(
@@ -439,18 +617,79 @@ def save_output_pdf(
 
 
 def get_payload(run: FCXMRun) -> Dict[str, Any]:
+    """
+    Return the run's result payload without copying it.
+
+    Parameters
+    ----------
+    run : FCXMRun
+        Completed FCXM run containing fitted gating, results, and plotting data.
+
+    Returns
+    -------
+    Dict[str, Any]
+        The run's result payload without copying it.
+    """
     return run.payload
 
 
 def get_plot_cache(run: FCXMRun) -> Dict[str, Any]:
+    """
+    Return the run's per-file plot cache without copying it.
+
+    Parameters
+    ----------
+    run : FCXMRun
+        Completed FCXM run containing fitted gating, results, and plotting data.
+
+    Returns
+    -------
+    Dict[str, Any]
+        The run's per-file plot cache without copying it.
+    """
     return run.plot_cache
 
 
 def get_sample_results(run: FCXMRun) -> List[SampleResult]:
+    """
+    Return the run's sample results without copying them.
+
+    Parameters
+    ----------
+    run : FCXMRun
+        Completed FCXM run containing fitted gating, results, and plotting data.
+
+    Returns
+    -------
+    List[SampleResult]
+        The run's sample results without copying them.
+    """
     return run.results
 
 
 def _resolve_plot_cache_key(run: FCXMRun, file_name: PathLike) -> str:
+    """
+    Match an exact cache key, raw file key, or unique basename.
+
+    Parameters
+    ----------
+    run : FCXMRun
+        Completed FCXM run containing fitted gating, results, and plotting data.
+    file_name : PathLike
+        File path or unique basename identifying the selected FCS file.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``text``, ``key``, ``matches[0]``.
+
+    Raises
+    ------
+    ValueError
+        File name is ambiguous: {file_name}. Use the full path instead.
+    KeyError
+        File not found in plot cache: {file_name}
+    """
     text = str(file_name)
 
     if text in run.plot_cache:
@@ -484,6 +723,24 @@ def get_file_result_view(
     file_name: PathLike,
     gate: str = "",
 ) -> Dict[str, Any]:
+    """
+    Build the selected file and gate view from the run's plot cache.
+
+    Parameters
+    ----------
+    run : FCXMRun
+        Completed FCXM run containing fitted gating, results, and plotting data.
+    file_name : PathLike
+        File path or unique basename identifying the selected FCS file.
+    gate : str
+        Population gate label; an empty string delegates selection to the result-view
+        builder. Default is ``''``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        The selected file and gate view from the run's plot cache.
+    """
     key = _resolve_plot_cache_key(run, file_name)
 
     return build_results_response_from_cache(
@@ -498,6 +755,24 @@ def gating_strategy(
     file_name: PathLike,
     gate: str = "",
 ) -> Dict[str, Any]:
+    """
+    Return gate options and gating-scatter data for a selected file.
+
+    Parameters
+    ----------
+    run : FCXMRun
+        Completed FCXM run containing fitted gating, results, and plotting data.
+    file_name : PathLike
+        File path or unique basename identifying the selected FCS file.
+    gate : str
+        Population gate label; an empty string delegates selection to the result-view
+        builder. Default is ``''``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``gate_options``, ``selected_gate``, ``gating_plots``.
+    """
     view = get_file_result_view(run, file_name=file_name, gate=gate)
 
     return {
@@ -512,6 +787,25 @@ def histogram(
     file_name: PathLike,
     gate: str = "",
 ) -> Dict[str, Any]:
+    """
+    Return IgG line-series data, cutoff, and metrics for a selected file and gate.
+
+    Parameters
+    ----------
+    run : FCXMRun
+        Completed FCXM run containing fitted gating, results, and plotting data.
+    file_name : PathLike
+        File path or unique basename identifying the selected FCS file.
+    gate : str
+        Population gate label; an empty string delegates selection to the result-view
+        builder. Default is ``''``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``selected_gate``, ``line_series``, ``cutoff``,
+        ``selected_file_metrics``, ``selected_sample_metrics``.
+    """
     view = get_file_result_view(run, file_name=file_name, gate=gate)
 
     return {
@@ -528,6 +822,24 @@ def igg_scatter(
     file_name: PathLike,
     gate: str = "",
 ) -> Dict[str, Any]:
+    """
+    Return final IgG scatter-series data and cutoff for a selected file and gate.
+
+    Parameters
+    ----------
+    run : FCXMRun
+        Completed FCXM run containing fitted gating, results, and plotting data.
+    file_name : PathLike
+        File path or unique basename identifying the selected FCS file.
+    gate : str
+        Population gate label; an empty string delegates selection to the result-view
+        builder. Default is ``''``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``selected_gate``, ``final_scatter_series``, ``cutoff``.
+    """
     view = get_file_result_view(run, file_name=file_name, gate=gate)
 
     return {

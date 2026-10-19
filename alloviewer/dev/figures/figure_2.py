@@ -39,6 +39,30 @@ from ..segmentation.dataset_io import DiskSimCellsDataset
 def crop_image(image, x, y, width, height):
     """
     Crop an image using top-left corner (x, y) and crop size.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+    x : object
+        Horizontal column coordinate in pixels.
+    y : object
+        Vertical row coordinate in pixels.
+    width : object
+        Width of the selected image region, in pixels.
+    height : object
+        Height of the selected image region, in pixels.
+
+    Returns
+    -------
+    object
+        Computed value of ``image[y:y + height, x:x + width]``.
+
+    Raises
+    ------
+    ValueError
+        x and y must be >= 0 width and height must be > 0 Crop region goes outside image
+        bounds
     """
     h, w = image.shape[:2]
 
@@ -62,6 +86,28 @@ def plot_rgb_histogram(
 ) -> None:
     """
     Plot RGB histogram curves onto an existing axis.
+
+    Parameters
+    ----------
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+    bins : int
+        Number of histogram bins, or explicit bin edges where supported by the called
+        histogram routine. Default is ``256``.
+    density : bool
+        Whether histogram counts are normalized to a probability density. Default is
+        ``True``.
+    value_range : tuple[int, int] | tuple[float, float] | None
+        Lower and upper histogram bounds. Default is ``None``.
+    linewidth : float
+        Line width used to render the curve or outline. Default is ``0.5``.
+
+    Raises
+    ------
+    ValueError
+        image must have shape (H, W, 3)
     """
     if image.ndim != 3 or image.shape[2] != 3:
         raise ValueError("image must have shape (H, W, 3)")
@@ -104,6 +150,25 @@ def _select_pca_features(
     feature_subset: Optional[Sequence[str]] = None,
     drop_size_features: bool = True,
 ) -> list[str]:
+    """
+    Select PCA features, honoring an explicit subset before default exclusions.
+
+    Parameters
+    ----------
+    feature_names : Sequence[str]
+        Feature column names in their intended order.
+    normalized : bool
+        Whether to use features computed from UNet-normalized images.
+    feature_subset : Optional[Sequence[str]]
+        Explicit feature names to retain; None uses the default feature selection.
+    drop_size_features : bool
+        Whether to exclude image-size features from the comparison. Default is ``True``.
+
+    Returns
+    -------
+    list[str]
+        PCA features, honoring an explicit subset before default exclusions.
+    """
     if feature_subset is not None:
         return list(feature_subset)
 
@@ -157,6 +222,57 @@ def plot_real_and_synthetic_pca(
 ) -> None:
     """
     PCA comparison between real images and dataset images, plotted onto an axis.
+
+    Parameters
+    ----------
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    dataset : object
+        Image dataset supplying synthetic samples, targets, and metadata.
+    cache_path : str | Path
+        Path to the persisted intermediate-data cache. Default is ``''``.
+    n_synthetic : int
+        Number of synthetic images or samples requested for the comparison. Default is
+        ``100``.
+    normalized : bool
+        Whether to use features computed from UNet-normalized images. Default is ``True``.
+    feature_subset : Optional[Sequence[str]]
+        Explicit feature names to retain; None uses the default feature selection.
+    drop_size_features : bool
+        Whether to exclude image-size features from the comparison. Default is ``True``.
+    hist_bins : int
+        Number of histogram bins. Default is ``16``.
+    percentiles : Sequence[float]
+        Percentiles to include as image-distribution features. Default is ``(1, 5, 25, 50,
+        75, 95, 99)``.
+    sample_pixels : Optional[int]
+        Maximum number of pixels sampled per image for feature estimation. Default is
+        ``300000``.
+    rng_seed : int
+        Seed used to initialize random sampling. Default is ``0``.
+    alpha_real : float
+        Opacity of plotted points representing real images. Default is ``0.45``.
+    alpha_syn : float
+        Opacity of plotted points representing synthetic images. Default is ``0.8``.
+    s_real : float
+        Scatter-marker area for real-image points. Default is ``16``.
+    s_syn : float
+        Scatter-marker area for synthetic-image points. Default is ``36``.
+    use_first_tile_only : bool
+        Whether to use only the first tile from each source image. Default is ``True``.
+    normalized_hist_range : Tuple[float, float]
+        Value interval used for histograms of normalized image channels. Default is ``(-3.0,
+        3.0)``.
+    title : Optional[str]
+        Text displayed as the plot or panel title. Default is ``None``.
+
+    Raises
+    ------
+    FileNotFoundError
+        Cache file not found: {final_cache_path}
+    ValueError
+        No features selected for PCA Need at least two images for PCA. Need at least two
+        finite features for PCA.
     """
     final_cache_path = get_feature_cache_path(
         cache_path=cache_path,
@@ -312,6 +428,14 @@ def plot_real_and_synthetic_pca(
 
 
 def _get_simulated_image():
+    """
+    Generate the configured demonstration image and its segmentation targets.
+
+    Returns
+    -------
+    tuple
+        Tuple containing ``sim_img``, ``targets``, in that order.
+    """
     sim_img, _, targets = simulate_image(
         H=1024,
         W=1300,
@@ -442,6 +566,19 @@ def _get_simulated_image():
 
 
 def _build_quantile_folders(ext_images_dir: str | Path) -> list[str]:
+    """
+    Build paths for the fixed anonymous runs used to calibrate camera-style quantiles.
+
+    Parameters
+    ----------
+    ext_images_dir : str | Path
+        Root directory containing external microscopy image sets.
+
+    Returns
+    -------
+    list[str]
+        Paths for the fixed anonymous runs used to calibrate camera-style quantiles.
+    """
     ext_images_dir = Path(ext_images_dir)
 
     return [
@@ -472,12 +609,66 @@ def _generate_main_figure(
     figure_output_dir,
     figure_name,
 ) -> None:
+    """
+    Assemble and save the figure showing real and simulated camera styles and their feature distributions.
+
+    Parameters
+    ----------
+    mic_img : numpy.ndarray
+        Microscope image used in the visual comparison.
+    gp_img : numpy.ndarray
+        Google Pixel image used in the visual comparison.
+    iphone_img : numpy.ndarray
+        iPhone image used in the visual comparison.
+    mono_img : numpy.ndarray
+        Monochrome image used in the visual comparison.
+    sim_img : numpy.ndarray
+        Synthetic image used in the visual comparison.
+    mic_adj : numpy.ndarray
+        Histogram-adjusted microscope-style image.
+    gp_adj : numpy.ndarray
+        Histogram-adjusted Google Pixel-style image.
+    iphone_adj : numpy.ndarray
+        Histogram-adjusted iPhone-style image.
+    mono_adj : numpy.ndarray
+        Histogram-adjusted monochrome-style image.
+    ds : object
+        Synthetic image dataset used for camera-style comparisons.
+    style_cache_path : str or os.PathLike
+        Path to the camera-style feature or quantile cache.
+    figure_output_dir : str or os.PathLike
+        Directory in which the figure files are written.
+    figure_name : object
+        Base name used for the output figure files.
+
+    Notes
+    -----
+    Creates Matplotlib subplots and writes the figure outputs selected in this module. Figure input data is supplied by the enclosing preparation workflow.
+    """
     def generate_subfigure_a(
         fig: Figure,
         ax: Axes,
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel A of Figure 2 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
         fig_sgs = gs.subgridspec(2, 5)
@@ -531,6 +722,24 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel B of Figure 2 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
         fig_sgs = gs.subgridspec(1, 1)
@@ -549,6 +758,24 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel C of Figure 2 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
         fig_sgs = gs.subgridspec(2, 5)
@@ -641,6 +868,22 @@ def figure_2_generation(
     figure_output_dir,
     **kwargs,
 ):
+    """
+    Prepare the data and generate Figure 2 showing real and simulated camera styles and their feature distributions.
+
+    Parameters
+    ----------
+    validation_results_dir : str
+        Directory containing cached validation tables and analysis results.
+    show_images_dir : str or os.PathLike
+        Directory containing example images used in the figure.
+    ext_images_dir : str or os.PathLike
+        Root directory containing external microscopy image sets.
+    figure_output_dir : str or os.PathLike
+        Directory in which the figure files are written.
+    **kwargs : dict
+        Accepted by the interface but not read by this implementation.
+    """
     ds = DiskSimCellsDataset(
         os.path.join(validation_results_dir, "test_ds_diverse_mc.ds")
     )

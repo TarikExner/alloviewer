@@ -36,11 +36,8 @@ ProgressCallback = Callable[[ProgressEvent], None]
 
 
 class Gater:
-    """Fit and apply a flow-cytometry gating workflow.
-
-    The gater performs quality-control gating, lymphocyte gating, marker
-    calibration, global clustering, cluster labeling, and IgG readout
-    calculation.
+    """
+    Fit and apply a flow-cytometry gating workflow.
 
     Parameters
     ----------
@@ -51,6 +48,11 @@ class Gater:
     clusterer_factory : callable or None, optional
         Factory that receives a ``ClustererConfig`` and returns a
         ``BaseClusterer``. If ``None``, ``default_clusterer_factory`` is used.
+
+    Raises
+    ------
+    ValueError
+        If ``panel.markers`` is empty or ``panel.igg`` is not set.
 
     Attributes
     ----------
@@ -63,10 +65,11 @@ class Gater:
     clusterer_factory : callable
         Factory used to create the clustering backend.
 
-    Raises
-    ------
-    ValueError
-        If ``panel.markers`` is empty or ``panel.igg`` is not set.
+    Notes
+    -----
+    The gater performs quality-control gating, lymphocyte gating, marker
+    calibration, global clustering, cluster labeling, and IgG readout
+    calculation.
     """
 
     def __init__(
@@ -77,6 +80,24 @@ class Gater:
             Callable[[ClustererConfig], BaseClusterer]
         ] = None,
     ) -> None:
+        """
+        Store the panel, gating configuration, clusterer factory, and analysis cache.
+
+        Parameters
+        ----------
+        panel : Panel
+            Panel definition with scatter, IgG, and marker channels.
+        config : GatingConfig or None, optional
+            Flow-cytometry gating and clustering configuration. Default is ``None``.
+        clusterer_factory : callable or None, optional
+            Factory that receives a ``ClustererConfig`` and returns a
+            ``BaseClusterer``. If ``None``, ``default_clusterer_factory`` is used.
+
+        Raises
+        ------
+        ValueError
+            Panel.markers must not be empty. Panel.igg must be set.
+        """
         self.panel = panel
         self.config = config or GatingConfig()
         self.qc = QCGater(panel=self.panel, config=self.config.qc)
@@ -96,7 +117,8 @@ class Gater:
         values: np.ndarray,
         cofactor: Optional[float] = None,
     ) -> np.ndarray:
-        """Apply arcsinh transformation to channel values.
+        """
+        Apply arcsinh transformation to channel values.
 
         Parameters
         ----------
@@ -123,7 +145,8 @@ class Gater:
         fcs: FCSFile,
         fitted: FittedGater,
     ) -> FileAnalysis:
-        """Analyze a file with caching.
+        """
+        Analyze a file with caching.
 
         Parameters
         ----------
@@ -153,7 +176,8 @@ class Gater:
         fcs: FCSFile,
         fitted: FittedGater,
     ) -> FileAnalysis:
-        """Analyze one FCS file with a fitted gater.
+        """
+        Analyze one FCS file with a fitted gater.
 
         Parameters
         ----------
@@ -235,7 +259,8 @@ class Gater:
         )
 
     def _get_gate_options(self) -> List[str]:
-        """Return gate labels available for the current panel.
+        """
+        Return gate labels available for the current panel.
 
         Returns
         -------
@@ -258,7 +283,8 @@ class Gater:
         fa: FileAnalysis,
         fitted: FittedGater,
     ) -> Dict[str, np.ndarray]:
-        """Build gate masks for one analyzed file.
+        """
+        Build gate masks for one analyzed file.
 
         Parameters
         ----------
@@ -310,7 +336,8 @@ class Gater:
         fcs: Optional[FCSFile] = None,
         extra: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Emit a progress event.
+        """
+        Emit a progress event.
 
         Parameters
         ----------
@@ -320,11 +347,11 @@ class Gater:
         stage : str
             Processing stage name.
         sample : Any, optional
-            Sample object used to populate sample metadata.
+            Sample object used to populate sample metadata. Default is ``None``.
         fcs : FCSFile or None, optional
-            FCS file used to populate file metadata.
+            FCS file used to populate file metadata. Default is ``None``.
         extra : dict or None, optional
-            Extra event fields.
+            Extra event fields. Default is ``None``.
         """
         if progress_cb is None:
             return
@@ -360,7 +387,8 @@ class Gater:
         gate_options: List[str],
         marker_info: Dict[str, Any],
     ) -> FittedGater:
-        """Build an intermediate fitted state during fitting.
+        """
+        Build an intermediate fitted state during fitting.
 
         Parameters
         ----------
@@ -408,14 +436,15 @@ class Gater:
         dataset: Dataset,
         progress_cb: Optional[ProgressCallback] = None,
     ) -> FittedGater:
-        """Fit the gating workflow on a dataset.
+        """
+        Fit the gating workflow on a dataset.
 
         Parameters
         ----------
         dataset : Dataset
             Dataset containing NC, optional PC, and sample files.
         progress_cb : callable or None, optional
-            Callback receiving progress-event dictionaries.
+            Callback receiving progress-event dictionaries. Default is ``None``.
 
         Returns
         -------
@@ -650,7 +679,8 @@ class Gater:
         Dict[str, List[np.ndarray]],
         List[str],
     ]:
-        """Apply a fitted gater to one FCS file.
+        """
+        Apply a fitted gater to one FCS file.
 
         Parameters
         ----------
@@ -752,7 +782,8 @@ class Gater:
         t_parts_by_gate: Dict[str, List[np.ndarray]],
         sample_notes: List[str],
     ) -> SampleResult:
-        """Combine per-file results into one sample-level result.
+        """
+        Combine per-file results into one sample-level result.
 
         Parameters
         ----------
@@ -843,7 +874,8 @@ class Gater:
         fitted: FittedGater,
         progress_cb: Optional[ProgressCallback] = None,
     ) -> SampleResult:
-        """Apply a fitted gater to all files of one sample.
+        """
+        Apply a fitted gater to all files of one sample.
 
         Parameters
         ----------
@@ -852,7 +884,7 @@ class Gater:
         fitted : FittedGater
             Fitted gater state.
         progress_cb : callable or None, optional
-            Callback receiving progress-event dictionaries.
+            Callback receiving progress-event dictionaries. Default is ``None``.
 
         Returns
         -------
@@ -913,7 +945,8 @@ class Gater:
         fitted: FittedGater,
         progress_cb: Optional[ProgressCallback] = None,
     ) -> List[SampleResult]:
-        """Apply a fitted gater to a dataset.
+        """
+        Apply a fitted gater to a dataset.
 
         Parameters
         ----------
@@ -922,7 +955,7 @@ class Gater:
         fitted : FittedGater
             Fitted gater state returned by :meth:`fit`.
         progress_cb : callable or None, optional
-            Callback receiving progress-event dictionaries.
+            Callback receiving progress-event dictionaries. Default is ``None``.
 
         Returns
         -------

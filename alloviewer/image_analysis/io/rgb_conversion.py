@@ -22,9 +22,19 @@ from .utils import (
 
 @dataclass
 class NamedImageSource:
-    """Named image input used for channel grouping.
+    """
+    Named image input used for channel grouping.
 
     Parameters
+    ----------
+    name : str
+        Original filename or display name. Used for channel detection and
+        output naming.
+    source : SourceType
+        Image source. Supported values are paths, bytes, bytearray objects, and
+        file-like objects.
+
+    Attributes
     ----------
     name : str
         Original filename or display name. Used for channel detection and
@@ -40,9 +50,19 @@ class NamedImageSource:
 
 @dataclass
 class CombinedRGBImage:
-    """Combined in-memory RGB image.
+    """
+    Combined in-memory RGB image.
 
     Parameters
+    ----------
+    array : numpy.ndarray
+        RGB image in ``(H, W, 3)`` layout. Raw values are preserved.
+    output_name : str
+        Suggested output filename.
+    report : ChannelCombineReport
+        Metadata and warnings for the channel-combination step.
+
+    Attributes
     ----------
     array : numpy.ndarray
         RGB image in ``(H, W, 3)`` layout. Raw values are preserved.
@@ -64,7 +84,8 @@ def extract_declared_mono_channel(
     image_name: str,
     warnings: list[str],
 ) -> np.ndarray:
-    """Extract a declared monochrome channel from an image array.
+    """
+    Extract a declared monochrome channel from an image array.
 
     Parameters
     ----------
@@ -178,7 +199,8 @@ def group_named_sources_by_rgb_channel(
     *,
     error_on_unmatched: bool = False,
 ) -> tuple[dict[str, dict[str, NamedImageSource]], list[str]]:
-    """Group named sources by RGB channel and group key.
+    """
+    Group named sources by RGB channel and group key.
 
     Parameters
     ----------
@@ -236,7 +258,8 @@ def combine_mono_rgb_sources(
     require_complete_rgb: bool = True,
     error_on_unmatched: bool = False,
 ) -> list[CombinedRGBImage]:
-    """Combine named monochrome R/G/B sources into RGB images.
+    """
+    Combine named monochrome R/G/B sources into RGB images.
 
     Parameters
     ----------
@@ -247,13 +270,13 @@ def combine_mono_rgb_sources(
         Output filename extension. The default is ``".tif"``.
     max_mp : float or None, optional
         Maximum allowed image size in megapixels. Passed to :func:`open_image`.
-        If ``None``, no size limit is applied.
+        If ``None``, no size limit is applied. Default is ``200.0``.
     require_complete_rgb : bool, optional
         If ``True``, groups missing any RGB channel are skipped. If ``False``,
-        missing channels are filled with zeros.
+        missing channels are filled with zeros. Default is ``True``.
     error_on_unmatched : bool, optional
         If ``True``, raise an error for files that cannot be assigned to a
-        channel.
+        channel. Default is ``False``.
 
     Returns
     -------
@@ -388,7 +411,8 @@ def save_rgb_image(
     *,
     overwrite: bool = False,
 ) -> Path:
-    """Save an RGB image array to disk.
+    """
+    Save an RGB image array to disk.
 
     Parameters
     ----------
@@ -445,7 +469,8 @@ def encode_rgb_image(
     *,
     ext: str = ".tif",
 ) -> bytes:
-    """Encode an RGB image array to bytes.
+    """
+    Encode an RGB image array to bytes.
 
     Parameters
     ----------
@@ -499,7 +524,8 @@ def combine_mono_rgb_folder(
     require_complete_rgb: bool = True,
     error_on_unmatched: bool = False,
 ) -> list[ChannelCombineReport]:
-    """Combine monochrome RGB channel files from a folder and save outputs.
+    """
+    Combine monochrome RGB channel files from a folder and save outputs.
 
     Parameters
     ----------
@@ -509,19 +535,20 @@ def combine_mono_rgb_folder(
         Folder where combined RGB images are written.
     base_dir : str or pathlib.Path or None, optional
         Optional root directory used to resolve relative input and output
-        folders.
+        folders. Default is ``None``.
     output_ext : str, optional
         Output image extension. The default is ``".tif"``.
     overwrite : bool, optional
         If ``True``, replace existing output files. The default is ``False``.
     max_mp : float or None, optional
-        Maximum allowed image size in megapixels. Passed to :func:`open_image`.
+        Maximum allowed image size in megapixels. Passed to :func:`open_image`. Default is
+        ``200.0``.
     require_complete_rgb : bool, optional
         If ``True``, groups missing any RGB channel are skipped. If ``False``,
-        missing channels are filled with zeros.
+        missing channels are filled with zeros. Default is ``True``.
     error_on_unmatched : bool, optional
         If ``True``, raise an error for files that cannot be assigned to a
-        channel.
+        channel. Default is ``False``.
 
     Returns
     -------

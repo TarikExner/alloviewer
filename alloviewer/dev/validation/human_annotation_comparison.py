@@ -26,6 +26,19 @@ def _as_numpy_prediction(x) -> np.ndarray:
     """
     Convert segmenter output to a NumPy array.
 
+    Parameters
+    ----------
+    x : array_like or torch.Tensor
+        Input array or tensor to convert, resize, normalize, or smooth as described above.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``x.detach().float().cpu().numpy()``,
+        ``np.asarray(x)``.
+
+    Notes
+    -----
     This handles both CPU/GPU torch tensors and already-materialized NumPy arrays.
     """
     if hasattr(x, "detach"):
@@ -37,6 +50,23 @@ def load_imageJ_roi_counts(csv_dir: str) -> pd.DataFrame:
     """
     Load ImageJ/reference ROI counts from results.csv.
 
+    Parameters
+    ----------
+    csv_dir : str
+        Directory containing human-annotation count CSVs.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ImageJ/reference ROI counts from results.csv.
+
+    Raises
+    ------
+    ValueError
+        CSV is missing required columns: {sorted(missing)}
+
+    Notes
+    -----
     Kept local because this function was not moved to utils.py.
     """
     df = pd.read_csv(os.path.join(csv_dir, "results.csv"))
@@ -72,6 +102,34 @@ def compare_human_annotations(
     """
     Run UNet on all images in the H5 file, count ROIs, join with human counts,
     optionally join ImageJ/reference counts, and write the result CSV.
+
+    Parameters
+    ----------
+    h5_path : str
+        Path to the simulated-image HDF5 dataset. Default is
+        ``'./image_datasets/human_annotated_images.h5'``.
+    human_csv_dir : str
+        Directory containing the human-annotation CSV files. Default is
+        ``'./human_annotations'``.
+    output_csv : str
+        Destination for the generated comparison CSV. Default is
+        ``'./results/human_annotated_comparison.csv'``.
+    segmenter_cfg : Optional[SegmenterConfig]
+        Configuration used to construct the instance segmenter. Default is ``None``.
+    include_imagej_counts : bool
+        Whether ImageJ-derived counts are added to the comparison. Default is ``True``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Computed value of ``out_df``.
+
+    Raises
+    ------
+    FileNotFoundError
+        H5 file not found: {h5_path}
+    KeyError
+        H5 file must contain datasets '/imgs' and '/meta'.
     """
     if not os.path.isfile(h5_path):
         raise FileNotFoundError(f"H5 file not found: {h5_path}")
@@ -139,6 +197,9 @@ def compare_human_annotations(
 
 
 def run_human_annotation_comparison():
+    """
+    Run the configured human-versus-model count comparison and print sample results.
+    """
     cfg = SegmenterConfig(
         unet_mode="small",
         model_dir="./models",
@@ -176,6 +237,46 @@ def visualize_human_vs_unet_tile(
     Visualize one chosen tile region using full-image stitched UNet inference
     followed by full-image instance segmentation.
 
+    Parameters
+    ----------
+    image_idx : int
+        Zero-based index of the image selected for processing or display.
+    tile_idx : int
+        Tile index within the selected sample.
+    h5_path : str
+        Path to the simulated-image HDF5 dataset. Default is
+        ``'./image_datasets/human_annotated_images.h5'``.
+    segmenter_cfg : Optional[SegmenterConfig]
+        Configuration used to construct the instance segmenter. Default is ``None``.
+    figsize : Tuple[int, int]
+        Figure width and height in inches. Default is ``(20, 10)``.
+
+    Returns
+    -------
+    dict
+        Result mapping with keys ``image_idx``, ``tile_idx``, ``Folder``, ``image_name``,
+        ``tile_box``, ``img_tile``, ``reference_instance_labels``, ``imagej_overlay``,
+        ``unet_overlay``, ``unet_cell_probability``, ``unet_boundary_probability``,
+        ``unet_center_probability``, ``unet_energy_probability``, ``unet_cell_mask``,
+        ``unet_boundary_mask``, ``unet_instance_labels``, ``seg_out``.
+
+    Raises
+    ------
+    FileNotFoundError
+        H5 file not found: {h5_path}
+    RuntimeError
+        InstanceSegmenter is missing. Set compute_instances=True.
+    KeyError
+        H5 file must contain '/imgs', '/meta', and '/inst'.
+    IndexError
+        image_idx={image_idx} out of range [0, {n_total - 1}] tile_idx={tile_idx} out of
+        range [0, {len(tile_metas) - 1}]
+    ValueError
+        H5 meta['tiles'] is missing or empty. Expected at least 4 probability channels after
+        stitching, got {probs_full.shape}
+
+    Notes
+    -----
     Returns a dict with the cropped arrays.
     """
     import matplotlib.pyplot as plt

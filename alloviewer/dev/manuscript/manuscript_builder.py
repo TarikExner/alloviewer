@@ -175,6 +175,18 @@ def normalize_unicode_scripts_in_latex(
     Replace Unicode superscript and subscript glyphs with ordinary
     characters inside LaTeX script commands.
 
+    Parameters
+    ----------
+    latex_text : str
+        LaTeX source text to parse or convert.
+
+    Returns
+    -------
+    str
+        Computed value of ``latex_text``.
+
+    Notes
+    -----
     This avoids missing-glyph squares when Arial does not contain a specific
     Unicode superscript or subscript character.
 
@@ -198,6 +210,19 @@ def normalize_unicode_scripts_in_latex(
     def clean_existing_script(
         match: re.Match[str],
     ) -> str:
+        """
+        Normalize Unicode digits and minus signs inside a LaTeX subscript or superscript.
+
+        Parameters
+        ----------
+        match : re.Match[str]
+            Regular-expression match used by the replacement callback.
+
+        Returns
+        -------
+        str
+            Computed value of ``f'\\\\text{kind}{{{content}}}'``.
+        """
         kind = match.group("kind")
         content = match.group("content")
 
@@ -263,6 +288,16 @@ def is_figure_legend_start(
     """
     Recognize the first paragraph of a figure legend, including captions
     stored as ordinary Word paragraphs rather than Word headings.
+
+    Parameters
+    ----------
+    text : str | None
+        Text content to inspect, normalize, or render.
+
+    Returns
+    -------
+    bool
+        Boolean result of the stated condition check.
     """
     if text is None:
         return False
@@ -282,6 +317,18 @@ def section_disables_paragraph_spacing(
     Disable paragraph spacing in References and in ordinary,
     supplementary, supplemental, and extended-data figure sections.
 
+    Parameters
+    ----------
+    heading_text : str
+        Heading text used to identify a document section.
+
+    Returns
+    -------
+    bool
+        Boolean result of the stated condition check.
+
+    Notes
+    -----
     This also recognizes individual headings such as:
         Figure 1
         Figure S1
@@ -309,6 +356,16 @@ def header_level_and_text(
 ) -> tuple[int, str] | None:
     """
     Return the level and normalized text of a Pandoc Header block.
+
+    Parameters
+    ----------
+    block : dict[str, Any]
+        Pandoc block node to inspect.
+
+    Returns
+    -------
+    tuple[int, str] | None
+        The level and normalized text of a Pandoc Header block.
     """
     if block.get("t") != "Header":
         return None
@@ -335,6 +392,16 @@ def uses_selective_paragraph_spacing(
     """
     Return True for manuscript sections that require 12 pt paragraph
     spacing.
+
+    Parameters
+    ----------
+    heading_text : str
+        Heading text used to identify a document section.
+
+    Returns
+    -------
+    bool
+        True for manuscript sections that require 12 pt paragraph spacing.
     """
     normalized = norm(heading_text).casefold().rstrip(":")
 
@@ -342,6 +409,20 @@ def uses_selective_paragraph_spacing(
 
 @dataclass(frozen=True)
 class Figure:
+    """
+    Store a source PDF figure, its lookup key, safe filename, and page count.
+
+    Attributes
+    ----------
+    key : str
+        Mapping key or attribute name selected by the helper.
+    source : Path
+        Source file path read by this operation.
+    safe_name : str
+        Generated filename used when staging a figure for the build.
+    page_count : int
+        Total number of pages available in the source PDF.
+    """
     key: str
     source: Path
     safe_name: str
@@ -350,20 +431,76 @@ class Figure:
 
 @dataclass(frozen=True)
 class Insertion:
+    """
+    Store a figure marker and the PDF pages selected for insertion.
+
+    Attributes
+    ----------
+    raw_marker : str
+        Original figure-insertion marker text.
+    figure : Figure
+        Figure content or identifier associated with the document insertion.
+    pages : tuple[int, ...]
+        Selected one-based source PDF page numbers.
+    """
     raw_marker: str
     figure: Figure
     pages: tuple[int, ...]
 
 
 def qn(name: str) -> str:
+    """
+    Qualify a WordprocessingML element name with its XML namespace.
+
+    Parameters
+    ----------
+    name : str
+        Name identifying the item being processed.
+
+    Returns
+    -------
+    str
+        Computed value of ``f'{{{W_NS}}}{name}'``.
+    """
     return f"{{{W_NS}}}{name}"
 
 
 def norm(text: str) -> str:
+    """
+    Collapse runs of whitespace and strip leading and trailing spaces.
+
+    Parameters
+    ----------
+    text : str
+        Text content to inspect, normalize, or render.
+
+    Returns
+    -------
+    str
+        Computed value of ``re.sub('\\\\s+', ' ', text).strip()``.
+    """
     return re.sub(r"\s+", " ", text).strip()
 
 
 def require_program(name: str) -> str:
+    """
+    Find a required executable on PATH or raise RuntimeError.
+
+    Parameters
+    ----------
+    name : str
+        Name identifying the item being processed.
+
+    Returns
+    -------
+    str
+        A required executable on PATH or raise RuntimeError.
+
+    Raises
+    ------
+    RuntimeError
+        Required executable not found on PATH: {name}
+    """
     path = shutil.which(name)
     if not path:
         raise RuntimeError(f"Required executable not found on PATH: {name}")
@@ -371,6 +508,24 @@ def require_program(name: str) -> str:
 
 
 def run(command: list[str], cwd: Path | None = None, capture: bool = False) -> str:
+    """
+    Execute a subprocess and optionally return its captured UTF-8 standard output.
+
+    Parameters
+    ----------
+    command : list[str]
+        Executable and argument list passed to subprocess.run.
+    cwd : Path | None
+        Working directory for the subprocess; None uses the current directory. Default is
+        ``None``.
+    capture : bool
+        Whether to capture and return standard output. Default is ``False``.
+
+    Returns
+    -------
+    str
+        Computed value of ``result.stdout if capture else ''``.
+    """
     result = subprocess.run(
         command,
         cwd=cwd,
@@ -383,11 +538,36 @@ def run(command: list[str], cwd: Path | None = None, capture: bool = False) -> s
 
 
 def paragraph_text(paragraph: etree._Element) -> str:
+    """
+    Concatenate text runs within a WordprocessingML paragraph.
+
+    Parameters
+    ----------
+    paragraph : etree._Element
+        WordprocessingML paragraph element inspected or edited in place.
+
+    Returns
+    -------
+    str
+        Computed value of ``''.join(paragraph.xpath('.//w:t/text()', namespaces=NS))``.
+    """
     return "".join(paragraph.xpath(".//w:t/text()", namespaces=NS))
 
 
 def has_nontext_content(paragraph: etree._Element) -> bool:
-    """Return True for content that must not be replaced as a blank line."""
+    """
+    Return True for content that must not be replaced as a blank line.
+
+    Parameters
+    ----------
+    paragraph : etree._Element
+        WordprocessingML paragraph element inspected or edited in place.
+
+    Returns
+    -------
+    bool
+        True for content that must not be replaced as a blank line.
+    """
     if paragraph.xpath(
         ".//w:drawing | .//w:pict | .//w:object | .//w:sym | "
         ".//w:fldSimple | .//w:instrText",
@@ -406,7 +586,16 @@ def has_nontext_content(paragraph: etree._Element) -> bool:
 
 
 def rewrite_paragraph(paragraph: etree._Element, text: str) -> None:
-    """Replace paragraph content with one Normal-style text run."""
+    """
+    Replace paragraph content with one Normal-style text run.
+
+    Parameters
+    ----------
+    paragraph : etree._Element
+        WordprocessingML paragraph element inspected or edited in place.
+    text : str
+        Text content to inspect, normalize, or render.
+    """
     p_pr = paragraph.find(qn("pPr"))
     if p_pr is None:
         p_pr = etree.Element(qn("pPr"))
@@ -428,12 +617,33 @@ def rewrite_paragraph(paragraph: etree._Element, text: str) -> None:
 
 
 def marker_paragraph(text: str) -> etree._Element:
+    """
+    Create a Word paragraph containing the supplied marker text.
+
+    Parameters
+    ----------
+    text : str
+        Text content to inspect, normalize, or render.
+
+    Returns
+    -------
+    etree._Element
+        A Word paragraph containing the supplied marker text.
+    """
     paragraph = etree.Element(qn("p"))
     rewrite_paragraph(paragraph, text)
     return paragraph
 
 
 def strip_direct_highlight(paragraph: etree._Element) -> None:
+    """
+    Remove direct paragraph and run highlighting and shading in place.
+
+    Parameters
+    ----------
+    paragraph : etree._Element
+        WordprocessingML paragraph element inspected or edited in place.
+    """
     nodes = paragraph.xpath(
         "./w:pPr/w:shd | .//w:rPr/w:highlight | .//w:rPr/w:shd",
         namespaces=NS,
@@ -445,6 +655,19 @@ def strip_direct_highlight(paragraph: etree._Element) -> None:
 
 
 def paragraph_style_ids(paragraph: etree._Element) -> set[str]:
+    """
+    Collect paragraph and run style IDs referenced by a Word paragraph.
+
+    Parameters
+    ----------
+    paragraph : etree._Element
+        WordprocessingML paragraph element inspected or edited in place.
+
+    Returns
+    -------
+    set[str]
+        Paragraph and run style IDs referenced by a Word paragraph.
+    """
     values = paragraph.xpath(
         "./w:pPr/w:pStyle/@w:val | .//w:rPr/w:rStyle/@w:val",
         namespaces=NS,
@@ -453,6 +676,22 @@ def paragraph_style_ids(paragraph: etree._Element) -> set[str]:
 
 
 def strip_style_highlights(styles_xml: bytes, style_ids: set[str]) -> bytes:
+    """
+    Remove highlight and shading from selected styles in a styles.xml document.
+
+    Parameters
+    ----------
+    styles_xml : bytes
+        Serialized Word style definitions.
+    style_ids : set[str]
+        Style identifiers whose highlights should be removed.
+
+    Returns
+    -------
+    bytes
+        Depending on the input and branch, returns ``styles_xml``, ``etree.tostring(root,
+        xml_declaration=True, encoding='UTF-8', standalone=True)``.
+    """
     if not styles_xml or not style_ids:
         return styles_xml
 
@@ -469,7 +708,26 @@ def strip_style_highlights(styles_xml: bytes, style_ids: set[str]) -> bytes:
 
 
 def preprocess_docx(source: Path, destination: Path) -> list[str]:
-    """Normalize markers, retain blank paragraphs, and expose Word sections."""
+    """
+    Normalize markers, retain blank paragraphs, and expose Word sections.
+
+    Parameters
+    ----------
+    source : Path
+        Source file path read by this operation.
+    destination : Path
+        Output file path.
+
+    Returns
+    -------
+    list[str]
+        Computed value of ``native_sections``.
+
+    Raises
+    ------
+    ValueError
+        Input is not a valid DOCX file. DOCX body not found.
+    """
     with zipfile.ZipFile(source, "r") as archive:
         entries = {item.filename: archive.read(item.filename) for item in archive.infolist()}
 
@@ -541,6 +799,19 @@ def preprocess_docx(source: Path, destination: Path) -> list[str]:
 
 
 def normalize_figure_key(value: str) -> str:
+    """
+    Normalize a quoted PDF path to a case-insensitive figure stem.
+
+    Parameters
+    ----------
+    value : str
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    str
+        Computed value of ``value.casefold()``.
+    """
     value = value.strip().strip('"').strip("'").replace("\\", "/")
     value = value.rsplit("/", 1)[-1]
     if value.lower().endswith(".pdf"):
@@ -549,6 +820,27 @@ def normalize_figure_key(value: str) -> str:
 
 
 def index_figures(directory: Path) -> dict[str, Figure]:
+    """
+    Index top-level PDF figures and reject duplicate case-insensitive stems.
+
+    Parameters
+    ----------
+    directory : Path
+        Directory containing the input PDF figures.
+
+    Returns
+    -------
+    dict[str, Figure]
+        Computed value of ``result``.
+
+    Raises
+    ------
+    FileNotFoundError
+        Figure directory not found: {directory} No top-level PDF figures found in:
+        {directory}
+    ValueError
+        Duplicate case-insensitive PDF stem: {path.stem}
+    """
     if not directory.is_dir():
         raise FileNotFoundError(f"Figure directory not found: {directory}")
 
@@ -569,6 +861,28 @@ def index_figures(directory: Path) -> dict[str, Figure]:
 
 
 def parse_pages(spec: str | None, page_count: int) -> tuple[int, ...]:
+    """
+    Parse an ordered one-based PDF page selection with ranges and duplicate removal.
+
+    Parameters
+    ----------
+    spec : str | None
+        Fixed scalar or pair of sampling bounds.
+    page_count : int
+        Total number of pages available in the source PDF.
+
+    Returns
+    -------
+    tuple[int, ...]
+        Depending on the input and branch, returns ``tuple(range(1, page_count + 1))``,
+        ``tuple(pages)``.
+
+    Raises
+    ------
+    ValueError
+        Invalid page range: {token} Invalid page selection {spec} for a {page_count}-page
+        PDF.
+    """
     if not spec or spec.strip().casefold() == "all":
         return tuple(range(1, page_count + 1))
 
@@ -592,6 +906,19 @@ def parse_pages(spec: str | None, page_count: int) -> tuple[int, ...]:
 
 
 def inline_text(inlines: list[dict[str, Any]]) -> str:
+    """
+    Extract readable text recursively from supported Pandoc inline nodes.
+
+    Parameters
+    ----------
+    inlines : list[dict[str, Any]]
+        Pandoc inline nodes from the document JSON.
+
+    Returns
+    -------
+    str
+        Readable text recursively from supported Pandoc inline nodes.
+    """
     parts: list[str] = []
     for inline in inlines:
         kind, content = inline.get("t"), inline.get("c")
@@ -610,6 +937,19 @@ def inline_text(inlines: list[dict[str, Any]]) -> str:
 
 
 def block_inlines(block: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """
+    Return inline nodes for a paragraph, plain block, or header.
+
+    Parameters
+    ----------
+    block : dict[str, Any]
+        Pandoc block node to inspect.
+
+    Returns
+    -------
+    list[dict[str, Any]] | None
+        Inline nodes for a paragraph, plain block, or header.
+    """
     kind, content = block.get("t"), block.get("c")
     if kind in {"Para", "Plain"} and isinstance(content, list):
         return content
@@ -619,11 +959,37 @@ def block_inlines(block: dict[str, Any]) -> list[dict[str, Any]] | None:
 
 
 def block_text(block: dict[str, Any]) -> str | None:
+    """
+    Extract and normalize readable text from a supported Pandoc block.
+
+    Parameters
+    ----------
+    block : dict[str, Any]
+        Pandoc block node to inspect.
+
+    Returns
+    -------
+    str | None
+        And normalize readable text from a supported Pandoc block.
+    """
     inlines = block_inlines(block)
     return norm(inline_text(inlines)) if inlines is not None else None
 
 
 def nested_block_lists(block: dict[str, Any]) -> list[list[dict[str, Any]]]:
+    """
+    Return nested block lists for supported Pandoc container blocks.
+
+    Parameters
+    ----------
+    block : dict[str, Any]
+        Pandoc block node to inspect.
+
+    Returns
+    -------
+    list[list[dict[str, Any]]]
+        Nested block lists for supported Pandoc container blocks.
+    """
     kind, content = block.get("t"), block.get("c")
     if kind == "Div":
         return [content[1]]
@@ -639,6 +1005,26 @@ def nested_block_lists(block: dict[str, Any]) -> list[list[dict[str, Any]]]:
 
 
 def collect_insertions(blocks: list[dict[str, Any]], figures: dict[str, Figure]) -> list[Insertion]:
+    """
+    Find figure markers recursively and resolve their source PDFs and selected pages.
+
+    Parameters
+    ----------
+    blocks : list[dict[str, Any]]
+        Pandoc block nodes to inspect or transform.
+    figures : dict[str, Figure]
+        Mapping of normalized figure keys to source-PDF records.
+
+    Returns
+    -------
+    list[Insertion]
+        Figure markers recursively and resolve their source PDFs and selected pages.
+
+    Raises
+    ------
+    FileNotFoundError
+        Figure {match.group('name')} not found. Available: {available}
+    """
     result: list[Insertion] = []
     for block in blocks:
         text = block_text(block)
@@ -657,7 +1043,14 @@ def collect_insertions(blocks: list[dict[str, Any]], figures: dict[str, Figure])
 
 
 def strip_ast_highlights(value: Any) -> None:
-    """Remove Pandoc background/highlight attributes that survived DOCX parsing."""
+    """
+    Remove Pandoc background/highlight attributes that survived DOCX parsing.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+    """
     if isinstance(value, dict):
         strip_ast_highlights(value.get("c"))
     elif isinstance(value, list):
@@ -677,6 +1070,19 @@ def strip_ast_highlights(value: Any) -> None:
 
 
 def meta_text(meta_value: Any) -> str:
+    """
+    Read normalized text from supported Pandoc metadata values.
+
+    Parameters
+    ----------
+    meta_value : Any
+        Pandoc metadata node to convert to text.
+
+    Returns
+    -------
+    str
+        Normalized text from supported Pandoc metadata values.
+    """
     if not isinstance(meta_value, dict):
         return ""
     kind, content = meta_value.get("t"), meta_value.get("c")
@@ -695,6 +1101,17 @@ def extract_title(
     """
     Extract the Pandoc title and remove ordinary, non-breaking, and
     zero-width whitespace from its edges.
+
+    Parameters
+    ----------
+    document : dict[str, Any]
+        Parsed document object whose content is inspected or modified.
+
+    Returns
+    -------
+    str
+        The Pandoc title and remove ordinary, non-breaking, and zero-width whitespace from
+        its edges.
     """
     meta = document.setdefault("meta", {})
 
@@ -720,6 +1137,19 @@ def extract_title(
 
 
 def latex_escape(text: str) -> str:
+    """
+    Escape characters that have a special meaning in LaTeX text.
+
+    Parameters
+    ----------
+    text : str
+        Text content to inspect, normalize, or render.
+
+    Returns
+    -------
+    str
+        Computed value of ``''.join((replacements.get(char, char) for char in text))``.
+    """
     replacements = {
         "\\": r"\textbackslash{}",
         "&": r"\&",
@@ -743,6 +1173,23 @@ def figure_latex(
     """
     Insert a large figure while retaining the normal footer height.
 
+    Parameters
+    ----------
+    figure : Figure
+        Figure content or identifier associated with the document insertion.
+    page : int
+        Page index selected from the multi-page image or document.
+    scale : float
+        Scaling factor applied to spatial dimensions or rendered content.
+
+    Returns
+    -------
+    str
+        LaTeX commands for the figure page, temporary page geometry, and restoration of
+        normal layout.
+
+    Notes
+    -----
     The fancyhdr footer width is recalculated after each geometry change so
     the page number remains horizontally centered.
     """
@@ -773,6 +1220,19 @@ def figure_latex(
 
 
 def section_latex(kind: str) -> str:
+    """
+    Build LaTeX for a continuous, odd-page, even-page, or ordinary section break.
+
+    Parameters
+    ----------
+    kind : str
+        Section kind used to select the corresponding LaTeX command.
+
+    Returns
+    -------
+    str
+        LaTeX for a continuous, odd-page, even-page, or ordinary section break.
+    """
     kind = kind.casefold()
     if kind == "continuous":
         return r"\par"
@@ -786,6 +1246,19 @@ def section_latex(kind: str) -> str:
 
 
 def raw_block(latex: str) -> dict[str, Any]:
+    """
+    Wrap LaTeX text in a Pandoc RawBlock node.
+
+    Parameters
+    ----------
+    latex : str
+        Raw LaTeX text to embed in the document.
+
+    Returns
+    -------
+    dict[str, Any]
+        Result mapping with keys ``t``, ``c``.
+    """
     return {"t": "RawBlock", "c": ["latex", latex]}
 
 
@@ -799,6 +1272,29 @@ def transform_blocks(
     Replace internal markers and switch paragraph spacing at level-1
     manuscript headings.
 
+    Parameters
+    ----------
+    blocks : list[dict[str, Any]]
+        Pandoc block nodes to inspect or transform.
+    insertion_map : dict[str, Insertion]
+        Mapping from placeholder identifiers to content to insert.
+    scale : float
+        Scaling factor applied to spatial dimensions or rendered content.
+    paragraph_spacing_scope : str
+        Selector controlling which paragraphs receive spacing changes.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Computed value of ``output``.
+
+    Raises
+    ------
+    ValueError
+        paragraph_spacing_scope must be 'selective', 'all', or 'none'.
+
+    Notes
+    -----
     paragraph_spacing_scope:
         selective:
             12 pt only in References and Figure Legends sections.
@@ -974,6 +1470,21 @@ def transform_blocks(
 
 
 def page_size(reader: PdfReader, page_number: int) -> tuple[float, float]:
+    """
+    Return a PDF page's crop-box dimensions, accounting for rotation.
+
+    Parameters
+    ----------
+    reader : PdfReader
+        PDF reader containing the source pages.
+    page_number : int
+        One-based page number in the PDF reader.
+
+    Returns
+    -------
+    tuple[float, float]
+        Tuple containing ``width``, ``height``, in that order.
+    """
     page = reader.pages[page_number - 1]
     width, height = float(page.cropbox.width), float(page.cropbox.height)
     if int(page.get("/Rotate", 0) or 0) % 360 in {90, 270}:
@@ -991,6 +1502,31 @@ def common_scale(
     """
     Calculate one common scale for all inserted figure pages.
 
+    Parameters
+    ----------
+    insertions : list[Insertion]
+        Prepared insertion records describing content and its document location.
+    paper : str
+        Paper-size selector used to size the exported page.
+    margin_mm : float
+        Accepted by the interface but not read by this implementation.
+    max_scale : float
+        Maximum permitted content scaling factor.
+    safety : float
+        Additional safety factor applied while fitting content to the available area.
+
+    Returns
+    -------
+    float
+        One common scale for all inserted figure pages.
+
+    Raises
+    ------
+    ValueError
+        The figure margins leave no usable page area. No figure pages selected.
+
+    Notes
+    -----
     Figures use narrow top and side margins, but retain the normal manuscript
     bottom margin so the page number stays in its original position.
     """
@@ -1044,6 +1580,25 @@ def common_scale(
 
 
 def latex_header(args: argparse.Namespace) -> str:
+    """
+    Build the LaTeX preamble from font, page, margin, and line-number settings.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command-line options controlling source paths, page layout, typography, and
+        export programs.
+
+    Returns
+    -------
+    str
+        The LaTeX preamble from font, page, margin, and line-number settings.
+
+    Raises
+    ------
+    ValueError
+        Unsafe or empty font name.
+    """
     paper_option = (
         "a4paper"
         if args.paper == "a4"
@@ -1298,6 +1853,24 @@ def latex_header(args: argparse.Namespace) -> str:
 
 
 def convert_docx(pandoc: str, source: Path, media_dir: Path) -> dict[str, Any]:
+    """
+    Convert a DOCX file to a Pandoc JSON document and extract its media.
+
+    Parameters
+    ----------
+    pandoc : str
+        Path to the Pandoc executable.
+    source : Path
+        Source file path read by this operation.
+    media_dir : Path
+        Directory into which Pandoc extracts embedded document media.
+
+    Returns
+    -------
+    dict[str, Any]
+        Parsed Pandoc JSON document; embedded media are extracted to media_dir as a side
+        effect.
+    """
     return json.loads(
         run(
             [pandoc, str(source), "--from=docx", "--to=json", f"--extract-media={media_dir}"],
@@ -1307,18 +1880,65 @@ def convert_docx(pandoc: str, source: Path, media_dir: Path) -> dict[str, Any]:
 
 
 def assert_no_markers(text: str) -> None:
+    """
+    Reject unresolved internal document or figure markers in generated LaTeX.
+
+    Parameters
+    ----------
+    text : str
+        Text content to inspect, normalize, or render.
+
+    Raises
+    ------
+    RuntimeError
+        Unresolved marker remained in generated LaTeX: {marker}
+    """
     for marker in ("[[SECTION_BREAK]]", "[[DOCX_SECTION:", "[[DOCX_BLANK]]", "[[PDF_FIGURE:"):
         if marker.casefold() in text.casefold():
             raise RuntimeError(f"Unresolved marker remained in generated LaTeX: {marker}")
 
 
 def normalized_font_key(name: str) -> str:
+    """
+    Remove PDF subset prefixes and punctuation for font-name comparison.
+
+    Parameters
+    ----------
+    name : str
+        Name identifying the item being processed.
+
+    Returns
+    -------
+    str
+        Computed value of ``re.sub('[^a-z0-9]+', '', name)``.
+    """
     name = re.sub(r"^[A-Z]{6}\+", "", name).casefold()
     return re.sub(r"[^a-z0-9]+", "", name)
 
 
 def validate_pdf_output(pdf_path: Path, font: str, body_size: float) -> None:
-    """Reject stale or incorrectly formatted output instead of silently copying it."""
+    """
+    Reject stale or incorrectly formatted output instead of silently copying it.
+
+    Parameters
+    ----------
+    pdf_path : Path
+        Path of the PDF to read or write.
+    font : str
+        Font name used for generated document text.
+    body_size : float
+        Body-text size in points.
+
+    Raises
+    ------
+    RuntimeError
+        Could not find a substantial text page for PDF validation. Generated PDF does not
+        use {font} on text page {page_index + 1}. Detected fonts: {sorted(set(font_names))}
+        Generated PDF does not contain {body_size} pt body text on page {page_index + 1}.
+        Detected sizes: {sorted(set((round(value, 3) for value in sizes)))} Generated PDF
+        does not contain the expected 8 pt line numbers. Detected sizes:
+        {sorted(set((round(value, 3) for value in sizes)))}
+    """
     reader = PdfReader(str(pdf_path))
     all_text = "\n".join(page.extract_text() or "" for page in reader.pages)
     assert_no_markers(all_text)
@@ -1365,6 +1985,20 @@ def validate_pdf_output(pdf_path: Path, font: str, body_size: float) -> None:
                     pass
 
     def has_size(target: float) -> bool:
+        """
+        Test whether an observed font size lies within 0.3 points of the requested size.
+
+        Parameters
+        ----------
+        target : float
+            Expected text size in points.
+
+        Returns
+        -------
+        bool
+            True when an observed font size lies within 0.3 points of the requested size; False
+            otherwise.
+        """
         return any(abs(value - target) <= 0.3 for value in sizes)
 
     if not has_size(body_size):
@@ -1381,6 +2015,18 @@ def validate_pdf_output(pdf_path: Path, font: str, body_size: float) -> None:
 
 
 def save_debug(temp_dir: Path, debug_dir: Path, enabled: bool) -> None:
+    """
+    Copy build intermediates to the debug directory when enabled.
+
+    Parameters
+    ----------
+    temp_dir : Path
+        Directory containing temporary build intermediates.
+    debug_dir : Path
+        Destination for copies of build intermediates.
+    enabled : bool
+        Whether progress messages are emitted.
+    """
     if not enabled:
         return
     try:
@@ -1392,6 +2038,27 @@ def save_debug(temp_dir: Path, debug_dir: Path, enabled: bool) -> None:
 
 
 def build(args: argparse.Namespace) -> None:
+    """
+    Convert the manuscript, insert PDF figures, build the PDF, and validate the output.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command-line options controlling source paths, page layout, typography, and
+        export programs.
+
+    Raises
+    ------
+    FileNotFoundError
+        DOCX source not found: {source}
+    ValueError
+        Output must use the .pdf extension. Margins, font size, and line spacing must be
+        positive. Line-number step and first page number must be at least 1. Invalid figure
+        scale settings. Pandoc returned invalid document blocks. No [[PDF_FIGURE: ...]]
+        markers found.
+    RuntimeError
+        XeLaTeX did not produce a PDF.
+    """
     source = args.source.resolve()
     output = args.output.resolve()
     figures_dir = args.figures_dir.resolve() if args.figures_dir else source.parent / "figures"
@@ -1542,6 +2209,14 @@ def build(args: argparse.Namespace) -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    """
+    Parse the manuscript builder's command-line options.
+
+    Returns
+    -------
+    argparse.Namespace
+        Computed value of ``parser.parse_args()``.
+    """
     parser = argparse.ArgumentParser(
         description="Convert DOCX to PDF, preserve section/blank markers, and insert vector PDF figures."
     )
@@ -1576,6 +2251,14 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    """
+    Run the manuscript build and return a shell-style success or failure code.
+
+    Returns
+    -------
+    int
+        Depending on the input and branch, returns ``exc.returncode or 1``, ``1``, ``0``.
+    """
     try:
         build(parse_args())
     except subprocess.CalledProcessError as exc:

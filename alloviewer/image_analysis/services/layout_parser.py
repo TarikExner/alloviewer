@@ -41,7 +41,8 @@ COMMON_PLATE_SIZES = {"6x10", "2x3", "4x6", "8x12", "16x24", "32x48"}
 
 
 def _sha256_bytes(b: bytes) -> str:
-    """Return the SHA-256 checksum of a byte string.
+    """
+    Return the SHA-256 checksum of a byte string.
 
     Parameters
     ----------
@@ -57,7 +58,8 @@ def _sha256_bytes(b: bytes) -> str:
 
 
 def _clean(s: Any) -> Optional[str]:
-    """Convert a cell value to a stripped string or ``None``.
+    """
+    Convert a cell value to a stripped string or ``None``.
 
     Parameters
     ----------
@@ -77,7 +79,8 @@ def _clean(s: Any) -> Optional[str]:
 
 
 def _normalize_well_id(val: str) -> Optional[str]:
-    """Normalize a well ID.
+    """
+    Normalize a well ID.
 
     Parameters
     ----------
@@ -108,7 +111,8 @@ def _normalize_well_id(val: str) -> Optional[str]:
 
 
 def _normalize_locus_header(h: str) -> Optional[str]:
-    """Normalize an Excel header to a known locus label.
+    """
+    Normalize an Excel header to a known locus label.
 
     Parameters
     ----------
@@ -150,7 +154,8 @@ def _normalize_locus_header(h: str) -> Optional[str]:
 
 
 def _infer_plate_format_from_wells(well_ids: List[str]) -> str:
-    """Infer a plate format from well IDs.
+    """
+    Infer a plate format from well IDs.
 
     Parameters
     ----------
@@ -189,7 +194,8 @@ def _infer_plate_format_from_wells(well_ids: List[str]) -> str:
 
 
 def parse_excel_layout(fileobj: BinaryIO) -> Tuple[str, ParsedPlateLayout]:
-    """Parse a vendor Excel plate layout.
+    """
+    Parse a vendor Excel plate layout.
 
     Parameters
     ----------
@@ -258,7 +264,8 @@ def parse_excel_layout(fileobj: BinaryIO) -> Tuple[str, ParsedPlateLayout]:
             pass
 
         def _scan_right(row: int, col: int, span: int = 12) -> Optional[str]:
-            """Return the first non-empty cell to the right of a cell.
+            """
+            Return the first non-empty cell to the right of a cell.
 
             Parameters
             ----------

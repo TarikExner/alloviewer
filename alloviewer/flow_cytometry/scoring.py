@@ -14,7 +14,8 @@ def pct_to_rule(
     pct: float,
     rules: Optional[Iterable[ScoreRule]] = None,
 ) -> ScoreRule:
-    """Map a percentage to the highest matching score rule.
+    """
+    Map a percentage to the highest matching score rule.
 
     Parameters
     ----------
@@ -50,7 +51,8 @@ def pct_to_score_verdict(
     pct: float,
     rules: Optional[Iterable[ScoreRule]] = None,
 ) -> tuple[int, str]:
-    """Map a percentage to a numeric score and verdict.
+    """
+    Map a percentage to a numeric score and verdict.
 
     Parameters
     ----------
@@ -72,7 +74,8 @@ def ratio_to_rule(
     ratio: float,
     rules: Optional[Iterable[RatioRule]] = None,
 ) -> RatioRule:
-    """Map a ratio to the highest matching ratio rule.
+    """
+    Map a ratio to the highest matching ratio rule.
 
     Parameters
     ----------
@@ -108,7 +111,8 @@ def ratio_to_score_verdict(
     ratio: float,
     rules: Optional[Iterable[RatioRule]] = None,
 ) -> tuple[int, str]:
-    """Map a ratio to a numeric score and verdict.
+    """
+    Map a ratio to a numeric score and verdict.
 
     Parameters
     ----------

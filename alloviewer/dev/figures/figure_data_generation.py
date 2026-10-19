@@ -49,12 +49,39 @@ def make_simulation_parameter_mosaic(
     """
     Create a 4 x 4 simulation parameter mosaic.
 
+    Parameters
+    ----------
+    H : int
+        Image height in pixels. Default is ``SIMULATION_IMAGE_SIZE``.
+    W : int
+        Image width in pixels. Default is ``SIMULATION_IMAGE_SIZE``.
+    crop_size : int
+        Spatial size of each displayed simulation crop, in pixels. Default is
+        ``SIMULATION_TILE_SIZE``.
+    seed : int
+        Random seed for reproducible sampling. Default is ``SIMULATION_SEED``.
+    same_seed_per_tile : bool
+        Whether generated tiles reuse the same random seed. Default is ``True``.
+
+    Returns
+    -------
+    tuple[numpy.ndarray, list[dict[str, Any]]]
+        Tuple containing ``mosaic``, ``tile_info``, in that order.
+
+    Raises
+    ------
+    ValueError
+        This function expects H == W. Use H = W = 4 * crop_size.
+    RuntimeError
+        Expected {n_rows * n_cols} tile specifications, got {len(tile_specs)}. Panel
+        {spec['label']} produced crop shape {crop.shape}, expected {expected_shape}.
+
+    Notes
+    -----
     Each panel is generated from a full simulated image. The crop position
     matches the panel position in the final mosaic, keeping the well ring
     aligned between panels.
 
-    Notes
-    -----
     - Clustering is disabled for all panels.
     - The calibrated diameter model is disabled because several panels
       directly test `cell_diameter`.
@@ -456,7 +483,21 @@ def make_simulation_parameter_mosaic(
 
 def _postprocess_to_rgb(img: np.ndarray,
                         tile_idx: Optional[int]) -> np.ndarray:
-    """Ensure image is HxWx3 uint8 RGB for matplotlib."""
+    """
+    Ensure image is HxWx3 uint8 RGB for matplotlib.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input image array.
+    tile_idx : Optional[int]
+        Tile index within the selected sample.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``arr``.
+    """
     arr = np.asarray(img)
 
     if arr.ndim == 4:
@@ -490,13 +531,43 @@ def _postprocess_to_rgb(img: np.ndarray,
 
 
 def _cv2_resize_rgb(img_rgb_uint8: np.ndarray, size: Tuple[int, int]) -> np.ndarray:
-    """Resize RGB uint8 to (H, W)."""
+    """
+    Resize RGB uint8 to (H, W).
+
+    Parameters
+    ----------
+    img_rgb_uint8 : numpy.ndarray
+        RGB image with uint8 channels in the range 0 to 255.
+    size : Tuple[int, int]
+        Output dimensions as (height, width), in pixels.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``cv2.resize(img_rgb_uint8, (w, h),
+        interpolation=cv2.INTER_LINEAR)``.
+    """
     h, w = size
     return cv2.resize(img_rgb_uint8, (w, h), interpolation=cv2.INTER_LINEAR)
 
 
 def _cv2_resize_mask(arr: np.ndarray, size: Tuple[int, int]) -> np.ndarray:
-    """Resize masks/targets to (H, W) with nearest neighbor."""
+    """
+    Resize masks/targets to (H, W) with nearest neighbor.
+
+    Parameters
+    ----------
+    arr : numpy.ndarray
+        Image or label array with spatial dimensions first and optional trailing channels.
+    size : Tuple[int, int]
+        Output dimensions as (height, width), in pixels.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``cv2.resize(arr, (Wt, Ht),
+        interpolation=cv2.INTER_NEAREST)``, ``out``, ``arr``.
+    """
     Ht, Wt = size
     if arr.ndim == 2:
         return cv2.resize(arr, (Wt, Ht), interpolation=cv2.INTER_NEAREST)
@@ -535,6 +606,39 @@ def fetch_item(
     """
     Core loader: returns (rgb, tgts_or_none).
     Expects targets with shape (1,4,H,W) at target_key if present.
+
+    Parameters
+    ----------
+    h5_path : str
+        Path to the simulated-image HDF5 dataset.
+    index : int
+        Zero-based position of the item to read or process.
+    tile_idx : Optional[int]
+        Tile index within the selected sample.
+    image_key : str
+        HDF5 dataset key containing source images. Default is ``'imgs'``.
+    target_key : Optional[str]
+        HDF5 dataset key containing target masks or labels. Default is ``'tgts'``.
+    resize_to : Optional[Tuple[int, int]]
+        Optional output image size used by the resize operation. Default is ``None``.
+    target_resize_to : Optional[Tuple[int, int]]
+        Optional output spatial size for target masks. Default is ``None``.
+    return_channel_last : bool
+        Whether returned image arrays place the channel dimension last. Default is ``True``.
+
+    Returns
+    -------
+    tuple[numpy.ndarray, Optional[numpy.ndarray]]
+        Tuple containing ``rgb``, ``tgts_out``, in that order.
+
+    Raises
+    ------
+    FileNotFoundError
+        HDF5 not found: {h5_path}
+    IndexError
+        Index {index} out of range for dataset length {n}.
+    KeyError
+        Targets key '{target_key}' not found in file.
     """
     if not os.path.exists(h5_path):
         raise FileNotFoundError(f"HDF5 not found: {h5_path}")
@@ -595,7 +699,27 @@ def fetch_image(
     dataset_key: str = "imgs",
     resize_to: Optional[Tuple[int, int]] = None,
 ) -> np.ndarray:
-    """Image only."""
+    """
+    Image only.
+
+    Parameters
+    ----------
+    h5_path : str
+        Path to the simulated-image HDF5 dataset.
+    index : int
+        Zero-based position of the item to read or process.
+    tile_idx : Optional[int]
+        Tile index within the selected sample. Default is ``None``.
+    dataset_key : str
+        HDF5 key identifying the requested dataset. Default is ``'imgs'``.
+    resize_to : Optional[Tuple[int, int]]
+        Optional output image size used by the resize operation. Default is ``None``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``rgb``.
+    """
     rgb, _ = fetch_item(
         h5_path,
         index,
@@ -619,7 +743,38 @@ def fetch_image_with_targets(
     target_resize_to: Optional[Tuple[int, int]] = None,
     return_channel_last: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Image + targets."""
+    """
+    Image + targets.
+
+    Parameters
+    ----------
+    h5_path : str
+        Path to the simulated-image HDF5 dataset.
+    index : int
+        Zero-based position of the item to read or process.
+    tile_idx : Optional[int]
+        Tile index within the selected sample. Default is ``None``.
+    image_key : str
+        HDF5 dataset key containing source images. Default is ``'imgs'``.
+    target_key : str
+        HDF5 dataset key containing target masks or labels. Default is ``'tgts'``.
+    resize_to : Optional[Tuple[int, int]]
+        Optional output image size used by the resize operation. Default is ``None``.
+    target_resize_to : Optional[Tuple[int, int]]
+        Optional output spatial size for target masks. Default is ``None``.
+    return_channel_last : bool
+        Whether returned image arrays place the channel dimension last. Default is ``True``.
+
+    Returns
+    -------
+    tuple[numpy.ndarray, numpy.ndarray]
+        Tuple containing ``rgb``, ``tgts``, in that order.
+
+    Raises
+    ------
+    KeyError
+        No targets found at key '{target_key}'.
+    """
     rgb, tgts = fetch_item(
         h5_path,
         index,
@@ -642,7 +797,27 @@ def fetch_images(
     dataset_key: str = "imgs",
     resize_to: Optional[Tuple[int, int]] = (240,240),
 ) -> List[np.ndarray]:
-    """Fetch multiple images using `fetch_image` for convenience."""
+    """
+    Fetch multiple images using `fetch_image` for convenience.
+
+    Parameters
+    ----------
+    h5_path : str
+        Path to the simulated-image HDF5 dataset.
+    indices : Sequence[int]
+        Optional subset of dataset record indices.
+    tile_idx : Optional[int]
+        Tile index within the selected sample. Default is ``None``.
+    dataset_key : str
+        HDF5 key identifying the requested dataset. Default is ``'imgs'``.
+    resize_to : Optional[Tuple[int, int]]
+        Optional output image size used by the resize operation. Default is ``(240, 240)``.
+
+    Returns
+    -------
+    list of numpy.ndarray
+        Loaded images in the same order as the requested record indices.
+    """
     return [
         fetch_image(h5_path, i, dataset_key=dataset_key, resize_to=resize_to, tile_idx=tile_idx)
         for i in indices
@@ -655,6 +830,26 @@ def get_dataset_statistics(
     output_filename: str = "dataset_statistics"
 ) -> pd.DataFrame:
 
+    """
+    Read simulation metadata from HDF5 and cache its statistics table as CSV.
+
+    Parameters
+    ----------
+    h5_path : str
+        Path to the simulated-image HDF5 dataset.
+    dataset_type : Literal['train', 'test', 'val']
+        Dataset format or category selector used by the loader. Default is ``'train'``.
+    output_dir : str
+        Directory in which generated outputs are stored. Default is ``'./figure_data/'``.
+    output_filename : str
+        Filename used for the cached or generated output. Default is
+        ``'dataset_statistics'``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Simulation metadata from HDF5 and cache its statistics table as CSV.
+    """
     ds_filename = os.path.basename(h5_path)
     crop_method = ds_filename.split(f"_{dataset_type}")[0]
     save_suffix = f"_{dataset_type}_{crop_method}"
@@ -680,6 +875,19 @@ def get_dataset_statistics(
     return df
 
 def _maybe_float(x):
+    """
+    Convert numeric strings to float while preserving other values.
+
+    Parameters
+    ----------
+    x : object
+        Scalar value to format or convert using the helper's stated rules.
+
+    Returns
+    -------
+    object
+        Depending on the input and branch, returns ``x``, ``float(x)``.
+    """
     if isinstance(x, (int, float)) or x is None:
         return x
     if isinstance(x, str):
@@ -690,7 +898,23 @@ def _maybe_float(x):
     return x
 
 def _read_run_meta(run_dir: str, unet_mode: str, tag: str) -> dict:
-    """Read the optional run_meta_*.json next to the log for extra fields."""
+    """
+    Read the optional run_meta_*.json next to the log for extra fields.
+
+    Parameters
+    ----------
+    run_dir : str
+        Directory containing a training run's logs and model checkpoints.
+    unet_mode : str
+        UNet model size selected by the pipeline.
+    tag : str
+        XML tag text to inspect or rewrite.
+
+    Returns
+    -------
+    dict
+        The optional run_meta_*.json next to the log for extra fields.
+    """
     meta_path = os.path.join(run_dir, f"run_meta_{unet_mode}_{tag}.json")
     if os.path.isfile(meta_path):
         try:
@@ -701,7 +925,20 @@ def _read_run_meta(run_dir: str, unet_mode: str, tag: str) -> dict:
     return {}
 
 def _yield_rows_from_log(log_path: str) -> Iterable[dict]:
-    """Yield one row per (epoch, split=train/val)."""
+    """
+    Yield one row per (epoch, split=train/val).
+
+    Parameters
+    ----------
+    log_path : str
+        Path to the training log or metric file.
+
+    Yields
+    ------
+    dict
+        One flattened metric record per epoch and train/validation split, including run
+        metadata and source-log identity.
+    """
     m = _LOG_RE.search(os.path.basename(log_path))
     parsed = m.groupdict() if m else {}
     unet_mode = parsed.get("unet_mode")
@@ -771,6 +1008,26 @@ def get_loss_data(model_output_dir: str, recursive: bool = True,
     """
     Scan base_dir for log_*.jsonl files, read them, and return a tidy DataFrame.
     One row per (epoch, split). Columns include identifiers and all metrics.
+
+    Parameters
+    ----------
+    model_output_dir : str
+        Directory containing trained model checkpoints and training outputs.
+    recursive : bool
+        Whether to include images in nested folders. Default is ``True``.
+    extra_globs : Optional[list[str]]
+        Additional filename patterns included while collecting inputs. Default is ``None``.
+    output_dir : str
+        Directory in which generated outputs are stored. Default is ``''``.
+    output_filename : str
+        Filename used for the cached or generated output. Default is
+        ``'loss_values_training'``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Depending on the input and branch, returns ``existing_file``, ``pd.DataFrame()``,
+        ``df``.
     """
 
     output_file = os.path.join(output_dir, f"{output_filename}.csv")
@@ -818,6 +1075,26 @@ def generate_param_showcase(
     """
     Builds a grid where each row is a parameter and each column is one value.
     Returns a dict with images, metas, and figure objects for further use.
+
+    Parameters
+    ----------
+    sim_config : Any
+        Scene-simulation configuration used to sample simulator keyword arguments.
+    camera : Optional[Any]
+        Camera-dimension configuration used to sample image height and width.
+    sweep : Mapping[str, Sequence[Any]]
+        Mapping from simulation parameters to the values shown in the sweep.
+    base_overrides : Optional[Mapping[str, Any]]
+        Shared simulation parameter overrides applied before individual sweep values.
+        Default is ``None``.
+    seed : int
+        Random seed for reproducible sampling. Default is ``0``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``images``, ``metas``, ``targets``, ``param_names``,
+        ``value_lists``, ``base_kwargs``, ``n_rows``, ``n_cols``.
     """
     rng = np.random.default_rng(seed)
 
@@ -874,6 +1151,26 @@ def generate_param_showcase(
     }
 
 def _read_validation_csvs(in_file) -> pd.DataFrame:
+    """
+    Read one validation CSV or concatenate a nonempty list of CSV files.
+
+    Parameters
+    ----------
+    in_file : str or os.PathLike
+        Input CSV path or list of CSV paths.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One validation CSV or concatenate a nonempty list of CSV files.
+
+    Raises
+    ------
+    FileNotFoundError
+        No validation CSV files found. Validation CSV not found: {in_file}
+    TypeError
+        in_file must be str or list[str].
+    """
     if isinstance(in_file, list):
         if len(in_file) == 0:
             raise FileNotFoundError("No validation CSV files found.")
@@ -897,6 +1194,21 @@ def _first_existing_column(
     data: pd.DataFrame,
     candidates: list[str],
 ) -> str | None:
+    """
+    Return the first candidate column present in a DataFrame, or None.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        Input data consumed by this analysis or plotting operation.
+    candidates : list[str]
+        Candidate names examined in priority order.
+
+    Returns
+    -------
+    str | None
+        The first candidate column present in a DataFrame, or None.
+    """
     for col in candidates:
         if col in data.columns:
             return col
@@ -911,6 +1223,21 @@ def _add_count_error_pct(
     """
     Add count_error_pct in a schema-tolerant way.
 
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        Input data consumed by this analysis or plotting operation.
+    mode : str
+        Dataset category selecting the count denominator and compatible metric columns;
+        training uses simulation counts.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Computed value of ``data``.
+
+    Notes
+    -----
     Refactored validation preferred columns:
       - count_error_instances_vs_stored_labels
       - count_error_components_vs_stored_labels
@@ -988,6 +1315,17 @@ def _add_count_error_pct(
 def _drop_validation_duplicates(data: pd.DataFrame) -> pd.DataFrame:
     """
     Drop duplicated rows if combined and individual CSVs were accidentally loaded.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        Input data consumed by this analysis or plotting operation.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Depending on the input and branch, returns ``data.reset_index(drop=True)``,
+        ``data.drop_duplicates(subset=dedup_cols).reset_index(drop=True)``.
     """
     dedup_cols = [
         c for c in [
@@ -1016,6 +1354,32 @@ def _training_files(
     unet_size: str,
     crop_method: str,
 ) -> str | list[str]:
+    """
+    Locate combined or individual training-validation CSV files for the selected mode.
+
+    Parameters
+    ----------
+    results_dir : str
+        Directory containing or receiving analysis and validation results.
+    seg_method : str
+        Segmentation-method selector used to choose the configured implementation.
+    unet_size : str
+        UNet model size used for model selection or validation.
+    crop_method : str
+        Method used to select or resize the displayed image crop.
+
+    Returns
+    -------
+    str | list[str]
+        Depending on the input and branch, returns ``combined_file``, ``sorted(in_files)``,
+        ``os.path.join(results_dir,
+        f'training_val_{unet_size}_{crop_method}_{seg_method}.csv')``.
+
+    Raises
+    ------
+    FileNotFoundError
+        No training validation files found in {results_dir} for seg_method={seg_method}.
+    """
     if crop_method == "combined":
         combined_file = os.path.join(
             results_dir,
@@ -1067,6 +1431,35 @@ def get_validation_data(
     """
     Load validation results for figures.
 
+    Parameters
+    ----------
+    results_dir : str or os.PathLike
+        Directory containing or receiving analysis and validation results.
+    mode : Literal['training', 'testing', 'human', 'imageJ']
+        Validation category used to locate and interpret the requested result CSV.
+    seg_method : Literal['inst_seg', 'conventional']
+        Segmentation-method selector used to choose the configured implementation. Default
+        is ``'inst_seg'``.
+    unet_size : Literal['small', 'medium', 'large']
+        UNet model size used for model selection or validation. Default is ``'small'``.
+    crop_method : Literal['pad_resize', 'crop_well_resize', 'tiles', 'combined']
+        Method used to select or resize the displayed image crop. Default is ``'combined'``.
+    comparison_images : Literal['external_images', 'tiles']
+        Source of validation images, such as external images or simulated tiles. Default is
+        ``'tiles'``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Validation results for figures.
+
+    Raises
+    ------
+    ValueError
+        Unknown mode {mode}
+
+    Notes
+    -----
     Supports both the old validation schema and the refactored schema where
     count-error columns were renamed explicitly.
     """
@@ -1112,6 +1505,23 @@ def _prep_config_for_unet_comparison(
     models_dir: str,
     unet_mode: Literal["large", "medium", "small"],
 ) -> dict:
+    """
+    Copy a UNet configuration and set checkpoint, size, and preprocessing options.
+
+    Parameters
+    ----------
+    cfg : dict
+        Configuration object controlling this component.
+    models_dir : str
+        Directory containing model checkpoint files.
+    unet_mode : Literal['large', 'medium', 'small']
+        UNet model size selected by the pipeline.
+
+    Returns
+    -------
+    dict
+        Computed value of ``cfg``.
+    """
     cfg = copy.deepcopy(cfg)
     cfg["model_dir"] = models_dir
     cfg["unet_mode"] = unet_mode
@@ -1126,6 +1536,17 @@ class Inset:
     """
     Square crop region.
 
+    Attributes
+    ----------
+    x : int
+        Horizontal column coordinate in pixels.
+    y : int
+        Vertical row coordinate in pixels.
+    size : int
+        Side length of the square crop, in pixels.
+
+    Notes
+    -----
     Coordinates use image-array convention:
         x = column index
         y = row index
@@ -1146,6 +1567,28 @@ MICROSCOPY_IMAGE_CONFIG = {
 
 
 def _crop_inset_array(arr: np.ndarray, inset: Inset) -> np.ndarray:
+    """
+    Extract a validated square inset from a two-dimensional or channel-last image.
+
+    Parameters
+    ----------
+    arr : numpy.ndarray
+        Image or label array with spatial dimensions first and optional trailing channels.
+    inset : Inset
+        Square inset specification with pixel coordinates and side length.
+
+    Returns
+    -------
+    numpy.ndarray
+        A validated square inset from a two-dimensional or channel-last image.
+
+    Raises
+    ------
+    ValueError
+        Expected 2D or HWC image array, got shape {arr.shape}. inset.size must be positive,
+        got {inset.size}. Inset starts outside image: x={x0}, y={y0}. Inset exceeds image
+        bounds. Inset x=[{x0}, {x1}), y=[{y0}, {y1}); image width={w}, height={h}.
+    """
     arr = np.asarray(arr)
 
     if arr.ndim not in (2, 3):
@@ -1184,6 +1627,32 @@ def _load_real_life_unet_input_tile(
     """
     Load a real-life microscopy image and crop the selected UNet input tile.
 
+    Parameters
+    ----------
+    ext_images_dir : str
+        Root directory containing external microscopy image sets.
+    image_config : dict[str, Any]
+        Image-processing configuration used to read or segment the selected image.
+    page : int
+        Page index selected from the multi-page image or document. Default is ``0``.
+    max_mp : Optional[float]
+        Maximum image area in megapixels before downsampling. Default is ``200.0``.
+
+    Returns
+    -------
+    dict[str, Any]
+        Result mapping with keys ``full_image``, ``tile``, ``inset``, ``base_dir``,
+        ``image_path``, ``load_report``.
+
+    Raises
+    ------
+    ValueError
+        Expected cropped tile to be HWC, got shape {tile.shape}. Unexpected tile shape
+        {tile.shape}; expected ({inset.size}, {inset.size}, C). Expected 3-channel tile, got
+        shape {tile.shape}.
+
+    Notes
+    -----
     Returns:
         full_image: HWC float32 image in [0, 1]
         tile: HWC float32 512x512 crop in [0, 1]
@@ -1250,6 +1719,35 @@ def generate_unet_comparison(
     """
     Compare small, medium, and large UNets on a real-life microscopy crop.
 
+    Parameters
+    ----------
+    models_dir : str
+        Directory containing model checkpoint files.
+    ext_images_dir : str
+        Root directory containing external microscopy image sets.
+    unet_base_config : Any
+        Base UNet segmentation configuration copied for the experiment.
+    segmenter_class : Any
+        Segmenter implementation instantiated for the comparison.
+    output_dir : str
+        Directory in which generated outputs are stored.
+    output_filename : str
+        Filename used for the cached or generated output. Default is
+        ``'unet_segmentation_comparison'``.
+    redo_analysis : bool
+        Whether to recompute analysis instead of using available cached results. Default is
+        ``False``.
+    image_config : Optional[dict[str, Any]]
+        Image-processing configuration used to read or segment the selected image. Default
+        is ``None``.
+
+    Returns
+    -------
+    dict
+        Depending on the input and branch, returns ``existing_file``, ``res``.
+
+    Notes
+    -----
     The image is loaded with scale=True, so the input tile is float32 in [0, 1].
     Further UNet normalization is handled by SegmenterUNet according to the
     model config.
@@ -1319,6 +1817,25 @@ def segment_image_unet(models_dir: str,
                        unet_base_config: Any,
                        segmenter_class: Any) -> np.ndarray:
 
+    """
+    Run the configured small UNet and return its probability heads.
+
+    Parameters
+    ----------
+    models_dir : str
+        Directory containing model checkpoint files.
+    img : numpy.ndarray
+        Input image array.
+    unet_base_config : Any
+        Base UNet segmentation configuration copied for the experiment.
+    segmenter_class : Any
+        Segmenter implementation instantiated for the comparison.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``pred``.
+    """
     cfg = _prep_config_for_unet_comparison(unet_base_config, models_dir, "small")
     seg = segmenter_class.from_config(cfg)
     pred = seg(img)["probs"]
@@ -1326,6 +1843,26 @@ def segment_image_unet(models_dir: str,
 
 def segment_well_plates(output_dir: str,
                         output_filename: str = "well_results.dict") -> dict:
+    """
+    Read a cached well-result dictionary when the existing branch permits it.
+
+    Parameters
+    ----------
+    output_dir : str
+        Directory in which generated outputs are stored.
+    output_filename : str
+        Filename used for the cached or generated output. Default is
+        ``'well_results.dict'``.
+
+    Returns
+    -------
+    dict
+        A cached well-result dictionary when the existing branch permits it.
+
+    Notes
+    -----
+    This existing helper only contains a cache-read branch. It refers to the global name redo_analysis, which is not defined in this module; an existing cache may therefore trigger NameError. No segmentation is performed by the current body.
+    """
     output_file = os.path.join(output_dir, f"{output_filename}.dict")
     existing_file = check_for_file(output_file)
     if existing_file is not None and not redo_analysis:
@@ -1339,6 +1876,28 @@ def instance_labels_to_rgb(
     background_label: int = 0,
     seed: int = 42,
 ) -> np.ndarray:
+    """
+    Assign reproducible random uint8 RGB colors to instance labels.
+
+    Parameters
+    ----------
+    label_img : numpy.ndarray
+        Integer image whose positive values identify distinct instances.
+    background_label : int
+        Instance label reserved for the background. Default is ``0``.
+    seed : int
+        Random seed for reproducible sampling. Default is ``42``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``rgb_img``.
+
+    Raises
+    ------
+    ValueError
+        label_img must be a 2D array
+    """
     if label_img.ndim != 2:
         raise ValueError("label_img must be a 2D array")
 
@@ -1364,6 +1923,28 @@ def resize_square_image(
     target_size: tuple[int, int] = TARGET_IMAGE_SIZE,
     interpolation: int = cv2.INTER_LINEAR,
 ) -> np.ndarray:
+    """
+    Require a square image and resize it with the supplied OpenCV interpolation.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+    target_size : tuple[int, int]
+        OpenCV output size as (width, height), in pixels. Default is ``TARGET_IMAGE_SIZE``.
+    interpolation : int
+        OpenCV interpolation flag used for resizing. Default is ``cv2.INTER_LINEAR``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``cv2.resize(image, target_size, interpolation=interpolation)``.
+
+    Raises
+    ------
+    ValueError
+        image must have shape (H, W) or (H, W, C) image must already be square
+    """
     if image.ndim not in (2, 3):
         raise ValueError("image must have shape (H, W) or (H, W, C)")
 
@@ -1375,10 +1956,50 @@ def resize_square_image(
 
 
 def prepare_image(image: np.ndarray, is_segmentation: bool = False) -> np.ndarray:
+    """
+    Resize a square display image using nearest-neighbor or cubic interpolation.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+    is_segmentation : bool
+        Whether the input is a label or segmentation display requiring nearest-neighbor
+        resizing. Default is ``False``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``resize_square_image(image, interpolation=interpolation)``.
+    """
     interpolation = cv2.INTER_NEAREST if is_segmentation else cv2.INTER_CUBIC
     return resize_square_image(image, interpolation=interpolation)
 
 def crop_square(image: np.ndarray, x: int, y: int, length: int) -> np.ndarray:
+    """
+    Extract a square crop after checking its bounds and positive side length.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+    x : int
+        Horizontal column coordinate in pixels.
+    y : int
+        Vertical row coordinate in pixels.
+    length : int
+        Side length of the square crop, in pixels.
+
+    Returns
+    -------
+    numpy.ndarray
+        A square crop after checking its bounds and positive side length.
+
+    Raises
+    ------
+    ValueError
+        length must be > 0 Crop square is outside image bounds
+    """
     if length <= 0:
         raise ValueError("length must be > 0")
 
@@ -1395,6 +2016,26 @@ def _load_crop_resize_image(
     crop_params: tuple[int, int, int],
     scale: bool = True,
 ) -> np.ndarray:
+    """
+    Load an image and extract the requested square crop.
+
+    Parameters
+    ----------
+    file_name : str
+        File path or unique basename identifying the selected FCS file.
+    base_dir : str
+        Directory under which the result is resolved.
+    crop_params : tuple[int, int, int]
+        Square crop as (x, y, side length), in pixels.
+    scale : bool
+        Whether image loading scales the source intensities before cropping. Default is
+        ``True``.
+
+    Returns
+    -------
+    numpy.ndarray
+        An image and extract the requested square crop.
+    """
     image, _ = load_image(file_name, base_dir=base_dir, scale=scale, as_chw=False)
     x, y, length = crop_params
     image = crop_square(image, x=x, y=y, length=length)
@@ -1408,6 +2049,25 @@ def load_or_create_figure_1_image_cache(
     force_recompute: bool = False,
 ) -> dict[str, np.ndarray]:
 
+    """
+    Load cached example arrays or regenerate and save image and segmentation examples.
+
+    Parameters
+    ----------
+    cache_path : str
+        Path to the persisted intermediate-data cache.
+    model_dir : str
+        Directory containing model checkpoint files. Default is ``'../final/models'``.
+    model_file : str
+        Model checkpoint filename. Default is ``'best_small_tiles_S512_seed187.pth'``.
+    force_recompute : bool
+        If True, regenerate data even when the cache exists. Default is ``False``.
+
+    Returns
+    -------
+    dict[str, numpy.ndarray]
+        Cached example arrays or regenerate and save image and segmentation examples.
+    """
     if os.path.exists(cache_path) and not force_recompute:
         cached = np.load(cache_path)
         return {key: cached[key] for key in cached.files}
@@ -1489,6 +2149,26 @@ def load_or_create_figure_1_image_cache(
     return data
 
 def _read_rgb_image(image_path: str) -> np.ndarray:
+    """
+    Read an image with OpenCV and convert BGR or BGRA channels for display.
+
+    Parameters
+    ----------
+    image_path : str
+        Image path relative to the job root.
+
+    Returns
+    -------
+    numpy.ndarray
+        An image with OpenCV and convert BGR or BGRA channels for display.
+
+    Raises
+    ------
+    FileNotFoundError
+        Could not read image: {image_path}
+    ValueError
+        Unsupported image shape: {img.shape}
+    """
     img = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
     if img is None:
         raise FileNotFoundError(f"Could not read image: {image_path}")
@@ -1533,6 +2213,74 @@ def fill_and_recalculate_frac_pos_from_scores_random(
     3. Recalculate corrected_frac_pos for humans and methods.
     4. Recalculate adjusted_score from corrected_frac_pos by default.
 
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Dataframe containing the input observations and metadata.
+    human_annotators : tuple
+        Names identifying human-annotation rows in the comparison table. Default is ``('1',
+        '2')``.
+    method_annotators : tuple
+        Names identifying automated-method rows in the comparison table. Default is
+        ``('unet', 'imageJ')``.
+    score_col : str
+        Column containing the original categorical score. Default is ``'score'``.
+    adjusted_score_col : str
+        Column containing the score after control-based adjustment. Default is
+        ``'adjusted_score'``.
+    annotator_col : str
+        Column containing the annotator or method identifier. Default is ``'Annotator'``.
+    experiment_col : str
+        Column identifying the source experiment. Default is ``'Folder'``.
+    role_col : str
+        Column identifying sample, positive-control, and negative-control roles. Default is
+        ``'role'``.
+    frac_pos_col : str
+        Column containing the original positive-cell fraction. Default is ``'frac_pos'``.
+    corrected_frac_pos_col : str
+        Column containing the control-corrected positive-cell fraction. Default is
+        ``'corrected_frac_pos'``.
+    score_source_for_adjusted : {"corrected_frac_pos", "frac_pos"}
+        Which fraction column to use for recalculating adjusted_score.
+
+        Usually use:
+            "corrected_frac_pos"
+
+        Use "frac_pos" only if you want raw, uncorrected scores. Default is
+        ``'corrected_frac_pos'``.
+    pc_ref_col : str
+        Column containing the positive-control reference value. Default is ``'pc_ref_raw'``.
+    nc_ref_col : str
+        Column containing the negative-control reference value. Default is ``'nc_ref_raw'``.
+    score_to_range : mapping or None
+        Mapping from categorical scores to positive-fraction intervals. Default is ``None``.
+    positive_role : str
+        Role label used to identify positive-control rows. Default is ``'positive'``.
+    negative_role : str
+        Role label used to identify negative-control rows. Default is ``'negative'``.
+    overwrite_human_frac_pos : bool
+        Whether to replace existing human positive-fraction values. Default is ``True``.
+    overwrite_corrected_frac_pos : bool
+        Whether to replace existing control-corrected fractions. Default is ``True``.
+    overwrite_adjusted_score : bool
+        Whether to replace existing adjusted score values. Default is ``True``.
+    random_seed : int
+        Seed used to initialize the local random-number generator. Default is ``0``.
+
+    Returns
+    -------
+    tuple
+        Tuple containing ``df_out``, ``refs``, in that order.
+
+    Raises
+    ------
+    ValueError
+        score_source_for_adjusted must be 'corrected_frac_pos' or 'frac_pos' Missing
+        required columns: {sorted(missing_cols)} Some human scores could not be mapped to
+        ranges. Unmapped scores: {bad_scores}
+
+    Notes
+    -----
     Correction is done separately per:
         Folder + Annotator
 
@@ -1549,16 +2297,6 @@ def fill_and_recalculate_frac_pos_from_scores_random(
         <= 50  -> 4
         <= 80  -> 6
         > 80   -> 8
-
-    Parameters
-    ----------
-    score_source_for_adjusted : {"corrected_frac_pos", "frac_pos"}
-        Which fraction column to use for recalculating adjusted_score.
-
-        Usually use:
-            "corrected_frac_pos"
-
-        Use "frac_pos" only if you want raw, uncorrected scores.
     """
 
     df_out = df.copy()
@@ -1708,6 +2446,20 @@ def fill_and_recalculate_frac_pos_from_scores_random(
         score_input_col = frac_pos_col
 
     def convert_frac_pos_to_score(frac_pos):
+        """
+        Convert a positive percentage to the configured discrete score bins.
+
+        Parameters
+        ----------
+        frac_pos : object
+            Positive-cell fraction used to assign the categorical score.
+
+        Returns
+        -------
+        object or int
+            Depending on the input and branch, returns ``np.nan``, ``1``, ``2``, ``4``, ``6``,
+            ``8``.
+        """
         if pd.isna(frac_pos):
             return np.nan
         if frac_pos <= 10:
@@ -1739,6 +2491,19 @@ def fill_and_recalculate_frac_pos_from_scores_random(
 
 def get_score_frame(validation_results_dir):
 
+    """
+    Load annotator score tables, combine them, and fill derived positive percentages.
+
+    Parameters
+    ----------
+    validation_results_dir : str or os.PathLike
+        Directory containing cached validation tables and analysis results.
+
+    Returns
+    -------
+    object
+        Annotator score tables, combine them, and fill derived positive percentages.
+    """
     from ..validation.experiment_readouts import concat_annotator_frames
 
     """\

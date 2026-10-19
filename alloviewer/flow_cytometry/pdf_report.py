@@ -63,6 +63,19 @@ PAGE_SIZE_MODE_DEFAULT = "SAFE"  # "SAFE" | "A4" | "LETTER"
 
 @dataclass
 class ReportMeta:
+    """
+    Store the report's job identifier and positivity metric and threshold.
+
+    Attributes
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory. Default is
+        ``''``.
+    positivity_metric : Optional[str]
+        Metric used to label an FCXM result as positive. Default is ``None``.
+    positivity_threshold : Optional[float]
+        Positive-call cutoff in the units of the selected assay metric. Default is ``None``.
+    """
     job_id: str = ""
     positivity_metric: Optional[str] = None
     positivity_threshold: Optional[float] = None
@@ -129,7 +142,14 @@ METRIC_DISPLAY = {key: display for key, display, _header in METRIC_ORDER}
 
 
 def _safe_pagesizes() -> tuple[tuple[float, float], tuple[float, float]]:
-    """Return (portrait, landscape) that fits within both A4 and Letter."""
+    """
+    Return (portrait, landscape) that fits within both A4 and Letter.
+
+    Returns
+    -------
+    tuple[tuple[float, float], tuple[float, float]]
+        Tuple containing ``portrait``, ``landscape``, in that order.
+    """
     a4w, a4h = A4
     lw, lh = LETTER
     portrait = (min(a4w, lw), min(a4h, lh))
@@ -138,6 +158,19 @@ def _safe_pagesizes() -> tuple[tuple[float, float], tuple[float, float]]:
 
 
 def _pagesizes(mode: str) -> tuple[tuple[float, float], tuple[float, float]]:
+    """
+    Select A4, Letter, or the shared-safe portrait and landscape sizes.
+
+    Parameters
+    ----------
+    mode : str
+        Page-size name, A4 or LETTER; unrecognized values use the safe default.
+
+    Returns
+    -------
+    tuple[tuple[float, float], tuple[float, float]]
+        A4, Letter, or the shared-safe portrait and landscape sizes.
+    """
     m = (mode or PAGE_SIZE_MODE_DEFAULT).upper()
     if m == "A4":
         return (A4, (A4[1], A4[0]))
@@ -152,6 +185,24 @@ def _fig_to_png_bytes(
     *,
     tight: bool = True,
 ) -> bytes:
+    """
+    Render a Matplotlib figure to PNG bytes and close it.
+
+    Parameters
+    ----------
+    fig : plt.Figure
+        Matplotlib figure containing the subplot grid.
+    dpi : int
+        Output image resolution in dots per inch. Default is ``150``.
+    tight : bool
+        Whether the figure bounding box is trimmed when exporting the PNG. Default is
+        ``True``.
+
+    Returns
+    -------
+    bytes
+        A Matplotlib figure to PNG bytes and close it.
+    """
     if tight:
         try:
             fig.tight_layout(pad=0.4)
@@ -164,10 +215,36 @@ def _fig_to_png_bytes(
 
 
 def _basename(path_or_name: str) -> str:
+    """
+    Return the basename of a path-like value, treating empty values as empty text.
+
+    Parameters
+    ----------
+    path_or_name : str
+        File path or filename to shorten.
+
+    Returns
+    -------
+    str
+        The basename of a path-like value, treating empty values as empty text.
+    """
     return os.path.basename(str(path_or_name or ""))
 
 
 def _build_file_key_map(plot_cache: Dict[str, Any]) -> Dict[str, str]:
+    """
+    Map FCS basenames to plot-cache keys, with later duplicates taking precedence.
+
+    Parameters
+    ----------
+    plot_cache : Dict[str, Any]
+        Cached per-file FCXM plotting data.
+
+    Returns
+    -------
+    Dict[str, str]
+        Computed value of ``out``.
+    """
     out: Dict[str, str] = {}
     for k, e in (plot_cache or {}).items():
         raw = e.get("file_key_raw") or e.get("file_key") or k
@@ -176,6 +253,20 @@ def _build_file_key_map(plot_cache: Dict[str, Any]) -> Dict[str, str]:
 
 
 def _safe_decode_meta(value: Any) -> str:
+    """
+    Decode and strip a metadata value, returning empty text for None.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``''``, ``value.decode(enc).strip()``,
+        ``value.decode(errors='ignore').strip()``, ``str(value).strip()``.
+    """
     if value is None:
         return ""
 
@@ -191,10 +282,38 @@ def _safe_decode_meta(value: Any) -> str:
 
 
 def _normalize_meta_key(key: Any) -> str:
+    """
+    Normalize metadata key case, spacing, underscores, and hyphens.
+
+    Parameters
+    ----------
+    key : Any
+        Mapping key or attribute name selected by the helper.
+
+    Returns
+    -------
+    str
+        Computed value of ``str(key).strip().lower().replace('_', ' ').replace('-', ' ')``.
+    """
     return str(key).strip().lower().replace("_", " ").replace("-", " ")
 
 
 def _extract_tube_name_from_meta(meta: Dict[str, Any], fallback: str) -> str:
+    """
+    Choose the first nonempty tube or sample name from known metadata keys.
+
+    Parameters
+    ----------
+    meta : Dict[str, Any]
+        FCS TEXT metadata mapping searched for a nonempty tube or sample name.
+    fallback : str
+        Value returned when no usable metadata value is found.
+
+    Returns
+    -------
+    str
+        The first nonempty tube or sample name from known metadata keys.
+    """
     if not meta:
         return fallback
 
@@ -228,6 +347,19 @@ def _extract_tube_name_from_meta(meta: Dict[str, Any], fallback: str) -> str:
 
 
 def _metadata_from_path(path_like: Any) -> Dict[str, Any]:
+    """
+    Read FCS TEXT metadata, returning an empty mapping on failure.
+
+    Parameters
+    ----------
+    path_like : Any
+        Path-like value identifying an FCS file.
+
+    Returns
+    -------
+    Dict[str, Any]
+        FCS TEXT metadata, returning an empty mapping on failure.
+    """
     try:
         path = os.fspath(path_like)
         if not path or not os.path.exists(path) or not str(path).lower().endswith(".fcs"):
@@ -240,6 +372,21 @@ def _metadata_from_path(path_like: Any) -> Dict[str, Any]:
 
 
 def _tube_name_from_entry(entry: Dict[str, Any], *, fallback: str) -> str:
+    """
+    Use cached display names or FCS metadata to name a cache entry.
+
+    Parameters
+    ----------
+    entry : Dict[str, Any]
+        Cached event arrays, masks, and metadata for one FCS file.
+    fallback : str
+        Value returned when no usable metadata value is found.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``value``, ``tube``, ``fallback``.
+    """
     for key in ("tube_name", "display_name", "fcs_display_name"):
         value = str(entry.get(key) or "").strip()
         if value:
@@ -258,6 +405,19 @@ def _tube_name_from_entry(entry: Dict[str, Any], *, fallback: str) -> str:
 
 
 def _safe_float(value: Any) -> float:
+    """
+    Read a finite float from a scalar or supported nested value field, otherwise NaN.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    float
+        A finite float from a scalar or supported nested value field, otherwise NaN.
+    """
     if value is None:
         return float("nan")
     if isinstance(value, dict):
@@ -275,11 +435,39 @@ def _safe_float(value: Any) -> float:
 
 
 def _fmt_num(x: Any, nd: int = 2) -> str:
+    """
+    Format a finite number with fixed decimal places, otherwise a dash.
+
+    Parameters
+    ----------
+    x : Any
+        Scalar value to format or convert using the helper's stated rules.
+    nd : int
+        Number of decimal places in numeric output. Default is ``2``.
+
+    Returns
+    -------
+    str
+        A finite number with fixed decimal places, otherwise a dash.
+    """
     v = _safe_float(x)
     return "-" if v != v else f"{v:.{nd}f}"
 
 
 def _fmt_threshold(x: Any) -> str:
+    """
+    Format a finite cutoff in general numeric format, otherwise a dash.
+
+    Parameters
+    ----------
+    x : Any
+        Scalar value to format or convert using the helper's stated rules.
+
+    Returns
+    -------
+    str
+        A finite cutoff in general numeric format, otherwise a dash.
+    """
     v = _safe_float(x)
     if v != v:
         return "-"
@@ -287,6 +475,19 @@ def _fmt_threshold(x: Any) -> str:
 
 
 def _median_mfi(values: Any) -> float:
+    """
+    Return the median of finite fluorescence values, or NaN when none exist.
+
+    Parameters
+    ----------
+    values : Any
+        Numeric values used to compute the requested statistic or transformation.
+
+    Returns
+    -------
+    float
+        The median of finite fluorescence values, or NaN when none exist.
+    """
     v = np.asarray(values if values is not None else [], dtype=float)
     v = v[np.isfinite(v)]
     if v.size == 0:
@@ -295,6 +496,21 @@ def _median_mfi(values: Any) -> float:
 
 
 def _ratio_value(mfi_sample: float, mfi_nc: float) -> float:
+    """
+    Divide sample MFI by negative-control MFI, returning NaN for invalid ratios.
+
+    Parameters
+    ----------
+    mfi_sample : float
+        Sample median fluorescence intensity in raw units.
+    mfi_nc : float
+        Negative-control median fluorescence intensity in raw units.
+
+    Returns
+    -------
+    float
+        Depending on the input and branch, returns ``float('nan')``, ``r``.
+    """
     if (mfi_sample != mfi_sample) or (mfi_nc != mfi_nc) or float(mfi_nc) == 0.0:
         return float("nan")
     r = float(mfi_sample) / float(mfi_nc)
@@ -306,7 +522,22 @@ def _ratio_value(mfi_sample: float, mfi_nc: float) -> float:
 
 
 def _raw_cutoff_from_transformed(cutoff_t: float, cofactor: float = 150.0) -> float:
-    """Invert the asinh(raw/cofactor) transform used for IgG display cutoffs."""
+    """
+    Invert the asinh(raw/cofactor) transform used for IgG display cutoffs.
+
+    Parameters
+    ----------
+    cutoff_t : float
+        IgG cutoff after the asinh transformation.
+    cofactor : float
+        Positive scale factor in asinh(raw / cofactor). Default is ``150.0``.
+
+    Returns
+    -------
+    float
+        Depending on the input and branch, returns ``float('nan')``, ``float(np.sinh(c) *
+        k)``.
+    """
     try:
         c = float(cutoff_t)
         k = float(cofactor)
@@ -318,6 +549,21 @@ def _raw_cutoff_from_transformed(cutoff_t: float, cofactor: float = 150.0) -> fl
 
 
 def _cell_par(text: str, style: ParagraphStyle) -> Paragraph:
+    """
+    Escape report text and wrap it in a ReportLab paragraph.
+
+    Parameters
+    ----------
+    text : str
+        Text content to inspect, normalize, or render.
+    style : ParagraphStyle
+        ReportLab paragraph style.
+
+    Returns
+    -------
+    Paragraph
+        Computed value of ``Paragraph(safe, style)``.
+    """
     safe = (str(text or "")
             .replace("&", "&amp;")
             .replace("<", "&lt;")
@@ -326,6 +572,19 @@ def _cell_par(text: str, style: ParagraphStyle) -> Paragraph:
 
 
 def _normalize_metric_key(metric: Optional[str]) -> Optional[str]:
+    """
+    Map recognized metric aliases to their standard key.
+
+    Parameters
+    ----------
+    metric : Optional[str]
+        Metric name or alias; None means no metric selected.
+
+    Returns
+    -------
+    Optional[str]
+        Depending on the input and branch, returns ``None``, ``canonical``, ``low``.
+    """
     if not metric:
         return None
     raw = str(metric).strip()
@@ -344,6 +603,21 @@ def _normalize_metric_key(metric: Optional[str]) -> Optional[str]:
 
 
 def _metric_from_metrics(metrics: Any, canonical: str) -> float:
+    """
+    Read a metric by its known aliases, returning NaN when unavailable.
+
+    Parameters
+    ----------
+    metrics : Any
+        Mapping of computed FCXM metrics.
+    canonical : str
+        Standard metric key used to resolve aliases and display style.
+
+    Returns
+    -------
+    float
+        A metric by its known aliases, returning NaN when unavailable.
+    """
     if not isinstance(metrics, dict):
         return float("nan")
 
@@ -369,6 +643,21 @@ def _metric_from_metrics(metrics: Any, canonical: str) -> float:
 
 
 def _value_from_aliases(metrics: Any, aliases: Tuple[str, ...]) -> float:
+    """
+    Read the first matching metric alias with a case-insensitive fallback.
+
+    Parameters
+    ----------
+    metrics : Any
+        Mapping of computed FCXM metrics.
+    aliases : Tuple[str, ...]
+        Candidate metric keys in lookup order.
+
+    Returns
+    -------
+    float
+        The first matching metric alias with a case-insensitive fallback.
+    """
     if not isinstance(metrics, dict):
         return float("nan")
 
@@ -393,7 +682,21 @@ def _mfi_values_for_row(
     rr: Dict[str, Any],
     line_series: List[Dict[str, Any]],
 ) -> Tuple[float, float, float]:
-    """Return raw MFI values: NC, PC, selected file."""
+    """
+    Return raw MFI values: NC, PC, selected file.
+
+    Parameters
+    ----------
+    rr : Dict[str, Any]
+        Result view containing selected-file metrics.
+    line_series : List[Dict[str, Any]]
+        Per-file IgG values and plotting metadata for controls and the selected file.
+
+    Returns
+    -------
+    Tuple[float, float, float]
+        Tuple containing ``mfi_nc``, ``mfi_pc``, ``mfi_sel``, in that order.
+    """
     metrics = rr.get("selected_file_metrics")
 
     mfi_sel = _value_from_aliases(metrics, ("igg_median_raw", "mfi_raw", "median_raw", "median_mfi_raw"))
@@ -412,6 +715,19 @@ def _mfi_values_for_row(
     return mfi_nc, mfi_pc, mfi_sel
 
 def _selected_pos_pct(line_series: List[Dict[str, Any]]) -> float:
+    """
+    Read the selected-file positive percentage from its line series.
+
+    Parameters
+    ----------
+    line_series : List[Dict[str, Any]]
+        Per-file IgG values and plotting metadata for controls and the selected file.
+
+    Returns
+    -------
+    float
+        The selected-file positive percentage from its line series.
+    """
     for s in line_series:
         if str(s.get("label", "")).casefold() == "selected file":
             return _safe_float(s.get("pos_pct"))
@@ -425,6 +741,25 @@ def _metric_values_for_row(
     mfi_nc: float,
     mfi_sel: float,
 ) -> Dict[str, float]:
+    """
+    Build report metrics with fallbacks for positive percent, MFI ratio, and shift.
+
+    Parameters
+    ----------
+    rr : Dict[str, Any]
+        Result view containing selected-file metrics.
+    line_series : List[Dict[str, Any]]
+        Per-file IgG values and plotting metadata for controls and the selected file.
+    mfi_nc : float
+        Negative-control median fluorescence intensity in raw units.
+    mfi_sel : float
+        Selected-file median fluorescence intensity in raw units.
+
+    Returns
+    -------
+    Dict[str, float]
+        Report metrics with fallbacks for positive percent, MFI ratio, and shift.
+    """
     metrics = rr.get("selected_file_metrics")
 
     values = {
@@ -447,6 +782,22 @@ def _metric_values_for_row(
 
 
 def _score_text(metric_values: Dict[str, float], meta: ReportMeta) -> str:
+    """
+    Label a value positive only when it strictly exceeds the selected threshold.
+
+    Parameters
+    ----------
+    metric_values : Dict[str, float]
+        Mapping of standard report metric names to numeric values.
+    meta : ReportMeta
+        Report metadata and positivity settings; None uses the report defaults.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``'-'``, ``'Positive' if float(value) >
+        float(threshold) else 'Negative'``.
+    """
     metric_key = _normalize_metric_key(meta.positivity_metric)
     threshold = _safe_float(meta.positivity_threshold)
 
@@ -461,6 +812,21 @@ def _score_text(metric_values: Dict[str, float], meta: ReportMeta) -> str:
 
 
 def _score_rule_text(meta: ReportMeta) -> str:
+    """
+    Describe the metric and strict greater-than threshold used for the report call.
+
+    Parameters
+    ----------
+    meta : ReportMeta
+        Report metadata and positivity settings; None uses the report defaults.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``'* Score calculated by the metric and
+        threshold selected in the app.'``, ``f'* Score calculated by {metric_label} >
+        {_fmt_threshold(threshold)}.'``.
+    """
     metric_key = _normalize_metric_key(meta.positivity_metric)
     threshold = _safe_float(meta.positivity_threshold)
 
@@ -477,6 +843,26 @@ def _metric_cell_style(
     normal: ParagraphStyle,
     bold: ParagraphStyle,
 ) -> ParagraphStyle:
+    """
+    Use bold text for the metric selected to determine positivity.
+
+    Parameters
+    ----------
+    canonical : str
+        Standard metric key used to resolve aliases and display style.
+    meta : ReportMeta
+        Report metadata and positivity settings; None uses the report defaults.
+    normal : ParagraphStyle
+        Regular paragraph style.
+    bold : ParagraphStyle
+        Emphasized paragraph style.
+
+    Returns
+    -------
+    ParagraphStyle
+        Computed value of ``bold if _normalize_metric_key(meta.positivity_metric) ==
+        canonical else normal``.
+    """
     return bold if _normalize_metric_key(meta.positivity_metric) == canonical else normal
 
 
@@ -484,6 +870,16 @@ def _extract_positive_marker(raw_label: str) -> Optional[str]:
     """
     From labels like "CD3 PerCP-A+ CD19 APC-Cy7-A-" return "CD3".
     Uses the first marker with a '+' channel.
+
+    Parameters
+    ----------
+    raw_label : str
+        Unnormalized population label to parse or simplify.
+
+    Returns
+    -------
+    Optional[str]
+        Depending on the input and branch, returns ``None``, ``positives[0][0]``.
     """
     toks = str(raw_label or "").split()
     pairs: List[Tuple[str, str]] = []
@@ -505,6 +901,23 @@ def _extract_positive_marker(raw_label: str) -> Optional[str]:
 
 def _find_population_name(marker: str, marker_to_population: Optional[Dict[str, str]]) -> str:
     """
+    Match an antibody marker to its configured population name.
+
+    Parameters
+    ----------
+    marker : str
+        Population marker name to match against the available labels.
+    marker_to_population : Optional[Dict[str, str]]
+        Mapping from marker names to population display labels.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``''``,
+        ``str(marker_to_population.get(marker) or '')``, ``str(v or '')``.
+
+    Notes
+    -----
     marker_to_population comes from build_panel_from_rows(panel_rows):
       key = antibody string (user-defined, often "CD3", "CD19", ...)
       value = population name (user-defined, e.g. "T-cells", "B-cells")
@@ -536,6 +949,19 @@ def population_label_for_table(raw_label: str, marker_to_population: Optional[Di
     Required output: "{marker} ({population})", based on user panel definitions.
     If population name not found, returns marker only.
     If parsing fails, returns the raw label.
+
+    Parameters
+    ----------
+    raw_label : str
+        Unnormalized population label to parse or simplify.
+    marker_to_population : Optional[Dict[str, str]]
+        Mapping from marker names to population display labels.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``str(raw_label or '')``, ``f'{marker}
+        ({pop})'``, ``marker``.
     """
     marker = _extract_positive_marker(raw_label)
     if not marker:
@@ -547,6 +973,24 @@ def population_label_for_table(raw_label: str, marker_to_population: Optional[Di
 
 
 def _subsample_points(points: List[Dict[str, Any]], max_points: int, seed: int) -> List[Dict[str, Any]]:
+    """
+    Sample plot points without replacement while retaining their relative order.
+
+    Parameters
+    ----------
+    points : List[Dict[str, Any]]
+        Scatter-point mappings containing x, y, and optional inGate values.
+    max_points : int
+        Maximum number of sampled scatter points used for plotting.
+    seed : int
+        Random seed for reproducible sampling.
+
+    Returns
+    -------
+    List[Dict[str, Any]]
+        Depending on the input and branch, returns ``points``, ``[points[int(i)] for i in
+        idx]``.
+    """
     n = len(points)
     if max_points <= 0 or n <= max_points:
         return points
@@ -557,6 +1001,16 @@ def _subsample_points(points: List[Dict[str, Any]], max_points: int, seed: int) 
 
 
 def _smart_axis(ax: plt.Axes, *, tick_label_size: float = 7.5) -> None:
+    """
+    Apply compact tick, scientific-number, grid, and spine formatting to an axis.
+
+    Parameters
+    ----------
+    ax : plt.Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    tick_label_size : float
+        Tick-label font size in points. Default is ``7.5``.
+    """
     ax.tick_params(axis="both", labelsize=tick_label_size)
     ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
     ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
@@ -581,6 +1035,33 @@ def _scatter_png(
     max_points: int,
     seed: int,
 ) -> bytes:
+    """
+    Render sampled scatter points and gate membership as PNG bytes.
+
+    Parameters
+    ----------
+    points : List[Dict[str, Any]]
+        Scatter-point mappings containing x, y, and optional inGate values.
+    title : str
+        Text displayed as the plot or panel title.
+    x_label : str
+        Horizontal-axis label.
+    y_label : str
+        Vertical-axis label.
+    width_in : float
+        Figure width in inches.
+    height_in : float
+        Figure height in inches.
+    max_points : int
+        Maximum number of sampled scatter points used for plotting.
+    seed : int
+        Random seed for reproducible sampling.
+
+    Returns
+    -------
+    bytes
+        Sampled scatter points and gate membership as PNG bytes.
+    """
     pts = _subsample_points(points, max_points=max_points, seed=seed)
 
     x = np.asarray([p.get("x", 0.0) for p in pts], dtype=float)
@@ -622,6 +1103,21 @@ def _scatter_png(
 
 
 def _wrap_label(text: str, width: int = 30) -> str:
+    """
+    Wrap a report label at word boundaries, returning a dash for empty text.
+
+    Parameters
+    ----------
+    text : str
+        Text content to inspect, normalize, or render.
+    width : int
+        Maximum line width in characters used to wrap the label. Default is ``30``.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``'-'``, ``raw``, ``'\\n'.join(parts)``.
+    """
     raw = str(text or "").strip()
     if not raw:
         return "-"
@@ -632,6 +1128,19 @@ def _wrap_label(text: str, width: int = 30) -> str:
 
 
 def _series_name(s: Dict[str, Any]) -> str:
+    """
+    Choose a line series' tube name or filename.
+
+    Parameters
+    ----------
+    s : Dict[str, Any]
+        One IgG line-series mapping.
+
+    Returns
+    -------
+    str
+        A line series' tube name or filename.
+    """
     tube = str(s.get("tube_name") or "").strip()
     if tube:
         return tube
@@ -639,6 +1148,19 @@ def _series_name(s: Dict[str, Any]) -> str:
 
 
 def _role_label_for_series(s: Dict[str, Any]) -> str:
+    """
+    Choose a selected-file, negative-control, or positive-control legend role.
+
+    Parameters
+    ----------
+    s : Dict[str, Any]
+        One IgG line-series mapping.
+
+    Returns
+    -------
+    str
+        A selected-file, negative-control, or positive-control legend role.
+    """
     label = str(s.get("label", ""))
     role = str(s.get("role", "")).upper()
 
@@ -652,11 +1174,37 @@ def _role_label_for_series(s: Dict[str, Any]) -> str:
 
 
 def _legend_label_for_series(s: Dict[str, Any]) -> str:
+    """
+    Combine a series role and wrapped file name for the legend.
+
+    Parameters
+    ----------
+    s : Dict[str, Any]
+        One IgG line-series mapping.
+
+    Returns
+    -------
+    str
+        Computed value of ``f'{role_label}\\n{_wrap_label(_series_name(s), width=30)}'``.
+    """
     role_label = _role_label_for_series(s)
     return f"{role_label}\n{_wrap_label(_series_name(s), width=30)}"
 
 
 def _style_for_series(s: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Choose line color, dash style, and draw order by series role.
+
+    Parameters
+    ----------
+    s : Dict[str, Any]
+        One IgG line-series mapping.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Line color, dash style, and draw order by series role.
+    """
     label = str(s.get("label", ""))
     role = str(s.get("role", "")).upper()
 
@@ -677,6 +1225,30 @@ def _hist_line_png(
     height_in: float,
     bins: int = 80,
 ) -> bytes:
+    """
+    Render normalized IgG histograms, an optional cutoff, and a legend to PNG.
+
+    Parameters
+    ----------
+    series : List[Dict[str, Any]]
+        IgG line-series mappings to draw.
+    cutoff : float
+        IgG positivity cutoff in the units of the supplied values.
+    title : str
+        Text displayed as the plot or panel title.
+    width_in : float
+        Figure width in inches.
+    height_in : float
+        Figure height in inches.
+    bins : int
+        Number of histogram bins, or explicit bin edges where supported by the called
+        histogram routine. Default is ``80``.
+
+    Returns
+    -------
+    bytes
+        Normalized IgG histograms, an optional cutoff, and a legend to PNG.
+    """
     vals_all: List[np.ndarray] = []
     for s in series:
         v = np.asarray(s.get("values", []), dtype=float)
@@ -745,6 +1317,20 @@ def _hist_line_png(
 
 
 def _compute_mfi_triplet(line_series: List[Dict[str, Any]]) -> Tuple[float, float, float]:
+    """
+    Compute finite-value medians for negative controls, positive controls, and the selected file.
+
+    Parameters
+    ----------
+    line_series : List[Dict[str, Any]]
+        Per-file IgG values and plotting metadata for controls and the selected file.
+
+    Returns
+    -------
+    Tuple[float, float, float]
+        Tuple containing ``_median_mfi(nc_vals)``, ``_median_mfi(pc_vals)``,
+        ``_median_mfi(sel_vals)``, in that order.
+    """
     nc_vals: List[float] = []
     pc_vals: List[float] = []
     sel_vals: List[float] = []
@@ -775,6 +1361,21 @@ def _compute_mfi_triplet(line_series: List[Dict[str, Any]]) -> Tuple[float, floa
 
 
 def _metrics_title(pop_gate: str, metric_values: Dict[str, float]) -> str:
+    """
+    Format a population label and its metrics into a three-line plot title.
+
+    Parameters
+    ----------
+    pop_gate : str
+        Population gate label displayed above a plot.
+    metric_values : Dict[str, float]
+        Mapping of standard report metric names to numeric values.
+
+    Returns
+    -------
+    str
+        A population label and its metrics into a three-line plot title.
+    """
     row1 = str(pop_gate)
 
     row2_parts = []
@@ -795,6 +1396,23 @@ def _metrics_title(pop_gate: str, metric_values: Dict[str, float]) -> str:
 
 
 def _summary_header(meta: ReportMeta, style_th: ParagraphStyle, style_th_bold: ParagraphStyle) -> List[Any]:
+    """
+    Build the file-summary table header with the selected metric emphasized.
+
+    Parameters
+    ----------
+    meta : ReportMeta
+        Report metadata and positivity settings; None uses the report defaults.
+    style_th : ParagraphStyle
+        Paragraph style for table headers.
+    style_th_bold : ParagraphStyle
+        Bold paragraph style for the selected metric header.
+
+    Returns
+    -------
+    List[Any]
+        The file-summary table header with the selected metric emphasized.
+    """
     row: List[Any] = [
         _cell_par("File", style_th),
         _cell_par("Tube", style_th),
@@ -810,6 +1428,23 @@ def _summary_header(meta: ReportMeta, style_th: ParagraphStyle, style_th_bold: P
 
 
 def _detail_header(meta: ReportMeta, style_th: ParagraphStyle, style_th_bold: ParagraphStyle) -> List[Any]:
+    """
+    Build the population-detail table header with the selected metric emphasized.
+
+    Parameters
+    ----------
+    meta : ReportMeta
+        Report metadata and positivity settings; None uses the report defaults.
+    style_th : ParagraphStyle
+        Paragraph style for table headers.
+    style_th_bold : ParagraphStyle
+        Bold paragraph style for the selected metric header.
+
+    Returns
+    -------
+    List[Any]
+        The population-detail table header with the selected metric emphasized.
+    """
     row: List[Any] = [
         _cell_par("Population", style_th),
         _cell_par("IgG+ (%)", style_th),
@@ -829,6 +1464,25 @@ def _row_metric_cells(
     style_cell: ParagraphStyle,
     style_cell_bold: ParagraphStyle,
 ) -> List[Any]:
+    """
+    Format metric values into report table cells in the configured order.
+
+    Parameters
+    ----------
+    metric_values : Dict[str, float]
+        Mapping of standard report metric names to numeric values.
+    meta : ReportMeta
+        Report metadata and positivity settings; None uses the report defaults.
+    style_cell : ParagraphStyle
+        Paragraph style for table body cells.
+    style_cell_bold : ParagraphStyle
+        Bold paragraph style for the selected metric value.
+
+    Returns
+    -------
+    List[Any]
+        Metric values into report table cells in the configured order.
+    """
     cells: List[Any] = []
     for canonical, _display, _header in METRIC_ORDER:
         st = _metric_cell_style(canonical, meta, style_cell, style_cell_bold)
@@ -837,6 +1491,14 @@ def _row_metric_cells(
 
 
 def _summary_table_style() -> TableStyle:
+    """
+    Build the grid, striped rows, and spacing for the summary table.
+
+    Returns
+    -------
+    TableStyle
+        The grid, striped rows, and spacing for the summary table.
+    """
     return TableStyle(
         [
             ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
@@ -852,6 +1514,14 @@ def _summary_table_style() -> TableStyle:
 
 
 def _detail_table_style() -> TableStyle:
+    """
+    Build the grid and spacing for the detail table.
+
+    Returns
+    -------
+    TableStyle
+        The grid and spacing for the detail table.
+    """
     return TableStyle(
         [
             ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
@@ -873,6 +1543,35 @@ def build_fcxm_summary_pdf(
     ratio_score_rules: Optional[Iterable[RatioRule]] = None,
     page_size_mode: str = PAGE_SIZE_MODE_DEFAULT,
 ) -> bytes:
+    """
+    Build an FCXM PDF with summary tables, per-file IgG curves, and gating plots.
+
+    Parameters
+    ----------
+    payload : Dict[str, Any]
+        Serialized flow-analysis result mapping containing samples and population metrics.
+    plot_cache : Dict[str, Any]
+        Cached per-file FCXM plotting data.
+    meta : Optional[ReportMeta]
+        Report metadata and positivity settings; None uses the report defaults.
+    score_rules : Optional[Iterable[ScoreRule]]
+        Accepted for call compatibility; not used by this implementation. Default is
+        ``None``.
+    ratio_score_rules : Optional[Iterable[RatioRule]]
+        Accepted for call compatibility; not used by this implementation. Default is
+        ``None``.
+    page_size_mode : str
+        Page-size mode used by the PDF report. Default is ``PAGE_SIZE_MODE_DEFAULT``.
+
+    Returns
+    -------
+    bytes
+        An FCXM PDF with summary tables, per-file IgG curves, and gating plots.
+
+    Notes
+    -----
+    Returns the PDF in memory. Positivity uses meta.positivity_metric and a strict greater-than comparison with meta.positivity_threshold. The score_rules and ratio_score_rules arguments are currently ignored. File blocks are arranged to start on odd pages.
+    """
     from reportlab.platypus.doctemplate import ActionFlowable
 
     _ = score_rules
@@ -902,15 +1601,33 @@ def build_fcxm_summary_pdf(
         """
         Force the next file block to start on an odd page.
 
+        Notes
+        -----
         Odd page = front side.
         Even page = back side.
         """
 
         def __init__(self, template_id: str = "details_landscape"):
+            """
+            Store the page template used for the next file block.
+
+            Parameters
+            ----------
+            template_id : str
+                ReportLab page-template identifier. Default is ``'details_landscape'``.
+            """
             super().__init__(())
             self.template_id = template_id
 
         def apply(self, doc):
+            """
+            Advance to the next odd page and select the detail-page template.
+
+            Parameters
+            ----------
+            doc : object
+                ReportLab document receiving page-template or drawing actions.
+            """
             doc.handle_nextPageTemplate(self.template_id)
 
             # In this ActionFlowable context, doc.page is still the current page.
@@ -975,6 +1692,16 @@ def build_fcxm_summary_pdf(
                 marker_to_population = {str(k): str(v) for k, v in mtp.items()}
 
     def footer(canvas, _doc_obj):
+        """
+        Draw the job identifier and page number in the footer.
+
+        Parameters
+        ----------
+        canvas : reportlab.pdfgen.canvas.Canvas
+            ReportLab canvas receiving drawing commands.
+        _doc_obj : reportlab.platypus.BaseDocTemplate
+            Accepted by the interface but not read by this implementation.
+        """
         canvas.saveState()
         canvas.setFont("Helvetica", 8)
         canvas.drawString(doc.leftMargin, 8 * mm, f"Job: {meta.job_id or '-'}")
@@ -986,6 +1713,16 @@ def build_fcxm_summary_pdf(
         canvas.restoreState()
 
     def _draw_title(canvas, text: str):
+        """
+        Draw the report title at the current page's top margin.
+
+        Parameters
+        ----------
+        canvas : reportlab.pdfgen.canvas.Canvas
+            ReportLab canvas receiving drawing commands.
+        text : str
+            Text content to inspect, normalize, or render.
+        """
         canvas.setFont("Helvetica-Bold", 16)
         canvas.drawString(
             doc.leftMargin,
@@ -995,6 +1732,14 @@ def build_fcxm_summary_pdf(
         canvas.setFont("Helvetica", 9)
 
     def _draw_editable_fields(canvas):
+        """
+        Draw editable report-date, laboratory, and reviewer fields.
+
+        Parameters
+        ----------
+        canvas : reportlab.pdfgen.canvas.Canvas
+            ReportLab canvas receiving drawing commands.
+        """
         form = canvas.acroForm
         field_h = 6.5 * mm
         label_w = 30 * mm
@@ -1010,6 +1755,23 @@ def build_fcxm_summary_pdf(
         y0 = canvas._pagesize[1] - doc.topMargin - 14 * mm
 
         def field(label: str, name: str, x: float, y: float, value: str = ""):
+            """
+            Draw a labeled editable text field on the report canvas.
+
+            Parameters
+            ----------
+            label : str
+                Display label or identifier for the corresponding item.
+            name : str
+                Name identifying the item being processed.
+            x : float
+                Horizontal position of the PDF form field in points.
+            y : float
+                Vertical position of the PDF form field in points.
+            value : str
+                Input value to validate, convert, or format as specified by this helper. Default is
+                ``''``.
+            """
             canvas.drawString(x, y + 1.5 * mm, label)
             form.textfield(
                 name=name,
@@ -1035,6 +1797,16 @@ def build_fcxm_summary_pdf(
         field("2nd reviewer:", "second_reviewer", x_right, y1, value="")
 
     def summary_on_page(canvas, _doc_obj):
+        """
+        Draw the summary-page footer, title, and first-page form fields.
+
+        Parameters
+        ----------
+        canvas : reportlab.pdfgen.canvas.Canvas
+            ReportLab canvas receiving drawing commands.
+        _doc_obj : reportlab.platypus.BaseDocTemplate
+            ReportLab document supplied to the page callback.
+        """
         footer(canvas, _doc_obj)
         canvas.saveState()
         if canvas.getPageNumber() == 1:
@@ -1045,6 +1817,16 @@ def build_fcxm_summary_pdf(
         canvas.restoreState()
 
     def details_on_page(canvas, _doc_obj):
+        """
+        Draw the detail-page footer and title.
+
+        Parameters
+        ----------
+        canvas : reportlab.pdfgen.canvas.Canvas
+            ReportLab canvas receiving drawing commands.
+        _doc_obj : reportlab.platypus.BaseDocTemplate
+            ReportLab document supplied to the page callback.
+        """
         footer(canvas, _doc_obj)
         canvas.saveState()
         _draw_title(canvas, "Flow Cytometry Crossmatch (FCXM) Details")
@@ -1106,6 +1888,22 @@ def build_fcxm_summary_pdf(
     gate_rank = {"All Cells": 0, "Singlets": 1, "Lymphocytes": 2}
 
     def gate_path_label(gate_label: str) -> str:
+        """
+        Add the parent gate path to a population label.
+
+        Parameters
+        ----------
+        gate_label : str
+            Population or core-gate display label.
+
+        Returns
+        -------
+        str
+            Depending on the input and branch, returns ``'All Cells'``, ``'Singlets (/All
+            Cells)'``, ``'Lymphocytes (/' + ('Singlets' if has_singlets_any else 'All Cells') +
+            ')'``, ``g + ' (/' + (('Singlets/' if has_singlets_any else '') + 'Lymphocytes') +
+            ')'``.
+        """
         g = str(gate_label or "")
         if g == "All Cells":
             return "All Cells"
@@ -1116,6 +1914,19 @@ def build_fcxm_summary_pdf(
         return g + " (/" + (("Singlets/" if has_singlets_any else "") + "Lymphocytes") + ")"
 
     def _gate_sort_key(g: str) -> Tuple[int, str]:
+        """
+        Sort core gates before population gates, then compare labels without case.
+
+        Parameters
+        ----------
+        g : str
+            Gate name used to compute the report's sorting key.
+
+        Returns
+        -------
+        Tuple[int, str]
+            Tuple containing ``int(gate_rank.get(g, 3))``, ``str(g).casefold()``, in that order.
+        """
         return (int(gate_rank.get(g, 3)), str(g).casefold())
 
     gate_to_rows: Dict[str, List[Tuple[str, List[Any]]]] = {}
@@ -1347,6 +2158,9 @@ def build_fcxm_summary_pdf(
             pops_on_page = 0
 
             def flush_pop_image_rows() -> None:
+                """
+                Append pending population-plot rows to the report and clear the row buffer.
+                """
                 nonlocal pop_image_rows
                 if not pop_image_rows:
                     return

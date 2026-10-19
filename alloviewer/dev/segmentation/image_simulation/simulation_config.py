@@ -27,6 +27,251 @@ INT_KEYS: Tuple[str, ...] = (
 @dataclass
 class SimulatorConfig:
     # --- size / geometry ---
+    """
+    Define fixed values and sampling ranges for well, cell, cluster, and artifact simulation.
+
+    Attributes
+    ----------
+    well_radius_frac : Union[float, Tuple[float, float]]
+        Well radius as a fraction of the shorter image dimension. Default is ``(0.3, 0.5)``.
+    well_center_jitter : Union[float, Tuple[float, float]]
+        Standard deviation of center displacement as a fraction of the shorter image
+        dimension. Default is ``(0.0, 0.04)``.
+    background_level : Union[float, Tuple[float, float]]
+        Base intensity of the simulated well background before color and illumination
+        effects. Default is ``(0, 0.3)``.
+    edge_boost : Union[float, Tuple[float, float]]
+        Amplitude added to the radial background illumination profile. Default is ``0.25``.
+    radial_gamma : Union[float, Tuple[float, float]]
+        Exponent of normalized radius in the background illumination profile. Default is
+        ``1.2``.
+    vignette_strength : Union[float, Tuple[float, float]]
+        Coefficient of quadratic darkening away from the image center. Default is ``0.2``.
+    background_texture_enable : Union[bool, float, Tuple[float, float]]
+        Whether to multiply the well interior by a random texture field. Default is
+        ``True``.
+    background_texture_sigma_fine : Union[float, Tuple[float, float]]
+        Fine texture Gaussian width in full-resolution pixels. Default is ``(0.25, 0.8)``.
+    background_texture_sigma_coarse : Union[float, Tuple[float, float]]
+        Coarse texture Gaussian width in full-resolution pixels. Default is ``(1.0, 2.5)``.
+    background_texture_fine_weight : Union[float, Tuple[float, float]]
+        Relative weight of the fine texture component. Default is ``(0.9, 1.0)``.
+    background_texture_coarse_weight : Union[float, Tuple[float, float]]
+        Relative weight of the coarse texture component. Default is ``(0.0, 0.08)``.
+    background_texture_strength : Union[float, Tuple[float, float]]
+        Amplitude of the standardized multiplicative texture variation. Default is ``(0.01,
+        0.04)``.
+    background_texture_clip : Tuple[float, float]
+        Lower and upper clipping bounds for the texture multiplier. Default is ``(0.1,
+        1.6)``.
+    n_cells : Union[int, Tuple[int, int]]
+        Number of true cell instances requested for the simulated image. Default is ``(10,
+        2000)``.
+    cell_diameter_bounds_by_short_side : Optional[Tuple[Tuple[float, float, float], ...]]
+        Calibration rows of (short image side, minimum diameter, maximum diameter), in
+        pixels; None selects the legacy diameter model. Default is ``((1620.0, 7.0, 11.0),
+        (3024.0, 11.0, 15.0))``.
+    cell_diameter_center_margin_frac : Union[float, Tuple[float, float]]
+        Fraction of the calibrated diameter interval excluded when sampling its central
+        diameter. Default is ``0.2``.
+    cell_diameter_sigma_frac : Union[float, Tuple[float, float]]
+        Diameter spread as a fraction of the calibrated diameter interval. Default is
+        ``0.18``.
+    cell_diameter_min_sigma_px : Union[float, Tuple[float, float]]
+        Minimum standard deviation of sampled cell diameters, in pixels. Default is
+        ``0.25``.
+    cell_diameter : Union[float, Tuple[float, float]]
+        Reference cell diameter in pixels for the legacy size model. Default is ``(7.0,
+        12.0)``.
+    cell_diameter_reference_short_side : Union[float, Tuple[float, float]]
+        Reference short image dimension in pixels for legacy diameter scaling. Default is
+        ``1620.0``.
+    cell_diameter_size_exponent : Union[float, Tuple[float, float]]
+        Power applied to the image-size ratio in the legacy diameter model. Default is
+        ``0.75``.
+    cell_diameter_scale_clip : Optional[Tuple[float, float]]
+        Optional lower and upper bounds on the legacy diameter scale factor. Default is
+        ``(0.85, 2.0)``.
+    large_cell_frac : Union[float, Tuple[float, float]]
+        Fraction of cells assigned to the larger-cell component, clipped to [0, 1]. Default
+        is ``(0.0, 0.2)``.
+    large_cell_diameter_factor : Union[float, Tuple[float, float]]
+        Multiplier for large-cell diameters in the legacy model only. Default is ``(1.15,
+        1.5)``.
+    cell_ellipse_enable : Union[bool, float, Tuple[float, float]]
+        Whether cells use elliptical cores instead of circular cores. Default is ``True``.
+    cell_random_rotation : Union[bool, float, Tuple[float, float]]
+        Whether to sample each ellipse orientation over a full rotation. Default is
+        ``True``.
+    frac_positive : Union[float, Tuple[float, float]]
+        Simulated fraction of positive cells, on a 0-1 scale. Default is ``(0.0, 1.0)``.
+    color_jitter : Union[float, Tuple[float, float]]
+        Standard deviation of multiplicative Gaussian jitter in each RGB component. Default
+        is ``(0.0, 0.2)``.
+    sigma_in : Union[Tuple[float, float], Tuple[float, float]]
+        Lower and upper bounds of the in-focus cell rendering sigma, in pixels. Default is
+        ``(0.06, 0.1)``.
+    sigma_out : Union[Tuple[float, float], Tuple[float, float]]
+        Lower and upper bounds of the out-of-focus cell rendering sigma, in pixels. Default
+        is ``(0.08, 0.16)``.
+    focus_frac_in : Union[float, Tuple[float, float]]
+        Probability of selecting the in-focus rendering-sigma range. Default is ``(0.0,
+        1.0)``.
+    in_focus_sigma_thresh : Optional[Union[float, Tuple[float, float]]]
+        Optional maximum sigma for the additional focus-filtered audit masks; standard
+        targets retain all cells. Default is ``None``.
+    boundary_width : Union[int, Tuple[int, int]]
+        Legacy argument retained for compatibility; boundary generation uses internal
+        constants instead. Default is ``2``.
+    rim_bias : Union[float, Tuple[float, float]]
+        Probability of sampling a center in the outer annulus of the well. Default is
+        ``(0.5, 0.95)``.
+    rim_band : Union[float, Tuple[float, float]]
+        Width of the outer annulus as a fraction of well radius. Default is ``(0.1, 0.5)``.
+    edge_clamp : Union[float, Tuple[float, float]]
+        Strength of shifting annular cell centers toward the well wall. Default is ``(0.1,
+        0.65)``.
+    cluster_enable : Union[bool, float, Tuple[float, float]]
+        Whether to assign and place groups of neighboring cells. Default is ``True``.
+    clustered_cell_frac : Union[float, Tuple[float, float]]
+        Fraction of cells selected for cluster assignment. Default is ``(0.3, 0.8)``.
+    cluster_size_range : Tuple[int, int]
+        Inclusive lower and upper bounds on cells per cluster. Default is ``(2, 35)``.
+    cluster_contact_factor_range : Tuple[float, float]
+        Range of center separation factors relative to the sum of cell radii for chain-like
+        clusters. Default is ``(1.02, 1.5)``.
+    cluster_core_min_sep_factor : Union[float, Tuple[float, float]]
+        Minimum separation factor relative to summed core radii during cluster placement.
+        Default is ``(0.9, 0.94)``.
+    cluster_chain_probability : Union[float, Tuple[float, float]]
+        Probability of extending a cluster from its most recent member. Default is ``(0.25,
+        0.75)``.
+    cluster_angle_jitter : Union[float, Tuple[float, float]]
+        Angular variation applied when extending a chain-like cluster, in radians. Default
+        is ``(0.55, 1.1)``.
+    cluster_packed_probability : Union[float, Tuple[float, float]]
+        Base probability of using compact placement for a cell cluster. Default is ``(0.35,
+        0.7)``.
+    cluster_packed_size_bias_range : Tuple[int, int]
+        Cluster-size interval over which the preference for compact placement increases.
+        Default is ``(3, 15)``.
+    cluster_packed_contact_factor_range : Tuple[float, float]
+        Range of radius-based center separation factors for compact clusters. Default is
+        ``(1.02, 1.5)``.
+    cluster_packed_candidate_count : Union[int, Tuple[int, int]]
+        Number of trial positions scored for each compact-cluster placement step. Default is
+        ``(6, 12)``.
+    cluster_packed_contact_bonus : Union[float, Tuple[float, float]]
+        Weight favoring candidate positions that contact existing cluster members. Default
+        is ``(1.0, 2.0)``.
+    cluster_packed_region_join_probability : Union[float, Tuple[float, float]]
+        Probability of seeding a compact cluster beside a previously placed compact region.
+        Default is ``(0.2, 0.45)``.
+    cluster_packed_region_contact_factor_range : Tuple[float, float]
+        Range of separation factors used when joining an existing compact region. Default is
+        ``(0.95, 1.12)``.
+    cluster_seed_tries : Union[int, Tuple[int, int]]
+        Maximum attempts to place a cluster's initial center. Default is ``120``.
+    cluster_member_tries : Union[int, Tuple[int, int]]
+        Maximum placement attempts per additional cluster member. Default is ``32``.
+    cluster_pack_min_sep_factor : Union[float, Tuple[float, float]]
+        Radius-based minimum separation factor used for cells in the same cluster during
+        overlap resolution. Default is ``(0.9, 0.94)``.
+    min_cell_sep_px : Optional[Union[float, Tuple[float, float]]]
+        Optional fixed center separation in pixels; None uses pair-specific cell radii.
+        Default is ``None``.
+    rim_min_sep_px : Union[int, Tuple[int, int]]
+        Additional minimum center spacing used for cells near the well rim, in pixels.
+        Default is ``(4, 20)``.
+    pack_iters : Union[int, Tuple[int, int]]
+        Maximum iterations of pairwise overlap resolution. Default is ``(10, 20)``.
+    pack_strength : Union[float, Tuple[float, float]]
+        Fraction of a detected overlap applied as a center displacement per iteration.
+        Default is ``(0.0, 1.0)``.
+    wall_margin_px : Union[float, Tuple[float, float]]
+        Margin between a cell's placement radius and the well wall, in pixels. Default is
+        ``(2.0, 20.0)``.
+    side_bias_enable : Union[bool, float, Tuple[float, float]]
+        Whether angular sampling favors a selected side of the well. Default is ``True``.
+    side_bias_theta : Union[float, Tuple[float, float]]
+        Preferred angle for the side-biased distribution, in radians. Default is ``(0.0,
+        3.141)``.
+    side_bias_strength : Union[float, Tuple[float, float]]
+        Maximum mixture weight for side-biased rather than uniform angular sampling. Default
+        is ``(0.5, 0.9)``.
+    side_bias_kappa : Union[float, Tuple[float, float]]
+        Concentration parameter of the side-biased von Mises distribution. Default is
+        ``(0.0, 10.0)``.
+    side_bias_inner_frac : Union[float, Tuple[float, float]]
+        Normalized well radius below which side bias is disabled. Default is ``(0.0, 1.0)``.
+    wall_blur_sigma : Union[float, Tuple[float, float]]
+        Gaussian width of the visible well-wall glow, in pixels. Default is ``(6.0, 18.0)``.
+    ring_artifacts : Union[int, Tuple[int, int]]
+        Number of additional faint rings rendered around the well wall. Default is ``(0,
+        2)``.
+    ring_sigma_range : Union[Tuple[float, float], Tuple[float, float]]
+        Lower and upper Gaussian widths for ring artifacts, in pixels. Default is ``(6.0,
+        18.0)``.
+    ring_alpha_range : Union[Tuple[float, float], Tuple[float, float]]
+        Lower and upper intensity amplitudes for ring artifacts. Default is ``(0.01, 0.1)``.
+    ghost_enable : Union[bool, float, Tuple[float, float]]
+        Whether to render blurred ghost cells outside the well without adding target
+        instances. Default is ``True``.
+    ghost_density : Union[float, Tuple[float, float]]
+        Ghost count relative to the number of true cells selected near the well rim. Default
+        is ``(0.0, 1.0)``.
+    ghost_offset_px : Union[float, Tuple[float, float]]
+        Base outward displacement of ghost centers from the well wall, in pixels. Default is
+        ``(10.0, 50.0)``.
+    ghost_offset_jitter : Union[float, Tuple[float, float]]
+        Random variation in ghost radial displacement, in pixels. Default is ``(1.0,
+        10.0)``.
+    ghost_sigma : Union[Tuple[float, float], Tuple[float, float]]
+        Lower and upper Gaussian widths of ghost rendering, in pixels. Default is ``(2.5,
+        6.0)``.
+    ghost_dilate : Union[float, Tuple[float, float]]
+        Scaling factor for the bounding radius of each ghost-rendering patch. Default is
+        ``1.0``.
+    ghost_intensity : Union[float, Tuple[float, float]]
+        Lower and upper ghost brightness multipliers. Default is ``(0.02, 0.3)``.
+    ghost_stretch : Union[float, Tuple[float, float]]
+        Major-to-minor axis ratio of elongated ghost patches. Default is ``(0.2, 3.0)``.
+    ghost_trail : Union[int, Tuple[int, int]]
+        Number of offset patches used to render a ghost trail. Default is ``(1, 3)``.
+    ghost_trail_decay : Union[float, Tuple[float, float]]
+        Multiplicative brightness decay between successive ghost-trail patches. Default is
+        ``0.6``.
+    dirt_density : Union[float, Tuple[float, float]]
+        Density controlling how many debris patches are generated in the well. Default is
+        ``(0.0, 5e-05)``.
+    dirt_size : Union[Tuple[int, int], Tuple[int, int]]
+        Lower and upper bounds controlling debris patch extent, in pixels. Default is ``(1,
+        8)``.
+    dirt_sigma : Union[Tuple[float, float], Tuple[float, float]]
+        Lower and upper blur widths for debris patches, in pixels. Default is ``(0.0,
+        2.0)``.
+    dirt_alpha : Union[Tuple[float, float], Tuple[float, float]]
+        Lower and upper intensity amplitudes for debris patches. Default is ``(0.1, 1.0)``.
+    reflect_enable : Union[bool, float, Tuple[float, float]]
+        Whether to add radial reflection artifacts outside the well. Default is ``True``.
+    reflect_n : Union[int, Tuple[int, int]]
+        Number of reflection patches around the well wall. Default is ``(1, 10)``.
+    reflect_theta_sigma : Union[float, Tuple[float, float]]
+        Angular Gaussian width of each reflection, in radians. Default is ``(0.05, 0.2)``.
+    reflect_radial_sigma : Union[float, Tuple[float, float]]
+        Radial Gaussian width of each reflection, in pixels. Default is ``(6.0, 18.0)``.
+    reflect_offset_range : Union[Tuple[float, float], Tuple[float, float]]
+        Range of outward radial reflection offsets from the wall, in pixels. Default is
+        ``(10, 100.0)``.
+    reflect_alpha_range : Union[Tuple[float, float], Tuple[float, float]]
+        Lower and upper reflection intensity amplitudes. Default is ``(0.05, 0.2)``.
+    reflect_wobble : Union[float, Tuple[float, float]]
+        Amplitude of harmonic variation in the reflection shape. Default is ``(0.0, 1.0)``.
+    reflect_harmonics : Union[int, Tuple[int, int]]
+        Number of harmonic terms used to vary reflection shape. Default is ``2``.
+    reflect_harmonic_decay : Union[float, Tuple[float, float]]
+        Amplitude decay between successive reflection harmonics. Default is ``0.55``.
+    """
     well_radius_frac: Union[float, Tuple[float, float]] = (0.3, 0.5)
     well_center_jitter: Union[float, Tuple[float, float]] = (0.0, 0.04)
 
@@ -178,19 +423,59 @@ class SimulatorConfig:
         - Scalars/ranges are sampled to scalars,
         - PASS_THROUGH_RANGES are left as ranges (tuples),
         - Booleans support prob specs.
+
+        Parameters
+        ----------
+        rng : RNG
+            NumPy random-number generator used for sampling.
+        camera : Optional[CameraDimension]
+            Camera-dimension configuration used to sample image height and width. Default is
+            ``None``.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Computed value of ``out``.
         """
         out: Dict[str, Any] = {}
 
         # helper to set any key with type awareness
         def set_num(key: str, integer: bool = False):
+            """
+            Sample a numeric configuration value and add it to the output arguments.
+
+            Parameters
+            ----------
+            key : str
+                Mapping key or attribute name selected by the helper.
+            integer : bool
+                Whether to sample integer values with inclusive integer bounds. Default is
+                ``False``.
+            """
             val = getattr(self, key)
             out[key] = sample_number(rng, val, integer=integer)
 
         def set_bool(key: str):
+            """
+            Sample a boolean configuration value and add it to the output arguments.
+
+            Parameters
+            ----------
+            key : str
+                Mapping key or attribute name selected by the helper.
+            """
             val = getattr(self, key)
             out[key] = sample_bool(rng, val)
 
         def set_passthrough(key: str):
+            """
+            Copy a configuration field into the simulation arguments unchanged.
+
+            Parameters
+            ----------
+            key : str
+                Mapping key or attribute name selected by the helper.
+            """
             out[key] = getattr(self, key)
 
         # camera overrides (if provided)
@@ -340,12 +625,36 @@ class SimulatorConfig:
 ###############
 
 def default_scene() -> SimulatorConfig:
+    """
+    Create the default scene-simulation configuration.
+
+    Returns
+    -------
+    SimulatorConfig
+        The default scene-simulation configuration.
+    """
     return SimulatorConfig()
 
 def train_scene() -> SimulatorConfig:
+    """
+    Return the default scene configuration used for training.
+
+    Returns
+    -------
+    SimulatorConfig
+        The default scene configuration used for training.
+    """
     return default_scene()
 
 def test_scene() -> SimulatorConfig:
+    """
+    Create the scene configuration used for test-image generation.
+
+    Returns
+    -------
+    SimulatorConfig
+        The scene configuration used for test-image generation.
+    """
     return SimulatorConfig(
         well_radius_frac = (0.3, 0.5),
         well_center_jitter = (0.0, 0.04),
@@ -398,4 +707,12 @@ def test_scene() -> SimulatorConfig:
     )
 
 def img_export_scene() -> SimulatorConfig:
+    """
+    Return the test-scene configuration used for image export.
+
+    Returns
+    -------
+    SimulatorConfig
+        The test-scene configuration used for image export.
+    """
     return test_scene()

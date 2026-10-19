@@ -9,7 +9,16 @@ import numpy as np
 
 
 def _copy_attrs(src_obj, dst_obj) -> None:
-    """Copy HDF5 attributes."""
+    """
+    Copy HDF5 attributes.
+
+    Parameters
+    ----------
+    src_obj : object
+        Source HDF5 file, group, or dataset whose attributes are copied.
+    dst_obj : object
+        Destination HDF5 file, group, or dataset receiving copied attributes.
+    """
     for k, v in src_obj.attrs.items():
         dst_obj.attrs[k] = v
 
@@ -21,6 +30,18 @@ def _safe_chunks(
     """
     Reuse source chunks when possible, but make sure no chunk dimension
     exceeds the destination shape.
+
+    Parameters
+    ----------
+    src_chunks : tuple[int, ...] | None
+        Chunk dimensions from the source HDF5 dataset.
+    dst_shape : tuple[int, ...]
+        Shape of the destination HDF5 dataset.
+
+    Returns
+    -------
+    tuple[int, ...] | None
+        Depending on the input and branch, returns ``None``, ``tuple(chunks)``.
     """
     if src_chunks is None:
         return None
@@ -44,6 +65,18 @@ def _dataset_creation_kwargs(
 ) -> dict:
     """
     Preserve relevant HDF5 storage options.
+
+    Parameters
+    ----------
+    src : h5py.Dataset
+        Source HDF5 dataset whose storage settings or records are copied.
+    dst_shape : tuple[int, ...]
+        Shape of the destination HDF5 dataset.
+
+    Returns
+    -------
+    dict
+        Computed value of ``kwargs``.
     """
     kwargs = {}
 
@@ -81,6 +114,23 @@ def _copy_dataset_subset(
     """
     Copy a dataset.
 
+    Parameters
+    ----------
+    src : h5py.Dataset
+        Source HDF5 dataset whose storage settings or records are copied.
+    dst_parent : h5py.Group
+        Destination HDF5 group in which the copied dataset is created.
+    name : str
+        Name identifying the item being processed.
+    n_source_samples : int
+        Total number of records in the source dataset.
+    n_keep : int
+        Number of leading records retained in the reduced dataset.
+    block_size : int
+        Number of records copied in each bounded-memory block.
+
+    Notes
+    -----
     If dataset.shape[0] == n_source_samples, copy only first n_keep entries.
     Otherwise copy the whole dataset unchanged.
     """
@@ -129,6 +179,24 @@ def _copy_group_subset(
     """
     Recursively copy groups and datasets, subsetting datasets whose first axis
     matches the sample axis.
+
+    Parameters
+    ----------
+    src_group : h5py.Group
+        Source HDF5 group whose children are copied recursively.
+    dst_group : h5py.Group
+        Destination HDF5 group receiving the copied children.
+    n_source_samples : int
+        Total number of records in the source dataset.
+    n_keep : int
+        Number of leading records retained in the reduced dataset.
+    block_size : int
+        Number of records copied in each bounded-memory block.
+
+    Raises
+    ------
+    TypeError
+        Unsupported HDF5 object at '{item.name}': {type(item)}
     """
     _copy_attrs(src_group, dst_group)
 
@@ -172,6 +240,44 @@ def subset_h5_for_zenodo(
     """
     Create reduced HDF5 files for Zenodo upload.
 
+    Parameters
+    ----------
+    h5_paths : Sequence[str | os.PathLike]
+        List of input HDF5 paths.
+    out_dir : str | os.PathLike
+        Output folder. Files are saved with the same filename as the input.
+    n_images : int
+        Number of samples/images to keep from axis 0. Default is ``1000``.
+    image_key : str
+        Dataset used to infer the sample count. Usually "imgs". Default is ``'imgs'``.
+    block_size : int
+        Number of samples copied per write block. Lower if RAM is tight,
+        higher if storage is fast. Default is ``16``.
+    overwrite : bool
+        Whether to overwrite existing output files. Default is ``False``.
+    tmp_suffix : str
+        Suffix used for a temporary file before replacing the final HDF5 output. Default is
+        ``'.tmp'``.
+
+    Returns
+    -------
+    list[pathlib.Path]
+        Paths to written subset files.
+
+    Raises
+    ------
+    ValueError
+        n_images must be positive, got {n_images}. block_size must be positive, got
+        {block_size}. Refusing to overwrite source in-place: {src_path}
+    FileNotFoundError
+        Input H5 does not exist: {src_path}
+    FileExistsError
+        Output file already exists: {dst_path}. Use overwrite=True to replace it.
+    KeyError
+        Cannot infer sample axis: missing dataset '{image_key}' in {src_path}
+
+    Notes
+    -----
     For each input H5 file, this writes a file with the same basename into
     out_dir, containing the first n_images samples.
 
@@ -180,32 +286,6 @@ def subset_h5_for_zenodo(
       - no transforms
       - no normalization
       - no model inference
-
-    Parameters
-    ----------
-    h5_paths:
-        List of input HDF5 paths.
-
-    out_dir:
-        Output folder. Files are saved with the same filename as the input.
-
-    n_images:
-        Number of samples/images to keep from axis 0.
-
-    image_key:
-        Dataset used to infer the sample count. Usually "imgs".
-
-    block_size:
-        Number of samples copied per write block. Lower if RAM is tight,
-        higher if storage is fast.
-
-    overwrite:
-        Whether to overwrite existing output files.
-
-    Returns
-    -------
-    list[pathlib.Path]
-        Paths to written subset files.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

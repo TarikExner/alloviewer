@@ -19,6 +19,17 @@ def _generate_main_figure(
     Build a 6x3 grid (18 tiles). First 17 tiles show histograms of cols_to_plot
     with hue=dataset_col using stacked counts. The last tile shows the legend only.
     Saves PDF/PNG if figure_output_dir is given, and also returns (fig, axes).
+
+    Parameters
+    ----------
+    figure_output_dir : str
+        Directory in which the figure files are written. Default is ``''``.
+    figure_name : str
+        Base name used for the output figure files. Default is ``''``.
+    img : numpy.ndarray
+        Input image array.
+    tgts : numpy.ndarray
+        Target arrays aligned with the corresponding image tiles.
     """
 
     titles = ["image","cell mask","cell boundary","cell centers","energy"]
@@ -47,6 +58,21 @@ def _generate_main_figure(
         centers = [tuple(map(int, c)) for c in inset_centers]
 
     def _add_inset_top_right(ax, arr, center, is_target: bool):
+        """
+        Draw a top-right zoomed crop centered on the supplied image coordinates.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        arr : numpy.ndarray
+            Image or label array with spatial dimensions first and optional trailing channels.
+        center : tuple of float
+            Center coordinates in (row, column) order, in pixels.
+        is_target : bool
+            Whether the displayed array is a target mask and requires discrete-label
+            interpolation.
+        """
         cy, cx = center
         half = inset_box_px // 2
         y0 = int(np.clip(cy - half, 0, arr.shape[0] - 1))
@@ -107,6 +133,18 @@ def figure_S3_generation(
     figure_output_dir: str,
     **kwargs
 ):
+    """
+    Prepare the data and generate Figure S3 showing simulated images and their segmentation targets.
+
+    Parameters
+    ----------
+    h5_path : str
+        Path to the simulated-image HDF5 dataset.
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    **kwargs : dict
+        Accepted by the interface but not read by this implementation.
+    """
     h5_path = os.path.join(h5_path, "tiles_val.h5")
 
     index = 9

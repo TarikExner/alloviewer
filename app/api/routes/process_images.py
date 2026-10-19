@@ -44,6 +44,20 @@ ALLOWED_CROSSMATCH_CELL_MODES = {"T", "B", "T/B", "empty"}
 
 
 def _json_response_safe(value: Any) -> Any:
+    """
+    Recursively convert values for JSON responses, replacing nonfinite floats with None.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    Any
+        JSON-compatible value with converted nested containers and nonfinite floats replaced
+        by None.
+    """
     if value is None or isinstance(value, (str, int, bool)):
         return value
 
@@ -75,6 +89,25 @@ def _json_response_safe(value: Any) -> Any:
 
 
 def _require_image_job(job_id: str) -> dict[str, Any]:
+    """
+    Require an existing PRA or crossmatch job and map lookup errors to HTTP errors.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    dict[str, Any]
+        Computed value of ``require_job_type(job_id, {'pra', 'crossmatch'})``.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 404 for the corresponding request validation, job-state, or processing error.
+        HTTP 409 for the corresponding request validation, job-state, or processing error.
+    """
     try:
         return require_job_type(job_id, {"pra", "crossmatch"})
     except FileNotFoundError:
@@ -84,6 +117,22 @@ def _require_image_job(job_id: str) -> dict[str, Any]:
 
 
 def _validate_image_files(*, job_id: str, image_filenames: list[str]) -> None:
+    """
+    Validate a nonempty list of image paths within the job upload folder.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    image_filenames : list[str]
+        Image paths relative to the job root, paired with image_order.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 400 for the corresponding request validation, job-state, or processing error.
+        HTTP 415 for the corresponding request validation, job-state, or processing error.
+    """
     if not image_filenames:
         raise HTTPException(
             status_code=400,
@@ -125,6 +174,24 @@ def _validate_image_files(*, job_id: str, image_filenames: list[str]) -> None:
 
 
 def _well_column(well_id: str) -> int:
+    """
+    Parse a trailing well column number and require a value from 1 to 10.
+
+    Parameters
+    ----------
+    well_id : str
+        Plate well identifier, such as ``A1``.
+
+    Returns
+    -------
+    int
+        Computed value of ``column``.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 400 for the corresponding request validation, job-state, or processing error.
+    """
     match = re.search(r"(\d+)$", well_id)
 
     if match is None:
@@ -150,6 +217,28 @@ def _validated_column_modes(
     image_order: list[str],
     column_modes: dict[int, str],
 ) -> dict[int, str]:
+    """
+    Validate cell labels for all used crossmatch columns.
+
+    Parameters
+    ----------
+    job_type : str
+        Assay type: ``pra``, ``crossmatch``, or ``fcxm``.
+    image_order : list[str]
+        Well IDs in the same order as the uploaded image filenames.
+    column_modes : dict[int, str]
+        Mapping from one-based column numbers to ``T``, ``B``, ``T/B``, or ``empty``.
+
+    Returns
+    -------
+    dict[int, str]
+        Depending on the input and branch, returns ``{}``, ``normalized``.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 400 for the corresponding request validation, job-state, or processing error.
+    """
     if job_type != "crossmatch":
         return {}
 
@@ -207,6 +296,11 @@ def _clear_previous_image_outputs(job_id: str) -> None:
     """
     Remove outputs from an earlier failed attempt while preserving uploads,
     parsed plate layouts, thumbnails, metadata, and logs.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
     """
     paths = get_job_paths(job_id, create=True)
 
@@ -225,6 +319,32 @@ def _clear_previous_image_outputs(job_id: str) -> None:
 
 @router.post("/run", response_model=ProcessStartResponse)
 async def process(job_id: str, req: ProcessRequest):
+    """
+    Validate and persist an image-analysis request, then enqueue its worker task.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    req : ProcessRequest
+        Validated request model containing the fields for this endpoint.
+
+    Returns
+    -------
+    dict
+        Identifier of the queued image job.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 409 for the corresponding request validation, job-state, or processing error.
+        HTTP 400 for the corresponding request validation, job-state, or processing error.
+        HTTP 503 for the corresponding request validation, job-state, or processing error.
+
+    Notes
+    -----
+    Image order and filename counts must agree, well identifiers must be unique, and PRA jobs require a parsed plate layout. Queued, running, and completed jobs are rejected. Queue failure is persisted and returned as HTTP 503.
+    """
     job = _require_image_job(job_id)
     paths = get_job_paths(job_id, create=True)
     current_status = str(job.get("status") or "draft")
@@ -358,6 +478,24 @@ async def process(job_id: str, req: ProcessRequest):
 
 @router.get("/progress", response_model=ProgressResponse)
 async def get_process(job_id: str):
+    """
+    Return persisted image-analysis progress and the current result.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    dict
+        Progress and analysis result.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 404 for the corresponding request validation, job-state, or processing error.
+    """
     _require_image_job(job_id)
 
     progress = get_image_progress(job_id)
@@ -383,6 +521,31 @@ async def set_well_classification_override(
     well_id: str,
     req: WellClassificationOverrideRequest,
 ):
+    """
+    Apply or clear a manual well call and invalidate saved summary PDFs.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    well_id : str
+        Plate well identifier, such as ``A1``.
+    req : WellClassificationOverrideRequest
+        Validated request model containing the fields for this endpoint.
+
+    Returns
+    -------
+    JSONResponse
+        Updated result with nonfinite numbers converted to JSON null.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 400 for the corresponding request validation, job-state, or processing error.
+        HTTP 404 for the corresponding request validation, job-state, or processing error.
+        HTTP 409 for the corresponding request validation, job-state, or processing error.
+        HTTP 500 for the corresponding request validation, job-state, or processing error.
+    """
     _require_image_job(job_id)
 
     if not WELL_ID_PATTERN.fullmatch(well_id):
@@ -447,6 +610,27 @@ async def set_well_classification_override(
 
 @router.get("/segmented/{well_id}.png")
 async def get_segmented_image(job_id: str, well_id: str):
+    """
+    Serve a well's generated segmentation PNG.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    well_id : str
+        Plate well identifier, such as ``A1``.
+
+    Returns
+    -------
+    FileResponse
+        PNG response for the requested well.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 400 for the corresponding request validation, job-state, or processing error.
+        HTTP 404 for the corresponding request validation, job-state, or processing error.
+    """
     _require_image_job(job_id)
 
     if not WELL_ID_PATTERN.fullmatch(well_id):
@@ -472,6 +656,28 @@ async def get_segmented_image(job_id: str, well_id: str):
 
 @router.get("/summary.pdf")
 async def get_cdc_summary_pdf(job_id: str, flip_vertical: bool = False):
+    """
+    Build, save, and serve a CDC summary PDF for a completed job.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    flip_vertical : bool
+        If True, reverse the displayed plate row order. Default is ``False``.
+
+    Returns
+    -------
+    FileResponse
+        Saved PDF with cache-disabled response headers.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 404 for the corresponding request validation, job-state, or processing error.
+        HTTP 409 for the corresponding request validation, job-state, or processing error.
+        HTTP 500 for the corresponding request validation, job-state, or processing error.
+    """
     _require_image_job(job_id)
     progress = get_image_progress(job_id)
 

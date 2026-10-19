@@ -40,6 +40,8 @@ class AttrDict(dict):
     """
     Dictionary supporting both item access and attribute access.
 
+    Notes
+    -----
     Parsed PRA layouts are currently consumed in both forms:
 
         layout["wells"]
@@ -53,6 +55,19 @@ class AttrDict(dict):
         self,
         name: str,
     ) -> Any:
+        """
+        Read a dictionary item through attribute syntax.
+
+        Parameters
+        ----------
+        name : str
+            Name identifying the item being processed.
+
+        Returns
+        -------
+        Any
+            A dictionary item through attribute syntax.
+        """
         try:
             return self[name]
         except KeyError as exc:
@@ -65,12 +80,30 @@ class AttrDict(dict):
         name: str,
         value: Any,
     ) -> None:
+        """
+        Store an attribute assignment as a dictionary item.
+
+        Parameters
+        ----------
+        name : str
+            Name identifying the item being processed.
+        value : Any
+            Input value to validate, convert, or format as specified by this helper.
+        """
         self[name] = value
 
     def __delattr__(
         self,
         name: str,
     ) -> None:
+        """
+        Delete a dictionary item through attribute syntax.
+
+        Parameters
+        ----------
+        name : str
+            Name identifying the item being processed.
+        """
         try:
             del self[name]
         except KeyError as exc:
@@ -84,6 +117,18 @@ def to_attrdict(
 ) -> Any:
     """
     Recursively convert JSON dictionaries to ``AttrDict`` instances.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    Any
+        Depending on the input and branch, returns ``AttrDict({key: to_attrdict(inner_value)
+        for key, inner_value in value.items()})``, ``[to_attrdict(item) for item in
+        value]``, ``value``.
     """
     if isinstance(value, dict):
         return AttrDict(
@@ -108,6 +153,26 @@ def to_attrdict(
 def _load_request(
     job_id: str,
 ) -> dict[str, Any]:
+    """
+    Load the job request JSON and require a dictionary.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    dict[str, Any]
+        The job request JSON and require a dictionary.
+
+    Raises
+    ------
+    FileNotFoundError
+        The image-analysis request file is missing.
+    ValueError
+        The image-analysis request file does not contain a JSON object.
+    """
     paths = get_job_paths(
         job_id
     )
@@ -139,6 +204,27 @@ def _load_plate_layout(
     """
     Load the parsed PRA plate layout.
 
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    assay_type : str
+        Assay selector used to choose PRA or crossmatch summary rules.
+
+    Returns
+    -------
+    Any | None
+        The parsed PRA plate layout.
+
+    Raises
+    ------
+    FileNotFoundError
+        The parsed PRA plate-layout file is missing.
+    ValueError
+        The parsed PRA plate layout does not contain a JSON object.
+
+    Notes
+    -----
     Crossmatch jobs do not use an HLA plate layout.
     """
     if assay_type != "pra":
@@ -175,11 +261,29 @@ def _make_progress_callback(
 ) -> ProgressCallback:
     """
     Persist progress events emitted by the analysis library.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    ProgressCallback
+        Computed value of ``progress``.
     """
 
     def progress(
         event: dict[str, Any],
     ) -> None:
+        """
+        Persist an image progress event, defaulting a missing status to running.
+
+        Parameters
+        ----------
+        event : dict[str, Any]
+            Progress event emitted by the analysis pipeline.
+        """
         payload = dict(event)
 
         if not payload.get(
@@ -202,6 +306,26 @@ ALLOWED_CROSSMATCH_CELL_MODES = {"T", "B", "T/B", "empty"}
 
 
 def _normalize_column_modes(value: Any) -> dict[int, str]:
+    """
+    Validate and normalize crossmatch column keys and cell labels.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    dict[int, str]
+        Depending on the input and branch, returns ``{}``, ``normalized``.
+
+    Raises
+    ------
+    ValueError
+        The image-analysis request contains invalid crossmatch column modes. Invalid
+        crossmatch column index: {raw_column} Crossmatch column index must be between 1 and
+        10: {column} Unsupported crossmatch cell mode for column {column}: {mode}
+    """
     if value is None:
         return {}
 
@@ -245,6 +369,29 @@ def _validate_request(
     float,
     dict[int, str],
 ]:
+    """
+    Validate the image request and extract the typed pipeline inputs.
+
+    Parameters
+    ----------
+    request : dict[str, Any]
+        Persisted image-analysis request mapping.
+
+    Returns
+    -------
+    tuple
+        Plate layout, ordered well IDs, image filenames, PRA threshold, and normalized
+        column modes, in that order.
+
+    Raises
+    ------
+    ValueError
+        The image-analysis request is missing its plate layout. The image-analysis request
+        contains an invalid image order. The image-analysis request contains an invalid
+        image-file list. The image-analysis request contains no wells. The image-analysis
+        request contains no image files. The image order and image-file list have different
+        lengths.
+    """
     layout_data = request.get(
         "layout"
     )
@@ -340,6 +487,20 @@ def run_image_job(
     """
     Execute a persisted image-analysis job.
 
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Raises
+    ------
+    ValueError
+        Unsupported image-analysis job type: {assay_type}
+    RuntimeError
+        Image analysis did not return a result dictionary.
+
+    Notes
+    -----
     Only ``job_id`` crosses the Celery boundary. The request, uploaded images,
     parsed PRA layout, results, and generated outputs are all read from or
     written to the corresponding job directory.

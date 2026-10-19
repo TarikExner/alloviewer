@@ -43,6 +43,19 @@ ProgressCallback = Callable[
 def _normalize_absolute_path(
     path: str | Path,
 ) -> str:
+    """
+    Resolve a path and normalize its case and separators for lookup.
+
+    Parameters
+    ----------
+    path : str | Path
+        Filesystem path of the file or directory processed by this helper.
+
+    Returns
+    -------
+    str
+        Computed value of ``os.path.normcase(os.path.normpath(str(Path(path).resolve())))``.
+    """
     return os.path.normcase(
         os.path.normpath(
             str(Path(path).resolve())
@@ -53,6 +66,19 @@ def _normalize_absolute_path(
 def _collect_original_filenames(
     request_dict: dict[str, Any],
 ) -> list[str]:
+    """
+    Collect nonempty FCS file paths from the submitted samples.
+
+    Parameters
+    ----------
+    request_dict : dict[str, Any]
+        FCXM request mapping with panel rows and sample file paths.
+
+    Returns
+    -------
+    list[str]
+        Nonempty FCS file paths from the submitted samples.
+    """
     filenames: list[str] = []
 
     for sample in request_dict.get(
@@ -79,6 +105,28 @@ def _resolve_request_file_paths(
     """
     Resolve job-relative FCS paths to absolute paths for the analysis library.
 
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    request_dict : dict[str, Any]
+        FCXM request mapping with panel rows and sample file paths.
+
+    Returns
+    -------
+    dict[str, str]
+        Computed value of ``absolute_to_original``.
+
+    Raises
+    ------
+    ValueError
+        Invalid FCS file path: {original_path} FCS path is not a file: {original_path} File
+        is not an FCS file: {original_path}
+    FileNotFoundError
+        FCS file was not found: {Path(original_path).name}
+
+    Notes
+    -----
     The request stored on disk remains unchanged. Only the in-memory copy is
     modified.
     """
@@ -164,6 +212,22 @@ def _public_filename(
         str,
     ],
 ) -> str | None:
+    """
+    Map an internal path to its submitted name, falling back to a basename.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+    absolute_to_original : dict[str, str]
+        Mapping from normalized absolute file paths to the submitted job-relative paths.
+
+    Returns
+    -------
+    str | None
+        Depending on the input and branch, returns ``None``, ``text``, ``mapped``,
+        ``path.name``, ``text.replace('\\\\', '/')``.
+    """
     if value is None:
         return None
 
@@ -206,9 +270,32 @@ def _make_progress_callback(
         str,
     ],
 ) -> ProgressCallback:
+    """
+    Create a callback that stores FCXM progress with public file names.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    absolute_to_original : dict[str, str]
+        Mapping from normalized absolute file paths to the submitted job-relative paths.
+
+    Returns
+    -------
+    ProgressCallback
+        A callback that stores FCXM progress with public file names.
+    """
     def progress(
         event: dict[str, Any],
     ) -> None:
+        """
+        Normalize event filenames and merge the event into persisted FCXM progress.
+
+        Parameters
+        ----------
+        event : dict[str, Any]
+            Progress event emitted by the analysis pipeline.
+        """
         payload = dict(event)
 
         payload["current_file"] = (
@@ -266,6 +353,24 @@ def run_fcxm_job(
     """
     Execute an FCXM job from its persisted request.
 
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Raises
+    ------
+    FileNotFoundError
+        The FCXM request file is missing.
+    ValueError
+        The FCXM request file does not contain a JSON object. The FCXM request contains no
+        FCS files.
+    RuntimeError
+        FCXM analysis did not return a result payload. FCXM analysis did not return a plot
+        cache.
+
+    Notes
+    -----
     Only ``job_id`` crosses the Celery boundary. The request is loaded from
     ``DATA_DIR/jobs/<job_id>/request.json``.
     """

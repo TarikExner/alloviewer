@@ -11,6 +11,13 @@ def run_image_analysis_task(job_id: str) -> None:
     """
     Execute one persisted image-analysis job.
 
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Notes
+    -----
     Only the job ID crosses the Celery boundary. The request and all inputs
     are loaded from the corresponding job directory.
     """

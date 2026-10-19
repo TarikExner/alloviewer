@@ -36,9 +36,49 @@ def _generate_main_figure(
     
 ):
 
+    """
+    Assemble and save the figure showing UNet validation metrics and predicted target maps.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        Input data consumed by this analysis or plotting operation.
+    img : numpy.ndarray
+        Input image array.
+    tgts : numpy.ndarray
+        Target arrays aligned with the corresponding image tiles.
+    preds : numpy.ndarray
+        Model predictions aligned with the corresponding image tiles.
+    figure_output_dir : str
+        Directory in which the figure files are written. Default is ``''``.
+    figure_name : str
+        Base name used for the output figure files. Default is ``''``.
+
+    Notes
+    -----
+    Creates Matplotlib subplots and writes the figure outputs selected in this module. Figure input data is supplied by the enclosing preparation workflow.
+    """
     def generate_subfigure_a(
         fig: Figure, ax: Axes, gs: SubplotSpec, subfigure_label
     ) -> None:
+        """
+        Draw panel A of Figure S6 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str or None
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
         fig_sgs = gs.subgridspec(1, 4)
@@ -80,6 +120,24 @@ def _generate_main_figure(
         fig: Figure, ax: Axes, gs: SubplotSpec, subfigure_label
     ) -> None:
         # Label + prepare subgrid
+        """
+        Draw panel B of Figure S6 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str or None
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
     
@@ -106,6 +164,21 @@ def _generate_main_figure(
             centers = [tuple(map(int, c)) for c in inset_centers]
     
         def _add_inset_top_right(ax_in, arr, center, is_target: bool):
+            """
+            Draw a top-right zoomed crop centered on the supplied image coordinates.
+
+            Parameters
+            ----------
+            ax_in : matplotlib.axes.Axes
+                Matplotlib axis receiving the inset.
+            arr : numpy.ndarray
+                Image or label array with spatial dimensions first and optional trailing channels.
+            center : tuple of float
+                Center coordinates in (row, column) order, in pixels.
+            is_target : bool
+                Whether the displayed array is a target mask and requires discrete-label
+                interpolation.
+            """
             cy, cx = center
             half = inset_box_px // 2
             y0 = int(np.clip(cy - half, 0, arr.shape[0] - 1))
@@ -213,6 +286,22 @@ def figure_S6_generation(
     **kwargs
 ):
 
+    """
+    Prepare the data and generate Figure S6 showing UNet validation metrics and predicted target maps.
+
+    Parameters
+    ----------
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    model_output_dir : str
+        Directory containing trained model checkpoints and training outputs.
+    validation_results_dir : str
+        Directory containing cached validation tables and analysis results.
+    h5_path : str
+        Path to the simulated-image HDF5 dataset.
+    **kwargs : dict
+        Accepted by the interface but not read by this implementation.
+    """
     data = get_validation_data(validation_results_dir,
                                mode = "testing",
                                unet_size = "small",

@@ -29,6 +29,28 @@ from .utils import collate_no_meta
 # --------------------- utils ---------------------
 def flatten_tiles(img, tgt, extras):
     # nothing to do if already 4D
+    """
+    Flatten batch and tile dimensions while aligning images, targets, and instance labels.
+
+    Parameters
+    ----------
+    img : torch.Tensor
+        Input image array.
+    tgt : torch.Tensor
+        Reference target tensor aligned with the image batch.
+    extras : object
+        Additional dataset metadata containing camera-style information.
+
+    Returns
+    -------
+    tuple
+        Computed value of ``(img, tgt, extras)``.
+
+    Raises
+    ------
+    ValueError
+        unexpected instance_labels shape {inst.shape}
+    """
     if img.ndim == 4 and tgt.ndim == 4:
         return img, tgt, extras
 
@@ -63,6 +85,25 @@ def flatten_tiles(img, tgt, extras):
 
 _GK_CACHE = {}
 def gaussian_kernel1d(sigma: float, radius: int | None = None, device=None, dtype=None):
+    """
+    Build or reuse a normalized one-dimensional Gaussian kernel on the requested device.
+
+    Parameters
+    ----------
+    sigma : float
+        Standard deviation of the spatial Gaussian kernel, in pixels.
+    radius : int | None
+        Kernel half-width in pixels; None derives it from sigma. Default is ``None``.
+    device : str or torch.device
+        PyTorch device on which tensors or model computations run. Default is ``None``.
+    dtype : torch.dtype
+        Requested array or tensor data type. Default is ``None``.
+
+    Returns
+    -------
+    object
+        Or reuse a normalized one-dimensional Gaussian kernel on the requested device.
+    """
     if sigma <= 0:
         # trivial kernel
         return torch.tensor([1.0], device=device, dtype=dtype)
@@ -79,6 +120,21 @@ def gaussian_kernel1d(sigma: float, radius: int | None = None, device=None, dtyp
 
 def gaussian_blur_2d(x: torch.Tensor, sigma: float) -> torch.Tensor:
     # x: [B,1,H,W]
+    """
+    Apply separable Gaussian convolution to a batch of single-channel images.
+
+    Parameters
+    ----------
+    x : torch.Tensor
+        Input array or tensor to convert, resize, normalize, or smooth as described above.
+    sigma : float
+        Standard deviation of the spatial Gaussian kernel, in pixels.
+
+    Returns
+    -------
+    torch.Tensor
+        Computed value of ``x``.
+    """
     if sigma <= 0:
         return x
     b, c, h, w = x.shape
@@ -90,6 +146,14 @@ def gaussian_blur_2d(x: torch.Tensor, sigma: float) -> torch.Tensor:
     return x
 
 def worker_init_fn(worker_id):
+    """
+    Seed NumPy, Python random, and a dataset RNG for a DataLoader worker.
+
+    Parameters
+    ----------
+    worker_id : int
+        Index assigned to the DataLoader worker.
+    """
     base_seed = torch.initial_seed() % 2**32
     np.random.seed(base_seed + worker_id)
     random.seed(base_seed + worker_id)
@@ -99,6 +163,27 @@ def worker_init_fn(worker_id):
         worker_info.dataset.rng = np.random.default_rng(base_seed + worker_id)
 
 def _tqdm(iterable, desc, position, total=None, disable=None):
+    """
+    Wrap an iterable in the training loop's compact progress bar.
+
+    Parameters
+    ----------
+    iterable : iterable
+        Iterable wrapped by the progress bar.
+    desc : object
+        Progress-bar description.
+    position : object
+        Terminal row assigned to the progress bar.
+    total : int or None
+        Total number of items expected by the progress tracker. Default is ``None``.
+    disable : bool
+        Whether to suppress the progress display. Default is ``None``.
+
+    Returns
+    -------
+    tqdm
+        Progress-bar iterator wrapping the supplied iterable.
+    """
     return tqdm(
         iterable, desc=desc, total=total, leave=False,
         dynamic_ncols=True, mininterval=0.2, smoothing=0.1,
@@ -106,9 +191,32 @@ def _tqdm(iterable, desc, position, total=None, disable=None):
     )
 
 def ddp_is_active():
+    """
+    Test whether torch.distributed is available and initialized.
+
+    Returns
+    -------
+    object
+        Computed value of ``dist.is_available() and dist.is_initialized()``.
+    """
     return dist.is_available() and dist.is_initialized()
 
 def _ddp_broadcast_bool(flag: bool, device):
+    """
+    Broadcast a boolean flag from distributed rank zero.
+
+    Parameters
+    ----------
+    flag : bool
+        Boolean value broadcast from rank zero.
+    device : str or torch.device
+        PyTorch device on which tensors or model computations run.
+
+    Returns
+    -------
+    object
+        Depending on the input and branch, returns ``flag``, ``bool(int(t.item()))``.
+    """
     if not ddp_is_active():
         return flag
     t = torch.tensor([1 if flag else 0], dtype=torch.int32, device=device)
@@ -118,12 +226,44 @@ def _ddp_broadcast_bool(flag: bool, device):
     return bool(int(t.item()))
 
 def ddp_world_size():
+    """
+    Return the active distributed process count, or one.
+
+    Returns
+    -------
+    object
+        The active distributed process count, or one.
+    """
     return dist.get_world_size() if ddp_is_active() else 1
 
 def ddp_rank():
+    """
+    Return the current distributed rank, or zero.
+
+    Returns
+    -------
+    object
+        The current distributed rank, or zero.
+    """
     return dist.get_rank() if ddp_is_active() else 0
 
 def reduce_mean_scalar(val: float, device):
+    """
+    Average a scalar across distributed workers, or return its local value.
+
+    Parameters
+    ----------
+    val : float
+        Scalar metric to average across workers.
+    device : str or torch.device
+        PyTorch device on which tensors or model computations run.
+
+    Returns
+    -------
+    object
+        Depending on the input and branch, returns ``float(val)``, ``float((t /
+        ddp_world_size()).item())``.
+    """
     if not ddp_is_active():
         return float(val)
     t = torch.tensor([val], dtype=torch.float32, device=device)
@@ -131,11 +271,42 @@ def reduce_mean_scalar(val: float, device):
     return float((t / ddp_world_size()).item())
 
 def reduce_mean_dict(d: dict, device):
+    """
+    Average each scalar metric across distributed workers.
+
+    Parameters
+    ----------
+    d : dict
+        Mapping of configuration field names to values.
+    device : str or torch.device
+        PyTorch device on which tensors or model computations run.
+
+    Returns
+    -------
+    object or dict
+        Depending on the input and branch, returns ``d``, ``{k: reduce_mean_scalar(float(v),
+        device) for k, v in d.items()}``.
+    """
     if not ddp_is_active():
         return d
     return {k: reduce_mean_scalar(float(v), device) for k, v in d.items()}
 
 def _concat_extras(ex_a: dict, ex_b: dict) -> dict:
+    """
+    Combine instance-label tensors and metadata from two training batches.
+
+    Parameters
+    ----------
+    ex_a : dict
+        Additional labels and metadata from the first batch.
+    ex_b : dict
+        Additional labels and metadata from the second batch.
+
+    Returns
+    -------
+    dict
+        Computed value of ``out``.
+    """
     out = {}
 
     if "instance_labels" in ex_a and "instance_labels" in ex_b:
@@ -156,6 +327,21 @@ def _concat_extras(ex_a: dict, ex_b: dict) -> dict:
     return out
 
 def _next_bg_batch(bg_iter, bg_loader):
+    """
+    Read the next background batch and restart its iterator when exhausted.
+
+    Parameters
+    ----------
+    bg_iter : iterator
+        Current iterator over the background DataLoader.
+    bg_loader : torch.utils.data.DataLoader or None
+        Optional loader supplying background-only training images.
+
+    Returns
+    -------
+    tuple
+        Tuple containing ``batch``, ``bg_iter``, in that order.
+    """
     try:
         batch = next(bg_iter)
     except StopIteration:
@@ -167,12 +353,48 @@ def _next_bg_batch(bg_iter, bg_loader):
 
 def dice_loss_from_probs(probs, target, eps=1e-6):
     # probs/target: [N,1,H,W]
+    """
+    Compute mean soft Dice loss over channels from probability and target tensors.
+
+    Parameters
+    ----------
+    probs : torch.Tensor
+        Predicted probabilities with batch, channel, height, and width dimensions.
+    target : torch.Tensor
+        Reference tensor with the same batch, channel, and spatial dimensions as the
+        prediction.
+    eps : float
+        Small positive floor preventing division by zero. Default is ``1e-06``.
+
+    Returns
+    -------
+    object
+        Mean soft Dice loss over channels from probability and target tensors.
+    """
     num = 2 * (probs * target).sum(dim=(0,2,3)) + eps
     den = (probs + target).sum(dim=(0,2,3)) + eps
     return (1 - num / den).mean()
 
 def dice_from_probs(probs, target, eps=1e-6):
     # probs/target: [N,1,H,W]
+    """
+    Compute the mean soft Dice coefficient as a Python scalar.
+
+    Parameters
+    ----------
+    probs : torch.Tensor
+        Predicted probabilities with batch, channel, height, and width dimensions.
+    target : torch.Tensor
+        Reference tensor with the same batch, channel, and spatial dimensions as the
+        prediction.
+    eps : float
+        Small positive floor preventing division by zero. Default is ``1e-06``.
+
+    Returns
+    -------
+    object
+        The mean soft Dice coefficient as a Python scalar.
+    """
     num = 2 * (probs * target).sum(dim=(0,2,3))
     den = (probs + target).sum(dim=(0,2,3)) + eps
     return (num / den).mean().item()
@@ -180,7 +402,19 @@ def dice_from_probs(probs, target, eps=1e-6):
 # --------------------- target shaping (batch) ---------------------
 
 def _compute_inner_boundary(inst_np: np.ndarray) -> np.ndarray:
-    """1-px inner boundary from integer labels (H,W)."""
+    """
+    1-px inner boundary from integer labels (H,W).
+
+    Parameters
+    ----------
+    inst_np : numpy.ndarray
+        Two-dimensional integer instance map with zero background.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``b.astype(np.uint8)``.
+    """
     a = inst_np
     H, W = a.shape
     up    = (a != np.roll(a, -1, axis=0))
@@ -205,6 +439,25 @@ def make_soft_boundary_batch(inst_batch: torch.Tensor,
     Build soft boundary targets for a batch of instance labels.
     inst_batch: [B,H,W] int
     returns: [B,1,H,W] float32 in [0,1]
+
+    Parameters
+    ----------
+    inst_batch : torch.Tensor
+        Batch of integer instance-label maps with zero-valued background.
+    ring_width : int
+        Width of the boundary ring around cell instances, in pixels. Default is ``1``.
+    soft_band : int
+        Whether to blur the boundary band into a soft target. Default is ``2``.
+    sigma : float
+        Standard deviation of the spatial Gaussian kernel, in pixels. Default is ``1.0``.
+    device : Optional[torch.device]
+        PyTorch device on which tensors or model computations run. Default is ``None``.
+
+    Returns
+    -------
+    torch.Tensor
+        Soft boundary targets for a batch of instance labels. inst_batch: [B,H,W] int
+        returns: [B,1,H,W] float32 in [0,1]
     """
     B, H, W = inst_batch.shape
     out = np.zeros((B, H, W), dtype=np.float32)
@@ -243,6 +496,27 @@ def make_outside_mask_centers_batch(meta_list: List[dict],
     Build 1 where peaks are allowed (small disks around GT centers), else 0.
     Returns [B,1,H,W] float32 in {0,1}
 
+    Parameters
+    ----------
+    meta_list : List[dict]
+        Per-image metadata records aligned with the tensor batch.
+    H : int
+        Image height in pixels.
+    W : int
+        Image width in pixels.
+    radius : int
+        Radius of the crop, core, or center-neighborhood mask, in pixels. Default is ``6``.
+    device : Optional[torch.device]
+        PyTorch device on which tensors or model computations run. Default is ``None``.
+
+    Returns
+    -------
+    torch.Tensor
+        1 where peaks are allowed (small disks around GT centers), else 0. Returns [B,1,H,W]
+        float32 in {0,1}
+
+    Notes
+    -----
     Notes:
       - Maps centers from original sim coords -> current [H,W] coords using meta['mode_meta'].
       - Supports modes: pad_resize, crop_well_resize, tiles.
@@ -255,6 +529,20 @@ def make_outside_mask_centers_batch(meta_list: List[dict],
 
     def _map_centers(m: dict) -> List[tuple]:
         # original centers from the simulator
+        """
+        Map cell centers into padded, cropped, resized, or tiled image coordinates.
+
+        Parameters
+        ----------
+        m : dict
+            Image metadata containing original centers and crop, tile, or resize transforms.
+
+        Returns
+        -------
+        List[tuple]
+            Depending on the input and branch, returns ``[]``, ``[(int(round(y)), int(round(x)))
+            for y, x in ctrs]``, ``mapped``.
+        """
         ctrs = m.get("centers", []) or []
         mm = m.get("mode_meta", None)
         if not ctrs:
@@ -325,6 +613,20 @@ def make_ring_and_far_bg_masks(cell_mask: torch.Tensor,
     Returns:
       ring_mask: [B,1,H,W] ~1 on a thin outer ring around cell borders
       far_bg_mask: [B,1,H,W] ~1 on background pixels at least `far_px` away from cells
+
+    Parameters
+    ----------
+    cell_mask : torch.Tensor
+        Spatial mask identifying cell foreground.
+    ring_px : int
+        Width of the near-cell ring, in pixels. Default is ``3``.
+    far_px : int
+        Distance used to define the far-background region, in pixels. Default is ``12``.
+
+    Returns
+    -------
+    tuple[torch.Tensor, torch.Tensor]
+        Tuple containing ``ring_mask``, ``far_bg_mask``, in that order.
     """
     m = (cell_mask > 0.5).float()
     # outer ring via dilation - mask
@@ -344,13 +646,51 @@ def make_ring_and_far_bg_masks(cell_mask: torch.Tensor,
     return ring_mask, far_bg_mask
 
 def bce_dice_loss(logits, target, w_bce=0.3, w_dice=0.7):
+    """
+    Combine binary cross-entropy on logits with soft Dice loss.
+
+    Parameters
+    ----------
+    logits : torch.Tensor
+        Unnormalized model outputs before sigmoid.
+    target : torch.Tensor
+        Reference tensor with the same batch, channel, and spatial dimensions as the
+        prediction.
+    w_bce : float
+        Weight of the binary cross-entropy loss term. Default is ``0.3``.
+    w_dice : float
+        Weight of the soft Dice loss term. Default is ``0.7``.
+
+    Returns
+    -------
+    object
+        Computed value of ``w_bce * bce + w_dice * d``.
+    """
     bce = F.binary_cross_entropy_with_logits(logits, target)
     probs = torch.sigmoid(logits)
     d    = dice_loss_from_probs(probs, target)
     return w_bce * bce + w_dice * d
 
 def boundary_exclusion_loss(cell_prob, boundary_target, weight=0.2):
-    """Penalize cell prob where boundary target is high."""
+    """
+    Penalize cell prob where boundary target is high.
+
+    Parameters
+    ----------
+    cell_prob : torch.Tensor
+        Predicted cell-foreground probabilities.
+    boundary_target : torch.Tensor
+        Reference boundary target with the same spatial shape as the predictions.
+    weight : float
+        Weight applied to the corresponding loss or measurement term. Default is ``0.2``.
+
+    Returns
+    -------
+    object
+        Depending on the input and branch, returns ``torch.tensor(0.0,
+        device=cell_prob.device, dtype=cell_prob.dtype)``, ``float(weight) * (cell_prob *
+        boundary_target).mean()``.
+    """
     if weight is None or weight <= 0:
         return torch.tensor(0.0, device=cell_prob.device, dtype=cell_prob.dtype)
     return float(weight) * (cell_prob * boundary_target).mean()
@@ -362,6 +702,33 @@ def center_head_loss(center_logits, center_target, cell_mask=None,
     """
     Composite: pos-weighted BCE + MSE (+ optional sparsity outside disks, + count consistency).
     Shapes: [B,1,H,W]
+
+    Parameters
+    ----------
+    center_logits : torch.Tensor
+        Unnormalized model outputs for the cell-center head.
+    center_target : torch.Tensor
+        Reference cell-center heatmap.
+    cell_mask : torch.Tensor
+        Spatial mask identifying cell foreground. Default is ``None``.
+    pos_weight : float
+        Positive-class weight used by binary cross-entropy. Default is ``10.0``.
+    w_bce : float
+        Weight of the binary cross-entropy loss term. Default is ``0.6``.
+    w_mse : float
+        Weight of the mean-squared-error term. Default is ``0.4``.
+    sparsity_weight : float
+        Weight of the sparsity penalty on predicted activations. Default is ``0.0``.
+    outside_mask : Optional[torch.Tensor]
+        Mask selecting locations outside the permitted cell or center region. Default is
+        ``None``.
+    count_weight : float
+        Weight of the cell-count consistency penalty. Default is ``0.0``.
+
+    Returns
+    -------
+    object
+        Computed value of ``loss``.
     """
     p = torch.sigmoid(center_logits)
     t = center_target
@@ -398,7 +765,27 @@ def center_head_loss(center_logits, center_target, cell_mask=None,
 
 def energy_head_loss_masked(energy_logits, energy_target, cell_mask,
                             w_l1=0.5, w_mse=0.5):
-    """Regression inside cells: L1 + MSE on sigmoid(logits)."""
+    """
+    Regression inside cells: L1 + MSE on sigmoid(logits).
+
+    Parameters
+    ----------
+    energy_logits : torch.Tensor
+        Unnormalized outputs of the model's energy head.
+    energy_target : torch.Tensor
+        Reference energy or distance-transform map.
+    cell_mask : torch.Tensor
+        Spatial mask identifying cell foreground.
+    w_l1 : float
+        Weight of the absolute-error term. Default is ``0.5``.
+    w_mse : float
+        Weight of the mean-squared-error term. Default is ``0.5``.
+
+    Returns
+    -------
+    object
+        Computed value of ``w_l1 * l1 + w_mse * mse``.
+    """
     p = torch.sigmoid(energy_logits)
     t = energy_target
     m = (cell_mask > 0.5).float()
@@ -413,6 +800,20 @@ def boundary_fscore_np(pred_bound: np.ndarray, gt_bound: np.ndarray, tol: int = 
     """
     pred_bound, gt_bound: float maps in [0,1] (H,W).
     tol in pixels. Dilation tolerance.
+
+    Parameters
+    ----------
+    pred_bound : numpy.ndarray
+        Predicted boundary probability map.
+    gt_bound : numpy.ndarray
+        Ground-truth boundary map.
+    tol : int
+        Spatial matching tolerance in pixels. Default is ``2``.
+
+    Returns
+    -------
+    dict
+        Result mapping with keys ``precision``, ``recall``, ``f1``.
     """
     pred = (pred_bound >= 0.5).astype(np.uint8)
     gt   = (gt_bound   >= 0.5).astype(np.uint8)
@@ -429,6 +830,19 @@ def boundary_fscore_np(pred_bound: np.ndarray, gt_bound: np.ndarray, tol: int = 
 
 def compute_thin_gt_boundary_from_instances(inst_np: np.ndarray) -> np.ndarray:
     # 1-px inner boundary from integer instances
+    """
+    Mark foreground pixels that differ from a four-neighbor instance label.
+
+    Parameters
+    ----------
+    inst_np : numpy.ndarray
+        Two-dimensional integer instance map with zero background.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``b.astype(np.uint8)``.
+    """
     a = inst_np
     H, W = a.shape
     up    = (a != np.roll(a, -1, axis=0))
@@ -451,10 +865,43 @@ def boundary_f1_skeletonized(pred_prob: np.ndarray,
     """
     F1 between predicted boundary map and a thin GT boundary extracted from instances.
     Optionally sweep thresholds and return best F1.
+
+    Parameters
+    ----------
+    pred_prob : numpy.ndarray
+        Predicted foreground or boundary probability array.
+    inst_gt : numpy.ndarray
+        Reference integer instance labels with zero background.
+    tol : int
+        Spatial matching tolerance in pixels. Default is ``2``.
+    thr : float
+        Probability threshold used to select foreground or peaks. Default is ``0.9``.
+    sweep : bool
+        Mapping from simulation parameters to the values shown in the sweep. Default is
+        ``False``.
+
+    Returns
+    -------
+    float
+        Depending on the input and branch, returns ``max((f1_at(t) for t in ts))``,
+        ``f1_at(thr)``.
     """
     gt_thin = compute_thin_gt_boundary_from_instances(inst_gt)
 
     def f1_at(t):
+        """
+        Threshold and skeletonize a boundary prediction, then compute its tolerant F1 score.
+
+        Parameters
+        ----------
+        t : float
+            Probability threshold used to binarize a prediction.
+
+        Returns
+        -------
+        object
+            Computed value of ``float(stats['f1'])``.
+        """
         pred_bin = (pred_prob >= t).astype(np.uint8)
         pred_skel = skeletonize(pred_bin > 0).astype(np.uint8)
         stats = boundary_fscore_np(pred_skel, gt_thin, tol=tol)
@@ -467,6 +914,23 @@ def boundary_f1_skeletonized(pred_prob: np.ndarray,
         return f1_at(thr)
 
 def _nms_peaks_np(heat: np.ndarray, thr: float = 0.2, min_dist: int = 3) -> List[Tuple[int,int,float]]:
+    """
+    Find heatmap peaks above threshold and sort them by descending score.
+
+    Parameters
+    ----------
+    heat : numpy.ndarray
+        Two-dimensional center-probability heatmap.
+    thr : float
+        Probability threshold used to select foreground or peaks. Default is ``0.2``.
+    min_dist : int
+        Radius used by local peak suppression, in pixels. Default is ``3``.
+
+    Returns
+    -------
+    List[Tuple[int, int, float]]
+        Heatmap peaks above threshold and sort them by descending score.
+    """
     h = (heat >= thr).astype(np.uint8)
     if min_dist > 1:
         k = 2*min_dist + 1
@@ -479,6 +943,28 @@ def _nms_peaks_np(heat: np.ndarray, thr: float = 0.2, min_dist: int = 3) -> List
 
 
 def center_metrics_np(center_pred, gt_centers, peak_thr=0.2, nms_dist=3, match_radius=10):
+    """
+    Match predicted center peaks to reference centers and compute precision, recall, and F1.
+
+    Parameters
+    ----------
+    center_pred : torch.Tensor
+        Predicted center-probability image.
+    gt_centers : object
+        Reference center coordinates in row-column order.
+    peak_thr : float
+        Minimum heatmap value for a predicted center peak. Default is ``0.2``.
+    nms_dist : int
+        Pixel radius used to suppress neighboring center peaks. Default is ``3``.
+    match_radius : int
+        Largest center-matching distance in pixels. Default is ``10``.
+
+    Returns
+    -------
+    dict
+        Result mapping with keys ``precision``, ``recall``, ``f1``, ``n_pred``, ``n_gt``,
+        ``n_tp``.
+    """
     preds = _nms_peaks_np(center_pred, thr=peak_thr, min_dist=nms_dist)
     P = np.array([(y,x) for y,x,_ in preds], dtype=float)
     G = np.array(gt_centers, dtype=float)
@@ -508,6 +994,22 @@ def energy_errors_np(energy_pred: np.ndarray,
     """
     Returns RMSE and Pearson r inside cells.
     If variance is ~0, marks Pearson invalid and returns NaN.
+
+    Parameters
+    ----------
+    energy_pred : numpy.ndarray
+        Predicted normalized energy map.
+    energy_gt : numpy.ndarray
+        Reference normalized energy map.
+    cell_mask_gt : numpy.ndarray
+        Ground-truth binary cell-foreground mask.
+
+    Returns
+    -------
+    dict
+        Depending on the input and branch, returns ``{'rmse': np.nan, 'pearson': np.nan,
+        'valid_rmse': False, 'valid_r': False}``, ``{'rmse': rmse, 'pearson': r,
+        'valid_rmse': valid_rmse, 'valid_r': valid_r}``.
     """
     m = (cell_mask_gt > 0.5)
     if not np.any(m):
@@ -545,6 +1047,26 @@ def make_weight_schedule(
     decay_epochs: int = 50,
 ) -> list[float]:
     """
+    Compute per-head loss weights using warmup and linear decay.
+
+    Parameters
+    ----------
+    C : int
+        Number of output-head weights requested in cell, boundary, center, energy order.
+    epoch : int
+        Current training epoch number.
+    warmup_epochs : int
+        Epochs used by the per-head loss-weight schedule. Default is ``10``.
+    decay_epochs : int
+        Number of epochs over which the scheduled weight decays. Default is ``50``.
+
+    Returns
+    -------
+    list of float
+        Weights in cell, boundary, center, energy order, truncated to C heads.
+
+    Notes
+    -----
     Channel order:
       0: cell, 1: boundary, 2: center, 3: energy
     hi until warmup is reached, then linearly decay to lo over decay_epochs.
@@ -568,13 +1090,40 @@ def make_weight_schedule(
 # --------------------- training loops ---------------------
 
 class EarlyStopper:
+    """
+    Track validation-loss improvement and a patience-based stop decision.
+    """
     def __init__(self, patience=10, min_delta=1e-5):
+        """
+        Initialize the best loss, minimum improvement, and patience counter.
+
+        Parameters
+        ----------
+        patience : int
+            Number of consecutive steps without sufficient improvement before stopping. Default
+            is ``10``.
+        min_delta : float
+            Minimum loss reduction counted as an improvement. Default is ``1e-05``.
+        """
         self.patience = int(patience)
         self.min_delta = float(min_delta)
         self.best = float("inf")
         self.bad = 0
 
     def step(self, val_loss: float) -> bool:
+        """
+        Update loss tracking and return whether the patience limit has been reached.
+
+        Parameters
+        ----------
+        val_loss : float
+            Validation loss used to update the early-stop state.
+
+        Returns
+        -------
+        bool
+            Boolean result of the stated condition check.
+        """
         if val_loss < self.best - self.min_delta:
             self.best = float(val_loss)
             self.bad = 0
@@ -588,6 +1137,29 @@ def _build_aux_targets(extras: dict,
                        center_outside_radius: int = 6,
                        bound_sigma: float = 1.0):
     """
+    Build auxiliary boundary, center-region, and cell targets for training.
+
+    Parameters
+    ----------
+    extras : dict
+        Additional dataset metadata containing camera-style information.
+    tgt : torch.Tensor
+        Reference target tensor aligned with the image batch.
+    device : torch.device
+        PyTorch device on which tensors or model computations run.
+    center_outside_radius : int
+        Radius around reference centers excluded from the outside-center penalty, in pixels.
+        Default is ``6``.
+    bound_sigma : float
+        Gaussian width used to smooth the boundary target, in pixels. Default is ``1.0``.
+
+    Returns
+    -------
+    tuple
+        Tuple containing ``bound_soft``, ``cell_mask``, ``center_allow``, in that order.
+
+    Notes
+    -----
     Build:
       - soft boundary target from instances
       - outside mask for center loss (optional)
@@ -631,6 +1203,75 @@ def train_epoch(
 ):
 
         
+    """
+    Train one epoch with per-head losses, regularizers, and optional background mixing.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        PyTorch model used for training or prediction.
+    loader : torch.utils.data.DataLoader
+        DataLoader supplying images, targets, and additional labels.
+    opt : torch.optim.Optimizer
+        Optimizer whose state and model parameters are updated during training.
+    scaler : torch.amp.GradScaler
+        Automatic mixed-precision gradient scaler.
+    device : str or torch.device
+        PyTorch device on which tensors or model computations run.
+    use_amp : bool
+        Whether to use automatic mixed precision during model calls.
+    weights : sequence of float
+        Per-head loss weights for cell, boundary, center, and energy predictions.
+    w_bce : float
+        Weight of the binary cross-entropy loss term.
+    w_dice : float
+        Weight of the soft Dice loss term.
+    show_bar : bool
+        Whether to show a progress bar.
+    max_steps : int or None
+        Maximum batches processed; None uses the full loader. Default is ``None``.
+    grad_clip_norm : Optional[float]
+        Maximum gradient norm; None disables gradient clipping. Default is ``None``.
+    center_pos_weight : float
+        Positive-class weight in the center-head binary cross-entropy term. Default is
+        ``10.0``.
+    center_w_bce : float
+        Weight of center-head binary cross-entropy. Default is ``0.6``.
+    center_w_mse : float
+        Weight of center-head mean-squared error. Default is ``0.4``.
+    center_sparsity_weight : float
+        Weight of the center-probability sparsity penalty. Default is ``0.0``.
+    energy_w_l1 : float
+        Weight of absolute error in the energy-head loss. Default is ``0.5``.
+    energy_w_mse : float
+        Weight of squared error in the energy-head loss. Default is ``0.5``.
+    excl_weight : float
+        Weight of the cell-boundary exclusion regularizer. Default is ``0.2``.
+    halo_ring_px : int
+        Width of the near-cell ring in pixels. Default is ``3``.
+    halo_far_px : int
+        Dilation distance defining far background, in pixels. Default is ``12``.
+    halo_w_cell : float
+        Weight penalizing cell probabilities in the outer ring. Default is ``0.05``.
+    halo_w_energy_ring : float
+        Weight penalizing energy predictions in the near-cell ring. Default is ``0.05``.
+    halo_w_energy_far : float
+        Weight penalizing energy predictions in far background. Default is ``0.1``.
+    halo_w_center_ring : float
+        Weight penalizing center predictions in the near-cell ring. Default is ``0.05``.
+    halo_w_center_far : float
+        Weight penalizing center predictions in far background. Default is ``0.1``.
+    bg_loader : torch.utils.data.DataLoader or None
+        Optional loader supplying background-only training images. Default is ``None``.
+    bg_mix_frac : float
+        Fraction controlling the number of extra background training batches. Default is
+        ``0.0``.
+
+    Returns
+    -------
+    object
+        Computed value of ``out``.
+    """
     bg_iter = iter(bg_loader) if (bg_loader is not None and bg_mix_frac > 0.0) else None
     model.train()
     # running sums
@@ -860,6 +1501,49 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
                center_match_radius_px: int = 10, center_thr: float = 0.2, center_nms: int = 3,
                bound_tol_px: int = 2, bound_thr: float = 0.7, bound_sweep: bool = False,
                halo_ring_px: int = 3, halo_far_px: int = 12):
+    """
+    Evaluate an epoch and collect segmentation, center, boundary, and halo metrics.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        PyTorch model used for training or prediction.
+    loader : torch.utils.data.DataLoader
+        DataLoader supplying images, targets, and additional labels.
+    device : str or torch.device
+        PyTorch device on which tensors or model computations run.
+    use_amp : bool
+        Whether to use automatic mixed precision during model calls.
+    weights : sequence of float
+        Per-head loss weights for cell, boundary, center, and energy predictions.
+    w_bce : float
+        Weight of the binary cross-entropy loss term.
+    w_dice : float
+        Weight of the soft Dice loss term.
+    show_bar : bool
+        Whether to show a progress bar.
+    center_match_radius_px : int
+        Maximum center-matching distance in pixels. Default is ``10``.
+    center_thr : float
+        Minimum predicted center probability used for peak detection. Default is ``0.2``.
+    center_nms : int
+        Local suppression radius for center peaks, in pixels. Default is ``3``.
+    bound_tol_px : int
+        Pixel tolerance for matching predicted and reference boundaries. Default is ``2``.
+    bound_thr : float
+        Threshold applied to predicted boundary probabilities. Default is ``0.7``.
+    bound_sweep : bool
+        Whether to search boundary thresholds during evaluation. Default is ``False``.
+    halo_ring_px : int
+        Width of the near-cell ring in pixels. Default is ``3``.
+    halo_far_px : int
+        Dilation distance defining far background, in pixels. Default is ``12``.
+
+    Returns
+    -------
+    object
+        Computed value of ``out``.
+    """
     model.eval()
     # loss accumulators
     n = 0
@@ -1070,6 +1754,24 @@ def eval_epoch(model, loader, device, use_amp, weights, w_bce, w_dice, show_bar,
     return out
 
 def _probe_total_len(h5_paths: list[str]) -> int:
+    """
+    Sum the number of image records across HDF5 files.
+
+    Parameters
+    ----------
+    h5_paths : list[str]
+        Paths to HDF5 datasets included in the loader or validation run.
+
+    Returns
+    -------
+    int
+        Computed value of ``tot``.
+
+    Raises
+    ------
+    KeyError
+        'imgs' dataset missing in {p}
+    """
     tot = 0
     for p in h5_paths:
         with h5py.File(p, "r", libver="latest", swmr=True) as f:
@@ -1085,6 +1787,27 @@ def build_background_loader(
     distributed: bool,
     device: torch.device,
 ):
+    """
+    Build a background-image dataset, loader, and optional distributed sampler.
+
+    Parameters
+    ----------
+    h5_path : str
+        Path to the simulated-image HDF5 dataset.
+    batch_size : int
+        Number of dataset records per DataLoader batch.
+    workers : int
+        Number of DataLoader worker processes.
+    distributed : bool
+        Whether to use distributed samplers.
+    device : torch.device
+        PyTorch device on which tensors or model computations run.
+
+    Returns
+    -------
+    tuple
+        Tuple containing ``bg_ds``, ``bg_dl``, ``bg_sampler``, in that order.
+    """
     bg_ds = DiskSimCellsDataset(h5_path)
 
     bg_sampler = DistributedSampler(
@@ -1117,6 +1840,38 @@ def build_h5_loaders(
     device: torch.device,
 ):
     # discover files and build a concatenated base dataset
+    """
+    Split shuffled HDF5 indices reproducibly and build training and validation loaders.
+
+    Parameters
+    ----------
+    h5_path : str
+        Path to the simulated-image HDF5 dataset.
+    batch_size : int
+        Number of dataset records per DataLoader batch.
+    workers : int
+        Number of DataLoader worker processes.
+    seed : int
+        Random seed for reproducible sampling.
+    train_pct : float
+        Fraction of shuffled records assigned to training.
+    val_pct : Optional[float]
+        Optional validation fraction; None uses the remaining records.
+    distributed : bool
+        Whether to use distributed samplers.
+    device : torch.device
+        PyTorch device on which tensors or model computations run.
+
+    Returns
+    -------
+    tuple
+        Tuple containing ``train_ds``, ``val_ds``, ``train_dl``, ``val_dl``, in that order.
+
+    Raises
+    ------
+    RuntimeError
+        Empty HDF5 dataset (no samples).
+    """
     base_ds = DiskSimCellsDataset(h5_path)
     N = len(base_ds)
     if N == 0:
@@ -1201,6 +1956,79 @@ def train(
     grad_clip_norm: float | None = 1.0,
     checkpoint_every: int | None = 5,
 ):
+    """
+    Train the multi-head UNet and save configuration, metric logs, and model checkpoints.
+
+    Parameters
+    ----------
+    out_dir : str
+        Directory in which generated outputs are stored. Default is ``'./models/'``.
+    h5_path : str
+        Path to the simulated-image HDF5 dataset. Default is ``'./image_datasets/'``.
+    epochs : int
+        Maximum number of training epochs. Default is ``500``.
+    batch_size : int
+        Number of dataset records per DataLoader batch. Default is ``64``.
+    lr : float
+        Optimizer learning rate. Default is ``0.001``.
+    weight_decay : float
+        AdamW weight-decay coefficient. Default is ``0.0001``.
+    workers : int
+        Number of DataLoader worker processes. Default is ``8``.
+    target : int
+        Side length of the output square image tiles, in pixels. Default is ``512``.
+    mode : Literal['pad_resize', 'crop_well_resize', 'tiles']
+        Simulation image preparation mode recorded with the training configuration. Default
+        is ``'crop_well_resize'``.
+    train_pct : float
+        Fraction of shuffled records assigned to training. Default is ``0.9``.
+    val_pct : float or None
+        Optional validation fraction; None uses the remaining records. Default is ``None``.
+    seed : int
+        Random seed for reproducible sampling. Default is ``187``.
+    amp : bool
+        Whether to enable automatic mixed precision where supported. Default is ``True``.
+    unet_mode : Literal['small', 'medium', 'large']
+        UNet model size selected by the pipeline. Default is ``'small'``.
+    bg_mix_frac : float
+        Fraction controlling the number of extra background training batches. Default is
+        ``0.075``.
+    w_bce : float
+        Weight of the binary cross-entropy loss term. Default is ``0.3``.
+    w_dice : float
+        Weight of the soft Dice loss term. Default is ``0.7``.
+    max_steps_per_epoch : int | None
+        Optional maximum number of training batches per epoch. Default is ``250``.
+    early_stop_patience : int
+        Validation epochs without sufficient improvement before stopping. Default is ``20``.
+    early_stop_min_delta : float
+        Required decrease in validation loss to reset patience. Default is ``1e-05``.
+    warmup_epochs : int
+        Epochs used by the per-head loss-weight schedule. Default is ``10``.
+    lr_warmup_epochs : int
+        Number of learning-rate warmup epochs. Default is ``3``.
+    lr_warmup_start_factor : float
+        Initial learning-rate multiplier during warmup. Default is ``0.01``.
+    grad_clip_norm : float | None
+        Maximum gradient norm; None disables gradient clipping. Default is ``1.0``.
+    checkpoint_every : int | None
+        Epoch interval for periodic checkpoints; None disables periodic saves. Default is
+        ``5``.
+
+    Returns
+    -------
+    str or None
+        Path of the best checkpoint on rank zero; None on other distributed ranks.
+
+    Raises
+    ------
+    ValueError
+        Unknown unet mode '{unet_mode}'
+
+    Notes
+    -----
+    Selects the best checkpoint using unweighted validation loss. Sets random seeds, may initialize torch.distributed, updates model and optimizer state, and writes outputs under out_dir. Early stopping and periodic checkpoints follow the supplied settings.
+    """
     os.makedirs(out_dir, exist_ok=True)
 
     background_h5_path = os.path.dirname(h5_path)

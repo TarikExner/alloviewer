@@ -63,6 +63,15 @@ DIRECTORIES = {
 
 def generate_all_figures(DIRECTORIES: dict):
 
+    """
+    Run the main, supplementary, and simulation figure builders with shared directories.
+
+    Parameters
+    ----------
+    DIRECTORIES : dict
+        Shared keyword arguments mapping data, model, cache, and figure directory names to
+        paths.
+    """
     figure_1_generation(**DIRECTORIES)
     figure_2_generation(**DIRECTORIES)
     figure_3_generation(**DIRECTORIES)

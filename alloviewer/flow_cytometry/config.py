@@ -4,9 +4,19 @@ from typing import List
 
 @dataclass(frozen=True)
 class ScoreRule:
-    """Score rule based on a positive-cell percentage.
+    """
+    Score rule based on a positive-cell percentage.
 
     Parameters
+    ----------
+    min_pct : float
+        Minimum percentage required for the rule to match.
+    score : int
+        Numeric score assigned by the rule.
+    verdict : str
+        Text label assigned by the rule.
+
+    Attributes
     ----------
     min_pct : float
         Minimum percentage required for the rule to match.
@@ -28,9 +38,19 @@ class ScoreRule:
 
 @dataclass(frozen=True)
 class RatioRule:
-    """Score rule based on a ratio.
+    """
+    Score rule based on a ratio.
 
     Parameters
+    ----------
+    min_ratio : float
+        Minimum ratio required for the rule to match.
+    score : int
+        Numeric score assigned by the rule.
+    verdict : str
+        Text label assigned by the rule.
+
+    Attributes
     ----------
     min_ratio : float
         Minimum ratio required for the rule to match.

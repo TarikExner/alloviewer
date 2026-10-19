@@ -43,12 +43,33 @@ WORKSPACE_SUFFIXES = {".wsp", ".wspt"}
 
 
 class FCSAnonymizationError(RuntimeError):
-    """Raised when a file cannot be anonymized or checked safely."""
+    """
+    Raised when a file cannot be anonymized or checked safely.
+    """
 
 
 @dataclass(frozen=True)
 class FCSFilenameMapping:
-    """Filename mapping for one FCS file."""
+    """
+    Filename mapping for one FCS file.
+
+    Attributes
+    ----------
+    source : Path
+        Source file path read by this operation.
+    original_relative_path : Path
+        Source path relative to the input root before anonymization.
+    original_filename : str
+        Filename before anonymization or public-name substitution.
+    anonymous_id : str
+        Generated identifier assigned to an anonymized source item.
+    anonymous_filename : str
+        Replacement filename written into the exported data or metadata.
+    anonymous_relative_path : Path
+        Replacement path relative to the anonymized output root.
+    output : Path
+        Destination path of the rewritten or converted file.
+    """
 
     source: Path
     original_relative_path: Path
@@ -61,7 +82,28 @@ class FCSFilenameMapping:
 
 @dataclass(frozen=True)
 class FCSFileResult:
-    """Result for one rewritten FCS file."""
+    """
+    Result for one rewritten FCS file.
+
+    Attributes
+    ----------
+    source : Path
+        Source file path read by this operation.
+    output : Path
+        Destination path of the rewritten or converted file.
+    original_filename : str
+        Filename before anonymization or public-name substitution.
+    anonymous_filename : str
+        Replacement filename written into the exported data or metadata.
+    event_count : int
+        Number of events in the FCS event matrix.
+    channel_count : int
+        Number of measurement channels in the FCS event matrix.
+    redacted_metadata_keys : tuple[str, ...]
+        Metadata keys whose values were removed or replaced.
+    maximum_absolute_event_difference : float
+        Largest absolute difference between source and rewritten FCS event values.
+    """
 
     source: Path
     output: Path
@@ -75,7 +117,18 @@ class FCSFileResult:
 
 @dataclass(frozen=True)
 class CSVRewriteResult:
-    """Result for one CSV file containing a file_name column."""
+    """
+    Result for one CSV file containing a file_name column.
+
+    Attributes
+    ----------
+    source : Path
+        Source file path read by this operation.
+    output : Path
+        Destination path of the rewritten or converted file.
+    replaced_rows : int
+        Number of table rows changed during rewriting.
+    """
 
     source: Path
     output: Path
@@ -84,7 +137,22 @@ class CSVRewriteResult:
 
 @dataclass(frozen=True)
 class WorkspaceRewriteResult:
-    """Result for one FlowJo workspace."""
+    """
+    Result for one FlowJo workspace.
+
+    Attributes
+    ----------
+    source : Path
+        Source file path read by this operation.
+    output : Path
+        Destination path of the rewritten or converted file.
+    replaced_dataset_uris : int
+        Number of workspace dataset URIs replaced.
+    replaced_filename_references : int
+        Number of filename references replaced during rewriting.
+    redacted_keyword_values : int
+        Number of metadata keyword values redacted.
+    """
 
     source: Path
     output: Path
@@ -95,7 +163,34 @@ class WorkspaceRewriteResult:
 
 @dataclass
 class FCSAnonymizationReport:
-    """Summary returned by :func:`anonymize_fcs_tree`."""
+    """
+    Summary returned by :func:`anonymize_fcs_tree`.
+
+    Attributes
+    ----------
+    input_root : Path
+        Root folder containing the input dataset.
+    output_root : Path
+        Root folder for the processed output dataset.
+    mapping_file : Path
+        Path to the CSV mapping original names to anonymous names.
+    filename_mappings : list[FCSFilenameMapping]
+        Records mapping original filenames to anonymous filenames. Default is
+        ``field(default_factory=list)``.
+    fcs_files : list[FCSFileResult]
+        FCS files included in the anonymization result. Default is
+        ``field(default_factory=list)``.
+    csv_files : list[CSVRewriteResult]
+        CSV files included in the anonymization result. Default is
+        ``field(default_factory=list)``.
+    workspace_files : list[WorkspaceRewriteResult]
+        FlowJo workspace files included in the anonymization result. Default is
+        ``field(default_factory=list)``.
+    copied_files : list[Path]
+        Files copied without content rewriting. Default is ``field(default_factory=list)``.
+    created_directories : int
+        Output directories created during processing. Default is ``0``.
+    """
 
     input_root: Path
     output_root: Path
@@ -109,18 +204,50 @@ class FCSAnonymizationReport:
 
     @property
     def fcs_file_count(self) -> int:
+        """
+        Return the number of rewritten FCS files in the report.
+
+        Returns
+        -------
+        int
+            The number of rewritten FCS files in the report.
+        """
         return len(self.fcs_files)
 
     @property
     def rewritten_csv_count(self) -> int:
+        """
+        Return the number of rewritten CSV files in the report.
+
+        Returns
+        -------
+        int
+            The number of rewritten CSV files in the report.
+        """
         return len(self.csv_files)
 
     @property
     def rewritten_workspace_count(self) -> int:
+        """
+        Return the number of rewritten FlowJo workspaces in the report.
+
+        Returns
+        -------
+        int
+            The number of rewritten FlowJo workspaces in the report.
+        """
         return len(self.workspace_files)
 
     @property
     def copied_file_count(self) -> int:
+        """
+        Return the number of copied ancillary files in the report.
+
+        Returns
+        -------
+        int
+            The number of copied ancillary files in the report.
+        """
         return len(self.copied_files)
 
 
@@ -222,6 +349,15 @@ _NON_AUTOSAVE_RE = re.compile(
 
 
 def _require_flowio_130() -> None:
+    """
+    Require the exact FlowIO version used by the FCS rewrite checks.
+
+    Raises
+    ------
+    RuntimeError
+        fcs_anonymizer.py requires FlowIO {REQUIRED_FLOWIO_VERSION}; installed version is
+        {version}. Install it with 'pip install flowio=={REQUIRED_FLOWIO_VERSION}'.
+    """
     version = str(getattr(flowio, "__version__", "unknown"))
     if version != REQUIRED_FLOWIO_VERSION:
         raise RuntimeError(
@@ -232,12 +368,40 @@ def _require_flowio_130() -> None:
 
 
 def _normalise_metadata_key(key: object) -> str:
+    """
+    Normalize a metadata key's prefix, case, underscores, and whitespace.
+
+    Parameters
+    ----------
+    key : object
+        Mapping key or attribute name selected by the helper.
+
+    Returns
+    -------
+    str
+        Computed value of ``' '.join(str(key).strip().lstrip('$').casefold().replace('_', '
+        ').split())``.
+    """
     return " ".join(
         str(key).strip().lstrip("$").casefold().replace("_", " ").split()
     )
 
 
 def _normalised_text(flow_data: flowio.FlowData) -> dict[str, str]:
+    """
+    Copy FCS TEXT metadata into a mapping with normalized keys and string values.
+
+    Parameters
+    ----------
+    flow_data : flowio.FlowData
+        FlowIO reader containing FCS events and metadata.
+
+    Returns
+    -------
+    dict[str, str]
+        Computed value of ``{_normalise_metadata_key(key): str(value) for key, value in
+        flow_data.text.items()}``.
+    """
     return {
         _normalise_metadata_key(key): str(value)
         for key, value in flow_data.text.items()
@@ -247,6 +411,21 @@ def _normalised_text(flow_data: flowio.FlowData) -> dict[str, str]:
 def _normalised_additional_keys(
     additional_sensitive_keys: Iterable[str] | None,
 ) -> frozenset[str]:
+    """
+    Normalize extra metadata keys selected for redaction.
+
+    Parameters
+    ----------
+    additional_sensitive_keys : Iterable[str] | None
+        Extra metadata keys to redact in addition to the built-in sensitive-key rules.
+
+    Returns
+    -------
+    frozenset[str]
+        Depending on the input and branch, returns ``frozenset()``,
+        ``frozenset((_normalise_metadata_key(item) for item in
+        additional_sensitive_keys))``.
+    """
     if additional_sensitive_keys is None:
         return frozenset()
     return frozenset(
@@ -258,6 +437,21 @@ def _is_sensitive_key(
     key: object,
     additional_sensitive_keys: Iterable[str] | None,
 ) -> bool:
+    """
+    Match a metadata key against configured sensitive names and patterns.
+
+    Parameters
+    ----------
+    key : object
+        Mapping key or attribute name selected by the helper.
+    additional_sensitive_keys : Iterable[str] | None
+        Extra metadata keys to redact in addition to the built-in sensitive-key rules.
+
+    Returns
+    -------
+    bool
+        Boolean result of the stated condition check.
+    """
     normalised = _normalise_metadata_key(key)
 
     if normalised in _EXACT_SENSITIVE_KEYS:
@@ -270,6 +464,19 @@ def _is_sensitive_key(
 
 
 def _is_generated_key(key: object) -> bool:
+    """
+    Identify metadata keys regenerated by the FCS writer.
+
+    Parameters
+    ----------
+    key : object
+        Mapping key or attribute name selected by the helper.
+
+    Returns
+    -------
+    bool
+        Boolean result of the stated condition check.
+    """
     compact = _normalise_metadata_key(key).replace(" ", "")
     return compact in _GENERATED_TEXT_KEYS or bool(
         _GENERATED_PARAMETER_KEY.fullmatch(compact)
@@ -277,6 +484,21 @@ def _is_generated_key(key: object) -> bool:
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:
+    """
+    Test whether a path is contained beneath a parent path.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+    parent : Path
+        Parent path against which containment is checked.
+
+    Returns
+    -------
+    bool
+        True when a path is contained beneath a parent path; False otherwise.
+    """
     try:
         path.relative_to(parent)
         return True
@@ -285,6 +507,31 @@ def _is_relative_to(path: Path, parent: Path) -> bool:
 
 
 def _validate_roots(input_root: Path, output_root: Path, overwrite: bool) -> None:
+    """
+    Validate input and output folders and the output overwrite policy.
+
+    Parameters
+    ----------
+    input_root : Path
+        Root folder containing the input dataset.
+    output_root : Path
+        Root folder for the processed output dataset.
+    overwrite : bool
+        If True, permit replacement of existing output as implemented by this operation.
+
+    Raises
+    ------
+    FileNotFoundError
+        Input folder does not exist: {input_root}
+    NotADirectoryError
+        Input path is not a folder: {input_root} The output path exists but is not a folder:
+        {output_root}
+    ValueError
+        Input and output folders must be different. The output folder must not be inside the
+        input folder.
+    FileExistsError
+        Output folder already exists: {output_root}. Pass overwrite=True to replace it.
+    """
     if not input_root.exists():
         raise FileNotFoundError(f"Input folder does not exist: {input_root}")
     if not input_root.is_dir():
@@ -305,6 +552,25 @@ def _validate_roots(input_root: Path, output_root: Path, overwrite: bool) -> Non
 
 
 def _validate_mapping_filename(mapping_filename: str | Path) -> Path:
+    """
+    Require a relative CSV mapping path without parent traversal.
+
+    Parameters
+    ----------
+    mapping_filename : str | Path
+        Relative CSV filename for the original-to-anonymous mapping.
+
+    Returns
+    -------
+    Path
+        Computed value of ``mapping_path``.
+
+    Raises
+    ------
+    ValueError
+        mapping_filename must be a relative path inside the output folder. mapping_filename
+        must end in .csv.
+    """
     mapping_path = Path(mapping_filename)
     if mapping_path.is_absolute() or ".." in mapping_path.parts:
         raise ValueError(
@@ -322,6 +588,30 @@ def _load_flow_data(
     ignore_offset_discrepancy: bool,
     use_header_offsets: bool,
 ) -> flowio.FlowData:
+    """
+    Read an FCS file with the requested offset options and wrap read failures.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+    ignore_offset_error : bool
+        Forwarded to FlowIO to control handling of an invalid data-end offset.
+    ignore_offset_discrepancy : bool
+        Forwarded to FlowIO to control disagreement between header and TEXT offsets.
+    use_header_offsets : bool
+        Whether FlowIO should use HEADER offsets when reading event data.
+
+    Returns
+    -------
+    flowio.FlowData
+        An FCS file with the requested offset options and wrap read failures.
+
+    Raises
+    ------
+    FCSAnonymizationError
+        Could not read FCS file '{path}': {exc}
+    """
     try:
         return flowio.FlowData(
             os.fspath(path),
@@ -336,7 +626,24 @@ def _load_flow_data(
 
 
 def _channel_labels(flow_data: flowio.FlowData) -> tuple[list[str], list[str]]:
-    """Extract PnN and PnS labels using the FlowIO 1.3.0 channel API."""
+    """
+    Extract PnN and PnS labels using the FlowIO 1.3.0 channel API.
+
+    Parameters
+    ----------
+    flow_data : flowio.FlowData
+        FlowIO reader containing FCS events and metadata.
+
+    Returns
+    -------
+    tuple[list[str], list[str]]
+        Tuple containing ``pnn_labels``, ``pns_labels``, in that order.
+
+    Raises
+    ------
+    FCSAnonymizationError
+        At least one required PnN channel label is missing.
+    """
 
     pnn_labels = [""] * int(flow_data.channel_count)
     pns_labels = [""] * int(flow_data.channel_count)
@@ -356,6 +663,25 @@ def _channel_labels(flow_data: flowio.FlowData) -> tuple[list[str], list[str]]:
 
 
 def _validate_source_format(flow_data: flowio.FlowData, source: Path) -> None:
+    """
+    Require floating-point FCS data with linear PnE scaling before rewriting.
+
+    Parameters
+    ----------
+    flow_data : flowio.FlowData
+        FlowIO reader containing FCS events and metadata.
+    source : Path
+        Source file path read by this operation.
+
+    Raises
+    ------
+    FCSAnonymizationError
+        '{source}' uses FCS datatype {data_type}. FlowIO 1.3.0 only writes floating-point
+        FCS files, so this module accepts only floating-point source files to avoid changing
+        data semantics. Invalid P{number}E value {pne} in '{source}'. '{source}' has
+        non-linear P{number}E={pne}. FlowIO 1.3.0 normalizes PnE to '0,0' when writing
+        floating-point files, so the file is rejected instead of silently changing scaling.
+    """
     data_type = str(flow_data.text.get("datatype", "")).upper()
     if data_type != "F":
         raise FCSAnonymizationError(
@@ -387,6 +713,23 @@ def _build_output_metadata(
     anonymous_filename: str,
     additional_sensitive_keys: Iterable[str] | None,
 ) -> tuple[dict[str, str], tuple[str, ...]]:
+    """
+    Replace sensitive metadata and retain the required channel scaling fields.
+
+    Parameters
+    ----------
+    source_data : flowio.FlowData
+        FCS reader holding original event data and TEXT metadata.
+    anonymous_filename : str
+        Replacement filename written into the exported data or metadata.
+    additional_sensitive_keys : Iterable[str] | None
+        Extra metadata keys to redact in addition to the built-in sensitive-key rules.
+
+    Returns
+    -------
+    tuple[dict[str, str], tuple[str, ...]]
+        Tuple containing ``metadata``, ``tuple(sorted(set(redacted_keys)))``, in that order.
+    """
     metadata: dict[str, str] = {}
     redacted_keys: list[str] = []
 
@@ -430,6 +773,23 @@ def _write_fcs(
     output_path: Path,
     metadata: dict[str, str],
 ) -> None:
+    """
+    Write FCS data and metadata, wrapping errors as anonymization failures.
+
+    Parameters
+    ----------
+    source_data : flowio.FlowData
+        FCS reader holding original event data and TEXT metadata.
+    output_path : Path
+        Destination path for the rewritten file.
+    metadata : dict[str, str]
+        Metadata mapping read from the source file or job record.
+
+    Raises
+    ------
+    FCSAnonymizationError
+        Could not write anonymized FCS file '{output_path}': {exc}
+    """
     try:
         source_data.write_fcs(os.fspath(output_path), metadata=metadata)
     except Exception as exc:
@@ -446,6 +806,32 @@ def _verify_redaction(
     anonymous_filename: str,
     additional_sensitive_keys: Iterable[str] | None,
 ) -> tuple[str, ...]:
+    """
+    Check sensitive-field replacement and removal of the FCS ANALYSIS segment.
+
+    Parameters
+    ----------
+    source_data : flowio.FlowData
+        FCS reader holding original event data and TEXT metadata.
+    output_data : flowio.FlowData
+        FCS reader holding the rewritten file used for verification.
+    output_path : Path
+        Destination path for the rewritten file.
+    anonymous_filename : str
+        Replacement filename written into the exported data or metadata.
+    additional_sensitive_keys : Iterable[str] | None
+        Extra metadata keys to redact in addition to the built-in sensitive-key rules.
+
+    Returns
+    -------
+    tuple[str, ...]
+        Computed value of ``tuple(sensitive_keys)``.
+
+    Raises
+    ------
+    FCSAnonymizationError
+        '{output_path}' still contains an ANALYSIS segment.
+    """
     source_text = _normalised_text(source_data)
     output_text = _normalised_text(output_data)
 
@@ -489,6 +875,23 @@ def _verify_technical_metadata(
     *,
     additional_sensitive_keys: Iterable[str] | None,
 ) -> None:
+    """
+    Check that retained non-generated technical metadata has not changed.
+
+    Parameters
+    ----------
+    source_data : flowio.FlowData
+        FCS reader holding original event data and TEXT metadata.
+    output_data : flowio.FlowData
+        FCS reader holding the rewritten file used for verification.
+    additional_sensitive_keys : Iterable[str] | None
+        Extra metadata keys to redact in addition to the built-in sensitive-key rules.
+
+    Raises
+    ------
+    FCSAnonymizationError
+        Technical metadata field {key} changed: {source_value} -> {output_value}.
+    """
     source_text = _normalised_text(source_data)
     output_text = _normalised_text(output_data)
 
@@ -513,6 +916,34 @@ def _verify_event_data(
     output_data: flowio.FlowData,
     source_path: Path,
 ) -> float:
+    """
+    Check event counts, channel labels, shapes, and numeric event values after rewriting.
+
+    Parameters
+    ----------
+    source_data : flowio.FlowData
+        FCS reader holding original event data and TEXT metadata.
+    output_data : flowio.FlowData
+        FCS reader holding the rewritten file used for verification.
+    source_path : Path
+        Path identifying the original source file.
+
+    Returns
+    -------
+    float
+        Depending on the input and branch, returns ``0.0``, ``maximum_difference``.
+
+    Raises
+    ------
+    FCSAnonymizationError
+        Event count changed for '{source_path}': {source_data.event_count} ->
+        {output_data.event_count}. Channel count changed for '{source_path}':
+        {source_data.channel_count} -> {output_data.channel_count}. PnN channel labels
+        changed while rewriting '{source_path}'. PnS channel labels changed while rewriting
+        '{source_path}'. Event data shape changed for '{source_path}': {source_events.shape}
+        -> {output_events.shape}. Event values changed while rewriting '{source_path}'.
+        Maximum absolute difference: {maximum_difference}.
+    """
     if int(output_data.event_count) != int(source_data.event_count):
         raise FCSAnonymizationError(
             f"Event count changed for '{source_path}': "
@@ -580,7 +1011,49 @@ def anonymize_fcs_file(
     ignore_offset_discrepancy: bool = False,
     use_header_offsets: bool = False,
 ) -> FCSFileResult:
-    """Rewrite one FCS file with identifying metadata values replaced."""
+    """
+    Rewrite one FCS file with identifying metadata values replaced.
+
+    Parameters
+    ----------
+    source_path : str | Path
+        Path identifying the original source file.
+    output_path : str | Path
+        Destination path for the rewritten file.
+    anonymous_filename : str | None
+        Replacement filename written into the exported data or metadata. Default is
+        ``None``.
+    verify : bool
+        Whether to compare rewritten FCS events with the original event matrix. Default is
+        ``True``.
+    additional_sensitive_keys : Iterable[str] | None
+        Extra metadata keys to redact in addition to the built-in sensitive-key rules.
+        Default is ``None``.
+    ignore_offset_error : bool
+        Forwarded to FlowIO to control handling of an invalid data-end offset. Default is
+        ``False``.
+    ignore_offset_discrepancy : bool
+        Forwarded to FlowIO to control disagreement between header and TEXT offsets. Default
+        is ``False``.
+    use_header_offsets : bool
+        Whether FlowIO should use HEADER offsets when reading event data. Default is
+        ``False``.
+
+    Returns
+    -------
+    FCSFileResult
+        Source/output identifiers, event and channel counts, metadata redactions, and
+        event-verification details for the rewritten FCS file.
+
+    Raises
+    ------
+    ValueError
+        Source file is not an .fcs file: {source} Source and output FCS paths must be
+        different. anonymous_filename must be a filename, not a path. anonymous_filename
+        must end in .fcs.
+    FileNotFoundError
+        FCS file does not exist: {source}
+    """
 
     _require_flowio_130()
 
@@ -678,6 +1151,35 @@ def _build_filename_mappings(
     identifier_prefix: str,
     identifier_width: int,
 ) -> list[FCSFilenameMapping]:
+    """
+    Assign ordered anonymous FCS names and reject ambiguous source basenames.
+
+    Parameters
+    ----------
+    input_root : Path
+        Root folder containing the input dataset.
+    output_root : Path
+        Root folder for the processed output dataset.
+    identifier_prefix : str
+        Prefix used for anonymous file identifiers.
+    identifier_width : int
+        Minimum width of the numeric part of an anonymous identifier.
+
+    Returns
+    -------
+    list[FCSFilenameMapping]
+        Computed value of ``mappings``.
+
+    Raises
+    ------
+    ValueError
+        identifier_prefix must contain only letters, digits, '_' or '-'. identifier_width
+        must be at least 1.
+    FCSAnonymizationError
+        The same FCS filename occurs in more than one folder, so a root-level expression
+        table containing only file_name would be ambiguous: '{previous}' and '{source}'.
+        Rename one source file first.
+    """
     if not identifier_prefix or not re.fullmatch(r"[A-Za-z0-9_-]+", identifier_prefix):
         raise ValueError(
             "identifier_prefix must contain only letters, digits, '_' or '-'."
@@ -728,15 +1230,60 @@ def _build_filename_mappings(
 def _mapping_by_basename(
     mappings: Sequence[FCSFilenameMapping],
 ) -> dict[str, FCSFilenameMapping]:
+    """
+    Index file translations by case-folded original basenames.
+
+    Parameters
+    ----------
+    mappings : Sequence[FCSFilenameMapping]
+        Original-to-anonymous file translations used by this operation.
+
+    Returns
+    -------
+    dict[str, FCSFilenameMapping]
+        Computed value of ``{mapping.original_filename.casefold(): mapping for mapping in
+        mappings}``.
+    """
     return {mapping.original_filename.casefold(): mapping for mapping in mappings}
 
 
 def _basename_from_reference(value: str) -> str:
+    """
+    Decode an HTML or URL file reference and extract its basename.
+
+    Parameters
+    ----------
+    value : str
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    str
+        Computed value of ``re.split('[/\\\\\\\\]', decoded)[-1]``.
+    """
     decoded = unquote(html.unescape(value.strip()))
     return re.split(r"[/\\]", decoded)[-1]
 
 
 def _detect_text_encoding(path: Path) -> str:
+    """
+    Choose UTF-8 with or without a BOM, then cp1252, from a file sample.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+
+    Returns
+    -------
+    str
+        UTF-8 with or without a BOM, then cp1252, from a file sample.
+
+    Raises
+    ------
+    FCSAnonymizationError
+        Could not decode text file '{path}' as UTF-8 or cp1252.
+    """
     with path.open("rb") as handle:
         raw = handle.read(1024 * 1024)
     if raw.startswith(b"\xef\xbb\xbf"):
@@ -755,12 +1302,28 @@ def _detect_text_encoding(path: Path) -> str:
 
 
 def _detect_csv_dialect(sample: str) -> csv.Dialect:
+    """
+    Infer a CSV dialect or use a comma/semicolon fallback.
+
+    Parameters
+    ----------
+    sample : str
+        Text excerpt used to infer the CSV dialect.
+
+    Returns
+    -------
+    csv.Dialect
+        A CSV dialect or use a comma/semicolon fallback.
+    """
     try:
         return csv.Sniffer().sniff(sample, delimiters=",;\t|")
     except csv.Error:
         delimiter = ";" if sample.partition("\n")[0].count(";") > sample.partition("\n")[0].count(",") else ","
 
         class FallbackDialect(csv.Dialect):
+            """
+            Define conservative CSV quoting and line-ending defaults.
+            """
             quoting = csv.QUOTE_MINIMAL
             quotechar = '"'
             doublequote = True
@@ -774,6 +1337,19 @@ def _detect_csv_dialect(sample: str) -> csv.Dialect:
 
 
 def _line_terminator(text: str) -> str:
+    """
+    Detect CRLF, CR, or LF line endings in text.
+
+    Parameters
+    ----------
+    text : str
+        Text content to inspect, normalize, or render.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``'\\r\\n'``, ``'\\r'``, ``'\\n'``.
+    """
     if "\r\n" in text:
         return "\r\n"
     if "\r" in text:
@@ -788,6 +1364,33 @@ def _rewrite_csv_file(
     mapping_by_name: Mapping[str, FCSFilenameMapping],
     strict_references: bool,
 ) -> CSVRewriteResult | None:
+    """
+    Translate file_name references in a CSV while checking unresolved references.
+
+    Parameters
+    ----------
+    source : Path
+        Source file path read by this operation.
+    output : Path
+        Destination path of the rewritten or converted file.
+    mapping_by_name : Mapping[str, FCSFilenameMapping]
+        File translations indexed by case-folded original basename.
+    strict_references : bool
+        If True, reject references that have no matching source-file translation.
+
+    Returns
+    -------
+    CSVRewriteResult | None
+        Depending on the input and branch, returns ``None``,
+        ``CSVRewriteResult(source=source, output=output, replaced_rows=replaced_rows)``.
+
+    Raises
+    ------
+    FCSAnonymizationError
+        CSV file '{source}' contains more than one file_name column. CSV file '{source}' has
+        too few columns on row {row_number}. CSV file '{source}' contains file_name values
+        with no matching FCS file in the input tree: {examples}
+    """
     encoding = _detect_text_encoding(source)
     with source.open("r", encoding=encoding, newline="") as handle:
         sample = handle.read(65536)
@@ -881,6 +1484,21 @@ def _rewrite_csv_file(
 
 
 def _get_xml_attribute(tag: str, name: str) -> str | None:
+    """
+    Read and HTML-decode a named attribute from an XML tag string.
+
+    Parameters
+    ----------
+    tag : str
+        XML tag text to inspect or rewrite.
+    name : str
+        Name identifying the item being processed.
+
+    Returns
+    -------
+    str | None
+        And HTML-decode a named attribute from an XML tag string.
+    """
     pattern = re.compile(
         _XML_ATTRIBUTE_TEMPLATE.format(name=re.escape(name)),
         re.IGNORECASE,
@@ -892,6 +1510,28 @@ def _get_xml_attribute(tag: str, name: str) -> str | None:
 
 
 def _replace_xml_attribute(tag: str, name: str, value: str) -> str:
+    """
+    Replace one XML attribute with escaped text while retaining its quote style.
+
+    Parameters
+    ----------
+    tag : str
+        XML tag text to inspect or rewrite.
+    name : str
+        Name identifying the item being processed.
+    value : str
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    str
+        Computed value of ``updated``.
+
+    Raises
+    ------
+    FCSAnonymizationError
+        Expected XML attribute {name} was not found in tag: {tag[:200]}
+    """
     pattern = re.compile(
         _XML_ATTRIBUTE_TEMPLATE.format(name=re.escape(name)),
         re.IGNORECASE,
@@ -899,6 +1539,19 @@ def _replace_xml_attribute(tag: str, name: str, value: str) -> str:
     escaped = html.escape(value, quote=True)
 
     def replace(match: re.Match[str]) -> str:
+        """
+        Build replacement XML attribute text from the matched prefix and quotes.
+
+        Parameters
+        ----------
+        match : re.Match[str]
+            Regular-expression match used by the replacement callback.
+
+        Returns
+        -------
+        str
+            Replacement XML attribute text from the matched prefix and quotes.
+        """
         return f"{match.group('prefix')}{match.group('quote')}{escaped}{match.group('quote')}"
 
     updated, count = pattern.subn(replace, tag, count=1)
@@ -910,6 +1563,21 @@ def _replace_xml_attribute(tag: str, name: str, value: str) -> str:
 
 
 def _relative_file_uri(workspace_relative_path: Path, target_relative_path: Path) -> str:
+    """
+    Build a URL-quoted file reference relative to a FlowJo workspace.
+
+    Parameters
+    ----------
+    workspace_relative_path : Path
+        FlowJo workspace path relative to the exported root.
+    target_relative_path : Path
+        FCS path relative to the exported root.
+
+    Returns
+    -------
+    str
+        A URL-quoted file reference relative to a FlowJo workspace.
+    """
     workspace_parent = workspace_relative_path.parent
     relative = os.path.relpath(target_relative_path, start=workspace_parent)
     relative_posix = relative.replace(os.sep, "/")
@@ -922,6 +1590,21 @@ def _replace_known_filename_forms(
     text: str,
     mappings: Sequence[FCSFilenameMapping],
 ) -> tuple[str, int]:
+    """
+    Replace plain and encoded original filenames and count replacements.
+
+    Parameters
+    ----------
+    text : str
+        Text content to inspect, normalize, or render.
+    mappings : Sequence[FCSFilenameMapping]
+        Original-to-anonymous file translations used by this operation.
+
+    Returns
+    -------
+    tuple[str, int]
+        Tuple containing ``text``, ``replacements``, in that order.
+    """
     replacements = 0
 
     for mapping in sorted(
@@ -956,6 +1639,39 @@ def _rewrite_flowjo_workspace(
     additional_sensitive_keys: Iterable[str] | None,
     strict_references: bool,
 ) -> WorkspaceRewriteResult:
+    """
+    Rewrite file references and sensitive metadata in a FlowJo workspace.
+
+    Parameters
+    ----------
+    source : Path
+        Source file path read by this operation.
+    output : Path
+        Destination path of the rewritten or converted file.
+    workspace_relative_path : Path
+        FlowJo workspace path relative to the exported root.
+    mappings : Sequence[FCSFilenameMapping]
+        Original-to-anonymous file translations used by this operation.
+    mapping_by_name : Mapping[str, FCSFilenameMapping]
+        File translations indexed by case-folded original basename.
+    additional_sensitive_keys : Iterable[str] | None
+        Extra metadata keys to redact in addition to the built-in sensitive-key rules.
+    strict_references : bool
+        If True, reject references that have no matching source-file translation.
+
+    Returns
+    -------
+    WorkspaceRewriteResult
+        Source/output paths and counts of rewritten dataset URIs, filename references, and
+        redacted keyword values.
+
+    Raises
+    ------
+    FCSAnonymizationError
+        FlowJo workspace '{source}' contains FCS references with no matching file in the
+        input tree: {examples} FlowJo workspace '{source}' still contains original FCS
+        filename text after rewriting: {remaining[:10]}
+    """
     encoding = _detect_text_encoding(source)
     text = source.read_text(encoding=encoding)
 
@@ -964,6 +1680,21 @@ def _rewrite_flowjo_workspace(
     redacted_keyword_count = 0
 
     def rewrite_tag(match: re.Match[str]) -> str:
+        """
+        Translate DataSet paths and replace selected Keyword values in an XML tag.
+
+        Parameters
+        ----------
+        match : re.Match[str]
+            Regular-expression match used by the replacement callback.
+
+        Returns
+        -------
+        str
+            Depending on the input and branch, returns ``tag``, ``_replace_xml_attribute(tag,
+            'uri', new_uri)``, ``_replace_xml_attribute(tag, 'value',
+            mapping.anonymous_filename)``, ``_replace_xml_attribute(tag, 'value', REDACTED)``.
+        """
         nonlocal dataset_uri_count, redacted_keyword_count
         tag = match.group(0)
         tag_name = match.group("name").casefold()
@@ -1064,6 +1795,16 @@ def _write_mapping_csv(
     path: Path,
     mappings: Sequence[FCSFilenameMapping],
 ) -> None:
+    """
+    Write the private original-to-anonymous FCS filename mapping.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+    mappings : Sequence[FCSFilenameMapping]
+        Original-to-anonymous file translations used by this operation.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(
@@ -1106,8 +1847,61 @@ def anonymize_fcs_tree(
     identifier_width: int = DEFAULT_IDENTIFIER_WIDTH,
     mapping_filename: str | Path = DEFAULT_MAPPING_FILENAME,
 ) -> FCSAnonymizationReport:
-    """Copy a tree while anonymizing FCS files and linked metadata files.
+    """
+    Copy a tree while anonymizing FCS files and linked metadata files.
 
+    Parameters
+    ----------
+    input_folder : str | Path
+        Root folder containing the source files to process.
+    output_folder : str | Path
+        Root folder where processed files are written.
+    overwrite : bool
+        If True, permit replacement of existing output as implemented by this operation.
+        Default is ``False``.
+    verify : bool
+        Whether to compare rewritten FCS events with the original event matrix. Default is
+        ``True``.
+    additional_sensitive_keys : Iterable[str] | None
+        Extra metadata keys to redact in addition to the built-in sensitive-key rules.
+        Default is ``None``.
+    ignore_offset_error : bool
+        Forwarded to FlowIO to control handling of an invalid data-end offset. Default is
+        ``False``.
+    ignore_offset_discrepancy : bool
+        Forwarded to FlowIO to control disagreement between header and TEXT offsets. Default
+        is ``False``.
+    use_header_offsets : bool
+        Whether FlowIO should use HEADER offsets when reading event data. Default is
+        ``False``.
+    reject_symlinks : bool
+        Whether symbolic links in the source tree cause processing to fail. Default is
+        ``True``.
+    strict_references : bool
+        If True, reject references that have no matching source-file translation. Default is
+        ``True``.
+    identifier_prefix : str
+        Prefix used for anonymous file identifiers. Default is
+        ``DEFAULT_IDENTIFIER_PREFIX``.
+    identifier_width : int
+        Minimum width of the numeric part of an anonymous identifier. Default is
+        ``DEFAULT_IDENTIFIER_WIDTH``.
+    mapping_filename : str | Path
+        Relative CSV filename for the original-to-anonymous mapping. Default is
+        ``DEFAULT_MAPPING_FILENAME``.
+
+    Returns
+    -------
+    FCSAnonymizationReport
+        Computed value of ``report``.
+
+    Raises
+    ------
+    FCSAnonymizationError
+        Symbolic links are not permitted: {source_path}
+
+    Notes
+    -----
     FCS files receive unique names across the full input tree. Directory names
     are retained. CSV files with a ``file_name`` column and FlowJo workspaces
     are rewritten against the same filename map.
@@ -1258,6 +2052,14 @@ def anonymize_fcs_tree(
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """
+    Build the command-line argument parser for FCS anonymization.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        The command-line argument parser for FCS anonymization.
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Copy a directory tree while anonymizing FCS metadata, assigning "
@@ -1313,6 +2115,19 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """
+    Parse arguments, run FCS anonymization, and print the resulting file counts.
+
+    Parameters
+    ----------
+    argv : Sequence[str] | None
+        Command-line arguments; None uses the process command line. Default is ``None``.
+
+    Returns
+    -------
+    int
+        The constant ``0``.
+    """
     args = _build_parser().parse_args(argv)
     report = anonymize_fcs_tree(
         args.input_folder,

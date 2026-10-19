@@ -52,11 +52,32 @@ FILE_MAPPING_REQUIRED_COLUMNS = {
 
 
 class HumanAnnotationsAnonymizationError(RuntimeError):
+    """
+    Signal invalid annotation translations or a failed export check.
+    """
     pass
 
 
 @dataclass(frozen=True)
 class TranslatedCSVResult:
+    """
+    Record a rewritten CSV and its translated folder and image counts.
+
+    Attributes
+    ----------
+    source : Path
+        Source file path read by this operation.
+    output : Path
+        Destination path of the rewritten or converted file.
+    delimiter : str
+        CSV field separator.
+    row_count : int
+        Number of data rows processed in the table.
+    translated_folder_cells : int
+        Number of CSV cells whose folder references were translated.
+    translated_image_cells : int
+        Number of CSV cells whose image references were translated.
+    """
     source: Path
     output: Path
     delimiter: str
@@ -67,6 +88,18 @@ class TranslatedCSVResult:
 
 @dataclass(frozen=True)
 class CopiedImageResult:
+    """
+    Record a copied image and its verified SHA-256 digest.
+
+    Attributes
+    ----------
+    source : Path
+        Source file path read by this operation.
+    output : Path
+        Destination path of the rewritten or converted file.
+    sha256 : str
+        SHA-256 hex digest used to verify file bytes.
+    """
     source: Path
     output: Path
     sha256: str
@@ -74,6 +107,35 @@ class CopiedImageResult:
 
 @dataclass
 class HumanAnnotationDatasetsReport:
+    """
+    Collect the human and experimental annotation export results.
+
+    Attributes
+    ----------
+    input_root : Path
+        Root folder containing the input dataset.
+    human_output_root : Path
+        Output root for human-annotation data.
+    experimental_output_root : Path
+        Output root for experimental annotation data.
+    translation_file : Path
+        Private CSV mapping original image paths to anonymous paths.
+    anonymized_images_root : Path
+        Root containing previously anonymized images.
+    human_csv_files : list[TranslatedCSVResult]
+        Processed human-annotation CSV files. Default is ``field(default_factory=list)``.
+    experimental_csv_files : list[TranslatedCSVResult]
+        Processed experiment-result CSV files. Default is ``field(default_factory=list)``.
+    human_images : list[CopiedImageResult]
+        Images included in the human-annotation output. Default is
+        ``field(default_factory=list)``.
+    experimental_images : list[CopiedImageResult]
+        Images included in the experimental output. Default is
+        ``field(default_factory=list)``.
+    excluded_source_files : list[Path]
+        Source files deliberately excluded from the anonymized output. Default is
+        ``field(default_factory=list)``.
+    """
     input_root: Path
     human_output_root: Path
     experimental_output_root: Path
@@ -87,23 +149,77 @@ class HumanAnnotationDatasetsReport:
 
     @property
     def csv_count(self) -> int:
+        """
+        Return the combined number of exported annotation CSV files.
+
+        Returns
+        -------
+        int
+            The combined number of exported annotation CSV files.
+        """
         return len(self.human_csv_files) + len(self.experimental_csv_files)
 
     @property
     def image_count(self) -> int:
+        """
+        Return the combined number of copied annotation images.
+
+        Returns
+        -------
+        int
+            The combined number of copied annotation images.
+        """
         return len(self.human_images) + len(self.experimental_images)
 
     @property
     def human_image_count(self) -> int:
+        """
+        Return the number of images copied into the human-annotation dataset.
+
+        Returns
+        -------
+        int
+            The number of images copied into the human-annotation dataset.
+        """
         return len(self.human_images)
 
     @property
     def experimental_image_count(self) -> int:
+        """
+        Return the number of images copied into the experimental dataset.
+
+        Returns
+        -------
+        int
+            The number of images copied into the experimental dataset.
+        """
         return len(self.experimental_images)
 
 
 @dataclass(frozen=True)
 class _FileMapping:
+    """
+    Store original and anonymous paths, ordering, and an optional image digest.
+
+    Attributes
+    ----------
+    original_relative_path : str
+        Source path relative to the input root before anonymization.
+    anonymous_relative_path : str
+        Replacement path relative to the anonymized output root.
+    original_folder : str
+        Folder label before anonymization.
+    anonymous_folder : str
+        Replacement folder label in the anonymous dataset.
+    original_filename : str
+        Filename before anonymization or public-name substitution.
+    anonymous_filename : str
+        Replacement filename written into the exported data or metadata.
+    order_index : int
+        Position of the item in the deterministic processing order.
+    output_sha256 : str | None
+        SHA-256 hex digest of the rewritten file.
+    """
     original_relative_path: str
     anonymous_relative_path: str
     original_folder: str
@@ -116,23 +232,56 @@ class _FileMapping:
 
 @dataclass(frozen=True)
 class _CSVFormat:
+    """
+    Store CSV separator, quoting, and BOM settings for a rewrite.
+
+    Attributes
+    ----------
+    write_bom : bool
+        Whether exported CSV text starts with a UTF-8 BOM.
+    delimiter : str
+        CSV field separator.
+    quotechar : str
+        CSV quoting character.
+    """
     write_bom: bool
     delimiter: str
     quotechar: str
 
 
 class _ProgressReporter:
+    """
+    Emit optional progress messages with elapsed time.
+    """
     def __init__(
         self,
         *,
         enabled: bool,
         callback: Callable[[str], None] | None,
     ) -> None:
+        """
+        Set progress reporting and use stdout when no callback is supplied.
+
+        Parameters
+        ----------
+        enabled : bool
+            Whether progress messages are emitted.
+        callback : Callable[[str], None] | None
+            Callable receiving progress text; None uses the default output handler.
+        """
         self.enabled = enabled
         self.callback = callback or (lambda message: print(message, flush=True))
         self.started = time.perf_counter()
 
     def log(self, message: str) -> None:
+        """
+        Emit a timed progress message when reporting is enabled.
+
+        Parameters
+        ----------
+        message : str
+            Human-readable status or error message.
+        """
         if not self.enabled:
             return
         elapsed = time.perf_counter() - self.started
@@ -140,10 +289,41 @@ class _ProgressReporter:
 
 
 def _normalise_header(value: str) -> str:
+    """
+    Normalize a CSV header's case, spaces, and hyphens.
+
+    Parameters
+    ----------
+    value : str
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    str
+        Computed value of ``value.strip().casefold().replace('-', '_').replace(' ', '_')``.
+    """
     return value.strip().casefold().replace("-", "_").replace(" ", "_")
 
 
 def _normalise_relative_path(value: str) -> str:
+    """
+    Normalize a relative path and reject parent references.
+
+    Parameters
+    ----------
+    value : str
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``'.'``, ``path.as_posix()``.
+
+    Raises
+    ------
+    HumanAnnotationsAnonymizationError
+        Unsafe relative path encountered: {value}.
+    """
     text = str(value).strip().replace("\\", "/")
     while text.startswith("./"):
         text = text[2:]
@@ -160,10 +340,38 @@ def _normalise_relative_path(value: str) -> str:
 
 
 def _path_key(value: str) -> str:
+    """
+    Normalize and case-fold a relative path for translation lookup.
+
+    Parameters
+    ----------
+    value : str
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    str
+        Computed value of ``_normalise_relative_path(value).casefold()``.
+    """
     return _normalise_relative_path(value).casefold()
 
 
 def _sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    """
+    Compute a file's SHA-256 digest by reading it in chunks.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+    chunk_size : int
+        Number of bytes read per hashing step. Default is ``1024 * 1024``.
+
+    Returns
+    -------
+    str
+        A file's SHA-256 digest by reading it in chunks.
+    """
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(chunk_size), b""):
@@ -172,6 +380,24 @@ def _sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
 
 
 def _read_text(path: Path) -> tuple[str, bool]:
+    """
+    Decode a CSV with supported encodings and record whether it has a BOM.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+
+    Returns
+    -------
+    tuple[str, bool]
+        Tuple containing ``raw.decode(encoding)``, ``write_bom``, in that order.
+
+    Raises
+    ------
+    HumanAnnotationsAnonymizationError
+        Could not decode CSV file '{path}'.
+    """
     raw = path.read_bytes()
     candidates = (
         ("utf-8-sig", raw.startswith(b"\xef\xbb\xbf")),
@@ -190,6 +416,20 @@ def _read_text(path: Path) -> tuple[str, bool]:
 
 
 def _detect_csv_format(path: Path) -> tuple[str, _CSVFormat]:
+    """
+    Read CSV text and infer its separator, quote character, and BOM policy.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+
+    Returns
+    -------
+    tuple[str, _CSVFormat]
+        Tuple containing ``text``, ``_CSVFormat(write_bom=write_bom, delimiter=delimiter,
+        quotechar=quotechar)``, in that order.
+    """
     text, write_bom = _read_text(path)
     sample = text[:65536]
 
@@ -216,6 +456,23 @@ def _merge_sibling_folder_mapping(
     file_mapping_path: Path,
     anonymous_folder_by_original_folder: dict[str, str],
 ) -> None:
+    """
+    Merge the neighboring folder-mapping CSV into the translation index.
+
+    Parameters
+    ----------
+    file_mapping_path : Path
+        Path to the image-file translation CSV.
+    anonymous_folder_by_original_folder : dict[str, str]
+        Mapping from normalized original folders to anonymous folders.
+
+    Raises
+    ------
+    HumanAnnotationsAnonymizationError
+        Folder translation file has no header: {folder_mapping_path} Folder translation file
+        has an unexpected schema: {folder_mapping_path} Conflicting folder translation for
+        '{original_folder}' at line {line_number} of '{folder_mapping_path}'.
+    """
     folder_mapping_path = file_mapping_path.with_name(
         "ext_images_folder_mapping.csv"
     )
@@ -273,6 +530,39 @@ def _load_translation_file(
     dict[str, str],
     dict[str, list[_FileMapping]],
 ]:
+    """
+    Validate image translations, ordering, and unique folder mappings.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+
+    Returns
+    -------
+    tuple[dict[str, _FileMapping], dict[str, str], dict[str, list[_FileMapping]]]
+        Tuple containing ``file_by_original_path``, ``anonymous_folder_by_original_folder``,
+        ``files_by_original_filename``, in that order.
+
+    Raises
+    ------
+    FileNotFoundError
+        Translation file does not exist: {path}
+    HumanAnnotationsAnonymizationError
+        Translation file has no header: {path} The translation file must be
+        ext_images_file_mapping.csv and contain {sorted(FILE_MAPPING_REQUIRED_COLUMNS)}.
+        Missing: {sorted(missing)}. Invalid empty mapping path in '{path}' at line
+        {line_number}. Invalid order_index '{order_index_text}' in '{path}' at line
+        {line_number}. order_index must be positive in '{path}' at line {line_number}.
+        Translation file does not use order-preserving anonymous filenames at line
+        {line_number}: expected '{expected_anonymous_filename}', found
+        '{anonymous_path.name}'. Conflicting translation entries for '{original_relative}'.
+        Original folder '{original_folder}' maps to multiple anonymous folders. Image order
+        mapping is inconsistent for original folder '{original_folder}'. Expected order
+        indices {expected_indices[:10]}..., found {observed_indices[:10]}.... Natural
+        sorting of anonymous filenames does not preserve image order for folder
+        '{original_folder}'. Translation file contains no image mappings: {path}
+    """
     if not path.is_file():
         raise FileNotFoundError(f"Translation file does not exist: {path}")
 
@@ -441,6 +731,26 @@ def _find_matching_column(
     fieldnames: Iterable[str],
     aliases: set[str],
 ) -> str | None:
+    """
+    Find one header matching the allowed aliases and reject ambiguous matches.
+
+    Parameters
+    ----------
+    fieldnames : Iterable[str]
+        CSV header names in their original order.
+    aliases : set[str]
+        Candidate metric keys in lookup order.
+
+    Returns
+    -------
+    str | None
+        One header matching the allowed aliases and reject ambiguous matches.
+
+    Raises
+    ------
+    HumanAnnotationsAnonymizationError
+        CSV contains multiple matching columns for {sorted(aliases)}: {matches}.
+    """
     matches = [
         field
         for field in fieldnames
@@ -463,6 +773,36 @@ def _resolve_image_mapping(
     csv_path: Path,
     row_number: int,
 ) -> _FileMapping:
+    """
+    Resolve an image translation by folder path or unique basename.
+
+    Parameters
+    ----------
+    folder_value : str | None
+        Original folder value read from an annotation row.
+    image_value : str
+        Original image name or relative path read from an annotation row.
+    file_by_original_path : Mapping[str, _FileMapping]
+        File translations indexed by normalized original relative paths.
+    files_by_original_filename : Mapping[str, list[_FileMapping]]
+        Lists of translation records indexed by original basename.
+    csv_path : Path
+        Source CSV path used in validation errors.
+    row_number : int
+        One-based row number used in validation errors.
+
+    Returns
+    -------
+    _FileMapping
+        Depending on the input and branch, returns ``mapping``, ``filename_matches[0]``.
+
+    Raises
+    ------
+    HumanAnnotationsAnonymizationError
+        Ambiguous image '{image_value}' in '{csv_path}' row {row_number}; the filename
+        occurs in multiple folders. No image translation found for '{image_value}' in
+        '{csv_path}' row {row_number}. Attempted paths: {attempted}.
+    """
     image_text = _normalise_relative_path(image_value)
 
     candidate_paths: list[str] = []
@@ -511,6 +851,41 @@ def _translate_csv(
     referenced_images: dict[str, _FileMapping] | None,
     require_image_column: bool,
 ) -> TranslatedCSVResult:
+    """
+    Rewrite folder and image columns and collect referenced image mappings.
+
+    Parameters
+    ----------
+    source : Path
+        Source file path read by this operation.
+    output : Path
+        Destination path of the rewritten or converted file.
+    file_by_original_path : Mapping[str, _FileMapping]
+        File translations indexed by normalized original relative paths.
+    anonymous_folder_by_original_folder : Mapping[str, str]
+        Mapping from normalized original folders to anonymous folders.
+    files_by_original_filename : Mapping[str, list[_FileMapping]]
+        Lists of translation records indexed by original basename.
+    referenced_images : dict[str, _FileMapping] | None
+        Mapping updated with images referenced by translated CSV rows; None disables
+        collection.
+    require_image_column : bool
+        If True, require a recognized image-name column.
+
+    Returns
+    -------
+    TranslatedCSVResult
+        Source and destination paths, CSV delimiter, row count, and counts of rewritten
+        folder and image references.
+
+    Raises
+    ------
+    HumanAnnotationsAnonymizationError
+        CSV has no header: {source} Required folder column was not found in '{source}'.
+        Required image-name column was not found in '{source}'. No folder translation found
+        for '{folder_value}' in '{source}' row {row_number}. Empty folder value in
+        '{source}' row {row_number}.
+    """
     text, csv_format = _detect_csv_format(source)
     reader = csv.DictReader(
         io.StringIO(text, newline=""),
@@ -608,6 +983,28 @@ def _translate_csv(
 
 
 def _find_unique_required_csv(input_root: Path, filename: str) -> Path:
+    """
+    Require exactly one matching CSV below the input folder.
+
+    Parameters
+    ----------
+    input_root : Path
+        Root folder containing the input dataset.
+    filename : str
+        Name or path of the file selected by this operation.
+
+    Returns
+    -------
+    Path
+        Computed value of ``matches[0]``.
+
+    Raises
+    ------
+    FileNotFoundError
+        Required CSV '{filename}' was not found below '{input_root}'.
+    HumanAnnotationsAnonymizationError
+        Required CSV '{filename}' exists more than once: {locations}.
+    """
     matches = sorted(
         (
             path
@@ -631,6 +1028,19 @@ def _find_unique_required_csv(input_root: Path, filename: str) -> Path:
 
 
 def _assert_no_symlinks(root: Path) -> None:
+    """
+    Reject symbolic links anywhere below the supplied root.
+
+    Parameters
+    ----------
+    root : Path
+        Root directory used to resolve or validate descendant paths.
+
+    Raises
+    ------
+    HumanAnnotationsAnonymizationError
+        Symbolic links are not accepted: {path}
+    """
     for path in root.rglob("*"):
         if path.is_symlink():
             raise HumanAnnotationsAnonymizationError(
@@ -646,6 +1056,33 @@ def _validate_roots(
     translation_file: Path,
     anonymized_images_root: Path,
 ) -> None:
+    """
+    Check export roots, translation files, and the anonymized-image source folder.
+
+    Parameters
+    ----------
+    input_root : Path
+        Root folder containing the input dataset.
+    human_output_root : Path
+        Output root for human-annotation data.
+    experimental_output_root : Path
+        Output root for experimental annotation data.
+    translation_file : Path
+        Private CSV mapping original image paths to anonymous paths.
+    anonymized_images_root : Path
+        Root containing previously anonymized images.
+
+    Raises
+    ------
+    NotADirectoryError
+        Input folder does not exist: {input_root} Anonymized image folder does not exist:
+        {anonymized_images_root}
+    FileNotFoundError
+        Translation file does not exist: {translation_file}
+    ValueError
+        The two output folders must be different. Input and output folders must be
+        different. Output folder must not be inside the input folder: {output_root}
+    """
     if not input_root.is_dir():
         raise NotADirectoryError(f"Input folder does not exist: {input_root}")
     if not translation_file.is_file():
@@ -683,6 +1120,37 @@ def _copy_referenced_images(
     progress: _ProgressReporter,
     progress_every: int,
 ) -> list[CopiedImageResult]:
+    """
+    Copy referenced anonymous images and verify their SHA-256 digests.
+
+    Parameters
+    ----------
+    mappings : Mapping[str, _FileMapping]
+        Original-to-anonymous file translations used by this operation.
+    anonymized_images_root : Path
+        Root containing previously anonymized images.
+    staging_root : Path
+        Temporary root used to prepare the output before publication.
+    final_output_root : Path
+        Final destination root represented in the export report.
+    progress : _ProgressReporter
+        Job progress fields to persist.
+    progress_every : int
+        Number of processed files between progress messages.
+
+    Returns
+    -------
+    list[CopiedImageResult]
+        Computed value of ``copied``.
+
+    Raises
+    ------
+    FileNotFoundError
+        Referenced anonymized image does not exist: {source}
+    HumanAnnotationsAnonymizationError
+        SHA-256 mismatch for anonymized image '{source}'. Copied image differs from source:
+        {source}
+    """
     ordered = sorted(
         mappings.values(),
         key=lambda item: (
@@ -745,6 +1213,27 @@ def _publish_two_outputs(
     experimental_output_root: Path,
     overwrite: bool,
 ) -> None:
+    """
+    Publish both staged datasets and restore backups if publication fails.
+
+    Parameters
+    ----------
+    human_staging_root : Path
+        Temporary prepared human-annotation dataset.
+    human_output_root : Path
+        Output root for human-annotation data.
+    experimental_staging_root : Path
+        Temporary prepared experimental dataset.
+    experimental_output_root : Path
+        Output root for experimental annotation data.
+    overwrite : bool
+        If True, permit replacement of existing output as implemented by this operation.
+
+    Raises
+    ------
+    FileExistsError
+        Output folder already exists: {output_root}. Pass overwrite=True to replace it.
+    """
     output_pairs = (
         (human_staging_root, human_output_root),
         (experimental_staging_root, experimental_output_root),
@@ -794,8 +1283,52 @@ def prepare_human_annotations(
     progress_every: int = 100,
     progress_callback: Callable[[str], None] | None = None,
 ) -> HumanAnnotationDatasetsReport:
-    """Create the two final anonymized annotation datasets.
+    """
+    Create the two final anonymized annotation datasets.
 
+    Parameters
+    ----------
+    input_folder : str | os.PathLike[str]
+        Root folder containing the source files to process. Default is
+        ``'./human_annotations'``.
+    human_output_folder : str | os.PathLike[str]
+        Destination root for anonymized human annotations and their images. Default is
+        ``'../final/human_annotations'``.
+    translation_file : str | os.PathLike[str]
+        Private CSV mapping original image paths to anonymous paths. Default is
+        ``'../final/private_mappings/ext_images_file_mapping.csv'``.
+    experimental_output_folder : str | os.PathLike[str]
+        Destination root for anonymized experimental results and their images. Default is
+        ``'../final/experimental_readout_images'``.
+    anonymized_images_folder : str | os.PathLike[str]
+        Folder containing the already anonymized images used to rewrite references. Default
+        is ``'../final/ext_images'``.
+    overwrite : bool
+        If True, permit replacement of existing output as implemented by this operation.
+        Default is ``False``.
+    reject_symlinks : bool
+        Whether symbolic links in the source tree cause processing to fail. Default is
+        ``True``.
+    verbose : bool
+        Whether to emit progress information. Default is ``True``.
+    progress_every : int
+        Number of processed files between progress messages. Default is ``100``.
+    progress_callback : Callable[[str], None] | None
+        Optional callable receiving progress information during processing; the function's
+        call sites define the event payload. Default is ``None``.
+
+    Returns
+    -------
+    HumanAnnotationDatasetsReport
+        The two final anonymized annotation datasets.
+
+    Raises
+    ------
+    ValueError
+        progress_every must be at least 1.
+
+    Notes
+    -----
     Only these source CSV files are included:
 
     - ``human_annotations.csv`` and
@@ -1063,10 +1596,33 @@ def prepare_human_annotations(
 
 
 def prepare_annotation_datasets(*args, **kwargs) -> HumanAnnotationDatasetsReport:
+    """
+    Forward arguments to prepare_human_annotations.
+
+    Parameters
+    ----------
+    *args : tuple
+        Additional positional arguments forwarded to ``prepare_human_annotations``.
+    **kwargs : dict
+        Additional keyword arguments forwarded to ``prepare_human_annotations``.
+
+    Returns
+    -------
+    HumanAnnotationDatasetsReport
+        Computed value of ``prepare_human_annotations(*args, **kwargs)``.
+    """
     return prepare_human_annotations(*args, **kwargs)
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """
+    Build the command-line parser for annotation-dataset exports.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        The command-line parser for annotation-dataset exports.
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Translate the three approved annotation CSV files and split "
@@ -1107,6 +1663,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """
+    Parse arguments, export annotation datasets, and print the resulting counts.
+    """
     args = _build_parser().parse_args()
     report = prepare_human_annotations(
         input_folder=args.input_folder,

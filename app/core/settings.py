@@ -4,10 +4,28 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class Settings:
+    """
+    Store the data directory and permitted cross-origin request origins.
+
+    Attributes
+    ----------
+    data_dir : Path
+        Base directory used to store job data.
+    cors_origins : list[str]
+        Origins allowed by the CORS middleware.
+    """
     data_dir: Path
     cors_origins: list[str]
 
 def _default_data_dir() -> Path:
+    """
+    Resolve the default data folder relative to the app package.
+
+    Returns
+    -------
+    Path
+        Computed value of ``(base_dir / 'data').resolve()``.
+    """
     base_dir = Path(__file__).resolve().parents[1]  # points to backend/
     return (base_dir / "data").resolve()
 

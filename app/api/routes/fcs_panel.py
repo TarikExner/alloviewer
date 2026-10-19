@@ -34,12 +34,34 @@ ChannelRole = Literal[
 
 
 class FcsPanelRequest(BaseModel):
+    """
+    Request the common panel for a list of uploaded FCS files.
+
+    Attributes
+    ----------
+    fcs_filenames : list[str]
+        FCS paths relative to the job root. Default is ``Field(default_factory=list)``.
+    """
     fcs_filenames: list[str] = Field(
         default_factory=list
     )
 
 
 class PanelRowModel(BaseModel):
+    """
+    Describe one detector, its assay role, antibody, and population.
+
+    Attributes
+    ----------
+    channel : str
+        FCS detector or channel name.
+    role : ChannelRole
+        Channel role: Scatter, Population Marker, or IgG Marker.
+    antibody : str
+        Antibody name assigned to the measurement channel.
+    population : str
+        Population label associated with the channel's marker.
+    """
     channel: str
     role: ChannelRole
     antibody: str
@@ -47,6 +69,25 @@ class PanelRowModel(BaseModel):
 
 
 class FcsPanelResponse(BaseModel):
+    """
+    Return the shared panel and any channel mismatch warning.
+
+    Attributes
+    ----------
+    panel_name : str | None
+        Display name assigned to the extracted FCS panel. Default is ``None``.
+    rows : list[PanelRowModel]
+        Rows included in the generated table or file. Default is
+        ``Field(default_factory=list)``.
+    files_seen : int
+        Number of uploaded FCS files inspected for the panel.
+    example_file : str | None
+        Filename of the first FCS file used as the channel-order reference. Default is
+        ``None``.
+    warning : dict[str, Any] | None
+        Optional explanation of inconsistent channels or other panel extraction limitations.
+        Default is ``None``.
+    """
     panel_name: str | None = None
     rows: list[PanelRowModel] = Field(
         default_factory=list
@@ -59,6 +100,25 @@ class FcsPanelResponse(BaseModel):
 def _require_fcxm_job(
     job_id: str,
 ) -> dict[str, Any]:
+    """
+    Require an existing FCXM job and map lookup errors to HTTP errors.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    dict[str, Any]
+        Computed value of ``require_job_type(job_id, {'fcxm'})``.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 404 for the corresponding request validation, job-state, or processing error.
+        HTTP 409 for the corresponding request validation, job-state, or processing error.
+    """
     try:
         return require_job_type(
             job_id,
@@ -81,6 +141,27 @@ def _resolve_fcs_file(
     job_id: str,
     filename: str,
 ):
+    """
+    Resolve an existing .fcs file within the job's FCS upload folder.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    filename : str
+        Name or path of the file selected by this operation.
+
+    Returns
+    -------
+    Path
+        Validated path to an uploaded FCS file.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 400 for the corresponding request validation, job-state, or processing error.
+        HTTP 415 for the corresponding request validation, job-state, or processing error.
+    """
     paths = get_job_paths(job_id)
 
     try:
@@ -136,6 +217,30 @@ async def extract_fcs_panel(
     job_id: str,
     req: FcsPanelRequest,
 ) -> FcsPanelResponse:
+    """
+    Read uploaded FCS headers and build a panel from their common channels.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    req : FcsPanelRequest
+        Validated request model containing the fields for this endpoint.
+
+    Returns
+    -------
+    FcsPanelResponse
+        Uploaded FCS headers and build a panel from their common channels.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 400 for the corresponding request validation, job-state, or processing error.
+
+    Notes
+    -----
+    Time channels are excluded. Channel order follows the first file. A warning describes differing channel sets; an empty filename list returns an empty panel. Reads FCS files but does not run gating.
+    """
     _require_fcxm_job(job_id)
 
     if not req.fcs_filenames:

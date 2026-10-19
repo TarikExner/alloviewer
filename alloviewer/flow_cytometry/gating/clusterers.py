@@ -17,7 +17,8 @@ FlowSOMLabelKind = Literal["cluster", "metacluster"]
 
 @dataclass
 class GenericPrediction:
-    """Generic prediction output returned by clusterer adapters.
+    """
+    Generic prediction output returned by clusterer adapters.
 
     Parameters
     ----------
@@ -27,6 +28,16 @@ class GenericPrediction:
         Prediction confidence or assignment probability, when available.
     outlier_score : numpy.ndarray or None, optional
         Outlier scores, when available.
+
+    Attributes
+    ----------
+    labels : numpy.ndarray
+        Predicted cluster labels.
+    prob : numpy.ndarray or None, optional
+        Prediction confidence or assignment probability, when available. Default is
+        ``None``.
+    outlier_score : numpy.ndarray or None, optional
+        Outlier scores, when available. Default is ``None``.
     """
 
     labels: np.ndarray
@@ -35,14 +46,18 @@ class GenericPrediction:
 
 
 class BaseClusterer(Protocol):
-    """Protocol for clustering backends.
+    """
+    Protocol for clustering backends.
 
+    Notes
+    -----
     Classes implementing this protocol can be used by the gating workflow as
     interchangeable clustering backends.
     """
 
     def fit(self, X: np.ndarray) -> "BaseClusterer":
-        """Fit the clusterer.
+        """
+        Fit the clusterer.
 
         Parameters
         ----------
@@ -57,7 +72,8 @@ class BaseClusterer(Protocol):
         ...
 
     def predict(self, X: np.ndarray) -> GenericPrediction:
-        """Predict cluster labels.
+        """
+        Predict cluster labels.
 
         Parameters
         ----------
@@ -73,7 +89,8 @@ class BaseClusterer(Protocol):
 
     @property
     def labels_(self) -> np.ndarray:
-        """Return training labels.
+        """
+        Return training labels.
 
         Returns
         -------
@@ -84,7 +101,8 @@ class BaseClusterer(Protocol):
 
 
 class FlowSOMClusterer:
-    """Adapter for :class:`flowsom.models.FlowSOMEstimator`.
+    """
+    Adapter for :class:`flowsom.models.FlowSOMEstimator`.
 
     Parameters
     ----------
@@ -98,6 +116,19 @@ class FlowSOMClusterer:
     """
 
     def __init__(self, cfg: FlowSOMConfig) -> None:
+        """
+        Initialize the FlowSOM adapter from its clusterer settings.
+
+        Parameters
+        ----------
+        cfg : FlowSOMConfig
+            FlowSOM clusterer configuration.
+
+        Raises
+        ------
+        ValueError
+            cfg.label_kind must be 'cluster' or 'metacluster'
+        """
         if cfg.label_kind not in {"cluster", "metacluster"}:
             raise ValueError("cfg.label_kind must be 'cluster' or 'metacluster'")
 
@@ -115,7 +146,8 @@ class FlowSOMClusterer:
         self._labels_fit: Optional[np.ndarray] = None
 
     def fit(self, X: np.ndarray) -> "FlowSOMClusterer":
-        """Fit FlowSOM on a feature matrix.
+        """
+        Fit FlowSOM on a feature matrix.
 
         Parameters
         ----------
@@ -145,7 +177,8 @@ class FlowSOMClusterer:
         return self
 
     def predict(self, X: np.ndarray) -> GenericPrediction:
-        """Predict FlowSOM labels for a feature matrix.
+        """
+        Predict FlowSOM labels for a feature matrix.
 
         Parameters
         ----------
@@ -183,7 +216,8 @@ class FlowSOMClusterer:
 
     @property
     def labels_(self) -> np.ndarray:
-        """Return labels assigned during fitting.
+        """
+        Return labels assigned during fitting.
 
         Returns
         -------
@@ -201,7 +235,8 @@ class FlowSOMClusterer:
         return self._labels_fit
 
     def _get_training_labels(self) -> np.ndarray:
-        """Return FlowSOM training labels for the configured label kind.
+        """
+        Return FlowSOM training labels for the configured label kind.
 
         Returns
         -------
@@ -223,7 +258,8 @@ class FlowSOMClusterer:
 
 
 class PARCClusterer(PARC):
-    """Adapter exposing PARC through the common clusterer interface.
+    """
+    Adapter exposing PARC through the common clusterer interface.
 
     Parameters
     ----------
@@ -232,6 +268,14 @@ class PARCClusterer(PARC):
     """
 
     def __init__(self, cfg: PARCConfig) -> None:
+        """
+        Initialize the PARC adapter from its clusterer settings.
+
+        Parameters
+        ----------
+        cfg : PARCConfig
+            PARC clusterer configuration.
+        """
         self.cfg = cfg
         self.allow_oos_prediction = cfg.allow_oos_prediction
         self.prediction_k = cfg.prediction_k
@@ -262,7 +306,8 @@ class PARCClusterer(PARC):
         self._X_fit: Optional[np.ndarray] = None
 
     def fit(self, X: np.ndarray) -> "PARCClusterer":
-        """Fit PARC on a feature matrix.
+        """
+        Fit PARC on a feature matrix.
 
         Parameters
         ----------
@@ -298,7 +343,8 @@ class PARCClusterer(PARC):
         return self
 
     def predict(self, X: np.ndarray) -> GenericPrediction:
-        """Predict PARC labels for a feature matrix.
+        """
+        Predict PARC labels for a feature matrix.
 
         Parameters
         ----------
@@ -371,7 +417,8 @@ class PARCClusterer(PARC):
 
     @property
     def labels_(self) -> np.ndarray:
-        """Return labels assigned during fitting.
+        """
+        Return labels assigned during fitting.
 
         Returns
         -------
@@ -390,7 +437,8 @@ class PARCClusterer(PARC):
 
 
 class HDBSCANClusterer:
-    """Adapter for HDBSCAN clustering.
+    """
+    Adapter for HDBSCAN clustering.
 
     Parameters
     ----------
@@ -399,6 +447,14 @@ class HDBSCANClusterer:
     """
 
     def __init__(self, cfg: HDBSCANConfig) -> None:
+        """
+        Initialize the HDBSCAN adapter from its clusterer settings.
+
+        Parameters
+        ----------
+        cfg : HDBSCANConfig
+            HDBSCAN clusterer configuration.
+        """
         self.cfg = cfg
         self.min_cluster_size = cfg.min_cluster_size
         self.min_samples = cfg.min_samples
@@ -415,14 +471,16 @@ class HDBSCANClusterer:
         min_cluster_size: Optional[int] = None,
         min_samples: Optional[int] = None,
     ) -> None:
-        """Rebuild the underlying HDBSCAN model.
+        """
+        Rebuild the underlying HDBSCAN model.
 
         Parameters
         ----------
         min_cluster_size : int or None, optional
-            Minimum cluster size. If ``None``, the current value is reused.
+            Minimum cluster size. If ``None``, the current value is reused. Default is ``None``.
         min_samples : int or None, optional
-            Minimum samples value. If ``None``, the current value is reused.
+            Minimum samples value. If ``None``, the current value is reused. Default is
+            ``None``.
         """
         if min_cluster_size is None:
             min_cluster_size = self.min_cluster_size
@@ -440,7 +498,8 @@ class HDBSCANClusterer:
         )
 
     def fit(self, X: np.ndarray) -> "HDBSCANClusterer":
-        """Fit HDBSCAN on a feature matrix.
+        """
+        Fit HDBSCAN on a feature matrix.
 
         Parameters
         ----------
@@ -487,7 +546,8 @@ class HDBSCANClusterer:
         return self
 
     def predict(self, X: np.ndarray) -> GenericPrediction:
-        """Predict HDBSCAN labels for a feature matrix.
+        """
+        Predict HDBSCAN labels for a feature matrix.
 
         Parameters
         ----------
@@ -520,7 +580,8 @@ class HDBSCANClusterer:
 
     @property
     def labels_(self) -> np.ndarray:
-        """Return labels assigned during fitting.
+        """
+        Return labels assigned during fitting.
 
         Returns
         -------
@@ -531,7 +592,8 @@ class HDBSCANClusterer:
 
 
 def HDBSCANFactory(cfg: HDBSCANConfig) -> BaseClusterer:
-    """Create an HDBSCAN clusterer.
+    """
+    Create an HDBSCAN clusterer.
 
     Parameters
     ----------
@@ -547,7 +609,8 @@ def HDBSCANFactory(cfg: HDBSCANConfig) -> BaseClusterer:
 
 
 def FlowSOMFactory(cfg: FlowSOMConfig) -> BaseClusterer:
-    """Create a FlowSOM clusterer.
+    """
+    Create a FlowSOM clusterer.
 
     Parameters
     ----------
@@ -563,7 +626,8 @@ def FlowSOMFactory(cfg: FlowSOMConfig) -> BaseClusterer:
 
 
 def PARCFactory(cfg: PARCConfig) -> BaseClusterer:
-    """Create a PARC clusterer.
+    """
+    Create a PARC clusterer.
 
     Parameters
     ----------
@@ -579,7 +643,8 @@ def PARCFactory(cfg: PARCConfig) -> BaseClusterer:
 
 
 def default_clusterer_factory(cfg: ClustererConfig) -> BaseClusterer:
-    """Create the default clusterer for a clusterer configuration.
+    """
+    Create the default clusterer for a clusterer configuration.
 
     Parameters
     ----------

@@ -8,6 +8,16 @@ from fastapi import HTTPException
 
 @dataclass(frozen=True)
 class PublicJobError:
+    """
+    Store an error message and error type for a job response.
+
+    Attributes
+    ----------
+    message : str
+        Human-readable status or error message.
+    error_type : str
+        Exception type recorded for the failed job.
+    """
     message: str
     error_type: str
 
@@ -17,6 +27,18 @@ def describe_job_error(exc: Exception) -> PublicJobError:
     Convert an internal exception into information that is safe and useful
     for the frontend.
 
+    Parameters
+    ----------
+    exc : Exception
+        Exception whose public error category and message are extracted.
+
+    Returns
+    -------
+    PublicJobError
+        Public error message and error-type identifier selected from the exception category.
+
+    Notes
+    -----
     Full exception details and tracebacks should remain in the server logs.
     """
     error_type = type(exc).__name__

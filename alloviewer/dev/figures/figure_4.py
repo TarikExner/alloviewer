@@ -35,6 +35,35 @@ def _get_eval_score(
     """
     Create one score column used consistently for all comparisons.
 
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Dataframe containing the input observations and metadata.
+    human_annotators : tuple
+        Names identifying human-annotation rows in the comparison table. Default is ``('1',
+        '2')``.
+    method_annotators : tuple
+        Names identifying automated-method rows in the comparison table. Default is
+        ``('unet', 'imageJ')``.
+    annotator_col : str
+        Column containing the annotator or method identifier. Default is ``'Annotator'``.
+    human_score_col : str
+        Column containing the human-assigned score. Default is ``'score'``.
+    method_score_col : str
+        Column containing the automated-method score. Default is ``'adjusted_score'``.
+    fallback_method_score_col : str
+        Alternative automated score column used when the preferred column is unavailable.
+        Default is ``'score'``.
+    output_col : str
+        Name of the computed output column. Default is ``'_eval_score'``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One score column used consistently for all comparisons.
+
+    Notes
+    -----
     Humans use `human_score_col`.
     Methods use `method_score_col`, with fallback to `fallback_method_score_col`.
     """
@@ -81,6 +110,47 @@ def compute_confusion_matrix_between_annotators(
     """
     Compute confusion matrix between two annotators/methods.
 
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Dataframe containing the input observations and metadata.
+    x_annotator : object
+        Annotator whose scores form the horizontal comparison axis.
+    y_annotator : object
+        Annotator whose scores form the vertical comparison axis.
+    id_cols : Sequence[str]
+        Columns identifying corresponding observations across annotators. Default is
+        ``('Folder', 'well', 'image_name', 'role')``.
+    annotator_col : str
+        Column containing the annotator or method identifier. Default is ``'Annotator'``.
+    human_score_col : str
+        Column containing the human-assigned score. Default is ``'score'``.
+    method_score_col : str
+        Column containing the automated-method score. Default is ``'adjusted_score'``.
+    fallback_method_score_col : str
+        Alternative automated score column used when the preferred column is unavailable.
+        Default is ``'score'``.
+    human_annotators : tuple
+        Names identifying human-annotation rows in the comparison table. Default is ``('1',
+        '2')``.
+    method_annotators : tuple
+        Names identifying automated-method rows in the comparison table. Default is
+        ``('unet', 'imageJ')``.
+    allowed_scores : Sequence[int]
+        Ordered score values retained in the comparison. Default is ``(1, 2, 4, 6, 8)``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Confusion matrix between two annotators/methods.
+
+    Raises
+    ------
+    ValueError
+        Missing annotator(s) after pivot: {missing}
+
+    Notes
+    -----
     Rows = y_annotator
     Columns = x_annotator
     """
@@ -154,6 +224,29 @@ def plot_confusion_matrix_on_ax(
     """
     Plot one confusion matrix into an existing axis.
 
+    Parameters
+    ----------
+    cm : pandas.DataFrame
+        Confusion matrix with reference and comparison score counts.
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    title : str
+        Text displayed as the plot or panel title. Default is ``''``.
+    normalize : bool
+        Whether confusion-matrix counts are normalized before display. Default is ``True``.
+    cmap : str
+        Matplotlib colormap used for scalar image values. Default is ``'Reds'``.
+    xlabel : str
+        Horizontal-axis label. Default is ``''``.
+    ylabel : str
+        Vertical-axis label. Default is ``''``.
+    show_colorbar : bool
+        Whether to add a color scale beside the matrix or image. Default is ``True``.
+    fig : Optional[Figure]
+        Matplotlib figure containing the subplot grid. Default is ``None``.
+
+    Notes
+    -----
     Rows = y-axis rater
     Columns = x-axis rater
     """
@@ -233,6 +326,46 @@ def compare_reference_and_human_consensus_estimate(
     """
     Paper-style comparison.
 
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Dataframe containing the input observations and metadata.
+    reference_human : int
+        Name of the human annotator used as the reference. Default is ``1``.
+    comparison_human : int
+        Name of the other human annotator used for comparison. Default is ``2``.
+    methods : tuple
+        Automated methods included in the displayed comparisons. Default is ``('unet',)``.
+    id_cols : tuple
+        Columns identifying corresponding observations across annotators. Default is
+        ``('Folder', 'well', 'image_name', 'role')``.
+    annotator_col : str
+        Column containing the annotator or method identifier. Default is ``'Annotator'``.
+    human_score_col : str
+        Column containing the human-assigned score. Default is ``'score'``.
+    method_score_col : str
+        Column containing the automated-method score. Default is ``'adjusted_score'``.
+    fallback_method_score_col : str
+        Alternative automated score column used when the preferred column is unavailable.
+        Default is ``'score'``.
+    experiment_col : str
+        Column identifying the source experiment. Default is ``'Folder'``.
+    allowed_scores : tuple
+        Ordered score values retained in the comparison. Default is ``(1, 2, 4, 6, 8)``.
+
+    Returns
+    -------
+    tuple[pandas.DataFrame, pandas.DataFrame]
+        Tuple containing ``per_item``, ``summary``, in that order.
+
+    Raises
+    ------
+    ValueError
+        Found scores outside allowed set {allowed_scores}: {invalid_scores} Missing human
+        annotator columns after pivoting: {missing_humans}
+
+    Notes
+    -----
     Per experiment:
         human_human_error_rate =
             fraction where comparison_human differs from reference_human
@@ -324,6 +457,19 @@ def compare_reference_and_human_consensus_estimate(
         )
 
     def summarize(group: pd.DataFrame) -> pd.Series:
+        """
+        Summarize available human-consensus and reference errors for one comparison group.
+
+        Parameters
+        ----------
+        group : pandas.DataFrame
+            Subset of comparison rows belonging to one grouping key.
+
+        Returns
+        -------
+        pd.Series
+            Available human-consensus and reference errors for one comparison group.
+        """
         out = {}
 
         out["reference_human"] = reference_human
@@ -377,6 +523,28 @@ def _paired_wilcoxon_pvalue(
     """
     Run a paired Wilcoxon test safely.
 
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        Input data consumed by this analysis or plotting operation.
+    left_col : str
+        Column containing the first member of each paired comparison.
+    right_col : str
+        Column containing the second member of each paired comparison.
+    alternative : str
+        Alternative hypothesis passed to the statistical test. Default is ``'two-sided'``.
+    zero_method : str
+        Treatment of zero paired differences passed to the Wilcoxon test. Default is
+        ``'wilcox'``.
+
+    Returns
+    -------
+    tuple[float, int, int]
+        Depending on the input and branch, returns ``(np.nan, n_paired, 0)``, ``(np.nan,
+        n_paired, n_nonzero)``, ``(float(p), n_paired, n_nonzero)``.
+
+    Notes
+    -----
     Returns:
         p_value
         n_paired
@@ -434,6 +602,39 @@ def plot_unet_reference_boxplot_on_ax(
         estimated human-consensus error
         UNET vs Annotator 1
 
+    Parameters
+    ----------
+    summary : pandas.DataFrame
+        Aggregated experiment statistics used for the reference comparison plot.
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    method : str
+        Method name selecting the comparison rows to plot. Default is ``'unet'``.
+    experiment_col : str
+        Column identifying the source experiment. Default is ``'Folder'``.
+    include_overall : bool
+        Whether to include an aggregate row across experiments. Default is ``False``.
+    ylim : tuple
+        Optional lower and upper limits for the vertical plot axis. Default is ``(0, 1)``.
+    show_significance : bool
+        Whether to annotate statistical significance on the plot. Default is ``True``.
+    comparisons : tuple
+        Pairs or comparison results used for statistical plot annotations. Default is
+        ``('annot2_vs_unet', 'consensus_vs_unet', 'annot2_vs_consensus')``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Computed value of ``plot_df``.
+
+    Raises
+    ------
+    ValueError
+        Missing columns for boxplot: {missing} Unknown comparison '{comp}'. Valid options
+        are: {list(comparison_map.keys())}
+
+    Notes
+    -----
     Optional statistical brackets:
         annot2_vs_unet:
             human_human_error_rate vs UNET error
@@ -626,12 +827,58 @@ def _generate_main_figure(
     figure_name: str = "Figure_2",
     save: bool = False,
 ) -> None:
+    """
+    Assemble and save the figure showing control-well classification and human scoring agreement.
+
+    Parameters
+    ----------
+    results_df : pandas.DataFrame
+        Per-ROI or per-run result table consumed by this figure.
+    plate : Any
+        Plate object containing well results and layout metadata.
+    scoring : pandas.DataFrame
+        Prepared well-scoring results used in the figure.
+    figure_output_dir : str
+        Directory in which the figure files are written. Default is ``''``.
+    figure_name : str
+        Base name used for the output figure files. Default is ``'Figure_2'``.
+    save : bool
+        Accepted by the interface but not read by this implementation. Default is ``False``.
+
+    Notes
+    -----
+    Creates Matplotlib subplots and writes the figure outputs selected in this module. Figure input data is supplied by the enclosing preparation workflow.
+    """
     def generate_subfigure_a(
         fig: Figure,
         ax: Axes,
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel A of Figure 4 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Raises
+        ------
+        ValueError
+            No wells with role 'negative' found in plate. No wells with role 'positive' found in
+            plate.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -708,6 +955,30 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel B of Figure 4 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Raises
+        ------
+        ValueError
+            Well '{well_id_c4}' not found in plate. No ROI results for well '{well_id_c4}' in
+            results_df.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -786,6 +1057,24 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel C of Figure 4 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -819,6 +1108,24 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel D of Figure 4 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -853,6 +1160,24 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel E of Figure 4 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -886,6 +1211,24 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel F of Figure 4 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -966,6 +1309,18 @@ def figure_4_generation(
     **kwargs,
 ) -> None:
 
+    """
+    Prepare the data and generate Figure 4 showing control-well classification and human scoring agreement.
+
+    Parameters
+    ----------
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    validation_results_dir : str
+        Directory containing cached validation tables and analysis results.
+    **kwargs : dict
+        Additional options read by this helper: ``scoring_df``.
+    """
     data_path = os.path.join(validation_results_dir, "calibration_data.dict")
 
     with open(data_path, "rb") as f:

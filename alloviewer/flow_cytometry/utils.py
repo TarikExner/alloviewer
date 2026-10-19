@@ -11,7 +11,8 @@ CORE_GATES = ("All Cells", "Singlets", "Lymphocytes")
 
 
 def norm_path(p: str) -> str:
-    """Normalize a path for stable dictionary lookups.
+    """
+    Normalize a path for stable dictionary lookups.
 
     Parameters
     ----------
@@ -31,7 +32,8 @@ def norm_path(p: str) -> str:
 
 
 def sanitize_array(a: np.ndarray) -> np.ndarray:
-    """Convert an array to finite float32 values.
+    """
+    Convert an array to finite float32 values.
 
     Parameters
     ----------
@@ -53,7 +55,8 @@ def sanitize_array(a: np.ndarray) -> np.ndarray:
 
 
 def as_list_finite(a: np.ndarray) -> List[float]:
-    """Convert an array to a finite Python list.
+    """
+    Convert an array to a finite Python list.
 
     Parameters
     ----------
@@ -73,7 +76,8 @@ def downsample_idx(
     max_points: int,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """Return indices for optional random downsampling.
+    """
+    Return indices for optional random downsampling.
 
     Parameters
     ----------
@@ -100,7 +104,8 @@ def simpoints(
     y: np.ndarray,
     in_gate: np.ndarray,
 ) -> List[Dict[str, Any]]:
-    """Build serializable scatter-plot points.
+    """
+    Build serializable scatter-plot points.
 
     Parameters
     ----------
@@ -127,7 +132,8 @@ def simpoints(
 
 
 def population_result_to_dict(p, display_label_fn) -> Dict[str, Any]:
-    """Convert a population result to a serializable dictionary.
+    """
+    Convert a population result to a serializable dictionary.
 
     Parameters
     ----------
@@ -162,7 +168,8 @@ def build_label_maps(
     fitted,
     marker_to_population: Dict[str, str],
 ) -> tuple[List[str], Dict[str, str], Dict[str, str], Dict[str, str]]:
-    """Build display labels and marker lookup maps.
+    """
+    Build display labels and marker lookup maps.
 
     Parameters
     ----------
@@ -219,7 +226,8 @@ def build_gate_options(
     fitted,
     pop_labels: List[str],
 ) -> List[str]:
-    """Build selectable gate labels.
+    """
+    Build selectable gate labels.
 
     Parameters
     ----------
@@ -247,7 +255,8 @@ def build_gate_options(
 
 
 def make_display_label_fn(marker_to_label: Dict[str, str]):
-    """Create a function that maps internal labels to display labels.
+    """
+    Create a function that maps internal labels to display labels.
 
     Parameters
     ----------
@@ -261,7 +270,8 @@ def make_display_label_fn(marker_to_label: Dict[str, str]):
     """
 
     def display_label(label: str) -> str:
-        """Return a display label for an internal population label.
+        """
+        Return a display label for an internal population label.
 
         Parameters
         ----------
@@ -287,7 +297,8 @@ def build_cutoff_by_gate(
     gate_options: List[str],
     label_to_marker: Dict[str, str],
 ) -> Dict[str, float]:
-    """Build IgG cutoff values keyed by display gate label.
+    """
+    Build IgG cutoff values keyed by display gate label.
 
     Parameters
     ----------
@@ -323,7 +334,8 @@ def build_metrics_maps(
     results,
     marker_to_label: Dict[str, str],
 ) -> tuple[Dict[str, Dict[str, Dict[str, Any]]], Dict[str, Dict[str, Dict[str, Any]]]]:
-    """Build sample-level and file-level metric lookup maps.
+    """
+    Build sample-level and file-level metric lookup maps.
 
     Parameters
     ----------
@@ -366,7 +378,8 @@ def build_metrics_maps(
 
 
 def gate_mask_downsampled(entry: Dict[str, Any], gate: str) -> np.ndarray:
-    """Return the downsampled mask for a selected gate.
+    """
+    Return the downsampled mask for a selected gate.
 
     Parameters
     ----------
@@ -429,7 +442,8 @@ def collect_plot_series(
     max_points_final: int,
     max_line_values: int,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """Collect scatter and line-series data for a plot.
+    """
+    Collect scatter and line-series data for a plot.
 
     Parameters
     ----------
@@ -553,7 +567,8 @@ def collect_plot_series(
 
 
 def population_x_label(pop_label: str, pop_to_marker: Dict[str, str]) -> str:
-    """Build an x-axis label for a population marker plot.
+    """
+    Build an x-axis label for a population marker plot.
 
     Parameters
     ----------

@@ -10,6 +10,48 @@ from skimage import measure, morphology, filters
 @dataclass
 class QCMonitorConfig:
     # --- touching rule ---
+    """
+    Set ROI crowding, shape, boundary, and image-quality thresholds.
+
+    Attributes
+    ----------
+    allowed_neighbors : int
+        1 => doublets allowed, triplets+ excluded. Default is ``0``.
+    connectivity : int
+        Pixel adjacency used to find touching instances, either 4 or 8. Default is ``8``.
+    exclude_border_touching : bool
+        Whether instances intersecting the image border are excluded. Default is ``True``.
+    area_z_max_isolated : float
+        Maximum absolute robust area z-score allowed for isolated instances. Default is
+        ``3.5``.
+    area_z_max_touching : float
+        Maximum absolute robust area z-score allowed for touching instances. Default is
+        ``4.5``.
+    min_instance_area : int
+        Minimum retained instance area, in pixels; zero disables this lower bound. Default
+        is ``0``.
+    min_circularity : float
+        Minimum retained circularity, computed as 4*pi*area/perimeter squared. Default is
+        ``0.4``.
+    max_eccentricity : float
+        Maximum retained region eccentricity. Default is ``0.95``.
+    min_solidity : float
+        Minimum retained ratio of region area to convex-hull area. Default is ``0.8``.
+    use_boundary_gap : bool
+        Whether the cell-versus-boundary probability gap is evaluated when predictions are
+        available. Default is ``True``.
+    min_boundary_gap : float
+        Minimum allowed probability gap at the instance boundary. Default is ``0.15``.
+    use_intensity_focus : bool
+        Whether image-intensity, saturation, and focus measurements are evaluated. Default
+        is ``True``.
+    max_saturation_frac : float
+        Maximum permitted fraction of saturated pixels. Default is ``0.02``.
+    min_snr : float
+        Minimum permitted signal-to-noise ratio. Default is ``3.0``.
+    min_focus_varlap : float
+        Minimum permitted variance-of-Laplacian focus measurement. Default is ``1.0``.
+    """
     allowed_neighbors: int = 0          # 1 => doublets allowed, triplets+ excluded
     connectivity: int = 8               # 8-connected touching (use 4 to be stricter)
 
@@ -38,16 +80,41 @@ class QCMonitorConfig:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "QCMonitorConfig":
+        """
+        Construct QC settings from recognized dataclass fields only.
+
+        Parameters
+        ----------
+        d : Dict[str, Any]
+            Mapping of configuration field names to values.
+
+        Returns
+        -------
+        QCMonitorConfig
+            QC settings from recognized dataclass fields only.
+        """
         d = dict(d or {})
         fields = set(cls.__dataclass_fields__.keys())  # type: ignore
         return cls(**{k: v for k, v in d.items() if k in fields})
 
     def to_dict(self) -> Dict[str, Any]:
+        """
+        Return QC settings as a new dictionary.
+
+        Returns
+        -------
+        Dict[str, Any]
+            QC settings as a new dictionary.
+        """
         return asdict(self)
 
 
 class QCMonitor:
     """
+    Filter cell instances by touching, border, area, shape, and optional prediction or image-quality criteria.
+
+    Notes
+    -----
     Crowding:
       - Build label adjacency with 8-connected touching.
       - Let K = allowed_neighbors.
@@ -57,6 +124,14 @@ class QCMonitor:
     Other QC rules stay as before.
     """
     def __init__(self, cfg: Optional[QCMonitorConfig] = None):
+        """
+        Store supplied QC settings or create their defaults.
+
+        Parameters
+        ----------
+        cfg : Optional[QCMonitorConfig]
+            Configuration object controlling this component. Default is ``None``.
+        """
         self.cfg = cfg or QCMonitorConfig()
 
     def __call__(
@@ -65,6 +140,29 @@ class QCMonitor:
         probs: Optional[Dict[str, np.ndarray]] = None,
         image: Optional[np.ndarray] = None,
     ) -> Dict[str, Any]:
+        """
+        Measure ROI quality, remove flagged instance labels, and report QC metrics.
+
+        Parameters
+        ----------
+        instance_labels : numpy.ndarray
+            Two-dimensional integer instance map; zero denotes background.
+        probs : Optional[Dict[str, numpy.ndarray]]
+            Optional mapping of cell and boundary probability images. Default is ``None``.
+        image : Optional[numpy.ndarray]
+            Input image array; channel order and normalization follow the calling pipeline.
+            Default is ``None``.
+
+        Returns
+        -------
+        dict
+            Filtered labels, excluded IDs, a per-ROI table, and well-level QC metrics under
+            instances_filtered, exclude_ids, roi_table, and well.
+
+        Notes
+        -----
+        Excluded pixels become background (label 0); remaining labels are not renumbered. Intensity and focus measurements are well-level diagnostics. Crowding violations exclude both endpoints of the offending adjacency edges.
+        """
         lab = instance_labels.astype(np.int32, copy=False)
         max_id = int(lab.max())
 
@@ -245,7 +343,21 @@ class QCMonitor:
     # ---------------- helpers ----------------
 
     def _adjacency(self, lab: np.ndarray, connectivity: int = 8) -> Tuple[Dict[int, set], List[Tuple[int, int]]]:
-        """Pairs of labels that touch (8-connected by default)."""
+        """
+        Pairs of labels that touch (8-connected by default).
+
+        Parameters
+        ----------
+        lab : numpy.ndarray
+            Two-dimensional integer label map; positive integers identify instances.
+        connectivity : int
+            Pixel adjacency used to find touching instances, either 4 or 8. Default is ``8``.
+
+        Returns
+        -------
+        Tuple[Dict[int, set], List[Tuple[int, int]]]
+            Tuple containing ``neigh``, ``sorted(pairs)``, in that order.
+        """
         assert connectivity in (4, 8)
         shifts = [(1, 0), (0, 1), (-1, 0), (0, -1)]
         if connectivity == 8:
@@ -272,6 +384,21 @@ class QCMonitor:
         return neigh, sorted(pairs)
 
     def _border_touching(self, lab: np.ndarray, max_id: int) -> np.ndarray:
+        """
+        Mark each positive label that occurs on an image edge.
+
+        Parameters
+        ----------
+        lab : numpy.ndarray
+            Two-dimensional integer label map; positive integers identify instances.
+        max_id : int
+            Largest positive label; output vectors are indexed by label minus one.
+
+        Returns
+        -------
+        numpy.ndarray
+            Computed value of ``touch``.
+        """
         H, W = lab.shape
         border_mask = np.zeros_like(lab, dtype=bool)
         border_mask[0, :] = True
@@ -285,6 +412,19 @@ class QCMonitor:
         return touch
 
     def _nearest_neighbor_distances(self, centroids: np.ndarray) -> np.ndarray:
+        """
+        Compute the distance to the nearest other centroid in pixels.
+
+        Parameters
+        ----------
+        centroids : numpy.ndarray
+            Array of centroid coordinates with shape (n_instances, 2), in row-column order.
+
+        Returns
+        -------
+        numpy.ndarray
+            The distance to the nearest other centroid in pixels.
+        """
         if len(centroids) <= 1:
             return np.full((len(centroids),), np.inf, dtype=np.float32)
         tree = cKDTree(centroids[:, ::-1])  # (x, y)
@@ -292,6 +432,23 @@ class QCMonitor:
         return dists[:, 1].astype(np.float32)
 
     def _boundary_gap(self, lab: np.ndarray, p_cell: np.ndarray, p_bound: np.ndarray) -> np.ndarray:
+        """
+        Subtract mean boundary probability in an outer ring from mean cell probability inside each label.
+
+        Parameters
+        ----------
+        lab : numpy.ndarray
+            Two-dimensional integer label map; positive integers identify instances.
+        p_cell : numpy.ndarray
+            Cell-probability image aligned with the instance labels.
+        p_bound : numpy.ndarray
+            Boundary-probability image aligned with the instance labels.
+
+        Returns
+        -------
+        numpy.ndarray
+            Computed value of ``gaps``.
+        """
         max_id = int(lab.max())
         gaps = np.zeros(max_id, dtype=np.float32)
         for rid in range(1, max_id + 1):
@@ -306,6 +463,21 @@ class QCMonitor:
         return gaps
 
     def _intensity_focus_metrics(self, image: np.ndarray, fg_mask: np.ndarray) -> Tuple[float, float, float]:
+        """
+        Compute saturation fraction, foreground-background SNR, and Laplacian variance.
+
+        Parameters
+        ----------
+        image : numpy.ndarray
+            Input image array; channel order and normalization follow the calling pipeline.
+        fg_mask : numpy.ndarray
+            Boolean foreground mask aligned with the image.
+
+        Returns
+        -------
+        Tuple[float, float, float]
+            Tuple containing ``sat_frac``, ``snr``, ``vlap``, in that order.
+        """
         img = image
 
         # ---- 3D images: support both HWC and CHW ----
@@ -381,6 +553,19 @@ class QCMonitor:
         return sat_frac, snr, vlap
 
     def _robust_z(self, x: np.ndarray) -> np.ndarray:
+        """
+        Calculate a median- and MAD-based robust z score.
+
+        Parameters
+        ----------
+        x : numpy.ndarray
+            Numeric observations used to compute the statistic or transformation.
+
+        Returns
+        -------
+        numpy.ndarray
+            A median- and MAD-based robust z score.
+        """
         med = np.median(x)
         mad = np.median(np.abs(x - med)) + 1e-6
         return 0.6745 * (x - med) / mad

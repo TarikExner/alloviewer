@@ -56,6 +56,25 @@ ALLOWED_CROSSMATCH_CELL_MODES = {"T", "B", "T/B", "empty"}
 def _normalize_column_modes(
     column_modes: dict[int, str] | None,
 ) -> dict[int, str]:
+    """
+    Normalize column indices and validate supported crossmatch cell labels.
+
+    Parameters
+    ----------
+    column_modes : dict[int, str] | None
+        Mapping from one-based column numbers to ``T``, ``B``, ``T/B``, or ``empty``.
+
+    Returns
+    -------
+    dict[int, str]
+        Depending on the input and branch, returns ``{}``, ``normalized``.
+
+    Raises
+    ------
+    ValueError
+        Crossmatch column index must be between 1 and 10: {column} Unsupported crossmatch
+        cell mode for column {column}: {mode}
+    """
     if not column_modes:
         return {}
 
@@ -81,6 +100,19 @@ def _normalize_column_modes(
 
 
 def _well_column(well_id: str) -> int | None:
+    """
+    Read the trailing integer in a well ID, returning None when absent.
+
+    Parameters
+    ----------
+    well_id : str
+        Plate well identifier, such as ``A1``.
+
+    Returns
+    -------
+    int | None
+        The trailing integer in a well ID, returning None when absent.
+    """
     digits = ""
 
     for character in reversed(str(well_id)):
@@ -101,6 +133,15 @@ def _emit_progress(
     """
     Send a progress event to the application layer.
 
+    Parameters
+    ----------
+    progress_cb : ProgressCallback | None
+        Callback receiving progress-event dictionaries; None disables progress events.
+    **values : Any
+        Numeric values used to compute the requested statistic or transformation.
+
+    Notes
+    -----
     The analysis package does not know how progress is persisted. The
     application callback may write to Redis, update job metadata, or ignore
     the event.
@@ -121,6 +162,23 @@ def _emit_stage_progress(
     """
     Emit one complete image-analysis progress state.
 
+    Parameters
+    ----------
+    progress_cb : ProgressCallback | None
+        Callback receiving progress-event dictionaries; None disables progress events.
+    stage : str
+        Current pipeline stage, or None.
+    done : int
+        Updated completed-well count; None leaves the count unchanged.
+    total : int
+        Total number of items expected by the progress tracker.
+    done_wells : list[str]
+        Well IDs whose processing has completed.
+    current_well : str | None
+        Well currently being processed, or None. Default is ``None``.
+
+    Notes
+    -----
     Supplying all well-related fields with every event prevents stale or
     partially merged progress states in the application layer.
     """
@@ -139,6 +197,21 @@ def _env_int(
     name: str,
     default: int,
 ) -> int:
+    """
+    Read an integer environment setting and clamp parsed values to at least one.
+
+    Parameters
+    ----------
+    name : str
+        Name identifying the item being processed.
+    default : int
+        Fallback value used when the setting is absent or cannot be parsed.
+
+    Returns
+    -------
+    int
+        An integer environment setting and clamp parsed values to at least one.
+    """
     raw = os.getenv(name)
 
     if raw is None or raw == "":
@@ -161,6 +234,19 @@ def _env_int(
 def _segmenter_device_type(
     segmenter: SegmenterUNetInference,
 ) -> str:
+    """
+    Read the segmenter's device type, falling back to unknown.
+
+    Parameters
+    ----------
+    segmenter : SegmenterUNetInference
+        Callable UNet instance segmenter used to process the image.
+
+    Returns
+    -------
+    str
+        The segmenter's device type, falling back to unknown.
+    """
     device = getattr(
         segmenter,
         "device",
@@ -181,6 +267,19 @@ def _segmenter_device_type(
 def _segmenter_is_cuda(
     segmenter: SegmenterUNetInference,
 ) -> bool:
+    """
+    Test whether the segmenter uses a CUDA device.
+
+    Parameters
+    ----------
+    segmenter : SegmenterUNetInference
+        Callable UNet instance segmenter used to process the image.
+
+    Returns
+    -------
+    bool
+        True when the segmenter uses a CUDA device; False otherwise.
+    """
     return (
         _segmenter_device_type(segmenter)
         == "cuda"
@@ -191,6 +290,21 @@ def _cpu_segmentation_workers(
     segmenter: SegmenterUNetInference,
     total: int,
 ) -> int:
+    """
+    Select one CUDA worker or a bounded number of CPU workers.
+
+    Parameters
+    ----------
+    segmenter : SegmenterUNetInference
+        Callable UNet instance segmenter used to process the image.
+    total : int
+        Total number of items expected by the progress tracker.
+
+    Returns
+    -------
+    int
+        One CUDA worker or a bounded number of CPU workers.
+    """
     if _segmenter_is_cuda(segmenter):
         return 1
 
@@ -211,6 +325,14 @@ def _cpu_segmentation_workers(
 def _prepare_cpu_parallel_runtime(
     max_workers: int,
 ) -> None:
+    """
+    Limit PyTorch thread counts when running several segmentation workers.
+
+    Parameters
+    ----------
+    max_workers : int
+        Number of concurrent CPU segmentation workers.
+    """
     if max_workers <= 1:
         return
 
@@ -243,6 +365,36 @@ def _extract_roi_from_image(
     well_id: str,
     qc: bool = False,
 ) -> tuple[WellResult, dict[str, Any]]:
+    """
+    Segment an image, optionally filter ROIs by QC, and extract ROI features.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+    segmenter : SegmenterUNetInference
+        Callable UNet instance segmenter used to process the image.
+    qc_monitor : QCMonitor | None
+        QC monitor required when QC filtering is enabled.
+    extractor : RGBExtractor
+        Callable extractor of RGB features for labeled cell instances.
+    well_id : str
+        Plate well identifier, such as ``A1``.
+    qc : bool
+        If True, compute QC metrics and filter rejected instances before ROI extraction.
+        Default is ``False``.
+
+    Returns
+    -------
+    tuple of (WellResult, dict)
+        Well with extracted ROI features and the segmentation output, including the label
+        map used for ROI extraction.
+
+    Raises
+    ------
+    RuntimeError
+        QC was requested but no QC monitor was provided.
+    """
     segmentation_results: dict[str, Any] = segmenter(
         image
     )
@@ -328,6 +480,28 @@ def _segment_one_well(
     WellResult,
     np.ndarray,
 ]:
+    """
+    Segment one well with worker-local feature extraction and optional QC.
+
+    Parameters
+    ----------
+    well : Any
+        Well object containing its identifier and image data for segmentation.
+    segmenter : SegmenterUNetInference
+        Callable UNet instance segmenter used to process the image.
+    qc : bool
+        If True, compute QC metrics and filter rejected instances before ROI extraction.
+
+    Returns
+    -------
+    tuple of (str, WellResult, numpy.ndarray)
+        Well ID, ROI result, and uint16 instance labels for the preview.
+
+    Raises
+    ------
+    ValueError
+        No image provided for well {well.well_id}. Image for well {well.well_id} is empty.
+    """
     thread_name = (
         threading.current_thread().name
     )
@@ -437,6 +611,35 @@ def _segment_plate_wells(
     dict[str, np.ndarray],
     list[str],
 ]:
+    """
+    Segment all wells, emit progress, and restore input ordering in the results.
+
+    Parameters
+    ----------
+    wells_list : list[Any]
+        Well objects with image data and well_id attributes, in output order.
+    segmenter : SegmenterUNetInference
+        Callable UNet instance segmenter used to process the image.
+    qc : bool
+        If True, compute QC metrics and filter rejected instances before ROI extraction.
+    progress_cb : ProgressCallback | None
+        Callback receiving progress-event dictionaries; None disables progress events.
+
+    Returns
+    -------
+    tuple
+        Mapping of well IDs to results, mapping to preview labels, and completed well IDs in
+        input order.
+
+    Raises
+    ------
+    RuntimeError
+        Segmentation failed for well {scheduled_well_id}.
+
+    Notes
+    -----
+    CUDA runs use one worker. CPU runs may use a thread pool and emit completion events as futures finish. Worker errors propagate; missing well results raise RuntimeError.
+    """
     total = len(wells_list)
 
     max_workers = (
@@ -699,39 +902,51 @@ def run_image_analysis(
 
     Parameters
     ----------
-    layout
+    layout : PlateLayout
         Plate well-role layout.
-    image_order
+    image_order : list[str]
         Well IDs in image acquisition order.
-    image_filenames
+    image_filenames : list[str]
         File paths relative to ``input_root``.
-    input_root
+    input_root : str | Path
         Root directory used to resolve input files.
-    segmented_output_dir
+    segmented_output_dir : str | Path
         Directory where segmented preview images are written.
-    segmented_url_prefix
+    segmented_url_prefix : str
         URL prefix used in the returned well results.
-    progress_cb
-        Optional callback receiving complete progress events.
-    unet_config
+    progress_cb : ProgressCallback | None
+        Optional callback receiving complete progress events. Default is ``None``.
+    unet_config : dict[str, Any] | None
         Optional UNet configuration. The default configuration is copied when
         omitted.
-    qc
-        Whether to run ROI QC filtering.
-    assay_type
-        Either ``"pra"`` or ``"crossmatch"``.
-    hla_layout
-        Parsed HLA layout required for PRA analysis.
-    pra_positivity_threshold
-        Positivity threshold used for PRA calculations.
-    column_modes
+    qc : bool
+        Whether to run ROI QC filtering. Default is ``False``.
+    assay_type : str
+        Either ``"pra"`` or ``"crossmatch"``. Default is ``'pra'``.
+    hla_layout : ParsedPlateLayout | None
+        Parsed HLA layout required for PRA analysis. Default is ``None``.
+    pra_positivity_threshold : float
+        Positivity threshold used for PRA calculations. Default is ``20.0``.
+    column_modes : dict[int, str] | None
         Optional mapping from plate column number to ``"T"``, ``"B"``,
-        ``"T/B"``, or ``"empty"``. Used for CDC crossmatch summaries.
+        ``"T/B"``, or ``"empty"``. Used for CDC crossmatch summaries. Default is ``None``.
 
     Returns
     -------
     dict
         JSON-compatible analysis result.
+
+    Raises
+    ------
+    ValueError
+        assay_type must be either 'pra' or 'crossmatch'. Crossmatch analysis requires
+        column_modes. image_order and image_filenames must have the same length. At least
+        one image file is required. The plate contains no processable wells. No
+        positive-control wells were available for calibration. No negative-control wells
+        were available for calibration. PRA analysis requires hla_layout. Pass the parsed
+        Excel layout into run_image_analysis.
+    RuntimeError
+        The image loader returned a different number of images than requested.
 
     Notes
     -----
@@ -1170,6 +1385,22 @@ def run_image_analysis(
         well_id: str,
         well_result: WellResult,
     ) -> dict[str, Any]:
+        """
+        Serialize one well's measurements, assay call, and segmentation-image URL.
+
+        Parameters
+        ----------
+        well_id : str
+            Plate well identifier, such as ``A1``.
+        well_result : WellResult
+            ROI measurements and summary values for one well.
+
+        Returns
+        -------
+        dict[str, Any]
+            Well summary including role, crossmatch cell mode, segmentation-image URL,
+            automated/effective call, borderline status, and override information.
+        """
         role = role_map.get(well_id)
         automated_call = automated_well_call(
             well_result.corrected_frac_pos,

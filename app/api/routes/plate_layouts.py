@@ -29,6 +29,28 @@ router = APIRouter(
 
 @router.post("")
 async def parse_layout(job_id: str, xlsx: UploadFile = File(...)):
+    """
+    Store and parse an Excel PRA layout for an existing PRA job.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    xlsx : UploadFile
+        Uploaded .xlsx or .xlsm plate-layout workbook. Default is ``File(...)``.
+
+    Returns
+    -------
+    dict
+        Parsed layout including its job identifier and content hash.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 404 for the corresponding request validation, job-state, or processing error.
+        HTTP 409 for the corresponding request validation, job-state, or processing error.
+        HTTP 400 for the corresponding request validation, job-state, or processing error.
+    """
     try:
         require_job_type(job_id, {"pra"})
     except FileNotFoundError:
@@ -77,6 +99,24 @@ async def parse_layout(job_id: str, xlsx: UploadFile = File(...)):
 
 @router.get("")
 async def get_layout(job_id: str):
+    """
+    Read the parsed plate-layout JSON for a job.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    dict
+        Previously parsed plate layout.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 404 for the corresponding request validation, job-state, or processing error.
+    """
     paths = get_job_paths(job_id)
 
     if not paths.plate_layout.exists():

@@ -62,6 +62,19 @@ ALGO_DISPLAY_ORDER = [
 
 
 def _select_best_settings_per_algorithm(summary_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Select each algorithm's setting with the highest mean F1 over the focus gates.
+
+    Parameters
+    ----------
+    summary_df : pandas.DataFrame
+        Summary table of validation scores and run settings.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Each algorithm's setting with the highest mean F1 over the focus gates.
+    """
     focus_df = summary_df.loc[summary_df["gate"].isin(FOCUS_GATES)].copy()
 
     ranking_df = (
@@ -80,6 +93,24 @@ def _select_best_settings_per_algorithm(summary_df: pd.DataFrame) -> pd.DataFram
 
 
 def _prepare_runtime_data(summary_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Build accuracy-runtime points and stage timings for the selected clustering settings.
+
+    Parameters
+    ----------
+    summary_df : pandas.DataFrame
+        Summary table of validation scores and run settings.
+
+    Returns
+    -------
+    tuple[pandas.DataFrame, pandas.DataFrame]
+        Tuple containing ``scatter_df``, ``runtime_breakdown_df``, in that order.
+
+    Raises
+    ------
+    ValueError
+        summary_df is missing required columns: {missing}
+    """
     required_cols = {
         "experiment",
         "algorithm",
@@ -174,6 +205,21 @@ def _prepare_runtime_data(summary_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
 
 
 def _param_label(algo: str, param_json: str) -> str:
+    """
+    Format the active clustering parameters as a compact legend label.
+
+    Parameters
+    ----------
+    algo : str
+        Algorithm identifier used to select a label, color, or parameter description.
+    param_json : str
+        JSON-encoded parameter configuration associated with a validation result.
+
+    Returns
+    -------
+    str
+        The active clustering parameters as a compact legend label.
+    """
     params = json.loads(param_json)
 
     if algo == "parc":
@@ -189,6 +235,21 @@ def _param_label(algo: str, param_json: str) -> str:
 
 
 def _sort_key(algo: str, param_json: str):
+    """
+    Build an algorithm-specific ordering key from parameter JSON.
+
+    Parameters
+    ----------
+    algo : str
+        Algorithm identifier used to select a label, color, or parameter description.
+    param_json : str
+        JSON-encoded parameter configuration associated with a validation result.
+
+    Returns
+    -------
+    object or tuple
+        An algorithm-specific ordering key from parameter JSON.
+    """
     params = json.loads(param_json)
 
     if algo == "parc":
@@ -208,6 +269,21 @@ def _sort_key(algo: str, param_json: str):
 
 
 def _palette_for_algo(algo: str, n: int):
+    """
+    Choose the plotting palette assigned to a clustering algorithm.
+
+    Parameters
+    ----------
+    algo : str
+        Algorithm identifier used to select a label, color, or parameter description.
+    n : int
+        Number of colors requested for this algorithm.
+
+    Returns
+    -------
+    object
+        The plotting palette assigned to a clustering algorithm.
+    """
     if algo == "parc":
         return sns.color_palette("tab20", n_colors=n)
 
@@ -227,6 +303,26 @@ def _generate_subfigure_a(
     subfigure_label: str,
     summary_df: pd.DataFrame,
 ) -> None:
+    """
+    Draw panel A of Figure S8 on the supplied figure and subplot grid.
+
+    Parameters
+    ----------
+    fig : Figure
+        Matplotlib figure containing the subplot grid.
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    gs : SubplotSpec
+        Subplot specification defining the area available to this panel.
+    subfigure_label : str
+        Panel label drawn next to the subplot.
+    summary_df : pandas.DataFrame
+        Summary table of validation scores and run settings.
+
+    Notes
+    -----
+    Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+    """
     import matplotlib.patches as mpatches
 
     ax.axis("off")
@@ -399,6 +495,26 @@ def _generate_subfigure_b(
     subfigure_label: str,
     scatter_df: pd.DataFrame,
 ) -> None:
+    """
+    Draw panel B of Figure S8 on the supplied figure and subplot grid.
+
+    Parameters
+    ----------
+    fig : Figure
+        Matplotlib figure containing the subplot grid.
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    gs : SubplotSpec
+        Subplot specification defining the area available to this panel.
+    subfigure_label : str
+        Panel label drawn next to the subplot.
+    scatter_df : pandas.DataFrame
+        Tabular observations used for the scatter comparison.
+
+    Notes
+    -----
+    Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+    """
     ax.axis("off")
     utils.figure_label(ax, subfigure_label, x=0)
 
@@ -449,6 +565,26 @@ def _generate_subfigure_c(
     subfigure_label: str,
     runtime_breakdown_df: pd.DataFrame,
 ) -> None:
+    """
+    Draw panel C of Figure S8 on the supplied figure and subplot grid.
+
+    Parameters
+    ----------
+    fig : Figure
+        Matplotlib figure containing the subplot grid.
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    gs : SubplotSpec
+        Subplot specification defining the area available to this panel.
+    subfigure_label : str
+        Panel label drawn next to the subplot.
+    runtime_breakdown_df : pandas.DataFrame
+        Tabular timing measurements used for the runtime breakdown.
+
+    Notes
+    -----
+    Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+    """
     ax.axis("off")
     utils.figure_label(ax, subfigure_label, x=0)
 
@@ -522,6 +658,26 @@ def _generate_main_figure(
     figure_output_dir: str = "",
     figure_name: str = "",
 ):
+    """
+    Assemble and save the figure showing flow-clustering settings, accuracy, and runtime.
+
+    Parameters
+    ----------
+    summary_df : pandas.DataFrame
+        Summary table of validation scores and run settings.
+    scatter_df : pandas.DataFrame
+        Tabular observations used for the scatter comparison.
+    runtime_breakdown_df : pandas.DataFrame
+        Tabular timing measurements used for the runtime breakdown.
+    figure_output_dir : str
+        Directory in which the figure files are written. Default is ``''``.
+    figure_name : str
+        Base name used for the output figure files. Default is ``''``.
+
+    Notes
+    -----
+    Creates Matplotlib subplots and writes the figure outputs selected in this module. Figure input data is supplied by the enclosing preparation workflow.
+    """
     fig = plt.figure(
         layout="constrained",
         figsize=(cfg.FIGURE_WIDTH_FULL, cfg.FIGURE_HEIGHT_FULL),
@@ -585,6 +741,23 @@ def figure_S8_generation(
     validation_results_dir: str,
     **kwargs,
 ):
+    """
+    Prepare the data and generate Figure S8 showing flow-clustering settings, accuracy, and runtime.
+
+    Parameters
+    ----------
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    validation_results_dir : str
+        Directory containing cached validation tables and analysis results.
+    **kwargs : dict
+        Accepted by the interface but not read by this implementation.
+
+    Raises
+    ------
+    FileNotFoundError
+        Missing flow validation summary: {summary_path}
+    """
     summary_path = os.path.join(validation_results_dir, "flow_validation_summary.csv")
 
     if not os.path.isfile(summary_path):

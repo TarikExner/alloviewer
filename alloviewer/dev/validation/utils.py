@@ -32,10 +32,50 @@ from alloviewer.image_analysis.segmenter import (
 # geometry & resizing
 # ----------------------------
 def crop_rect(arr: np.ndarray, y0: int, x0: int, h: int, w: int) -> np.ndarray:
+    """
+    Slice a rectangular spatial region from a two-dimensional or channel-last array.
+
+    Parameters
+    ----------
+    arr : numpy.ndarray
+        Image or label array with spatial dimensions first and optional trailing channels.
+    y0 : int
+        Top row of the crop in pixels.
+    x0 : int
+        Left column of the crop in pixels.
+    h : int
+        Crop height in pixels.
+    w : int
+        Crop width in pixels.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``arr[y0:y0 + h, x0:x0 + w, ...] if arr.ndim == 3 else arr[y0:y0 +
+        h, x0:x0 + w]``.
+    """
     return arr[y0:y0+h, x0:x0+w, ...] if arr.ndim == 3 else arr[y0:y0+h, x0:x0+w]
 
 
 def estimate_well_mask(img: np.ndarray, blur_sigma: float = 3.0, well_is_brighter: str | bool = "auto"):
+    """
+    Estimate the largest well region by smoothing, Otsu thresholding, and morphology.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input image array.
+    blur_sigma : float
+        Standard deviation of the smoothing kernel in pixels. Default is ``3.0``.
+    well_is_brighter : str | bool
+        Whether the well is brighter than its surroundings; auto chooses from thresholded
+        regions. Default is ``'auto'``.
+
+    Returns
+    -------
+    tuple
+        The largest well region by smoothing, Otsu thresholding, and morphology.
+    """
     g = img if img.ndim == 2 else (0.2989*img[...,0] + 0.5870*img[...,1] + 0.1140*img[...,2])
     g = ndi.gaussian_filter(g.astype(np.float32), blur_sigma)
     g = exposure.rescale_intensity(g, in_range='image', out_range=(0, 1))
@@ -62,6 +102,25 @@ def estimate_well_mask(img: np.ndarray, blur_sigma: float = 3.0, well_is_brighte
     return (lbl == p.label), (cy, cx), r
 
 def square_crop_from_center_radius(mask_shape: Tuple[int,int], center: Tuple[float,float], radius: float, pad: int = 8):
+    """
+    Compute a clipped square crop around a center and radius.
+
+    Parameters
+    ----------
+    mask_shape : Tuple[int, int]
+        Spatial mask shape as (height, width).
+    center : Tuple[float, float]
+        Center coordinates in (row, column) order, in pixels.
+    radius : float
+        Radius of the crop, core, or center-neighborhood mask, in pixels.
+    pad : int
+        Extra padding added around the crop, in pixels. Default is ``8``.
+
+    Returns
+    -------
+    tuple
+        Tuple containing ``y0``, ``y1``, ``x0``, ``x1``, in that order.
+    """
     H, W = mask_shape
     cy, cx = center
     half = int(math.ceil(radius + pad))
@@ -92,6 +151,18 @@ def iou_dice_overlap(pred_bin: np.ndarray, gt_bin: np.ndarray) -> Dict[str, floa
     """
     pred_bin, gt_bin: binary arrays {0,1} or {False,True}
     Returns IoU (Jaccard), Dice, and Overlap coefficient.
+
+    Parameters
+    ----------
+    pred_bin : numpy.ndarray
+        Binary predicted foreground mask.
+    gt_bin : numpy.ndarray
+        Binary ground-truth foreground mask.
+
+    Returns
+    -------
+    Dict[str, float]
+        Result mapping with keys ``iou``, ``dice``, ``overlap``.
     """
     p = pred_bin.astype(bool)
     g = gt_bin.astype(bool)
@@ -113,6 +184,16 @@ def iou_dice_overlap(pred_bin: np.ndarray, gt_bin: np.ndarray) -> Dict[str, floa
 def compute_thin_gt_boundary_from_instances(inst_gt: np.ndarray) -> np.ndarray:
     """
     Make a 1-pixel thin boundary map from instance labels via morphological gradient + skeletonize.
+
+    Parameters
+    ----------
+    inst_gt : numpy.ndarray
+        Reference integer instance labels with zero background.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``thin``.
     """
     # edge from gradient on binary instance map
     bin_gt = (inst_gt > 0).astype(np.uint8)
@@ -127,6 +208,20 @@ def boundary_fscore_np(pred: np.ndarray, gt: np.ndarray, tol: int = 2) -> Dict[s
     """
     Boundary F-score with tolerance (like BSDS).
     pred, gt are binary edges (uint8 or bool).
+
+    Parameters
+    ----------
+    pred : numpy.ndarray
+        Predicted boundary mask compared with the reference boundary.
+    gt : numpy.ndarray
+        Ground-truth boundary mask used as the comparison reference.
+    tol : int
+        Spatial matching tolerance in pixels. Default is ``2``.
+
+    Returns
+    -------
+    Dict[str, float]
+        Result mapping with keys ``precision``, ``recall``, ``f1``.
     """
     pred = (pred > 0).astype(np.uint8)
     gt = (gt > 0).astype(np.uint8)
@@ -158,10 +253,43 @@ def boundary_f1_skeletonized(pred_prob: np.ndarray,
     """
     F1 between predicted boundary prob and thin GT boundary from instances.
     If sweep=True, returns best F1 over a small threshold grid.
+
+    Parameters
+    ----------
+    pred_prob : numpy.ndarray
+        Predicted foreground or boundary probability array.
+    inst_gt : numpy.ndarray
+        Reference integer instance labels with zero background.
+    tol : int
+        Spatial matching tolerance in pixels. Default is ``2``.
+    thr : float
+        Probability threshold used to select foreground or peaks. Default is ``0.9``.
+    sweep : bool
+        Mapping from simulation parameters to the values shown in the sweep. Default is
+        ``False``.
+
+    Returns
+    -------
+    float
+        Depending on the input and branch, returns ``max((f1_at(t) for t in ts))``,
+        ``f1_at(thr)``.
     """
     gt_thin = compute_thin_gt_boundary_from_instances(inst_gt)
 
     def f1_at(t):
+        """
+        Threshold and skeletonize a boundary map and compute tolerant boundary F1.
+
+        Parameters
+        ----------
+        t : float
+            Probability threshold used to binarize a prediction.
+
+        Returns
+        -------
+        object
+            Computed value of ``float(stats['f1'])``.
+        """
         pred_bin = (pred_prob >= t).astype(np.uint8)
         pred_skel = skeletonize(pred_bin > 0).astype(np.uint8)
         stats = boundary_fscore_np(pred_skel, gt_thin, tol=tol)
@@ -181,6 +309,16 @@ def boundary_f1_skeletonized(pred_prob: np.ndarray,
 def centroids_from_instances(inst: np.ndarray) -> List[Tuple[int, int]]:
     """
     Get simple centroids (mean y/x) for each instance id >=1.
+
+    Parameters
+    ----------
+    inst : numpy.ndarray
+        Integer instance-label image with background label zero.
+
+    Returns
+    -------
+    List[Tuple[int, int]]
+        Simple centroids (mean y/x) for each instance id >=1.
     """
     centers: List[Tuple[int, int]] = []
     max_id = int(inst.max())
@@ -198,6 +336,20 @@ def nms_peaks_np(heat: np.ndarray, thr: float = 0.2, min_dist: int = 3) -> List[
     """
     Simple NMS on a heatmap using dilation to find local maxima above thr.
     Returns (y, x, score) sorted by score desc.
+
+    Parameters
+    ----------
+    heat : numpy.ndarray
+        Two-dimensional center-probability heatmap.
+    thr : float
+        Probability threshold used to select foreground or peaks. Default is ``0.2``.
+    min_dist : int
+        Radius used by local peak suppression, in pixels. Default is ``3``.
+
+    Returns
+    -------
+    List[Tuple[int, int, float]]
+        Computed value of ``[(int(ys[i]), int(xs[i]), float(scores[i])) for i in idx]``.
     """
     h = (heat >= thr).astype(np.uint8)
     if min_dist > 1:
@@ -214,6 +366,20 @@ def _hungarian_match(P: np.ndarray, G: np.ndarray, max_dist: float) -> Tuple[int
     """
     Hungarian 1-1 matching by Euclidean distance with a max distance cap.
     Returns (TP, list_of_distances_for_TP).
+
+    Parameters
+    ----------
+    P : numpy.ndarray
+        Predicted point coordinates used for distance-based assignment.
+    G : numpy.ndarray
+        Reference center coordinates used for assignment.
+    max_dist : float
+        Maximum distance allowed for an accepted point match, in pixels.
+
+    Returns
+    -------
+    Tuple[int, List[float]]
+        Depending on the input and branch, returns ``(0, [])``, ``(len(matched), matched)``.
     """
     if len(P) == 0 or len(G) == 0:
         return 0, []
@@ -233,6 +399,27 @@ def _pr_ap_from_thresholds(center_pred: np.ndarray,
                            thr_list: Sequence[float],
                            nms_dist: int,
                            match_radius: int) -> Dict[str, Any]:
+    """
+    Compute center precision-recall points and average precision over thresholds.
+
+    Parameters
+    ----------
+    center_pred : numpy.ndarray
+        Predicted center-probability image.
+    G : numpy.ndarray
+        Reference center coordinates used for assignment.
+    thr_list : Sequence[float]
+        Thresholds over which to compute center precision and recall.
+    nms_dist : int
+        Pixel radius used to suppress neighboring center peaks.
+    match_radius : int
+        Largest center-matching distance in pixels.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``ap``, ``precisions``, ``recalls``.
+    """
     prs, rcs = [], []
     for t in thr_list:
         preds = nms_peaks_np(center_pred, thr=t, min_dist=nms_dist)
@@ -259,6 +446,20 @@ def _oks_for_matches(match_dists: List[float],
     """
     OKS per matched pair. Scale s from median instance area: s = sqrt(area_median).
     OKS = exp( - d^2 / (2 * (k*s)^2) ).
+
+    Parameters
+    ----------
+    match_dists : List[float]
+        Distances of the accepted predicted-to-reference point matches.
+    inst_gt : numpy.ndarray
+        Reference integer instance labels with zero background.
+    k : float
+        Requested number of sampled rows. Default is ``0.5``.
+
+    Returns
+    -------
+    List[float]
+        Depending on the input and branch, returns ``[]``, ``oks_vals``.
     """
     areas = []
     max_id = int(inst_gt.max())
@@ -280,6 +481,31 @@ def center_metrics_hungarian(center_pred: np.ndarray,
                              oks_thresholds: Sequence[float] = (0.5, 0.75, 0.9)) -> Dict[str, Any]:
     """
     Main center metrics with Hungarian match, PR/AP sweep, and OKS mAP.
+
+    Parameters
+    ----------
+    center_pred : numpy.ndarray
+        Predicted center-probability image.
+    inst_gt : numpy.ndarray
+        Reference integer instance labels with zero background.
+    peak_thr : float
+        Minimum heatmap value for a predicted center peak. Default is ``0.2``.
+    nms_dist : int
+        Pixel radius used to suppress neighboring center peaks. Default is ``3``.
+    match_radius : int
+        Largest center-matching distance in pixels. Default is ``10``.
+    ap_thr_list : Sequence[float]
+        Probability thresholds used to compute center average precision. Default is
+        ``tuple(np.linspace(0.05, 0.7, 14))``.
+    oks_thresholds : Sequence[float]
+        Object-keypoint similarity thresholds evaluated for center matching. Default is
+        ``(0.5, 0.75, 0.9)``.
+
+    Returns
+    -------
+    dict[str, Any]
+        Center-detection precision, recall, F1, counts, localization errors, and
+        threshold-sweep/AP and OKS metrics.
     """
     preds = nms_peaks_np(center_pred, thr=peak_thr, min_dist=nms_dist)
     P = np.array([(y, x) for y, x, _ in preds], dtype=float)
@@ -332,6 +558,28 @@ def center_metrics_np(center_pred: np.ndarray,
                       peak_thr: float = 0.2,
                       nms_dist: int = 3,
                       match_radius: int = 10) -> Dict[str, Any]:
+    """
+    Greedily match predicted center peaks to references within a distance limit.
+
+    Parameters
+    ----------
+    center_pred : numpy.ndarray
+        Predicted center-probability image.
+    gt_centers : Sequence[Tuple[int, int]]
+        Reference center coordinates in row-column order.
+    peak_thr : float
+        Minimum heatmap value for a predicted center peak. Default is ``0.2``.
+    nms_dist : int
+        Pixel radius used to suppress neighboring center peaks. Default is ``3``.
+    match_radius : int
+        Largest center-matching distance in pixels. Default is ``10``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``precision``, ``recall``, ``f1``, ``n_pred``, ``n_gt``,
+        ``n_tp``.
+    """
     preds = nms_peaks_np(center_pred, thr=peak_thr, min_dist=nms_dist)
     P = np.array([(y, x) for y, x, _ in preds], dtype=float)
     G = np.array(gt_centers, dtype=float)
@@ -362,6 +610,21 @@ def center_metrics_np(center_pred: np.ndarray,
 # ----------------------------
 
 def concordance_ccc(x: np.ndarray, y: np.ndarray) -> float:
+    """
+    Compute Lin's concordance correlation coefficient for paired arrays.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        First numeric vector aligned elementwise with the other vector.
+    y : numpy.ndarray
+        Second numeric vector aligned elementwise with the other vector.
+
+    Returns
+    -------
+    float
+        Lin's concordance correlation coefficient for paired arrays.
+    """
     xm = x.mean()
     ym = y.mean()
     vx = x.var()
@@ -378,6 +641,22 @@ def energy_errors_np(energy_pred: np.ndarray,
                      cell_mask_gt: np.ndarray) -> dict:
     """
     RMSE and Pearson r inside cells. NaN-safe, with validity flags.
+
+    Parameters
+    ----------
+    energy_pred : numpy.ndarray
+        Predicted normalized energy map.
+    energy_gt : numpy.ndarray
+        Reference normalized energy map.
+    cell_mask_gt : numpy.ndarray
+        Ground-truth binary cell-foreground mask.
+
+    Returns
+    -------
+    dict
+        Depending on the input and branch, returns ``{'rmse': np.nan, 'pearson': np.nan,
+        'valid_rmse': False, 'valid_r': False}``, ``{'rmse': rmse, 'pearson': r,
+        'valid_rmse': valid_rmse, 'valid_r': valid_r}``.
     """
     m = (cell_mask_gt > 0.5)
     if not np.any(m):
@@ -409,6 +688,28 @@ def energy_metrics_extended_full(
     cell_mask: np.ndarray,
     frac_delta: Optional[float] = 0.05,
 ) -> Dict[str, Any]:
+    """
+    Measure energy-map error, agreement, and structure over cell pixels.
+
+    Parameters
+    ----------
+    energy_pred : numpy.ndarray
+        Predicted normalized energy map.
+    energy_gt : numpy.ndarray
+        Reference normalized energy map.
+    cell_mask : numpy.ndarray
+        Spatial mask identifying cell foreground.
+    frac_delta : Optional[float]
+        Error tolerance expressed as a fraction of the reference energy range. Default is
+        ``0.05``.
+
+    Returns
+    -------
+    dict[str, Any]
+        Energy-map error and agreement metrics, including RMSE, MAE, correlations, CCC,
+        SSIM, gradient correlation, and distribution distance. Unavailable measurements are
+        NaN.
+    """
     m = cell_mask > 0.5
     n_pix = int(m.sum())
     if n_pix == 0:
@@ -460,6 +761,19 @@ def energy_metrics_extended_full(
             g_f[~m_patch] = g_in.mean()
 
             def _mm(a):
+                """
+                Scale an array by its minimum and range with a small denominator guard.
+
+                Parameters
+                ----------
+                a : object
+                    Numeric image patch to rescale using its minimum and maximum.
+
+                Returns
+                -------
+                object
+                    Computed value of ``(a - amin) / (amax - amin + 1e-08)``.
+                """
                 amin, amax = float(a.min()), float(a.max())
                 return (a - amin) / (amax - amin + 1e-8)
 
@@ -502,6 +816,21 @@ def energy_metrics_extended_full(
     }
 
 def jsonify(x: Any):
+    """
+    Recursively convert NumPy and PyTorch values to JSON-compatible Python objects.
+
+    Parameters
+    ----------
+    x : Any
+        Value or serialized metadata to convert into JSON-compatible Python data.
+
+    Returns
+    -------
+    object or dict or list
+        Depending on the input and branch, returns ``x.item()``, ``x.tolist()``, ``{str(k):
+        jsonify(v) for k, v in x.items()}``, ``[jsonify(v) for v in x]``,
+        ``x.detach().cpu().tolist()``, ``x``.
+    """
     if isinstance(x, (np.generic,)):
         return x.item()
     if isinstance(x, np.ndarray):
@@ -517,6 +846,20 @@ def jsonify(x: Any):
     return x
 
 def flatten_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Flatten simulation parameters and JSON-encode other nested metadata values.
+
+    Parameters
+    ----------
+    meta : Dict[str, Any]
+        Image or tile metadata containing source identity, scene settings, and spatial
+        transforms.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Computed value of ``out``.
+    """
     out: Dict[str, Any] = {}
     for k, v in meta.items():
         if k == "params" and isinstance(v, dict):
@@ -529,6 +872,19 @@ def flatten_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 def get_dataset_mode(h5_path: str) -> str:
+    """
+    Infer tiling or resize mode from the HDF5 path text.
+
+    Parameters
+    ----------
+    h5_path : str
+        Path to the simulated-image HDF5 dataset.
+
+    Returns
+    -------
+    str
+        Tiling or resize mode from the HDF5 path text.
+    """
     hp = h5_path.lower()
     if "tile" in hp:
         return "tiling"
@@ -544,6 +900,23 @@ def decode_json_maybe(x: Any) -> Dict[str, Any]:
     """
     Decode one metadata entry from H5.
 
+    Parameters
+    ----------
+    x : Any
+        Value or serialized metadata to convert into JSON-compatible Python data.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Depending on the input and branch, returns ``json.loads(x)``, ``x``.
+
+    Raises
+    ------
+    TypeError
+        Could not decode meta entry of type {type(x)}
+
+    Notes
+    -----
     Supports:
       - bytes
       - np.bytes_
@@ -572,6 +945,21 @@ def decode_json_maybe(x: Any) -> Dict[str, Any]:
 def _first_present(d: Dict[str, Any], keys: List[str], default=None):
     """
     Return the first present non-None value from a dict.
+
+    Parameters
+    ----------
+    d : Dict[str, Any]
+        Mapping of configuration field names to values.
+    keys : List[str]
+        Ordered candidate keys checked when reading the mapping.
+    default : object
+        Fallback value used when the setting is absent or cannot be parsed. Default is
+        ``None``.
+
+    Returns
+    -------
+    object
+        The first present non-None value from a dict.
     """
     for k in keys:
         if k in d and d[k] is not None:
@@ -582,6 +970,16 @@ def _first_present(d: Dict[str, Any], keys: List[str], default=None):
 def _as_int_pair(x: Any) -> Optional[Tuple[int, int]]:
     """
     Convert a list/tuple/array-like object with at least two entries to an int pair.
+
+    Parameters
+    ----------
+    x : Any
+        Sequence with at least two entries to convert to integer coordinates.
+
+    Returns
+    -------
+    Optional[Tuple[int, int]]
+        Depending on the input and branch, returns ``None``, ``(int(x[0]), int(x[1]))``.
     """
     if x is None:
         return None
@@ -598,6 +996,16 @@ def _as_int_pair(x: Any) -> Optional[Tuple[int, int]]:
 def count_positive_labels(lbl: np.ndarray) -> int:
     """
     Count instance labels greater than zero.
+
+    Parameters
+    ----------
+    lbl : numpy.ndarray
+        Integer instance-label image with zero-valued background.
+
+    Returns
+    -------
+    int
+        Instance labels greater than zero.
     """
     vals = np.unique(lbl)
     vals = vals[vals > 0]
@@ -608,6 +1016,23 @@ def load_human_roi_counts(csv_dir: str) -> pd.DataFrame:
     """
     Load human ROI counts from human_annotations.csv.
 
+    Parameters
+    ----------
+    csv_dir : str
+        Directory containing human-annotation count CSVs.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Human ROI counts from human_annotations.csv.
+
+    Raises
+    ------
+    ValueError
+        CSV is missing required columns: {sorted(missing)}
+
+    Notes
+    -----
     Expected columns:
       - Folder
       - image_name
@@ -644,6 +1069,26 @@ def extract_image_identity(meta: Dict[str, Any]) -> Tuple[str, str]:
     """
     Extract (Folder, image_name) from H5 metadata.
 
+    Parameters
+    ----------
+    meta : Dict[str, Any]
+        Image or tile metadata containing source identity, scene settings, and spatial
+        transforms.
+
+    Returns
+    -------
+    Tuple[str, str]
+        (Folder, image_name) from H5 metadata.
+
+    Raises
+    ------
+    KeyError
+        Could not extract Folder/image_name from H5 meta. Available top-level keys:
+        {list(meta.keys())}, full keys: {list(full.keys()) if isinstance(full, dict) else
+        'n/a'}
+
+    Notes
+    -----
     Priority:
       1) direct fields in meta["full"]
       2) src_path / image_path / img_path / path in meta["full"]
@@ -707,6 +1152,28 @@ def extract_tile_box(
     """
     Return tile box as (y0, y1, x0, x1).
 
+    Parameters
+    ----------
+    tile_meta : Dict[str, Any]
+        Metadata mapping for one image tile.
+    tile_hw : Tuple[int, int]
+        Tile height and width in pixels.
+
+    Returns
+    -------
+    Tuple[int, int, int, int]
+        Tile box as (y0, y1, x0, x1).
+
+    Raises
+    ------
+    ValueError
+        tile_xy has invalid format: {xy} tile_hw has invalid format: {hw}
+    KeyError
+        Could not extract tile box from tile metadata. Available tile keys:
+        {list(tile_meta.keys())}
+
+    Notes
+    -----
     For the current tile export:
       - tile_xy = (y0, x0)
       - tile_hw = (h, w)
@@ -760,6 +1227,28 @@ def extract_full_hw(
     """
     Infer the full image size as (H, W).
 
+    Parameters
+    ----------
+    meta : Dict[str, Any]
+        Image or tile metadata containing source identity, scene settings, and spatial
+        transforms.
+    tile_metas : List[Dict[str, Any]]
+        Metadata for each tile, including its position in the full image.
+    tile_hw : Tuple[int, int]
+        Tile height and width in pixels.
+
+    Returns
+    -------
+    Tuple[int, int]
+        The full image size as (H, W).
+
+    Raises
+    ------
+    ValueError
+        Could not infer full image size from H5 metadata.
+
+    Notes
+    -----
     Priority:
       1) meta["full"] height/width fields
       2) first tile's full_meta
@@ -824,22 +1313,28 @@ def stitch_prob_tiles(
 
     Parameters
     ----------
-    prob_tiles:
+    prob_tiles : numpy.ndarray
         Array with shape [T, C, tile_h, tile_w].
-    tile_metas:
+    tile_metas : List[Dict[str, Any]]
         List of tile metadata dicts, length T.
-    full_hw:
+    full_hw : Tuple[int, int]
         Full image size as (H, W).
 
     Returns
     -------
-    np.ndarray
+    numpy.ndarray
         Array with shape [C, H, W].
 
-    Important correction:
+    Important correction
     This version handles clipped tiles correctly. If a tile starts outside the
     full image coordinate range, the matching source offset inside the tile is
     used instead of always reading from [:th, :tw].
+
+    Raises
+    ------
+    ValueError
+        Expected prob_tiles [T,C,h,w], got {prob_tiles.shape} Number of tile metas
+        ({len(tile_metas)}) does not match number of tiles ({T}) Invalid full_hw={full_hw}
     """
     if prob_tiles.ndim != 4:
         raise ValueError(f"Expected prob_tiles [T,C,h,w], got {prob_tiles.shape}")
@@ -919,6 +1414,33 @@ def segment_one_h5_entry(
     """
     Segment one tiled H5 entry and return one count row.
 
+    Parameters
+    ----------
+    segmenter : SegmenterUNet
+        Callable UNet instance segmenter used to process the image.
+    imgs_tiles : numpy.ndarray
+        Image tensor containing the tiles of one image or batch.
+    meta : Dict[str, Any]
+        Report metadata and positivity settings; None uses the report defaults.
+    update_cell_mask : bool
+        Whether instance segmentation replaces the cell-foreground probability mask with the
+        final instance foreground. Default is ``False``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``Folder``, ``image_name``, ``unet_roi_count``.
+
+    Raises
+    ------
+    ValueError
+        Expected imgs_tiles [T,3,H,W], got {imgs_tiles.shape} H5 meta['tiles'] is missing or
+        empty.
+    RuntimeError
+        Segmenter has no instance segmenter. Set cfg.compute_instances=True.
+
+    Notes
+    -----
     imgs_tiles: [Tmax, 3, S, S]
     meta: decoded JSON dict with a 'tiles' list
     """
@@ -974,7 +1496,19 @@ VALIDATION_VERSION_STORED_INST_GT = "stored_inst_gt_v2"
 
 
 def validation_count_positive_labels(inst: np.ndarray) -> int:
-    """Count positive instance labels in a 2D label image."""
+    """
+    Count positive instance labels in a 2D label image.
+
+    Parameters
+    ----------
+    inst : numpy.ndarray
+        Integer instance-label image with background label zero.
+
+    Returns
+    -------
+    int
+        Positive instance labels in a 2D label image.
+    """
     vals = np.unique(inst)
     vals = vals[vals > 0]
     return int(vals.size)
@@ -984,6 +1518,18 @@ def validation_locally_relabel_instances(inst: np.ndarray) -> np.ndarray:
     """
     Convert stored labels to compact local labels while keeping 0 as background.
 
+    Parameters
+    ----------
+    inst : numpy.ndarray
+        Integer instance-label image with background label zero.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``inst_local.astype(np.int32, copy=False)``.
+
+    Notes
+    -----
     Stored H5 labels may be global ids. Several metrics iterate over 1..max_id,
     so local relabeling avoids slow or misleading behavior when ids are sparse.
     """
@@ -993,12 +1539,38 @@ def validation_locally_relabel_instances(inst: np.ndarray) -> np.ndarray:
 
 
 def validation_as_float_or_nan(x: Any) -> float:
+    """
+    Return numeric scalar inputs as float and all other inputs as NaN.
+
+    Parameters
+    ----------
+    x : Any
+        Scalar value to format or convert using the helper's stated rules.
+
+    Returns
+    -------
+    float
+        Numeric scalar inputs as float and all other inputs as NaN.
+    """
     if isinstance(x, (int, float, np.integer, np.floating)):
         return float(x)
     return np.nan
 
 
 def validation_as_int_or_nan(x: Any) -> Any:
+    """
+    Return integer or finite floating inputs as int and other inputs as NaN.
+
+    Parameters
+    ----------
+    x : Any
+        Scalar value to format or convert using the helper's stated rules.
+
+    Returns
+    -------
+    Any
+        Integer or finite floating inputs as int and other inputs as NaN.
+    """
     if isinstance(x, (int, np.integer)):
         return int(x)
     if isinstance(x, (float, np.floating)) and np.isfinite(float(x)):
@@ -1010,12 +1582,42 @@ def validation_get_original_sample_idx(
     loop_idx: int,
     indices: Optional[Sequence[int]],
 ) -> int:
+    """
+    Translate a loop index through the optional selected-index list.
+
+    Parameters
+    ----------
+    loop_idx : int
+        Index within the current validation loop.
+    indices : Optional[Sequence[int]]
+        Optional subset of dataset record indices.
+
+    Returns
+    -------
+    int
+        Depending on the input and branch, returns ``int(loop_idx)``,
+        ``int(indices[loop_idx])``.
+    """
     if indices is None:
         return int(loop_idx)
     return int(indices[loop_idx])
 
 
 def validation_extract_full_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Return a dictionary-valued full-image metadata field, or an empty mapping.
+
+    Parameters
+    ----------
+    meta : Dict[str, Any]
+        Image or tile metadata containing source identity, scene settings, and spatial
+        transforms.
+
+    Returns
+    -------
+    Dict[str, Any]
+        A dictionary-valued full-image metadata field, or an empty mapping.
+    """
     full_meta = meta.get("full", {})
     if isinstance(full_meta, dict):
         return full_meta
@@ -1023,6 +1625,22 @@ def validation_extract_full_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def validation_extract_tile_meta(meta: Dict[str, Any], tile_idx: int) -> Dict[str, Any]:
+    """
+    Return the selected tile metadata dictionary, or an empty mapping.
+
+    Parameters
+    ----------
+    meta : Dict[str, Any]
+        Image or tile metadata containing source identity, scene settings, and spatial
+        transforms.
+    tile_idx : int
+        Tile index within the selected sample.
+
+    Returns
+    -------
+    Dict[str, Any]
+        The selected tile metadata dictionary, or an empty mapping.
+    """
     tiles = meta.get("tiles", [])
     if isinstance(tiles, list) and tile_idx < len(tiles):
         tile_meta = tiles[tile_idx]
@@ -1032,6 +1650,20 @@ def validation_extract_tile_meta(meta: Dict[str, Any], tile_idx: int) -> Dict[st
 
 
 def validation_extract_params(meta: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Read simulation parameters from full-image or top-level metadata.
+
+    Parameters
+    ----------
+    meta : Dict[str, Any]
+        Image or tile metadata containing source identity, scene settings, and spatial
+        transforms.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Simulation parameters from full-image or top-level metadata.
+    """
     full_meta = validation_extract_full_meta(meta)
 
     params = full_meta.get("params", None)
@@ -1049,6 +1681,18 @@ def validation_extract_tile_n_cells_meta(tile_meta: Dict[str, Any]) -> float:
     """
     Return the tile-level metadata count.
 
+    Parameters
+    ----------
+    tile_meta : Dict[str, Any]
+        Metadata mapping for one image tile.
+
+    Returns
+    -------
+    float
+        The tile-level metadata count.
+
+    Notes
+    -----
     For simulated tiled data, this is usually the number of cells whose centers
     lie inside the tile, stored as tile_meta['sim_meta']['n_cells'].
     """
@@ -1075,6 +1719,19 @@ def validation_extract_tile_n_cells_meta(tile_meta: Dict[str, Any]) -> float:
 
 
 def validation_extract_tile_frac_positive(tile_meta: Dict[str, Any]) -> float:
+    """
+    Read a tile's simulated positive-cell fraction, or NaN.
+
+    Parameters
+    ----------
+    tile_meta : Dict[str, Any]
+        Metadata mapping for one image tile.
+
+    Returns
+    -------
+    float
+        A tile's simulated positive-cell fraction, or NaN.
+    """
     if not isinstance(tile_meta, dict):
         return np.nan
 
@@ -1089,6 +1746,19 @@ def validation_extract_tile_frac_positive(tile_meta: Dict[str, Any]) -> float:
 
 
 def validation_extract_tile_xy(tile_meta: Dict[str, Any]) -> Tuple[float, float]:
+    """
+    Read the two stored tile coordinates, or a pair of NaNs.
+
+    Parameters
+    ----------
+    tile_meta : Dict[str, Any]
+        Metadata mapping for one image tile.
+
+    Returns
+    -------
+    Tuple[float, float]
+        The two stored tile coordinates, or a pair of NaNs.
+    """
     if not isinstance(tile_meta, dict):
         return np.nan, np.nan
 
@@ -1104,6 +1774,19 @@ def validation_extract_tile_xy(tile_meta: Dict[str, Any]) -> Tuple[float, float]
 
 
 def validation_jsonify_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Flatten numeric simulation parameters into scalar or JSON-list columns.
+
+    Parameters
+    ----------
+    params : Dict[str, Any]
+        Simulation parameter mapping to flatten for tabular output.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Computed value of ``params_out``.
+    """
     params_out: Dict[str, Any] = {}
 
     for k, v in params.items():
@@ -1133,9 +1816,22 @@ def validation_prediction_masks_and_counts(
     """
     Return prediction mask and counts for one tile.
 
+    Parameters
+    ----------
+    out : Dict[str, Any]
+        Segmentation output containing predicted maps or instance labels.
+    tile_idx : int
+        Tile index within the selected sample.
+    segmentation_method : str
+        Segmentation-method selector used to choose the configured implementation.
+    cell_prob : numpy.ndarray
+        Predicted cell-foreground probabilities.
+    cfg : Any
+        Configuration object controlling this component.
+
     Returns
     -------
-    cell_pred_bin_for_mask_metrics : np.ndarray
+    cell_pred_bin_for_mask_metrics : numpy.ndarray
         Binary prediction used for mask IoU/Dice.
     n_components_cell_thr : int
         Connected components after thresholding the cell probability with
@@ -1143,6 +1839,13 @@ def validation_prediction_masks_and_counts(
     n_pred_instances : int
         Conventional mode: same as n_components_cell_thr.
         inst_seg mode: number of predicted instance labels.
+
+    Raises
+    ------
+    RuntimeError
+        segmentation_method='inst_seg' but segmenter output has no instance_labels.
+    ValueError
+        Unknown segmentation_method: {segmentation_method}
     """
     component_bin = (cell_prob >= cfg.cell_thr).astype(np.uint8)
     n_components_cell_thr = int(sklabel(component_bin, connectivity=1).max())
@@ -1167,12 +1870,42 @@ def validation_prediction_masks_and_counts(
 
 
 def validation_count_error_vs_meta(pred_count: int, n_cells_gt_meta_tile: float) -> float:
+    """
+    Subtract the reference metadata count from a predicted cell count.
+
+    Parameters
+    ----------
+    pred_count : int
+        Predicted number of cell instances.
+    n_cells_gt_meta_tile : float
+        Reference cell count stored for the tile, or NaN.
+
+    Returns
+    -------
+    float
+        Depending on the input and branch, returns ``float(pred_count -
+        int(n_cells_gt_meta_tile))``, ``np.nan``.
+    """
     if np.isfinite(float(n_cells_gt_meta_tile)):
         return float(pred_count - int(n_cells_gt_meta_tile))
     return np.nan
 
 
 def validation_summary_from_dataframe(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Summarize selected validation metrics with means, standard deviations, and record counts.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Dataframe containing the input observations and metadata.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``validation_version``, ``n_images``, ``n_tiles``,
+        ``means``, ``stds``.
+    """
     metric_cols = [
         c
         for c in df.columns
@@ -1224,6 +1957,39 @@ def validation_validate_tiled_h5(
     """
     Shared tile-level validation loop for saved H5 datasets.
 
+    Parameters
+    ----------
+    segmenter : SegmenterUNet
+        Callable UNet instance segmenter used to process the image.
+    cfg : Any
+        Configuration object controlling this component.
+    dataset_cls : Type[Any]
+        Dataset class instantiated for validation.
+    collate_fn : Any
+        Callable used to combine individual dataset items into a loader batch.
+    indices : Optional[Sequence[int]]
+        Optional subset of dataset record indices. Default is ``None``.
+    segmentation_method : str
+        Segmentation-method selector used to choose the configured implementation. Default
+        is ``'inst_seg'``.
+    stop : Optional[int]
+        Optional stop indicator checked between validation items. Default is ``None``.
+    progress_desc : Optional[str]
+        Text displayed beside the processing progress bar. Default is ``None``.
+
+    Returns
+    -------
+    Tuple[pandas.DataFrame, Dict[str, Any]]
+        Tuple containing ``df``, ``summary``, in that order.
+
+    Raises
+    ------
+    ValueError
+        Unknown segmentation_method: {segmentation_method} segmentation_method='inst_seg'
+        requires SegmenterUNet with compute_instances=True
+
+    Notes
+    -----
     Ground-truth policy
     -------------------
     - Stored /inst labels are the source of truth for pixel-level instance metrics.
@@ -1451,7 +2217,33 @@ def validation_make_segmenter_and_config(
     seg_method: str,
     validation_config_cls: Type[Any],
 ) -> Tuple[SegmenterUNet, Any]:
-    """Create SegmenterUNet plus a matching TrainingValidationConfig-like object."""
+    """
+    Create SegmenterUNet plus a matching TrainingValidationConfig-like object.
+
+    Parameters
+    ----------
+    h5_path : str
+        Path to the simulated-image HDF5 dataset.
+    out_csv : str
+        Optional destination path for per-record validation metrics.
+    out_summary_json : str
+        Optional destination path for validation summary statistics.
+    unet_mode : str
+        UNet model size selected by the pipeline.
+    model_dir : str
+        Directory containing model checkpoint files.
+    model_file : str
+        Model checkpoint filename.
+    seg_method : str
+        Segmentation-method selector used to choose the configured implementation.
+    validation_config_cls : Type[Any]
+        Configuration class instantiated for validation settings.
+
+    Returns
+    -------
+    Tuple[SegmenterUNet, Any]
+        Tuple containing ``segmenter``, ``cfg``, in that order.
+    """
     instance_cfg = InstanceSegmenterConfig()
 
     seg_params: Dict[str, Any] = dict(

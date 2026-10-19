@@ -5,6 +5,23 @@ from fastapi import HTTPException
 def resolve_under_base_dir(base_dir: Path, rel_or_abs: str) -> Path:
     """
     Resolve a user-provided path safely under base_dir.
+
+    Parameters
+    ----------
+    base_dir : Path
+        Directory under which the result is resolved.
+    rel_or_abs : str
+        Submitted path; absolute or parent-prefixed paths are reduced to their basename.
+
+    Returns
+    -------
+    Path
+        Computed value of ``dest``.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 400 for the corresponding request validation, job-state, or processing error.
     """
     base_dir = base_dir.resolve()
     raw = (rel_or_abs or "").replace("\\", "/").strip()

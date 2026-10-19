@@ -14,6 +14,20 @@ import cv2
 
 
 def collate_no_meta(batch):
+    """
+    Stack image, target, and instance tensors while retaining metadata as a list.
+
+    Parameters
+    ----------
+    batch : object
+        Sequence of image, target, and extras triples to combine.
+
+    Returns
+    -------
+    tuple
+        Tuple containing ``imgs``, ``tgts``, ``{'instance_labels': inst, 'meta': metas}``,
+        in that order.
+    """
     imgs, tgts, exs = zip(*batch)
     imgs = torch.stack(imgs, dim=0)   # works for [3,H,W] AND for [1,3,H,W]
     tgts = torch.stack(tgts, dim=0)
@@ -22,6 +36,25 @@ def collate_no_meta(batch):
     return imgs, tgts, {"instance_labels": inst, "meta": metas}
 
 def resize_map(x, side, mode="image"):
+    """
+    Resize an image, binary mask, or label map with mode-specific interpolation.
+
+    Parameters
+    ----------
+    x : array_like or torch.Tensor
+        Input array or tensor to convert, resize, normalize, or smooth as described above.
+    side : int
+        Target square side length in pixels.
+    mode : str
+        Interpolation and output-type selector: image, binary, or label. Default is
+        ``'image'``.
+
+    Returns
+    -------
+    object
+        Depending on the input and branch, returns ``y.astype(np.float32, copy=False)``,
+        ``y.astype(np.int32, copy=False)``.
+    """
     H, W = x.shape[:2]
     down = (side < H) or (side < W)
     if mode == "image":
@@ -41,6 +74,21 @@ def resize_map(x, side, mode="image"):
         raise ValueError(mode)
 
 def pad_to_square(arr, pad_val=0.0):
+    """
+    Center-pad the spatial dimensions and return the padding offset and square size.
+
+    Parameters
+    ----------
+    arr : numpy.ndarray
+        Image or label array with spatial dimensions first and optional trailing channels.
+    pad_val : float
+        Constant value used for spatial padding. Default is ``0.0``.
+
+    Returns
+    -------
+    tuple
+        Tuple containing ``out``, ``(top, left)``, ``S``, in that order.
+    """
     H, W = arr.shape[:2]
     S = max(H, W)
     dy = S - H
@@ -58,9 +106,49 @@ def pad_to_square(arr, pad_val=0.0):
     return out, (top, left), S
 
 def crop_rect(arr, y0, x0, h, w):
+    """
+    Slice a rectangular spatial region from a two-dimensional or channel-last array.
+
+    Parameters
+    ----------
+    arr : numpy.ndarray
+        Image or label array with spatial dimensions first and optional trailing channels.
+    y0 : int
+        Top row of the crop in pixels.
+    x0 : int
+        Left column of the crop in pixels.
+    h : int
+        Crop height in pixels.
+    w : int
+        Crop width in pixels.
+
+    Returns
+    -------
+    object
+        Computed value of ``arr[y0:y0 + h, x0:x0 + w, ...] if arr.ndim == 3 else arr[y0:y0 +
+        h, x0:x0 + w]``.
+    """
     return arr[y0:y0+h, x0:x0+w, ...] if arr.ndim == 3 else arr[y0:y0+h, x0:x0+w]
 
 def estimate_well_mask(img, blur_sigma=3.0, well_is_brighter="auto"):
+    """
+    Estimate the largest well region with smoothing, Otsu thresholding, and morphology.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input image array.
+    blur_sigma : float
+        Standard deviation of the smoothing kernel in pixels. Default is ``3.0``.
+    well_is_brighter : str
+        Whether the well is brighter than its surroundings; auto chooses from thresholded
+        regions. Default is ``'auto'``.
+
+    Returns
+    -------
+    tuple
+        The largest well region with smoothing, Otsu thresholding, and morphology.
+    """
     g = img if img.ndim == 2 else (0.2989*img[...,0] + 0.5870*img[...,1] + 0.1140*img[...,2])
     g = ndi.gaussian_filter(g.astype(np.float32), blur_sigma)
     g = exposure.rescale_intensity(g, in_range='image', out_range=(0, 1))
@@ -87,6 +175,25 @@ def estimate_well_mask(img, blur_sigma=3.0, well_is_brighter="auto"):
     return (lbl == p.label), (cy, cx), r
 
 def square_crop_from_center_radius(mask_shape, center, radius, pad=8):
+    """
+    Compute a clipped square bounding box around a center and radius.
+
+    Parameters
+    ----------
+    mask_shape : tuple of int
+        Spatial mask shape as (height, width).
+    center : tuple of float
+        Center coordinates in (row, column) order, in pixels.
+    radius : float
+        Radius of the crop, core, or center-neighborhood mask, in pixels.
+    pad : int
+        Extra padding added around the crop, in pixels. Default is ``8``.
+
+    Returns
+    -------
+    tuple
+        Tuple containing ``y0``, ``y1``, ``x0``, ``x1``, in that order.
+    """
     H, W = mask_shape
     cy, cx = center
     half = int(math.ceil(radius + pad))
@@ -111,6 +218,19 @@ def square_crop_from_center_radius(mask_shape, center, radius, pad=8):
     return y0, y1, x0, x1
 
 def compute_inner_boundary(inst_np: np.ndarray) -> np.ndarray:
+    """
+    Mark inner instance boundaries by differences with four rolled neighbors.
+
+    Parameters
+    ----------
+    inst_np : numpy.ndarray
+        Two-dimensional integer instance map with zero background.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``b.astype(np.uint8)``.
+    """
     a = inst_np
     H, W = a.shape
     up    = (a != np.roll(a, -1, axis=0))
@@ -135,6 +255,30 @@ def make_soft_boundary_from_instances(
     """
     Faster version of your current per-instance soft boundary.
 
+    Parameters
+    ----------
+    inst : numpy.ndarray
+        Integer instance-label image with background label zero.
+    ring_width : int
+        Width of the boundary ring around cell instances, in pixels. Default is ``1``.
+    soft_band : int
+        Whether to blur the boundary band into a soft target. Default is ``2``.
+    sigma : float
+        Standard deviation of the spatial Gaussian kernel, in pixels. Default is ``1.0``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``np.zeros(inst.shape,
+        dtype=np.float32)``, ``np.clip(out, 0.0, 1.0).astype(np.float32)``.
+
+    Raises
+    ------
+    ValueError
+        Expected 2D instance map, got shape {inst.shape}
+
+    Notes
+    -----
     Main speed fix:
     - Uses ndi.find_objects() to get all instance bounding boxes once.
     - Avoids np.where(inst == label_id) over the full image for every label.
@@ -204,6 +348,19 @@ def make_soft_boundary_from_instances(
 
 
 def normalize01(x: np.ndarray) -> np.ndarray:
+    """
+    Convert to float32 and divide by the maximum when it is positive.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        Input array or tensor to convert, resize, normalize, or smooth as described above.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``x.astype(np.float32, copy=False)``.
+    """
     x = np.asarray(x, dtype=np.float32)
     if x.size == 0:
         return x.astype(np.float32, copy=False)
@@ -219,11 +376,20 @@ def make_ellipse_mask(radius: int, ratio: float, angle: float):
     """
     Build a hard ellipse mask with approximately constant area.
 
+    Parameters
+    ----------
+    radius : int
+        Radius of the crop, core, or center-neighborhood mask, in pixels.
+    ratio : float
+        Axis ratio used to construct the elliptical cell core.
+    angle : float
+        Rotation angle of the ellipse, in radians.
+
     Returns
     -------
-    mask:
+    mask
         Boolean array with shape [2*r_box+1, 2*r_box+1].
-    r_box:
+    r_box
         Integer half-size of the returned mask.
     """
     radius = max(1, int(radius))
@@ -253,6 +419,27 @@ def render_mask_derived_cell(
     """
     Create a soft visible cell from the exact hard instance mask.
 
+    Parameters
+    ----------
+    core_mask : numpy.ndarray
+        Binary mask defining the cell's core geometry.
+    sigma : float
+        Standard deviation of the spatial Gaussian kernel, in pixels.
+    halo_weight : float
+        Relative intensity of the blurred halo surrounding the cell core. Default is
+        ``0.2``.
+    halo_sigma_factor : float
+        Multiplier applied to the cell sigma when rendering the halo. Default is ``2.25``.
+    min_sigma : float
+        Minimum Gaussian rendering width, in pixels. Default is ``0.1``.
+
+    Returns
+    -------
+    numpy.ndarray
+        A soft visible cell from the exact hard instance mask.
+
+    Notes
+    -----
     Fast path:
     - if halo_weight <= 0, compute only the core blur
     - if sigma is effectively zero, return the hard mask
@@ -305,6 +492,21 @@ def render_mask_derived_cell(
     return normalize01(render)
 
 def make_center_stem_from_centers(centers, shape):
+    """
+    Place unit impulses at in-bounds center coordinates.
+
+    Parameters
+    ----------
+    centers : object
+        Cell-center coordinates in row-column order.
+    shape : tuple of int
+        Output array dimensions.
+
+    Returns
+    -------
+    object
+        Computed value of ``stem``.
+    """
     H, W = shape
     stem = np.zeros((H, W), dtype=np.float32)
     for (y, x) in centers or []:
@@ -313,6 +515,21 @@ def make_center_stem_from_centers(centers, shape):
     return stem
 
 def make_center_heatmap(stem, sigma: Union[int, float] = 1.0):
+    """
+    Blur center impulses and normalize the heatmap by its maximum.
+
+    Parameters
+    ----------
+    stem : numpy.ndarray
+        Two-dimensional impulse map of reference centers.
+    sigma : Union[int, float]
+        Standard deviation of the spatial Gaussian kernel, in pixels. Default is ``1.0``.
+
+    Returns
+    -------
+    object
+        Computed value of ``heat.astype(np.float32)``.
+    """
     heat = stem.astype(np.float32)
     if sigma and sigma > 0:
         heat = ndi.gaussian_filter(heat, float(sigma))
@@ -322,6 +539,19 @@ def make_center_heatmap(stem, sigma: Union[int, float] = 1.0):
     return heat.astype(np.float32)
 
 def make_energy_from_instances(instances):
+    """
+    Compute a globally normalized foreground distance-transform target.
+
+    Parameters
+    ----------
+    instances : numpy.ndarray
+        Integer instance-label image with zero background.
+
+    Returns
+    -------
+    object
+        A globally normalized foreground distance-transform target.
+    """
     cell = (instances > 0)
     dist = ndi.distance_transform_edt(cell).astype(np.float32)
     if cell.any():
@@ -335,6 +565,25 @@ def crop_sim_meta_to_tile(meta, y0, x0, h, w):
     """
     Take simulator meta (full image) and make it consistent with a tile
     that starts at (y0, x0) and has size (h, w).
+
+    Parameters
+    ----------
+    meta : object
+        Image or tile metadata containing source identity, scene settings, and spatial
+        transforms.
+    y0 : int
+        Top row of the crop in pixels.
+    x0 : int
+        Left column of the crop in pixels.
+    h : int
+        Crop height in pixels.
+    w : int
+        Crop width in pixels.
+
+    Returns
+    -------
+    object
+        Computed value of ``new_meta``.
     """
     # shallow copy so we don't mutate caller's dict
     new_meta = dict(meta)
@@ -409,7 +658,21 @@ def crop_sim_meta_to_tile(meta, y0, x0, h, w):
     return new_meta
 
 def heal_watershed_gaps(mask: np.ndarray, radius: int = 1) -> np.ndarray:
-    """Return a healed *binary* foreground mask (no instance labels)."""
+    """
+    Return a healed *binary* foreground mask (no instance labels).
+
+    Parameters
+    ----------
+    mask : numpy.ndarray
+        Spatial mask selecting the pixels used by this operation.
+    radius : int
+        Disk radius for morphological closing and dilation, in pixels. Default is ``1``.
+
+    Returns
+    -------
+    numpy.ndarray
+        A healed *binary* foreground mask (no instance labels).
+    """
     mask_bin = (mask > 0)
 
     if radius <= 0:
@@ -428,6 +691,18 @@ def seeded_watershed_from_mask(mask_healed: np.ndarray, seeds: np.ndarray) -> np
     """
     Expand seed labels into mask_healed using distance-transform watershed.
     Keeps instances separate even if mask_healed is connected.
+
+    Parameters
+    ----------
+    mask_healed : numpy.ndarray
+        Binary foreground mask after healing gaps between fragments.
+    seeds : numpy.ndarray
+        Seed labels or positions used to initialize instance separation.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``inst``.
     """
     mask_healed = mask_healed.astype(bool)
 
@@ -453,6 +728,23 @@ def load_com_labels_csv(
     with columns:
       Folder, file_name, X, Y, mean_red, mean_green, mean_blue
 
+    Parameters
+    ----------
+    image_name : str
+        Filename or image identifier used for lookup or output naming.
+    folder : str
+        Folder path or dataset folder label associated with the image.
+    csv_path : str or os.PathLike
+        Source CSV path used in validation errors.
+
+    Returns
+    -------
+    tuple or object
+        Rows from ONE combined CSV (ROOT/results/*.csv or a merged file) with columns:
+        Folder, file_name, X, Y, mean_red, mean_green, mean_blue
+
+    Notes
+    -----
     Filters by (Folder == folder) AND (file_name == image_name).
 
     Returns:
@@ -498,6 +790,24 @@ def crop_external_meta_to_tile(meta_full: dict, y0: int, x0: int, h: int, w: int
       labels : [int]
       n_cells: int
       frac_positive: float   # mean(label==1), mapping -1→0
+
+    Parameters
+    ----------
+    meta_full : dict
+        Metadata describing the full image before crop or tile transforms.
+    y0 : int
+        Top row of the crop in pixels.
+    x0 : int
+        Left column of the crop in pixels.
+    h : int
+        Crop height in pixels.
+    w : int
+        Crop width in pixels.
+
+    Returns
+    -------
+    object
+        Computed value of ``new_meta``.
     """
     new_meta = dict(meta_full)
     centers = meta_full.get("centers", [])
@@ -546,25 +856,37 @@ def apply_overexposure_halo(
     """
     Add a local overexposure halo around bright cell signal.
 
+    Parameters
+    ----------
+    img : numpy.ndarray
+        RGB HWC float32 image in [0, 1].
+    threshold : float
+        Only signal above this threshold contributes to the halo.
+    sigma : float
+        Gaussian blur sigma for the halo spread.
+    strength : float
+        Strength of the added halo field.
+    wash_strength : float
+        Optional local contrast washout around the halo. Default is ``0.0``.
+    cell_mask : Optional[numpy.ndarray]
+        Optional binary/float cell mask [H, W]. If given, the halo is focused
+        on cell regions. Default is ``None``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``img``, ``img.astype(np.float32)``.
+
+    Raises
+    ------
+    ValueError
+        cell_mask must be 2D, got shape {mask.shape}
+
+    Notes
+    -----
     The effect is driven by bright pixels, optionally restricted by the
     simulated cell mask. Nearby halos naturally overlap because the halo
     field is built on the whole image at once.
-
-    Parameters
-    ----------
-    img:
-        RGB HWC float32 image in [0, 1].
-    threshold:
-        Only signal above this threshold contributes to the halo.
-    sigma:
-        Gaussian blur sigma for the halo spread.
-    strength:
-        Strength of the added halo field.
-    wash_strength:
-        Optional local contrast washout around the halo.
-    cell_mask:
-        Optional binary/float cell mask [H, W]. If given, the halo is focused
-        on cell regions.
     """
     if sigma <= 0.0 or strength <= 0.0:
         return img

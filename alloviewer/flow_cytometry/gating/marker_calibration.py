@@ -14,9 +14,19 @@ from ..panel import Panel
 
 @dataclass(frozen=True)
 class MarkerCalibrationResult:
-    """Marker calibration result.
+    """
+    Marker calibration result.
 
     Parameters
+    ----------
+    marker_cofactors : dict
+        Marker-specific raw-value divisors used for arcsinh transformation.
+    marker_thresholds : dict
+        Marker-specific thresholds in transformed space.
+    marker_info : dict
+        Marker-specific diagnostic information and fallback metadata.
+
+    Attributes
     ----------
     marker_cofactors : dict
         Marker-specific raw-value divisors used for arcsinh transformation.
@@ -32,7 +42,8 @@ class MarkerCalibrationResult:
 
 
 def _weighted_quantile(x: np.ndarray, w: np.ndarray, q: float) -> float:
-    """Compute a weighted quantile.
+    """
+    Compute a weighted quantile.
 
     Parameters
     ----------
@@ -78,7 +89,8 @@ def _gmm_intersection_1d(
     vars_: np.ndarray,
     weights: np.ndarray,
 ) -> float:
-    """Compute the intersection of two one-dimensional Gaussian components.
+    """
+    Compute the intersection of two one-dimensional Gaussian components.
 
     Parameters
     ----------
@@ -157,7 +169,8 @@ def _pool_marker_raw(
     file_records: List[Dict[str, Any]],
     marker_name: str,
 ) -> np.ndarray:
-    """Pool raw marker values from QC-passed events.
+    """
+    Pool raw marker values from QC-passed events.
 
     Parameters
     ----------
@@ -240,7 +253,8 @@ def _calibrate_marker(
     x_raw: np.ndarray,
     cofactor_init: float,
 ) -> Tuple[float, float, Dict[str, Any]]:
-    """Calibrate one marker cofactor and threshold.
+    """
+    Calibrate one marker cofactor and threshold.
 
     Parameters
     ----------
@@ -404,7 +418,8 @@ def calibrate_markers(
     file_records: List[Dict[str, Any]],
     marker_names: Optional[List[str]] = None,
 ) -> MarkerCalibrationResult:
-    """Calibrate marker cofactors and thresholds.
+    """
+    Calibrate marker cofactors and thresholds.
 
     Parameters
     ----------
@@ -421,7 +436,8 @@ def calibrate_markers(
     file_records : list of dict
         Per-file records containing FCS objects, events, and QC masks.
     marker_names : list of str or None, optional
-        Marker names to calibrate. If ``None``, all panel markers are used.
+        Marker names to calibrate. If ``None``, all panel markers are used. Default is
+        ``None``.
 
     Returns
     -------

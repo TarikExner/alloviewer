@@ -14,10 +14,8 @@ from alloviewer.flow_cytometry.panel import Panel
 
 
 class QCGater:
-    """Quality-control gater for FCS event data.
-
-    The QC stage applies edge-event filtering, optional singlet gating, and
-    returns the resulting QC mask.
+    """
+    Quality-control gater for FCS event data.
 
     Parameters
     ----------
@@ -32,9 +30,24 @@ class QCGater:
         Panel used for channel lookup.
     config : QCConfig
         Quality-control configuration.
+
+    Notes
+    -----
+    The QC stage applies edge-event filtering, optional singlet gating, and
+    returns the resulting QC mask.
     """
 
     def __init__(self, panel: Panel, config: QCConfig) -> None:
+        """
+        Store the panel and QC settings used for event filtering.
+
+        Parameters
+        ----------
+        panel : Panel
+            Panel definition containing scatter-channel assignments.
+        config : QCConfig
+            Flow-cytometry gating and clustering configuration.
+        """
         self.panel = panel
         self.config = config
 
@@ -42,7 +55,8 @@ class QCGater:
         self._cache: Dict[Tuple[int, Tuple], QCResult] = {}
 
     def _events(self, fcs: FCSFile) -> np.ndarray:
-        """Return events from the configured source.
+        """
+        Return events from the configured source.
 
         Parameters
         ----------
@@ -57,7 +71,8 @@ class QCGater:
         return fcs.get_events(self.config.event_source)
 
     def _idx(self, fcs: FCSFile, channel_label: str) -> int:
-        """Return the event-matrix column index for a channel.
+        """
+        Return the event-matrix column index for a channel.
 
         Parameters
         ----------
@@ -74,7 +89,8 @@ class QCGater:
         return int(fcs.get_channel_index(channel_label))
 
     def _col(self, events: np.ndarray, idx: int) -> np.ndarray:
-        """Return one event column as float32.
+        """
+        Return one event column as float32.
 
         Parameters
         ----------
@@ -92,7 +108,8 @@ class QCGater:
 
     @staticmethod
     def _mad(x: np.ndarray) -> float:
-        """Compute the median absolute deviation.
+        """
+        Compute the median absolute deviation.
 
         Parameters
         ----------
@@ -113,7 +130,8 @@ class QCGater:
         k: int,
         rng: np.random.Generator,
     ) -> np.ndarray:
-        """Return random subsample indices.
+        """
+        Return random subsample indices.
 
         Parameters
         ----------
@@ -137,7 +155,8 @@ class QCGater:
 
     @staticmethod
     def _log1p_f32(x: np.ndarray) -> np.ndarray:
-        """Apply ``log1p`` after float32 conversion.
+        """
+        Apply ``log1p`` after float32 conversion.
 
         Parameters
         ----------
@@ -157,7 +176,8 @@ class QCGater:
         events: np.ndarray,
         mask_in: Optional[np.ndarray] = None,
     ) -> np.ndarray:
-        """Remove events at scatter-channel acquisition boundaries.
+        """
+        Remove events at scatter-channel acquisition boundaries.
 
         Parameters
         ----------
@@ -166,7 +186,7 @@ class QCGater:
         events : numpy.ndarray
             Event matrix.
         mask_in : numpy.ndarray or None, optional
-            Optional input mask. If ``None``, all events are considered.
+            Optional input mask. If ``None``, all events are considered. Default is ``None``.
 
         Returns
         -------
@@ -205,7 +225,8 @@ class QCGater:
         *,
         mode: Optional[SingletMode] = None,
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
-        """Gate singlets from FSC-A and FSC-H values.
+        """
+        Gate singlets from FSC-A and FSC-H values.
 
         Parameters
         ----------
@@ -214,7 +235,7 @@ class QCGater:
         fsc_h : numpy.ndarray
             Forward-scatter height values.
         mode : SingletMode or None, optional
-            Singlet gating mode. If ``None``, the configured mode is used.
+            Singlet gating mode. If ``None``, the configured mode is used. Default is ``None``.
 
         Returns
         -------
@@ -273,7 +294,8 @@ class QCGater:
         *,
         valid: np.ndarray,
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
-        """Gate singlets using a MAD band on log-transformed FSC values.
+        """
+        Gate singlets using a MAD band on log-transformed FSC values.
 
         Parameters
         ----------
@@ -331,7 +353,8 @@ class QCGater:
         *,
         valid: np.ndarray,
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
-        """Gate singlets using a Gaussian mixture model.
+        """
+        Gate singlets using a Gaussian mixture model.
 
         Parameters
         ----------
@@ -476,7 +499,8 @@ class QCGater:
         *,
         valid: np.ndarray,
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
-        """Gate singlets with GMM followed by a tightened MAD band.
+        """
+        Gate singlets with GMM followed by a tightened MAD band.
 
         Parameters
         ----------
@@ -631,14 +655,15 @@ class QCGater:
         *,
         singlet_mode: Optional[SingletMode] = None,
     ) -> QCResult:
-        """Compute QC masks for one FCS file.
+        """
+        Compute QC masks for one FCS file.
 
         Parameters
         ----------
         fcs : FCSFile
             FCS file object.
         singlet_mode : SingletMode or None, optional
-            Optional singlet mode override.
+            Optional singlet mode override. Default is ``None``.
 
         Returns
         -------

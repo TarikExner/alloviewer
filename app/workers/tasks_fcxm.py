@@ -11,6 +11,13 @@ def run_fcxm_job_task(job_id: str) -> None:
     """
     Execute one previously prepared FCXM job.
 
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Notes
+    -----
     The request is loaded from the job directory by ``run_fcxm_job``.
     Only the job ID is passed through Celery.
     """

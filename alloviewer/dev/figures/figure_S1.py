@@ -23,6 +23,26 @@ def _grid_of_images(
     wspace: float = 0.02,
     hspace: float = 0.02,
 ) -> None:
+    """
+    Place images in a nested subplot grid without axis decorations.
+
+    Parameters
+    ----------
+    fig : Figure
+        Matplotlib figure containing the subplot grid.
+    parent_gs : SubplotSpec
+        Parent subplot specification for the nested grid.
+    imgs : Sequence[numpy.ndarray]
+        Images included in the current grid or batch.
+    nrows : int
+        Number of rows in the image or subplot grid. Default is ``2``.
+    ncols : int
+        Number of columns in the image or subplot grid. Default is ``3``.
+    wspace : float
+        Horizontal spacing between subplot columns. Default is ``0.02``.
+    hspace : float
+        Vertical spacing between subplot rows. Default is ``0.02``.
+    """
     sub_gs = GridSpecFromSubplotSpec(
         nrows=nrows,
         ncols=ncols,
@@ -45,6 +65,26 @@ def _generate_main_figure(
     b_images: Sequence[np.ndarray] = (),
     c_images: Sequence[np.ndarray] = (),
 ):
+    """
+    Assemble and save the figure showing examples from the simulated image datasets.
+
+    Parameters
+    ----------
+    figure_output_dir : str
+        Directory in which the figure files are written. Default is ``''``.
+    figure_name : str
+        Base name used for the output figure files. Default is ``''``.
+    a_images : Sequence[numpy.ndarray]
+        Images displayed in panel A. Default is ``()``.
+    b_images : Sequence[numpy.ndarray]
+        Images displayed in panel B. Default is ``()``.
+    c_images : Sequence[numpy.ndarray]
+        Images displayed in panel C. Default is ``()``.
+
+    Notes
+    -----
+    Creates Matplotlib subplots and writes the figure outputs selected in this module. Figure input data is supplied by the enclosing preparation workflow.
+    """
     a_imgs = list(a_images)
     b_imgs = list(b_images)
     c_imgs = list(c_images)
@@ -55,6 +95,24 @@ def _generate_main_figure(
     def generate_subfigure_a(
         fig: Figure, ax: Axes, gs: SubplotSpec, subfigure_label
     ) -> None:
+        """
+        Draw panel A of Figure S1 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str or None
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=-0.4)
         _grid_of_images(fig, gs, a_imgs, nrows=nrows, ncols=ncols)
@@ -62,6 +120,24 @@ def _generate_main_figure(
     def generate_subfigure_b(
         fig: Figure, ax: Axes, gs: SubplotSpec, subfigure_label
     ) -> None:
+        """
+        Draw panel B of Figure S1 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str or None
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=-0.4)
         _grid_of_images(fig, gs, b_imgs, nrows=nrows, ncols=ncols)
@@ -69,6 +145,24 @@ def _generate_main_figure(
     def generate_subfigure_c(
         fig: Figure, ax: Axes, gs: SubplotSpec, subfigure_label
     ) -> None:
+        """
+        Draw panel C of Figure S1 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str or None
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=-0.4)
         _grid_of_images(fig, gs, c_imgs, nrows=nrows, ncols=ncols)
@@ -107,6 +201,18 @@ def figure_S1_generation(
     figure_output_dir: str,
     **kwargs
 ):
+    """
+    Prepare the data and generate Figure S1 showing examples from the simulated image datasets.
+
+    Parameters
+    ----------
+    h5_path : str
+        Path to the simulated-image HDF5 dataset.
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    **kwargs : dict
+        Accepted by the interface but not read by this implementation.
+    """
     n_images = 8
     indices = list(np.arange(1, n_images+1))
 

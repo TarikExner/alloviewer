@@ -61,6 +61,19 @@ ALGO_KEY_ORDER = [
 
 
 def _select_best_settings_per_algorithm(summary_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Select each algorithm's setting with the highest mean F1 over the focus gates.
+
+    Parameters
+    ----------
+    summary_df : pandas.DataFrame
+        Summary table of validation scores and run settings.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Each algorithm's setting with the highest mean F1 over the focus gates.
+    """
     ranking_df = summary_df.loc[summary_df["gate"].isin(FOCUS_GATES)].copy()
 
     ranking_df = (
@@ -79,6 +92,24 @@ def _select_best_settings_per_algorithm(summary_df: pd.DataFrame) -> pd.DataFram
 
 
 def _prepare_figure_S11_data(summary_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Select the best settings and apply gate and algorithm display labels for Figure S9.
+
+    Parameters
+    ----------
+    summary_df : pandas.DataFrame
+        Summary table of validation scores and run settings.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The best settings and apply gate and algorithm display labels for Figure S9.
+
+    Raises
+    ------
+    ValueError
+        summary_df is missing required columns: {missing}
+    """
     required_cols = {
         "experiment",
         "algorithm",
@@ -133,6 +164,26 @@ def _generate_subfigure_a(
     subfigure_label: str,
     summary_df: pd.DataFrame,
 ) -> None:
+    """
+    Draw panel A of Figure S9 on the supplied figure and subplot grid.
+
+    Parameters
+    ----------
+    fig : Figure
+        Matplotlib figure containing the subplot grid.
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    gs : SubplotSpec
+        Subplot specification defining the area available to this panel.
+    subfigure_label : str
+        Panel label drawn next to the subplot.
+    summary_df : pandas.DataFrame
+        Summary table of validation scores and run settings.
+
+    Notes
+    -----
+    Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+    """
     ax.axis("off")
     utils.figure_label(ax, subfigure_label, x=0)
 
@@ -245,6 +296,26 @@ def _generate_subfigure_b(
     subfigure_label: str,
     plot_df: pd.DataFrame,
 ) -> None:
+    """
+    Draw panel B of Figure S9 on the supplied figure and subplot grid.
+
+    Parameters
+    ----------
+    fig : Figure
+        Matplotlib figure containing the subplot grid.
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    gs : SubplotSpec
+        Subplot specification defining the area available to this panel.
+    subfigure_label : str
+        Panel label drawn next to the subplot.
+    plot_df : pandas.DataFrame
+        Prepared DataFrame containing the values and labels used by the plot.
+
+    Notes
+    -----
+    Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+    """
     ax.axis("off")
     utils.figure_label(ax, subfigure_label, x=0)
 
@@ -305,6 +376,26 @@ def _generate_subfigure_c(
     subfigure_label: str,
     plot_df: pd.DataFrame,
 ) -> None:
+    """
+    Draw panel C of Figure S9 on the supplied figure and subplot grid.
+
+    Parameters
+    ----------
+    fig : Figure
+        Matplotlib figure containing the subplot grid.
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    gs : SubplotSpec
+        Subplot specification defining the area available to this panel.
+    subfigure_label : str
+        Panel label drawn next to the subplot.
+    plot_df : pandas.DataFrame
+        Prepared DataFrame containing the values and labels used by the plot.
+
+    Notes
+    -----
+    Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+    """
     ax.axis("off")
     utils.figure_label(ax, subfigure_label, x=0)
 
@@ -376,6 +467,24 @@ def _generate_main_figure(
     figure_output_dir: str = "",
     figure_name: str = "",
 ):
+    """
+    Assemble and save the figure showing flow-clustering scores by gate, experiment, and algorithm.
+
+    Parameters
+    ----------
+    summary_df : pandas.DataFrame
+        Summary table of validation scores and run settings.
+    plot_df : pandas.DataFrame
+        Prepared DataFrame containing the values and labels used by the plot.
+    figure_output_dir : str
+        Directory in which the figure files are written. Default is ``''``.
+    figure_name : str
+        Base name used for the output figure files. Default is ``''``.
+
+    Notes
+    -----
+    Creates Matplotlib subplots and writes the figure outputs selected in this module. Figure input data is supplied by the enclosing preparation workflow.
+    """
     fig = plt.figure(
         layout="constrained",
         figsize=(cfg.FIGURE_WIDTH_FULL, cfg.FIGURE_HEIGHT_FULL),
@@ -438,6 +547,23 @@ def figure_S9_generation(
     validation_results_dir: str,
     **kwargs,
 ):
+    """
+    Prepare the data and generate Figure S9 showing flow-clustering scores by gate, experiment, and algorithm.
+
+    Parameters
+    ----------
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    validation_results_dir : str
+        Directory containing cached validation tables and analysis results.
+    **kwargs : dict
+        Accepted by the interface but not read by this implementation.
+
+    Raises
+    ------
+    FileNotFoundError
+        Missing flow validation summary: {summary_path}
+    """
     summary_path = os.path.join(validation_results_dir, "flow_validation_summary.csv")
 
     if not os.path.isfile(summary_path):

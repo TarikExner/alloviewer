@@ -6,6 +6,14 @@ from .api.router import api_router
 from .thumbnails import router as thumbnails_router
 
 def create_app() -> FastAPI:
+    """
+    Create the FastAPI app with CORS middleware and API routers.
+
+    Returns
+    -------
+    FastAPI
+        The FastAPI app with CORS middleware and API routers.
+    """
     app = FastAPI(title="Plate Server", version="0.1.0")
 
     app.add_middleware(

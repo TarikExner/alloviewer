@@ -46,6 +46,8 @@ class BaseCellsTilesDataset(Dataset):
         - center     : [H,W] (center heatmap)
         - energy     : [H,W]
 
+    Notes
+    -----
     Subclasses must:
       - implement __len__
       - in __getitem__, build a list of tiles and call _finalize_tiles
@@ -72,6 +74,26 @@ class BaseCellsTilesDataset(Dataset):
         center_sigma: float = 1.0,
         transforms=None,
     ):
+        """
+        Store tile dimensions, target-map settings, and optional transforms.
+
+        Parameters
+        ----------
+        target : int
+            Side length of the output square image tiles, in pixels. Default is ``512``.
+        tile_overlap : int
+            Overlap between adjacent tiles, in pixels. Default is ``64``.
+        boundary_ring_width : int
+            Width of the inner boundary target ring, in pixels. Default is ``1``.
+        boundary_soft_band : int
+            Width of the softened boundary target band, in pixels. Default is ``2``.
+        boundary_sigma : float
+            Gaussian standard deviation used for boundary targets. Default is ``1.0``.
+        center_sigma : float
+            Gaussian standard deviation used for center heatmaps. Default is ``1.0``.
+        transforms : callable or None
+            Optional joint image/target transformation callable. Default is ``None``.
+        """
         super().__init__()
         self.target = int(target)
         self.tile_overlap = int(tile_overlap)
@@ -88,6 +110,19 @@ class BaseCellsTilesDataset(Dataset):
         Sliding window tiling with overlap; returns [(y0, x0), ...]
         covering the full image with tiles of size target×target.
         If the image is smaller than the target, returns a single (0,0) tile.
+
+        Parameters
+        ----------
+        H : int
+            Image height in pixels.
+        W : int
+            Image width in pixels.
+
+        Returns
+        -------
+        list
+            Depending on the input and branch, returns ``[(0, 0)]``, ``[(int(y0), int(x0)) for
+            y0 in ys for x0 in xs]``.
         """
         th = self.target
         if H <= th or W <= th:
@@ -107,6 +142,19 @@ class BaseCellsTilesDataset(Dataset):
 
     @staticmethod
     def _compute_centers_from_instances(inst: np.ndarray):
+        """
+        Compute integer row-column centroids for each present positive instance label.
+
+        Parameters
+        ----------
+        inst : numpy.ndarray
+            Integer instance-label image with background label zero.
+
+        Returns
+        -------
+        object
+            Integer row-column centroids for each present positive instance label.
+        """
         centers = []
         max_id = int(inst.max())
         for k in range(1, max_id + 1):
@@ -129,6 +177,21 @@ class BaseCellsTilesDataset(Dataset):
         inst_t : int32 [H,W]
         cell_t : optional float32 [H,W], if None → (inst_t>0)
         centers: optional list of (y,x) in tile coords, if None → from inst_t
+
+        Parameters
+        ----------
+        inst_t : numpy.ndarray
+            Integer instance-label tensor corresponding to the image tiles.
+        cell_t : numpy.ndarray | None
+            Cell-foreground target tensor corresponding to the image tiles. Default is ``None``.
+        centers : list[tuple[int, int]] | None
+            Cell-center coordinates in row-column order. Default is ``None``.
+
+        Returns
+        -------
+        tuple
+            Tuple containing ``cell_t``, ``bound_soft``, ``center_heat``, ``energy``, in that
+            order.
         """
         inst_t = inst_t.astype(np.int32)
         H, W = inst_t.shape
@@ -162,6 +225,22 @@ class BaseCellsTilesDataset(Dataset):
           tgts_t : float32 [T,4,H,W]
           extras : dict with instance labels + meta
 
+        Parameters
+        ----------
+        tiles : object
+            Image tiles and their associated targets or metadata.
+        full_meta : dict
+            Metadata for the full image before tiling or cropping.
+        sim_kwargs : dict
+            Keyword arguments passed to the image simulator.
+
+        Returns
+        -------
+        tuple
+            Tuple containing ``imgs_t``, ``tgts_t``, ``extras``, in that order.
+
+        Notes
+        -----
         Important:
           - heads are built from LOCAL relabeled instances
           - stored /inst keeps GLOBAL instance ids so tiles remain stitchable
@@ -233,6 +312,10 @@ class BaseCellsTilesDataset(Dataset):
 
 class SimCellsDataset(BaseCellsTilesDataset):
     """
+    Generate simulated cell images, camera-style effects, and aligned training targets.
+
+    Notes
+    -----
     Modes:
       - pad_resize: pad to square, then resize to target
       - crop_well_resize: square crop around well, then resize
@@ -274,6 +357,47 @@ class SimCellsDataset(BaseCellsTilesDataset):
         camera_style_cfg: Optional[CameraStyleConfig]=None,
         camera_style_registry: Optional[Dict]=None,
     ):
+        """
+        Configure the simulated dataset, random sampling, camera dimensions, and image styles.
+
+        Parameters
+        ----------
+        length : int
+            Number of items exposed by the simulated dataset. Default is ``1000``.
+        mode : str
+            Image preparation mode: pad_resize, crop_well_resize, tiles, or fullres. Default is
+            ``'pad_resize'``.
+        target : int
+            Side length of the output square image tiles, in pixels. Default is ``512``.
+        n_tiles : int
+            Number of tiles per sample; -1 requests full coverage where supported. Default is
+            ``1``.
+        tile_overlap : int
+            Overlap between adjacent tiles, in pixels. Default is ``64``.
+        boundary_ring_width : int
+            Width of the inner boundary target ring, in pixels. Default is ``1``.
+        boundary_soft_band : int
+            Width of the softened boundary target band, in pixels. Default is ``2``.
+        boundary_sigma : float
+            Gaussian standard deviation used for boundary targets. Default is ``1.0``.
+        center_sigma : float
+            Gaussian standard deviation used for center heatmaps. Default is ``1.0``.
+        rng_seed : int
+            Seed used to initialize random sampling. Default is ``123``.
+        well_is_brighter : str
+            Whether the well is brighter than its surroundings; auto chooses from thresholded
+            regions. Default is ``'auto'``.
+        transforms : callable or None
+            Optional joint image/target transformation callable. Default is ``None``.
+        scene_cfg : Optional[SimulatorConfig]
+            Configuration controlling the simulated well and cell scene. Default is ``None``.
+        camera_cfg : Optional[CameraDimension]
+            Configuration controlling simulated image dimensions. Default is ``None``.
+        camera_style_cfg : Optional[CameraStyleConfig]
+            Configuration selecting the camera-style distribution. Default is ``None``.
+        camera_style_registry : Optional[Dict]
+            Mapping of camera-style names to their rendering parameters. Default is ``None``.
+        """
         assert scene_cfg is not None, "scene_cfg (SimulatorConfig) is required"
         assert camera_cfg is not None, "camera_cfg (CameraSetup) is required"
 
@@ -315,6 +439,14 @@ class SimCellsDataset(BaseCellsTilesDataset):
 
     def __len__(self):
         # number of simulated scenes, not tiles
+        """
+        Return the configured number of simulated samples.
+
+        Returns
+        -------
+        object
+            Stored ``length`` value, returned without an additional copy.
+        """
         return self.length
 
     # ---- mode helpers that produce single tiles (img, cell, inst, mode_meta, centers) ----
@@ -323,6 +455,23 @@ class SimCellsDataset(BaseCellsTilesDataset):
         """
         Pad image/masks to square and resize to self.target.
         Centers are mapped from full-res coordinates through pad+resize.
+
+        Parameters
+        ----------
+        img : numpy.ndarray
+            Input image array.
+        cell : numpy.ndarray
+            Cell-foreground mask or probability map aligned with the other target maps.
+        inst : numpy.ndarray
+            Integer instance-label image with background label zero.
+        sim_meta : dict
+            Metadata returned by the image simulator, including scene geometry.
+
+        Returns
+        -------
+        tuple
+            Tuple containing ``img_o``, ``cell_o``, ``inst_o``, ``centers``, ``mode_meta``, in
+            that order.
         """
         img_sq, (pad_top, pad_left), S = pad_to_square(img, pad_val=0.0)
         cell_sq, _, _ = pad_to_square(cell, pad_val=0.0)
@@ -355,6 +504,23 @@ class SimCellsDataset(BaseCellsTilesDataset):
         """
         Crop a square region around the well (from sim_meta if possible),
         then resize to target. Centers are mapped through crop+resize.
+
+        Parameters
+        ----------
+        img : numpy.ndarray
+            Input image array.
+        cell : numpy.ndarray
+            Cell-foreground mask or probability map aligned with the other target maps.
+        inst : numpy.ndarray
+            Integer instance-label image with background label zero.
+        sim_meta : dict
+            Metadata returned by the image simulator, including scene geometry.
+
+        Returns
+        -------
+        tuple
+            Tuple containing ``img_o``, ``cell_o``, ``inst_o``, ``centers``, ``mode_meta``, in
+            that order.
         """
         cycx = sim_meta.get("well_center", None)
         R = sim_meta.get("radius_px", None)
@@ -401,6 +567,23 @@ class SimCellsDataset(BaseCellsTilesDataset):
         """
         Keep full resolution, no crop/resize.
         Centers are taken from sim_meta in full-res coordinates.
+
+        Parameters
+        ----------
+        img : numpy.ndarray
+            Input image array.
+        cell : numpy.ndarray
+            Cell-foreground mask or probability map aligned with the other target maps.
+        inst : numpy.ndarray
+            Integer instance-label image with background label zero.
+        sim_meta : dict
+            Metadata returned by the image simulator, including scene geometry.
+
+        Returns
+        -------
+        tuple
+            Tuple containing ``img_o``, ``cell_o``, ``inst_o``, ``centers``, ``mode_meta``, in
+            that order.
         """
         img_o = img.astype(np.float32)
         cell_o = cell.astype(np.float32)
@@ -427,6 +610,22 @@ class SimCellsDataset(BaseCellsTilesDataset):
         """
         mode == "tiles", n_tiles == -1
         Sliding tiles with overlap; centers taken from cropped sim_meta per tile.
+
+        Parameters
+        ----------
+        img : numpy.ndarray
+            Input image array.
+        cell : numpy.ndarray
+            Cell-foreground mask or probability map aligned with the other target maps.
+        inst : numpy.ndarray
+            Integer instance-label image with background label zero.
+        sim_meta : dict
+            Metadata returned by the image simulator, including scene geometry.
+
+        Returns
+        -------
+        object
+            Computed value of ``tiles``.
         """
         H, W = cell.shape
         th = self.target
@@ -482,6 +681,24 @@ class SimCellsDataset(BaseCellsTilesDataset):
         """
         mode == "tiles", n_tiles > 0
         Pick n_tiles random tiles; fallback to pad_resize if image too small.
+
+        Parameters
+        ----------
+        img : numpy.ndarray
+            Input image array.
+        cell : numpy.ndarray
+            Cell-foreground mask or probability map aligned with the other target maps.
+        inst : numpy.ndarray
+            Integer instance-label image with background label zero.
+        sim_meta : dict
+            Metadata returned by the image simulator, including scene geometry.
+        rng : numpy.random.Generator
+            NumPy random-number generator used for sampling.
+
+        Returns
+        -------
+        object
+            Computed value of ``tiles``.
         """
         H, W = cell.shape
         th = self.target
@@ -550,6 +767,22 @@ class SimCellsDataset(BaseCellsTilesDataset):
         """
         Apply overexposure halo only to simulated final-size tiles.
 
+        Parameters
+        ----------
+        tiles : List[Dict]
+            Image tiles and their associated targets or metadata.
+        rng : numpy.random.Generator
+            NumPy random-number generator used for sampling.
+        style_name : str
+            Name of the camera style to select or record.
+
+        Returns
+        -------
+        List[Dict]
+            Computed value of ``tiles``.
+
+        Notes
+        -----
         This is intentionally SimCellsDataset-only. Do not move this into
         BaseCellsTilesDataset._finalize_tiles(), because that would also affect
         external real-image datasets.
@@ -608,6 +841,25 @@ class SimCellsDataset(BaseCellsTilesDataset):
         return tiles
 
     def __getitem__(self, idx):
+        """
+        Simulate a scene, apply camera style, and produce image tiles and training targets.
+
+        Parameters
+        ----------
+        idx : int
+            Zero-based position of the dataset item to read.
+
+        Returns
+        -------
+        object
+            Computed value of ``self._finalize_tiles(tiles=tiles, full_meta=full_meta,
+            sim_kwargs=sim_kwargs_clean)``.
+
+        Raises
+        ------
+        ValueError
+            Choose n_tiles to be a positive integer or -1
+        """
         rng = np.random.default_rng(
             int(self.base_rng.integers(0, 2**31 - 1)) ^ int(idx)
         )
@@ -713,6 +965,8 @@ class ExternalCellsTilesDataset(BaseCellsTilesDataset):
     External images + 8-bit masks → same output format as
     SimCellsDataset(mode="tiles", n_tiles=-1).
 
+    Notes
+    -----
     Per-image COM+labels CSV ({image}_data.csv) is used if present and
     passed into tile meta (cropped to each tile).
     """
@@ -729,6 +983,35 @@ class ExternalCellsTilesDataset(BaseCellsTilesDataset):
         center_sigma: float = 1.0,
         transforms=None,   # optional Albumentations-style joint transform
     ):
+        """
+        Find external image-mask pairs and configure tile and target generation.
+
+        Parameters
+        ----------
+        root_dir : str
+            Root directory containing source images and matching annotations.
+        target : int
+            Side length of the output square image tiles, in pixels. Default is ``512``.
+        tile_overlap : int
+            Overlap between adjacent tiles, in pixels. Default is ``64``.
+        heal_radius : int
+            Radius used to fill narrow gaps before regrowing instance labels. Default is ``1``.
+        boundary_ring_width : int
+            Width of the inner boundary target ring, in pixels. Default is ``1``.
+        boundary_soft_band : int
+            Width of the softened boundary target band, in pixels. Default is ``2``.
+        boundary_sigma : float
+            Gaussian standard deviation used for boundary targets. Default is ``1.0``.
+        center_sigma : float
+            Gaussian standard deviation used for center heatmaps. Default is ``1.0``.
+        transforms : callable or None
+            Optional joint image/target transformation callable. Default is ``None``.
+
+        Raises
+        ------
+        RuntimeError
+            no (img, img_mask) pairs found in external folder
+        """
         assert os.path.isdir(root_dir), f"not a dir: {root_dir}"
         super().__init__(
             target=target,
@@ -748,10 +1031,31 @@ class ExternalCellsTilesDataset(BaseCellsTilesDataset):
             raise RuntimeError("no (img, img_mask) pairs found in external folder")
 
     def __len__(self):
+        """
+        Return the number of external image-mask pairs.
+
+        Returns
+        -------
+        object
+            The number of external image-mask pairs.
+        """
         return len(self.pairs)
 
     # ---- IO helpers ----
     def find_pairs_strict(self, root_dir: str) -> List[Tuple[str, str]]:
+        """
+        Find matching source images and mask files and return sorted absolute path pairs.
+
+        Parameters
+        ----------
+        root_dir : str
+            Root directory containing source images and matching annotations.
+
+        Returns
+        -------
+        List[Tuple[str, str]]
+            Matching source images and mask files and return sorted absolute path pairs.
+        """
         exts = (".tif", ".tiff")
         files = [
             p
@@ -783,6 +1087,22 @@ class ExternalCellsTilesDataset(BaseCellsTilesDataset):
 
     def _detect_bitdepth_u16(self, a: np.ndarray, p: float = 99.9):
         # a: uint16 HxW or HxWxC
+        """
+        Estimate effective uint16 bit depth, white level, and left-shifted storage.
+
+        Parameters
+        ----------
+        a : numpy.ndarray
+            Unsigned 16-bit image array whose effective bit depth is estimated.
+        p : float
+            Percentile used to estimate the effective upper intensity of a uint16 image. Default
+            is ``99.9``.
+
+        Returns
+        -------
+        tuple
+            Effective uint16 bit depth, white level, and left-shifted storage.
+        """
         vmax = int(a.max())
         if vmax == 0:
             return 16, (1 << 16) - 1, False  # bit_depth, white, shifted
@@ -810,6 +1130,28 @@ class ExternalCellsTilesDataset(BaseCellsTilesDataset):
 
     def _read_image_and_mask(self, img_path: str, mask_path: str):
         """
+        Read an image and binary mask while recording intensity-scale details.
+
+        Parameters
+        ----------
+        img_path : str
+            Source image path.
+        mask_path : str
+            Path to the label or mask image associated with a source image.
+
+        Returns
+        -------
+        tuple
+            RGB float32 image (H, W, 3) in [0, 1], uint8 binary mask (H, W), and image-scaling
+            metadata.
+
+        Raises
+        ------
+        RuntimeError
+            Failed to read image: {img_path} Failed to read mask: {mask_path}
+
+        Notes
+        -----
         Returns:
           img_rgb_f32 : float32 [H, W, 3] in [0,1]
           msk_bin     : uint8   [H, W] with {0,1}
@@ -882,6 +1224,19 @@ class ExternalCellsTilesDataset(BaseCellsTilesDataset):
 
     # ---- main __getitem__ ----
     def __getitem__(self, idx: int):
+        """
+        Load an image-mask pair, derive instances and centers, and generate aligned tiles.
+
+        Parameters
+        ----------
+        idx : int
+            Zero-based position of the dataset item to read.
+
+        Returns
+        -------
+        object
+            An image-mask pair, derive instances and centers, and generate aligned tiles.
+        """
         img_path, mask_path = self.pairs[idx]
         img, msk, read_info = self._read_image_and_mask(img_path, mask_path)
         H, W = msk.shape

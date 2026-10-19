@@ -22,27 +22,92 @@ REQUIRED_ANNOTATION_SUFFIXES = ANNOTATION_SUFFIXES[:3]
 
 @dataclass(frozen=True)
 class _ImageMapping:
+    """
+    Pair an original image path with its anonymous replacement.
+
+    Attributes
+    ----------
+    original : PurePosixPath
+        Original name or relative image path before anonymization.
+    anonymous : PurePosixPath
+        Replacement anonymous name or relative image path.
+    """
     original: PurePosixPath
     anonymous: PurePosixPath
 
     @property
     def original_folder(self) -> PurePosixPath:
+        """
+        Return the original image's parent folder.
+
+        Returns
+        -------
+        PurePosixPath
+            The original image's parent folder.
+        """
         return self.original.parent
 
     @property
     def anonymous_folder(self) -> PurePosixPath:
+        """
+        Return the anonymous image's parent folder.
+
+        Returns
+        -------
+        PurePosixPath
+            The anonymous image's parent folder.
+        """
         return self.anonymous.parent
 
     @property
     def original_stem(self) -> str:
+        """
+        Return the original filename without its suffix.
+
+        Returns
+        -------
+        str
+            The original filename without its suffix.
+        """
         return self.original.stem
 
     @property
     def anonymous_stem(self) -> str:
+        """
+        Return the anonymous filename without its suffix.
+
+        Returns
+        -------
+        str
+            The anonymous filename without its suffix.
+        """
         return self.anonymous.stem
 
 
 def _read_mapping_csv(path: Path) -> list[_ImageMapping]:
+    """
+    Read and validate unique relative image-path translations from CSV.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+
+    Returns
+    -------
+    list[_ImageMapping]
+        And validate unique relative image-path translations from CSV.
+
+    Raises
+    ------
+    FileNotFoundError
+        Mapping CSV does not exist: {path}
+    ValueError
+        {path} is missing required columns: {sorted(missing)} Unsafe mapping at line
+        {line_number} of {path} Conflicting mapping for {original.as_posix()} at line
+        {line_number} Multiple source images map to {anonymous.as_posix()} No image mappings
+        found in {path}
+    """
     if not path.is_file():
         raise FileNotFoundError(f"Mapping CSV does not exist: {path}")
 
@@ -112,6 +177,19 @@ def _read_mapping_csv(path: Path) -> list[_ImageMapping]:
 
 
 def _infer_device(path: PurePosixPath) -> str:
+    """
+    Infer the acquisition-device group from known path fragments.
+
+    Parameters
+    ----------
+    path : PurePosixPath
+        Filesystem path of the file or directory processed by this helper.
+
+    Returns
+    -------
+    str
+        The acquisition-device group from known path fragments.
+    """
     text = path.as_posix().casefold()
     if "mono_rgb" in text or "mono_real" in text:
         return "monochrome_real"
@@ -126,6 +204,21 @@ def _annotation_relative_paths(
     mapping: _ImageMapping,
     suffix: str,
 ) -> tuple[list[PurePosixPath], PurePosixPath]:
+    """
+    Build candidate original annotation paths and the anonymous target path.
+
+    Parameters
+    ----------
+    mapping : _ImageMapping
+        Translation record for one image.
+    suffix : str
+        File suffix appended to an image stem or used to select an image format.
+
+    Returns
+    -------
+    tuple[list[PurePosixPath], PurePosixPath]
+        Tuple containing ``sources``, ``target``, in that order.
+    """
     old_folder_name = mapping.original_folder.name
     new_folder_name = mapping.anonymous_folder.name
     device = _infer_device(mapping.original)
@@ -145,6 +238,19 @@ def _annotation_relative_paths(
 def _build_rewrite_tables(
     mappings: Sequence[_ImageMapping],
 ) -> tuple[list[tuple[str, str]], dict[str, str]]:
+    """
+    Build exact and longest-first substring rules for cached image references.
+
+    Parameters
+    ----------
+    mappings : Sequence[_ImageMapping]
+        Original-to-anonymous file translations used by this operation.
+
+    Returns
+    -------
+    tuple[list[tuple[str, str]], dict[str, str]]
+        Tuple containing ``ordered_substring_rules``, ``exact_rules``, in that order.
+    """
     substring_rules: dict[str, str] = {}
     exact_rules: dict[str, str] = {}
 
@@ -198,6 +304,23 @@ def _rewrite_string(
     substring_rules: Sequence[tuple[str, str]],
     exact_rules: dict[str, str],
 ) -> tuple[str, int]:
+    """
+    Rewrite one string using the image translation rules and count replacements.
+
+    Parameters
+    ----------
+    value : str
+        Input value to validate, convert, or format as specified by this helper.
+    substring_rules : Sequence[tuple[str, str]]
+        Ordered old/new text pairs for substring replacement.
+    exact_rules : dict[str, str]
+        Mapping of complete original strings to replacement strings.
+
+    Returns
+    -------
+    tuple[str, int]
+        Tuple containing ``rewritten``, ``replacements``, in that order.
+    """
     used_backslashes = "\\" in value and "/" not in value
     normalized = value.replace("\\", "/")
     rewritten = exact_rules.get(normalized, normalized)
@@ -220,6 +343,29 @@ def _rewrite_object(
     substring_rules: Sequence[tuple[str, str]],
     exact_rules: dict[str, str],
 ) -> tuple[Any, int]:
+    """
+    Recursively rewrite references in containers while rejecting mapping-key collisions.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+    substring_rules : Sequence[tuple[str, str]]
+        Ordered old/new text pairs for substring replacement.
+    exact_rules : dict[str, str]
+        Mapping of complete original strings to replacement strings.
+
+    Returns
+    -------
+    tuple
+        Rewritten value, preserving supported container types, and the number of
+        replacements made.
+
+    Raises
+    ------
+    ValueError
+        Cache-key collision after renaming: {key} -> {new_key}
+    """
     if isinstance(value, str):
         return _rewrite_string(value, substring_rules, exact_rules)
 
@@ -303,6 +449,16 @@ def _rewrite_object(
 
 
 def _atomic_write_json(path: Path, payload: Any) -> None:
+    """
+    Replace a JSON file through a temporary UTF-8 file.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+    payload : Any
+        JSON-serializable value to write atomically.
+    """
     temporary = path.with_name(f".{path.name}.tmp")
     temporary.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
@@ -312,6 +468,16 @@ def _atomic_write_json(path: Path, payload: Any) -> None:
 
 
 def _atomic_write_pickle(path: Path, payload: Any) -> None:
+    """
+    Replace a pickle through a temporary file while preserving its permission mode.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+    payload : Any
+        Python object to serialize with pickle.
+    """
     temporary = path.with_name(f".{path.name}.tmp")
     with temporary.open("wb") as handle:
         pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -325,6 +491,23 @@ def _backup_inputs(
     cache_paths: Sequence[Path],
     backup_dir: Path,
 ) -> None:
+    """
+    Copy annotations and existing cache files into a new backup directory.
+
+    Parameters
+    ----------
+    annotation_dir : Path
+        Directory containing image or cell annotation files.
+    cache_paths : Sequence[Path]
+        Paths of cached analysis files to back up or rewrite.
+    backup_dir : Path
+        New directory used to keep copies of the original inputs.
+
+    Raises
+    ------
+    FileExistsError
+        Backup directory already exists: {backup_dir}
+    """
     if backup_dir.exists():
         raise FileExistsError(
             f"Backup directory already exists: {backup_dir}"
@@ -353,6 +536,44 @@ def rename_region_annotations_and_caches(
     """
     Rename reviewed region annotations and rewrite cached path references.
 
+    Parameters
+    ----------
+    mapping_csv : str | Path
+        Path to the CSV containing original-to-anonymous name mappings. Default is
+        ``'./private_mappings/ext_images_file_mapping.csv'``.
+    annotation_dir : str | Path
+        Directory containing image or cell annotation files. Default is
+        ``'./region_annotations'``.
+    results_dir : str | Path
+        Directory containing or receiving analysis and validation results. Default is
+        ``'./results'``.
+    cache_paths : Sequence[str | Path] | None
+        Paths of cached analysis files to back up or rewrite. Default is ``None``.
+    backup : bool
+        Whether to preserve a backup before replacing a rewritten file. Default is ``True``.
+    backup_dir : str | Path
+        New directory used to keep copies of the original inputs. Default is
+        ``'./private_mappings/region_cache_rename_backup'``.
+
+    Returns
+    -------
+    dict[str, Any]
+        Result mapping with keys ``mapping_rows``, ``annotated_images``,
+        ``annotation_files_moved``, ``annotation_files_already_renamed``,
+        ``annotation_json_replacements``, ``cache_replacements``, ``backup_dir``.
+
+    Raises
+    ------
+    FileNotFoundError
+        Annotation directory does not exist: {annotation_dir} Expected exactly one source
+        annotation for {mapping.original} and suffix {suffix}; found {existing_sources}
+        Missing required annotation for {mapping.original}: {suffix}
+    FileExistsError
+        Both old and new annotation files exist for {mapping.original}:
+        {existing_sources[0]} and {target}
+
+    Notes
+    -----
     Run this from the final dataset directory. Image data and numerical cache
     arrays are not modified; only annotation filenames/directories and nested
     string or pathlib.Path references are changed.

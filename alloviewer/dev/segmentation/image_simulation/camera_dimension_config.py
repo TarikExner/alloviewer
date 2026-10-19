@@ -15,6 +15,38 @@ class CameraDimension:
     """
     Sample image dimensions by target megapixels.
 
+    Attributes
+    ----------
+    name : str
+        Name identifying the item being processed. Default is ``'Camera'``.
+    megapixels : Tuple[float, float]
+        Fixed image area or pair of sampling bounds, in millions of pixels. Default is
+        ``(2.0, 14.0)``.
+    megapixel_sampling : str
+        Distribution selector for sampling image area. Default is ``'mixed'``.
+    mixed_low : Tuple[float, float]
+        Lower-megapixel interval used by mixed area sampling. Default is ``(2.0, 6.0)``.
+    mixed_high : Tuple[float, float]
+        Higher-megapixel interval used by mixed area sampling. Default is ``(6.0, 14.0)``.
+    mixed_high_prob : float
+        Probability of choosing the higher interval in mixed area sampling. Default is
+        ``0.5``.
+    W : Optional[int]
+        Image width in pixels. Default is ``None``.
+    H : Optional[int]
+        Image height in pixels. Default is ``None``.
+    aspect_ratios : Sequence[Tuple[int, int]]
+        Candidate (width, height) aspect ratios for generated images. Default is ``((16, 9),
+        (16, 10), (3, 2), (4, 3))``.
+    portrait_prob : float
+        Probability of inverting a sampled aspect ratio. Default is ``0.5``.
+    size_multiple : int
+        Pixel multiple to which sampled dimensions are rounded. Default is ``32``.
+    min_dim : int
+        Minimum allowed height or width, in pixels. Default is ``512``.
+
+    Notes
+    -----
     Sampling modes:
       - "uniform":     uniform over megapixels
       - "log_uniform": log-uniform over megapixels
@@ -55,6 +87,26 @@ class CameraDimension:
     min_dim: int = 512
 
     def _sample_megapixels(self, rng: RNG) -> float:
+        """
+        Sample image area using the selected megapixel distribution.
+
+        Parameters
+        ----------
+        rng : RNG
+            NumPy random-number generator used for sampling.
+
+        Returns
+        -------
+        float
+            Depending on the input and branch, returns ``float(rng.uniform(float(mp_lo),
+            float(mp_hi)))``, ``float(np.exp(rng.uniform(np.log(mp_lo), np.log(mp_hi))))``.
+
+        Raises
+        ------
+        ValueError
+            Unknown megapixel_sampling={self.megapixel_sampling}. Use 'uniform', 'log_uniform',
+            or 'mixed'.
+        """
         mode = str(self.megapixel_sampling)
 
         if mode == "uniform":
@@ -81,6 +133,19 @@ class CameraDimension:
 
     def sample(self, rng: RNG) -> Dict[str, Any]:
         # Fixed dimensions override sampling
+        """
+        Sample image height and width with aspect-ratio and size constraints.
+
+        Parameters
+        ----------
+        rng : RNG
+            NumPy random-number generator used for sampling.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Computed value of ``{'H': int(H), 'W': int(W)}``.
+        """
         if self.W is not None and self.H is not None:
             H = round_to_multiple(float(self.H), self.size_multiple)
             W = round_to_multiple(float(self.W), self.size_multiple)
@@ -138,14 +203,38 @@ class CameraDimension:
 ###############
 
 def default_camera() -> CameraDimension:
+    """
+    Create the default camera-dimension configuration.
+
+    Returns
+    -------
+    CameraDimension
+        The default camera-dimension configuration.
+    """
     return CameraDimension(
         name = "default_camera"
     )
 
 def train_camera() -> CameraDimension:
+    """
+    Return the default camera-dimension configuration used for training.
+
+    Returns
+    -------
+    CameraDimension
+        The default camera-dimension configuration used for training.
+    """
     return default_camera()
 
 def test_camera() -> CameraDimension:
+    """
+    Create the fixed test camera configuration.
+
+    Returns
+    -------
+    CameraDimension
+        The fixed test camera configuration.
+    """
     return CameraDimension(
         name = "test_cam",
         W = 2160,
@@ -156,6 +245,14 @@ def test_camera() -> CameraDimension:
     )
 
 def img_export_camera() -> CameraDimension:
+    """
+    Create the fixed camera configuration used for image exports.
+
+    Returns
+    -------
+    CameraDimension
+        The fixed camera configuration used for image exports.
+    """
     return CameraDimension(
         name = "img_export_cam",
         W = 2160,

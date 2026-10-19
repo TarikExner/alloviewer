@@ -10,7 +10,8 @@ WellID = str
 
 @dataclass(frozen=True)
 class WellImage:
-    """Image and metadata for a single plate well.
+    """
+    Image and metadata for a single plate well.
 
     Parameters
     ----------
@@ -25,6 +26,21 @@ class WellImage:
         Image array for the well.
     result_ids : list of str, optional
         IDs of results linked to this image.
+
+    Attributes
+    ----------
+    well_id : str
+        Well identifier, for example ``"A1"``.
+    role : str, optional
+        Well role, such as ``"positive"``, ``"negative"``, ``"sample"``, or
+        ``"empty"``. Default is ``''``.
+    path : str, optional
+        Source image path. Default is ``''``.
+    image : numpy.ndarray, optional
+        Image array for the well. Default is ``field(default_factory=lambda:
+        np.array([]))``.
+    result_ids : list of str, optional
+        IDs of results linked to this image. Default is ``field(default_factory=list)``.
     """
 
     well_id: str
@@ -36,7 +52,8 @@ class WellImage:
 
 @dataclass
 class Plate:
-    """Collection of well images belonging to one plate.
+    """
+    Collection of well images belonging to one plate.
 
     Parameters
     ----------
@@ -44,13 +61,22 @@ class Plate:
         Plate identifier.
     wells : dict, optional
         Mapping from well ID to :class:`WellImage`.
+
+    Attributes
+    ----------
+    plate_id : str
+        Plate identifier.
+    wells : dict, optional
+        Mapping from well ID to :class:`WellImage`. Default is
+        ``field(default_factory=dict)``.
     """
 
     plate_id: str
     wells: Dict[str, WellImage] = field(default_factory=dict)
 
     def add(self, w: WellImage) -> None:
-        """Add or replace a well image.
+        """
+        Add or replace a well image.
 
         Parameters
         ----------
@@ -61,12 +87,13 @@ class Plate:
         self.wells[w.well_id] = w
 
     def get(self, role: Optional[str] = None) -> List[WellImage]:
-        """Return wells, optionally filtered by role.
+        """
+        Return wells, optionally filtered by role.
 
         Parameters
         ----------
         role : str or None, optional
-            Role to filter by. If ``None``, all wells are returned.
+            Role to filter by. If ``None``, all wells are returned. Default is ``None``.
 
         Returns
         -------
@@ -79,7 +106,8 @@ class Plate:
         return [w for w in self.wells.values() if w.role == role]
 
     def subset(self, wells: Union[str, Iterable[str]]) -> "Plate":
-        """Return a plate containing only selected wells.
+        """
+        Return a plate containing only selected wells.
 
         Parameters
         ----------
@@ -106,9 +134,15 @@ class Plate:
 
 @dataclass
 class PlateLayout:
-    """Role layout for a plate.
+    """
+    Role layout for a plate.
 
     Parameters
+    ----------
+    wells : dict
+        Mapping from well ID to well type.
+
+    Attributes
     ----------
     wells : dict
         Mapping from well ID to well type.
@@ -119,7 +153,8 @@ class PlateLayout:
 
 @dataclass
 class ROIResult:
-    """Measurement and classification result for one ROI.
+    """
+    Measurement and classification result for one ROI.
 
     Parameters
     ----------
@@ -162,6 +197,48 @@ class ROIResult:
         Name of the classification method.
     extras : dict, optional
         Extra method-specific values.
+
+    Attributes
+    ----------
+    roi_id : int
+        ROI or instance identifier.
+    mean_r : float
+        Mean red-channel intensity.
+    mean_g : float
+        Mean green-channel intensity.
+    mean_b : float
+        Mean blue-channel intensity.
+    area : int
+        ROI area in pixels.
+    label : str or None, optional
+        Classification label, commonly ``"pos"``, ``"neg"``, or
+        ``"uncertain"``. Default is ``None``.
+    score : float or None, optional
+        Main classifier score. Default is ``None``.
+    score_rg : float or None, optional
+        Red/green ratio score. Default is ``None``.
+    z_nc : float or None, optional
+        Z-score relative to the negative control distribution. Default is ``None``.
+    z_pc : float or None, optional
+        Z-score relative to the positive control distribution. Default is ``None``.
+    p_nc_upper : float or None, optional
+        Upper-tail probability under the negative control model. Default is ``None``.
+    p_pc_lower : float or None, optional
+        Lower-tail probability under the positive control model. Default is ``None``.
+    logp_pc : float or None, optional
+        Log probability under the positive control model. Default is ``None``.
+    logp_nc : float or None, optional
+        Log probability under the negative control model. Default is ``None``.
+    mahal_pc : float or None, optional
+        Mahalanobis distance to the positive control model. Default is ``None``.
+    mahal_nc : float or None, optional
+        Mahalanobis distance to the negative control model. Default is ``None``.
+    delta_logp : float or None, optional
+        Difference ``logp_pc - logp_nc``. Default is ``None``.
+    method : str or None, optional
+        Name of the classification method. Default is ``None``.
+    extras : dict, optional
+        Extra method-specific values. Default is ``field(default_factory=dict)``.
     """
 
     roi_id: int
@@ -192,7 +269,8 @@ class ROIResult:
 
 @dataclass
 class WellResult:
-    """Analysis result for a single well.
+    """
+    Analysis result for a single well.
 
     Parameters
     ----------
@@ -208,6 +286,22 @@ class WellResult:
         Path to a preview image.
     corrected_frac_pos : float or None, optional
         Control-corrected positive ROI fraction.
+
+    Attributes
+    ----------
+    well_id : str
+        Well identifier.
+    rois : list of ROIResult, optional
+        ROI-level results for the well. Default is ``field(default_factory=list)``.
+    qc : dict, optional
+        Quality-control values. Default is ``field(default_factory=dict)``.
+    store_paths : dict, optional
+        Paths to stored intermediate or output files. Default is
+        ``field(default_factory=dict)``.
+    preview_path : str or None, optional
+        Path to a preview image. Default is ``None``.
+    corrected_frac_pos : float or None, optional
+        Control-corrected positive ROI fraction. Default is ``None``.
     """
 
     well_id: str
@@ -219,7 +313,8 @@ class WellResult:
     corrected_frac_pos: Optional[float] = None
 
     def summary(self) -> Dict[str, Any]:
-        """Return a compact well-level summary.
+        """
+        Return a compact well-level summary.
 
         Returns
         -------
@@ -250,12 +345,19 @@ class WellResult:
 
 @dataclass
 class LociMap:
-    """Mapping from locus names to alleles or markers.
+    """
+    Mapping from locus names to alleles or markers.
 
     Parameters
     ----------
     data : dict, optional
         Mapping from locus name to a list of allele or marker strings.
+
+    Attributes
+    ----------
+    data : dict, optional
+        Mapping from locus name to a list of allele or marker strings. Default is
+        ``field(default_factory=dict)``.
     """
 
     data: Dict[str, List[str]] = field(default_factory=dict)
@@ -263,7 +365,8 @@ class LociMap:
 
 @dataclass
 class WellLayout:
-    """Parsed layout information for one well.
+    """
+    Parsed layout information for one well.
 
     Parameters
     ----------
@@ -275,6 +378,17 @@ class WellLayout:
         Race or source group value from the layout file.
     loci : LociMap, optional
         Locus-to-marker mapping for the well.
+
+    Attributes
+    ----------
+    well_id : str
+        Well identifier.
+    combo_id : str or None, optional
+        Combination ID assigned to the well. Default is ``None``.
+    race : str or None, optional
+        Race or source group value from the layout file. Default is ``None``.
+    loci : LociMap, optional
+        Locus-to-marker mapping for the well. Default is ``field(default_factory=LociMap)``.
     """
 
     well_id: WellID
@@ -285,7 +399,8 @@ class WellLayout:
 
 @dataclass
 class ParsedPlateLayout:
-    """Parsed plate layout metadata and well definitions.
+    """
+    Parsed plate layout metadata and well definitions.
 
     Parameters
     ----------
@@ -309,6 +424,29 @@ class ParsedPlateLayout:
         Non-fatal parsing warnings.
     valid : bool, optional
         Whether the parsed layout is valid.
+
+    Attributes
+    ----------
+    upload_id : str
+        Upload identifier.
+    schema_version : str
+        Layout schema version.
+    sha256 : str
+        SHA-256 checksum of the uploaded layout source.
+    lot_no : str or None
+        Lot number.
+    compl_no : str or None
+        Complement number.
+    plate_format : str or None
+        Plate format descriptor.
+    wells : dict
+        Mapping from well ID to :class:`WellLayout`.
+    custom_loci : list of str, optional
+        Custom locus names found in the layout. Default is ``field(default_factory=list)``.
+    warnings : list of str, optional
+        Non-fatal parsing warnings. Default is ``field(default_factory=list)``.
+    valid : bool, optional
+        Whether the parsed layout is valid. Default is ``True``.
     """
 
     upload_id: str
@@ -325,9 +463,17 @@ class ParsedPlateLayout:
 
 @dataclass
 class PositivityEntry:
-    """Positive fraction assigned to one well.
+    """
+    Positive fraction assigned to one well.
 
     Parameters
+    ----------
+    well_id : str
+        Well identifier.
+    positive_fraction : float
+        Positive fraction in the range ``0..1``.
+
+    Attributes
     ----------
     well_id : str
         Well identifier.
@@ -341,7 +487,8 @@ class PositivityEntry:
 
 @dataclass
 class Stringency:
-    """Thresholds and penalties for allele inference.
+    """
+    Thresholds and penalties for allele inference.
 
     Parameters
     ----------
@@ -355,6 +502,20 @@ class Stringency:
         Penalty applied for negative wells carrying an allele.
     allow_relaxed : bool, optional
         Whether relaxed fallback rules may be used.
+
+    Attributes
+    ----------
+    min_positive_fraction : float, optional
+        Minimum fraction of wells with an allele that must be positive. Default is ``2 /
+        3``.
+    min_alt_threshold : float or None, optional
+        Optional alternative positive-fraction threshold. Default is ``None``.
+    min_positive_support : int, optional
+        Minimum number of positive wells supporting an allele. Default is ``2``.
+    negative_penalty : float, optional
+        Penalty applied for negative wells carrying an allele. Default is ``0.5``.
+    allow_relaxed : bool, optional
+        Whether relaxed fallback rules may be used. Default is ``True``.
     """
 
     min_positive_fraction: float = 2 / 3
@@ -366,7 +527,8 @@ class Stringency:
 
 @dataclass
 class AnalysisRequest:
-    """Input request for allele-level analysis.
+    """
+    Input request for allele-level analysis.
 
     Parameters
     ----------
@@ -378,6 +540,17 @@ class AnalysisRequest:
         Threshold used to call a well positive.
     stringency : Stringency, optional
         Allele inference thresholds.
+
+    Attributes
+    ----------
+    upload_id : str
+        Upload identifier of the parsed plate layout.
+    image_batch_id : str or None, optional
+        Optional image batch identifier. Default is ``None``.
+    positivity_threshold : float, optional
+        Threshold used to call a well positive. Default is ``0.2``.
+    stringency : Stringency, optional
+        Allele inference thresholds. Default is ``field(default_factory=Stringency)``.
     """
 
     upload_id: str
@@ -388,9 +561,29 @@ class AnalysisRequest:
 
 @dataclass
 class AlleleEvidence:
-    """Evidence summary for one inferred positive allele.
+    """
+    Evidence summary for one inferred positive allele.
 
     Parameters
+    ----------
+    allele_key : str
+        Allele identifier.
+    supports : int
+        Number of positive supporting wells.
+    supports_weighted : float
+        Weighted support score.
+    total_with_allele : int
+        Number of wells containing the allele.
+    positive_with_allele : int
+        Number of allele-containing wells called positive.
+    negative_with_allele : int
+        Number of allele-containing wells called negative.
+    positive_fraction : float
+        Fraction of allele-containing wells called positive.
+    score : float
+        Final evidence score.
+
+    Attributes
     ----------
     allele_key : str
         Allele identifier.
@@ -422,7 +615,8 @@ class AlleleEvidence:
 
 @dataclass
 class AnalysisResult:
-    """Result of allele-level analysis.
+    """
+    Result of allele-level analysis.
 
     Parameters
     ----------
@@ -436,6 +630,19 @@ class AnalysisResult:
         Per-well analysis data.
     notes : list of str, optional
         Analysis notes or warnings.
+
+    Attributes
+    ----------
+    upload_id : str
+        Upload identifier of the parsed plate layout.
+    positivity_threshold : float
+        Threshold used to call wells positive.
+    inferred_positive_alleles : list of AlleleEvidence
+        Inferred positive alleles with evidence fields.
+    per_well : dict
+        Per-well analysis data.
+    notes : list of str, optional
+        Analysis notes or warnings. Default is ``field(default_factory=list)``.
     """
 
     upload_id: str
@@ -446,7 +653,8 @@ class AnalysisResult:
 
 
 def dc_to_dict(obj: Any) -> Any:
-    """Convert nested dataclass objects to plain Python containers.
+    """
+    Convert nested dataclass objects to plain Python containers.
 
     Parameters
     ----------
@@ -473,7 +681,8 @@ def dc_to_dict(obj: Any) -> Any:
 
 
 def parsed_plate_from_dict(d: Dict[str, Any]) -> ParsedPlateLayout:
-    """Create a parsed plate layout from a dictionary.
+    """
+    Create a parsed plate layout from a dictionary.
 
     Parameters
     ----------

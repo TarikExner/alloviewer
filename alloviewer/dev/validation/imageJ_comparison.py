@@ -36,6 +36,29 @@ VALIDATION_VERSION = "imagewide_imagej_stored_gt_v2"
 
 
 def _tile_signature(meta: Dict[str, Any]) -> List[Tuple[Tuple[int, int], Tuple[int, int]]]:
+    """
+    Extract tile coordinates and dimensions for grid comparison.
+
+    Parameters
+    ----------
+    meta : Dict[str, Any]
+        Image or tile metadata containing source identity, scene settings, and spatial
+        transforms.
+
+    Returns
+    -------
+    List[Tuple[Tuple[int, int], Tuple[int, int]]]
+        Tile coordinates and dimensions for grid comparison.
+
+    Raises
+    ------
+    ValueError
+        meta['tiles'] missing or empty
+    TypeError
+        Tile metadata must be dict, got {type(tm)}
+    KeyError
+        Tile metadata missing tile_xy/tile_hw. Keys: {list(tm.keys())}
+    """
     tiles = meta.get("tiles", None)
     if not isinstance(tiles, list) or len(tiles) == 0:
         raise ValueError("meta['tiles'] missing or empty")
@@ -61,6 +84,25 @@ def _assert_same_tile_grid(
     meta_ij: Dict[str, Any],
     sample_idx: int,
 ) -> None:
+    """
+    Require matching reference and ImageJ tile signatures for a sample.
+
+    Parameters
+    ----------
+    meta_gt : Dict[str, Any]
+        Reference tile metadata.
+    meta_ij : Dict[str, Any]
+        ImageJ tile metadata.
+    sample_idx : int
+        Original sample index in the validation dataset.
+
+    Raises
+    ------
+    RuntimeError
+        Tile grid mismatch at sample_idx={sample_idx}: GT has {len(sig_gt)} tiles, ImageJ has {len(sig_ij)} tiles.
+        GT first/last: {sig_gt[:3]} ... {sig_gt[-3:]}
+        IJ first/last: {sig_ij[:3]} ... {sig_ij[-3:]}
+    """
     sig_gt = _tile_signature(meta_gt)
     sig_ij = _tile_signature(meta_ij)
 
@@ -74,6 +116,20 @@ def _assert_same_tile_grid(
 
 
 def _basename_from_meta(meta: Dict[str, Any]) -> str:
+    """
+    Extract the original image basename from full-image or tile metadata.
+
+    Parameters
+    ----------
+    meta : Dict[str, Any]
+        Image or tile metadata containing source identity, scene settings, and spatial
+        transforms.
+
+    Returns
+    -------
+    str
+        The original image basename from full-image or tile metadata.
+    """
     full = meta.get("full", {})
     src_path = ""
 
@@ -98,6 +154,22 @@ def _assert_same_sample_identity(
     """
     Best-effort check.
 
+    Parameters
+    ----------
+    meta_gt : Dict[str, Any]
+        Reference tile metadata.
+    meta_ij : Dict[str, Any]
+        ImageJ tile metadata.
+    sample_idx : int
+        Original sample index in the validation dataset.
+
+    Raises
+    ------
+    RuntimeError
+        Sample identity mismatch at sample_idx={sample_idx}: GT={name_gt}, ImageJ={name_ij}
+
+    Notes
+    -----
     If both names are present, compare stems. This catches most order bugs.
     If names are missing, do not fail, because simulated GT metadata may not
     always contain src_path.
@@ -129,6 +201,26 @@ def _extract_full_hw(
     """
     Return full image size as (H, W).
 
+    Parameters
+    ----------
+    meta : Dict[str, Any]
+        Image or tile metadata containing source identity, scene settings, and spatial
+        transforms.
+    tile_metas : List[Dict[str, Any]]
+        Metadata for each tile, including its position in the full image.
+
+    Returns
+    -------
+    Tuple[int, int]
+        Full image size as (H, W).
+
+    Raises
+    ------
+    ValueError
+        Could not infer full image size.
+
+    Notes
+    -----
     Priority:
       1. meta['full']['H_in'], meta['full']['W_in']
       2. meta['full']['H'], meta['full']['W']
@@ -161,6 +253,19 @@ def _extract_full_hw(
 
 
 def _int_or_nan(x: Any) -> Any:
+    """
+    Convert a nonmissing value to int, returning NaN on failure.
+
+    Parameters
+    ----------
+    x : Any
+        Scalar value to format or convert using the helper's stated rules.
+
+    Returns
+    -------
+    Any
+        Depending on the input and branch, returns ``np.nan``, ``int(x)``.
+    """
     try:
         if x is None or pd.isna(x):
             return np.nan
@@ -170,6 +275,19 @@ def _int_or_nan(x: Any) -> Any:
 
 
 def _float_or_nan(x: Any) -> float:
+    """
+    Convert a nonmissing value to float, returning NaN on failure.
+
+    Parameters
+    ----------
+    x : Any
+        Scalar value to format or convert using the helper's stated rules.
+
+    Returns
+    -------
+    float
+        Depending on the input and branch, returns ``float('nan')``, ``float(x)``.
+    """
     try:
         if x is None or pd.isna(x):
             return float("nan")
@@ -179,6 +297,19 @@ def _float_or_nan(x: Any) -> float:
 
 
 def _jsonify_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Flatten numeric simulation parameters into CSV-compatible columns.
+
+    Parameters
+    ----------
+    params : Dict[str, Any]
+        Simulation parameter mapping to flatten for tabular output.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Computed value of ``params_out``.
+    """
     params_out: Dict[str, Any] = {}
 
     for k, v in params.items():
@@ -205,17 +336,23 @@ def stitch_float_tiles_mean(
 
     Parameters
     ----------
-    tiles:
+    tiles : numpy.ndarray
         [T, C, S, S]
-    tile_metas:
+    tile_metas : List[Dict[str, Any]]
         Metadata with tile_xy=(y0,x0), tile_hw=(h,w).
-    full_hw:
+    full_hw : Tuple[int, int]
         (H_full, W_full)
 
     Returns
     -------
-    out:
+    out
         [C, H_full, W_full]
+
+    Raises
+    ------
+    ValueError
+        Expected tiles [T,C,H,W], got {tiles.shape} Tile count mismatch: tiles={T},
+        metadata={len(tile_metas)}
     """
     if tiles.ndim != 4:
         raise ValueError(f"Expected tiles [T,C,H,W], got {tiles.shape}")
@@ -265,6 +402,28 @@ def stitch_instance_tiles(
     """
     Stitch global-ID instance tiles.
 
+    Parameters
+    ----------
+    inst_tiles : numpy.ndarray
+        Integer instance-label tiles to combine into a full-image label map.
+    tile_metas : List[Dict[str, Any]]
+        Metadata for each tile, including its position in the full image.
+    full_hw : Tuple[int, int]
+        Full-image height and width in pixels.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``out``.
+
+    Raises
+    ------
+    ValueError
+        Expected inst_tiles [T,H,W], got {inst_tiles.shape} Tile count mismatch:
+        inst_tiles={T}, metadata={len(tile_metas)}
+
+    Notes
+    -----
     This assumes instance labels are global across tiles. The dataset writer
     keeps global IDs in /inst, so this is valid for the simulated GT dataset.
     """
@@ -310,6 +469,19 @@ def stitch_instance_tiles(
 
 
 def _count_positive_labels(inst: np.ndarray) -> int:
+    """
+    Count distinct non-background instance labels.
+
+    Parameters
+    ----------
+    inst : numpy.ndarray
+        Integer instance-label image with background label zero.
+
+    Returns
+    -------
+    int
+        Distinct non-background instance labels.
+    """
     vals = np.unique(inst)
     vals = vals[vals > 0]
     return int(vals.size)
@@ -321,6 +493,25 @@ def _make_seg_out(
     center: np.ndarray,
     energy: np.ndarray,
 ) -> Dict[str, Any]:
+    """
+    Wrap cell, boundary, center, and energy arrays as float32 probability heads.
+
+    Parameters
+    ----------
+    cell : numpy.ndarray
+        Cell-foreground mask or probability map aligned with the other target maps.
+    bound : numpy.ndarray
+        Boundary probability or target map aligned with the cell map.
+    center : numpy.ndarray
+        Cell-center probability map aligned with the other prediction heads.
+    energy : numpy.ndarray
+        Energy or distance-transform map aligned with the cell map.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``probs``, ``instance_labels``, ``meta``.
+    """
     return {
         "probs": {
             "cell": cell.astype(np.float32),
@@ -346,6 +537,33 @@ def _segment_full_probs(
     """
     Convert full-image probability maps into an instance map.
 
+    Parameters
+    ----------
+    inst_segmenter : Any
+        Instance segmenter applied to the full-image prediction maps.
+    cell : numpy.ndarray
+        Cell-foreground mask or probability map aligned with the other target maps.
+    bound : numpy.ndarray
+        Boundary probability or target map aligned with the cell map.
+    center : numpy.ndarray
+        Cell-center probability map aligned with the other prediction heads.
+    energy : numpy.ndarray
+        Energy or distance-transform map aligned with the cell map.
+    cell_thr : float
+        Threshold used to binarize cell probabilities.
+    update_cell_mask : bool
+        Whether instance segmentation replaces the cell-foreground probability mask with the
+        final instance foreground. Default is ``True``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``sklabel((cell >=
+        float(cell_thr)).astype(np.uint8), connectivity=1).astype(np.int32)``,
+        ``np.asarray(seg_out['instance_labels'], dtype=np.int32)``.
+
+    Notes
+    -----
     If inst_segmenter is None, this is the conventional baseline and uses
     cfg.cell_thr via the required cell_thr argument. Do not hard-code 0.5 here.
     """
@@ -379,6 +597,49 @@ def _row_metrics_for_prediction(
     frac_positive: Optional[float],
     params_out: Dict[str, Any],
 ) -> Dict[str, Any]:
+    """
+    Compute image-level cell counts and mask, boundary, center, and energy metrics.
+
+    Parameters
+    ----------
+    sample_idx : int
+        Original sample index in the validation dataset.
+    dataset_mode : str
+        Dataset sampling mode used to select the corresponding training or validation data.
+    segmentation_method : str
+        Segmentation-method selector used to choose the configured implementation.
+    cell_pred : numpy.ndarray
+        Predicted cell-foreground probability map.
+    bound_pred : numpy.ndarray
+        Predicted boundary-probability map.
+    center_pred : numpy.ndarray
+        Predicted center-probability image.
+    energy_pred : numpy.ndarray
+        Predicted normalized energy map.
+    inst_pred : numpy.ndarray
+        Predicted integer instance labels with zero background.
+    cell_gt : numpy.ndarray
+        Reference cell-foreground mask.
+    energy_gt : numpy.ndarray
+        Reference normalized energy map.
+    inst_gt : numpy.ndarray
+        Reference integer instance labels with zero background.
+    cfg : TrainingValidationConfig
+        Configuration object controlling this component.
+    src_path : str
+        Original image path retained in validation metadata.
+    n_cells_full_meta : Optional[int]
+        Reference full-image cell count from metadata, if available.
+    frac_positive : Optional[float]
+        Simulated fraction of positive cells, on a 0-1 scale.
+    params_out : Dict[str, Any]
+        Flattened simulation-parameter columns added to the metric row.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Image-level cell counts and mask, boundary, center, and energy metrics.
+    """
     n_gt = _count_positive_labels(inst_gt)
     n_pred_instances = _count_positive_labels(inst_pred)
 
@@ -461,6 +722,28 @@ def _make_segmenter_and_validation_config(
     """
     Build the UNet segmenter, the ImageJ instance segmenter holder, and a
     validation config aligned with the segmentation defaults.
+
+    Parameters
+    ----------
+    gt_h5_path : str
+        Path to the HDF5 file containing ground-truth images and targets.
+    out_csv : str
+        Optional destination path for per-record validation metrics.
+    out_summary_json : str
+        Optional destination path for validation summary statistics.
+    unet_mode : str
+        UNet model size selected by the pipeline.
+    model_dir : str
+        Directory containing model checkpoint files.
+    model_file : str
+        Model checkpoint filename.
+    seg_method : str
+        Segmentation-method selector used to choose the configured implementation.
+
+    Returns
+    -------
+    Tuple[SegmenterUNet, SegmenterUNet, TrainingValidationConfig]
+        Tuple containing ``segmenter``, ``imagej_segmenter``, ``cfg``, in that order.
     """
     instance_cfg = InstanceSegmenterConfig()
 
@@ -516,6 +799,40 @@ def validate_unet_vs_imagej_on_fullres_h5(
     """
     Image-wide validation on simulated full-resolution images.
 
+    Parameters
+    ----------
+    segmenter : SegmenterUNet
+        Callable UNet instance segmenter used to process the image.
+    imagej_segmenter : SegmenterUNet
+        ImageJ-compatible segmenter used for the method comparison.
+    cfg : TrainingValidationConfig
+        Configuration object controlling this component.
+    imagej_h5_path : str
+        Path to the HDF5 file containing ImageJ-derived labels.
+    indices : Optional[Sequence[int]]
+        Optional subset of dataset record indices. Default is ``None``.
+    segmentation_method : str
+        Segmentation-method selector used to choose the configured implementation. Default
+        is ``'conventional'``.
+    stop : Optional[int]
+        Optional stop indicator checked between validation items. Default is ``None``.
+
+    Returns
+    -------
+    Tuple[pandas.DataFrame, Dict[str, Any]]
+        Tuple containing ``df``, ``summary``, in that order.
+
+    Raises
+    ------
+    ValueError
+        Unknown segmentation_method: {segmentation_method} imagej_segmenter must have
+        compute_instances=True
+    RuntimeError
+        Ground-truth and ImageJ datasets have different lengths: {len(ds_gt)} vs
+        {len(ds_ij)}
+
+    Notes
+    -----
     The H5 files are tile-based, but metrics are computed after stitching all
     tiles back to full-image maps.
 
@@ -772,6 +1089,41 @@ def run_fullres_unet_vs_imagej_validation(
     """
     Run image-wide validation on simulated images.
 
+    Parameters
+    ----------
+    out_dir : str
+        Directory in which generated outputs are stored.
+    model_dir : str
+        Directory containing model checkpoint files.
+    h5_dir : str
+        Directory containing the input HDF5 datasets.
+    unet_mode : str
+        UNet model size selected by the pipeline.
+    seg_method : str
+        Segmentation-method selector used to choose the configured implementation.
+    gt_h5_name : str
+        Filename of the ground-truth HDF5 file within h5_dir. Default is
+        ``'fullres_ground_truth.h5'``.
+    imagej_h5_name : str
+        Filename of the ImageJ-label HDF5 file within h5_dir. Default is
+        ``'fullres_imageJ.h5'``.
+    force : bool
+        Whether to recompute results even when the expected output already exists. Default
+        is ``False``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Depending on the input and branch, returns ``pd.read_csv(out_csv, index_col=None)``,
+        ``df``.
+
+    Raises
+    ------
+    ValueError
+        Unknown seg_method: {seg_method}
+
+    Notes
+    -----
     Compares:
       - UNet vs simulated ground truth
       - ImageJ/NCISP vs simulated ground truth

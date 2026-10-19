@@ -24,6 +24,9 @@ from reportlab.platypus import (
 PAGE_SIZE_MODE_DEFAULT = "SAFE"
 
 class EditableTextBox(Flowable):
+    """
+    Render a labeled editable multiline field as a ReportLab flowable.
+    """
     def __init__(
         self,
         *,
@@ -36,6 +39,29 @@ class EditableTextBox(Flowable):
         tooltip: str | None = None,
         font_size: int = 8,
     ):
+        """
+        Store the field name, label, size, and initial value.
+
+        Parameters
+        ----------
+        name : str
+            Name identifying the item being processed.
+        label : str
+            Display label or identifier for the corresponding item.
+        width : float
+            Width of the PDF element in points.
+        height : float
+            Height of the PDF element in points.
+        label_width : float
+            Width of the label area in PDF points. Default is ``38 * mm``.
+        value : str
+            Input value to validate, convert, or format as specified by this helper. Default is
+            ``''``.
+        tooltip : str | None
+            PDF form-field tooltip; None uses the field label. Default is ``None``.
+        font_size : int
+            Text size in points. Default is ``8``.
+        """
         super().__init__()
         self.name = name
         self.label = label
@@ -47,9 +73,27 @@ class EditableTextBox(Flowable):
         self.font_size = font_size
 
     def wrap(self, availWidth, availHeight):
+        """
+        Return the fixed flowable width and height.
+
+        Parameters
+        ----------
+        availWidth : object
+            Available width in points; the fixed field width is returned regardless.
+        availHeight : object
+            Available height in points; the fixed field height is returned regardless.
+
+        Returns
+        -------
+        tuple of float
+            Fixed width and height in PDF points.
+        """
         return self.width, self.height
 
     def draw(self):
+        """
+        Draw the label and editable PDF form field on the current canvas.
+        """
         canvas = self.canv
         field_x = self.label_width
         field_w = self.width - self.label_width
@@ -85,6 +129,14 @@ class EditableTextBox(Flowable):
         canvas.restoreState()
 
 def _safe_pagesizes() -> tuple[tuple[float, float], tuple[float, float]]:
+    """
+    Choose portrait and landscape page sizes that fit both A4 and Letter.
+
+    Returns
+    -------
+    tuple[tuple[float, float], tuple[float, float]]
+        Tuple containing ``portrait``, ``landscape``, in that order.
+    """
     a4w, a4h = A4
     lw, lh = LETTER
     portrait = (min(a4w, lw), min(a4h, lh))
@@ -93,6 +145,21 @@ def _safe_pagesizes() -> tuple[tuple[float, float], tuple[float, float]]:
 
 
 def _fmt(value: Any, digits: int = 1) -> str:
+    """
+    Format a number with fixed decimal places, using a dash for None or NaN.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+    digits : int
+        Number of decimal places to display. Default is ``1``.
+
+    Returns
+    -------
+    str
+        A number with fixed decimal places, using a dash for None or NaN.
+    """
     if value is None:
         return "-"
 
@@ -108,6 +175,21 @@ def _fmt(value: Any, digits: int = 1) -> str:
 
 
 def _pct(value: Any, digits: int = 1) -> str:
+    """
+    Format a percentage with fixed decimal places, using a dash for None or NaN.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+    digits : int
+        Number of decimal places to display. Default is ``1``.
+
+    Returns
+    -------
+    str
+        A percentage with fixed decimal places, using a dash for None or NaN.
+    """
     if value is None:
         return "-"
 
@@ -124,6 +206,23 @@ def _pct(value: Any, digits: int = 1) -> str:
 
 
 def _finite_float(value: Any) -> float | None:
+    """
+    Convert a value to float, returning None for invalid values or NaN.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    float | None
+        Depending on the input and branch, returns ``None``, ``number``.
+
+    Notes
+    -----
+    Despite the helper name, infinities are not rejected by this implementation.
+    """
     try:
         number = float(value)
     except (TypeError, ValueError):
@@ -143,6 +242,27 @@ def _control_percent_with_range(
     range_value: Any = None,
     digits: int = 1,
 ) -> str:
+    """
+    Format a control percentage with a min-max range or range width when present.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+    min_value : Any
+        Optional minimum control percentage. Default is ``None``.
+    max_value : Any
+        Optional maximum control percentage. Default is ``None``.
+    range_value : Any
+        Optional control range width in percentage points. Default is ``None``.
+    digits : int
+        Number of decimal places to display. Default is ``1``.
+
+    Returns
+    -------
+    str
+        A control percentage with a min-max range or range width when present.
+    """
     main = _pct(value, digits)
     minimum = _finite_float(min_value)
     maximum = _finite_float(max_value)
@@ -159,6 +279,20 @@ def _control_percent_with_range(
 
 
 def _crossmatch_call_label(value: Any) -> str:
+    """
+    Convert a stored crossmatch call to its report label.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    str
+        Report label for a known call, or the normalized input key when the call is
+        unrecognized.
+    """
     key = str(value or "not_available")
 
     return {
@@ -171,6 +305,19 @@ def _crossmatch_call_label(value: Any) -> str:
 
 
 def _normalized_column_modes(value: Any) -> dict[int, str]:
+    """
+    Retain valid crossmatch cell labels for columns 1 through 10.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    dict[int, str]
+        Valid crossmatch cell labels for columns 1 through 10.
+    """
     if not isinstance(value, dict):
         return {}
 
@@ -191,6 +338,20 @@ def _normalized_column_modes(value: Any) -> dict[int, str]:
 
 
 def _safe_text(value: Any) -> str:
+    """
+    Escape ampersands and angle brackets for ReportLab paragraph text.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    str
+        Computed value of ``text.replace('&', '&amp;').replace('<', '&lt;').replace('>',
+        '&gt;')``.
+    """
     text = "" if value is None else str(value)
 
     return (
@@ -203,11 +364,40 @@ def _safe_text(value: Any) -> str:
 def _par(value: Any, style: ParagraphStyle) -> Paragraph:
     # ReportLab paragraphs ignore plain newline characters. Escape the text
     # first, then convert intentional newlines to explicit line breaks.
+    """
+    Create an escaped ReportLab paragraph, preserving line breaks.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+    style : ParagraphStyle
+        ReportLab paragraph style.
+
+    Returns
+    -------
+    Paragraph
+        An escaped ReportLab paragraph, preserving line breaks.
+    """
     text = _safe_text(value).replace("\n", "<br/>")
     return Paragraph(text, style)
 
 
 def _role_color(role: Optional[str]) -> colors.Color:
+    """
+    Select a report background color for a well role.
+
+    Parameters
+    ----------
+    role : Optional[str]
+        Well role, such as sample, positive control, negative control, empty, or IgM
+        control.
+
+    Returns
+    -------
+    colors.Color
+        A report background color for a well role.
+    """
     r = str(role or "").lower()
 
     if r == "positive":
@@ -226,6 +416,19 @@ def _role_color(role: Optional[str]) -> colors.Color:
 
 
 def _well_value(well: Dict[str, Any]) -> Any:
+    """
+    Read a corrected positive percentage using either supported key.
+
+    Parameters
+    ----------
+    well : Dict[str, Any]
+        Mapping of measurements and call information for one well.
+
+    Returns
+    -------
+    Any
+        A corrected positive percentage using either supported key.
+    """
     value = well.get("frac_pos_corrected")
 
     if value is None:
@@ -235,10 +438,36 @@ def _well_value(well: Dict[str, Any]) -> Any:
 
 
 def _well_raw_value(well: Dict[str, Any]) -> Any:
+    """
+    Read the raw positive percentage from a well result.
+
+    Parameters
+    ----------
+    well : Dict[str, Any]
+        Mapping of measurements and call information for one well.
+
+    Returns
+    -------
+    Any
+        The raw positive percentage from a well result.
+    """
     return well.get("frac_pos")
 
 
 def _well_manual_override(well: Dict[str, Any]) -> Dict[str, Any] | None:
+    """
+    Return a valid manual positive or negative override, or None.
+
+    Parameters
+    ----------
+    well : Dict[str, Any]
+        Mapping of measurements and call information for one well.
+
+    Returns
+    -------
+    Dict[str, Any] | None
+        A valid manual positive or negative override, or None.
+    """
     override = well.get("manual_override")
 
     if (
@@ -254,6 +483,24 @@ def _well_effective_call(
     well: Dict[str, Any],
     threshold: Optional[float],
 ) -> str:
+    """
+    Resolve an effective call, manual override, or threshold-based well call.
+
+    Parameters
+    ----------
+    well : Dict[str, Any]
+        Mapping of measurements and call information for one well.
+    threshold : Optional[float]
+        Corrected positive-percentage cutoff used when an effective well call is
+        unavailable.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``str(call)``, ``str(override['call'])``,
+        ``'not_available'``, ``'positive' if float(value) >= float(threshold) else
+        'negative'``.
+    """
     call = well.get("effective_call")
 
     if call in {"positive", "negative", "not_available"}:
@@ -276,6 +523,19 @@ def _well_effective_call(
 
 
 def _well_is_borderline(well: Dict[str, Any]) -> bool:
+    """
+    Use an explicit borderline flag or the inclusive 15-25 percent range.
+
+    Parameters
+    ----------
+    well : Dict[str, Any]
+        Mapping of measurements and call information for one well.
+
+    Returns
+    -------
+    bool
+        Boolean result of the stated condition check.
+    """
     explicit = well.get("borderline")
 
     if isinstance(explicit, bool):
@@ -287,6 +547,19 @@ def _well_is_borderline(well: Dict[str, Any]) -> bool:
 
 
 def _active_manual_overrides(result: Dict[str, Any]) -> list[Dict[str, Any]]:
+    """
+    Collect report rows for active well overrides and sort them by well ID.
+
+    Parameters
+    ----------
+    result : Dict[str, Any]
+        Analysis result containing per-well values and assay summaries.
+
+    Returns
+    -------
+    list[Dict[str, Any]]
+        Report rows for active well overrides and sort them by well ID.
+    """
     wells = result.get("wells", {}) or {}
     rows: list[Dict[str, Any]] = []
 
@@ -322,12 +595,43 @@ def _is_positive_well(
     result: Dict[str, Any],
     threshold: Optional[float],
 ) -> bool:
+    """
+    Test whether a result well has an effective positive call.
+
+    Parameters
+    ----------
+    well_id : str
+        Plate well identifier, such as ``A1``.
+    result : Dict[str, Any]
+        Analysis result containing per-well values and assay summaries.
+    threshold : Optional[float]
+        Corrected positive-percentage cutoff used when an effective well call is
+        unavailable.
+
+    Returns
+    -------
+    bool
+        True when a result well has an effective positive call; False otherwise.
+    """
     wells = result.get("wells", {}) or {}
     well = wells.get(well_id, {}) or {}
     return _well_effective_call(well, threshold) == "positive"
 
 
 def _well_column_number(well_id: Any) -> int | None:
+    """
+    Read the trailing column number of a well ID, or return None.
+
+    Parameters
+    ----------
+    well_id : Any
+        Plate well identifier, such as ``A1``.
+
+    Returns
+    -------
+    int | None
+        The trailing column number of a well ID, or return None.
+    """
     digits = ""
 
     for character in reversed(str(well_id)):
@@ -350,8 +654,26 @@ def _positive_well_counts_by_role(
     *,
     columns: Iterable[int] | None = None,
 ) -> list[tuple[str, int, int]]:
-    """Count effective positive calls by role, optionally within plate columns.
+    """
+    Count effective positive calls by role, optionally within plate columns.
 
+    Parameters
+    ----------
+    result : Dict[str, Any]
+        Analysis result containing per-well values and assay summaries.
+    threshold : Optional[float]
+        Corrected positive-percentage cutoff used when an effective well call is
+        unavailable.
+    columns : Iterable[int] | None
+        Optional one-based plate columns to include. Default is ``None``.
+
+    Returns
+    -------
+    list[tuple[str, int, int]]
+        Effective positive calls by role, optionally within plate columns.
+
+    Notes
+    -----
     Manual declarations are included because ``_well_effective_call`` resolves
     the effective call before falling back to the measured value. For crossmatch
     reports, ``columns`` limits the count to one cell type. IgM is omitted only
@@ -397,6 +719,26 @@ def _metric_table(
     style_th: ParagraphStyle,
     col_widths: Optional[list[float]] = None,
 ) -> Table:
+    """
+    Build a two-column ReportLab table of metric names and values.
+
+    Parameters
+    ----------
+    rows : list[tuple[str, Any]]
+        Rows included in the generated table or file.
+    style_cell : ParagraphStyle
+        Paragraph style for table body cells.
+    style_th : ParagraphStyle
+        Paragraph style for table headers.
+    col_widths : Optional[list[float]]
+        Table column widths in PDF points; None allows automatic sizing. Default is
+        ``None``.
+
+    Returns
+    -------
+    Table
+        A two-column ReportLab table of metric names and values.
+    """
     data = [
         [_par("Metric", style_th), _par("Value", style_th)],
         *[
@@ -429,6 +771,25 @@ def _manual_override_table(
     style_th: ParagraphStyle,
     usable_width: float,
 ) -> Table:
+    """
+    Build a report table for the first twelve manual overrides.
+
+    Parameters
+    ----------
+    overrides : list[Dict[str, Any]]
+        Manual-call records to display.
+    style_cell : ParagraphStyle
+        Paragraph style for table body cells.
+    style_th : ParagraphStyle
+        Paragraph style for table headers.
+    usable_width : float
+        Available table width in PDF points.
+
+    Returns
+    -------
+    Table
+        A report table for the first twelve manual overrides.
+    """
     displayed = overrides[:12]
     data = [
         [
@@ -492,6 +853,38 @@ def _well_cell(
     style_cell: ParagraphStyle,
     style_role: ParagraphStyle,
 ) -> list[Any]:
+    """
+    Build report paragraphs for one well's values, role, and call flags.
+
+    Parameters
+    ----------
+    well_id : str
+        Plate well identifier, such as ``A1``.
+    corrected_value : Any
+        Calibrated positive-cell percentage.
+    raw_value : Any
+        Raw positive-cell percentage.
+    role : Any
+        Well role, such as sample, positive control, negative control, empty, or IgM
+        control.
+    effective_call : str
+        Call after applying any manual override.
+    borderline : bool
+        Whether the measured value is flagged as borderline.
+    manual_override : Dict[str, Any] | None
+        Manual well-call record, or None.
+    style_well_id : ParagraphStyle
+        Paragraph style for well identifiers.
+    style_cell : ParagraphStyle
+        Paragraph style for table body cells.
+    style_role : ParagraphStyle
+        Paragraph style for well roles and call notes.
+
+    Returns
+    -------
+    list[Any]
+        Report paragraphs for one well's values, role, and call flags.
+    """
     corrected_text = _pct(corrected_value, 1)
     raw_text = _pct(raw_value, 1)
     role_key = str(role or "-").lower()
@@ -539,6 +932,35 @@ def _well_layout_table(
     flip_vertical: bool = False,
     column_modes: Optional[Dict[int, str]] = None,
 ) -> Table:
+    """
+    Build a six-row, ten-column plate table with assay and override highlights.
+
+    Parameters
+    ----------
+    result : Dict[str, Any]
+        Analysis result containing per-well values and assay summaries.
+    style_cell : ParagraphStyle
+        Paragraph style for table body cells.
+    style_th : ParagraphStyle
+        Paragraph style for table headers.
+    style_well_id : ParagraphStyle
+        Paragraph style for well identifiers.
+    style_role : ParagraphStyle
+        Paragraph style for well roles and call notes.
+    threshold : Optional[float]
+        Corrected positive-percentage cutoff used when an effective well call is
+        unavailable.
+    flip_vertical : bool
+        If True, reverse the displayed plate row order. Default is ``False``.
+    column_modes : Optional[Dict[int, str]]
+        Mapping from one-based column numbers to ``T``, ``B``, ``T/B``, or ``empty``.
+        Default is ``None``.
+
+    Returns
+    -------
+    Table
+        A six-row, ten-column plate table with assay and override highlights.
+    """
     wells = result.get("wells", {}) or {}
     plate_rows = ["A", "B", "C", "D", "E", "F"]
 
@@ -666,6 +1088,26 @@ def _allele_table(
     style_th: ParagraphStyle,
     max_rows: int = 35,
 ) -> Table:
+    """
+    Build a report table sorted by allele reactivity evidence.
+
+    Parameters
+    ----------
+    alleles : Iterable[Dict[str, Any]]
+        Per-allele reactivity evidence records.
+    style_cell : ParagraphStyle
+        Paragraph style for table body cells.
+    style_th : ParagraphStyle
+        Paragraph style for table headers.
+    max_rows : int
+        Maximum number of allele rows included after sorting by reactivity. Default is
+        ``35``.
+
+    Returns
+    -------
+    Table
+        A report table sorted by allele reactivity evidence.
+    """
     sorted_alleles = sorted(
         list(alleles or []),
         key=lambda a: (
@@ -745,6 +1187,27 @@ def build_cdc_summary_pdf(
     job_id: str,
     flip_vertical: bool = False,
 ) -> bytes:
+    """
+    Render a PRA or CDC crossmatch summary as PDF bytes.
+
+    Parameters
+    ----------
+    result : Dict[str, Any]
+        Analysis result containing per-well values and assay summaries.
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    flip_vertical : bool
+        If True, reverse the displayed plate row order. Default is ``False``.
+
+    Returns
+    -------
+    bytes
+        A PRA or CDC crossmatch summary as PDF bytes.
+
+    Notes
+    -----
+    Builds report tables from existing result values; it does not rerun image analysis. Includes plate results, control checks, manual-call information, and editable report fields. PRA reports also include allele evidence. The generated document is returned in memory.
+    """
     summary = result.get("summary", {}) or {}
     assay_type = str(
         summary.get("assay_type") or result.get("assay_type") or ""
@@ -860,6 +1323,16 @@ def build_cdc_summary_pdf(
     )
 
     def footer(canvas, _doc):
+        """
+        Draw the job identifier and page number in the report footer.
+
+        Parameters
+        ----------
+        canvas : reportlab.pdfgen.canvas.Canvas
+            ReportLab canvas receiving drawing commands.
+        _doc : reportlab.platypus.BaseDocTemplate
+            Accepted by the interface but not read by this implementation.
+        """
         canvas.saveState()
         canvas.setFont("Helvetica", 8)
         canvas.drawString(doc.leftMargin, 7 * mm, f"Job: {job_id or '-'}")
@@ -871,6 +1344,16 @@ def build_cdc_summary_pdf(
         canvas.restoreState()
 
     def page_canvas(canvas, _doc):
+        """
+        Draw the footer and first-page title and editable report fields.
+
+        Parameters
+        ----------
+        canvas : reportlab.pdfgen.canvas.Canvas
+            ReportLab canvas receiving drawing commands.
+        _doc : reportlab.platypus.BaseDocTemplate
+            ReportLab document passed to the page callback.
+        """
         footer(canvas, _doc)
 
         if canvas.getPageNumber() != 1:

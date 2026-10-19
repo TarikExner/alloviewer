@@ -7,7 +7,8 @@ from .config import DEFAULT_CALIB_RG_GAUSS
 
 
 def _phi_cdf(z: float) -> float:
-    """Return the standard normal cumulative distribution value.
+    """
+    Return the standard normal cumulative distribution value.
 
     Parameters
     ----------
@@ -23,7 +24,8 @@ def _phi_cdf(z: float) -> float:
 
 
 def _normalize_gauss_calib(calib: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Fill missing Gaussian calibration values and clamp standard deviations.
+    """
+    Fill missing Gaussian calibration values and clamp standard deviations.
 
     Parameters
     ----------
@@ -51,15 +53,18 @@ def _normalize_gauss_calib(calib: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 class ROIClassifier:
-    """Classify ROIs with a binary R/G threshold.
+    """
+    Classify ROIs with a binary R/G threshold.
 
+    Notes
+    -----
     The classifier labels an ROI as ``"pos"`` when its red/green ratio is
     greater than or equal to the threshold, and ``"neg"`` otherwise.
-
     """
 
     def __init__(self, calib: Optional[Dict[str, Any]] = None):
-        """Initialize the threshold classifier.
+        """
+        Initialize the threshold classifier.
 
         Parameters
         ----------
@@ -81,7 +86,8 @@ class ROIClassifier:
             self.method = calib.get("method", "pc_nc_median_rg")
 
     def __call__(self, rois: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Classify ROIs.
+        """
+        Classify ROIs.
 
         Parameters
         ----------
@@ -117,15 +123,19 @@ class ROIClassifier:
 
 
 class ROIClassifierMedianRG:
-    """Classify ROIs with a median-derived R/G threshold.
+    """
+    Classify ROIs with a median-derived R/G threshold.
 
+    Notes
+    -----
     The classifier expects a calibration dictionary with ``"rg_thresh"``. ROIs
     with R/G ratios greater than or equal to the threshold are labeled
     ``"pos"``; all others are labeled ``"neg"``.
     """
 
     def __init__(self, calib: Optional[Dict[str, Any]] = None):
-        """Initialize the median R/G threshold classifier.
+        """
+        Initialize the median R/G threshold classifier.
 
         Parameters
         ----------
@@ -146,7 +156,8 @@ class ROIClassifierMedianRG:
             self.method = calib.get("method", "pc_nc_median_rg")
 
     def __call__(self, rois: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Classify ROIs.
+        """
+        Classify ROIs.
 
         Parameters
         ----------
@@ -172,15 +183,19 @@ class ROIClassifierMedianRG:
 
 
 class ROIClassifierNCUpper:
-    """Classify ROIs by testing against the NC upper tail.
+    """
+    Classify ROIs by testing against the NC upper tail.
 
+    Notes
+    -----
     ROIs are labeled ``"pos"`` when their R/G ratio is at least ``k`` standard
     deviations above the negative control mean. Other ROIs are labeled
     ``"uncertain"``.
     """
 
     def __init__(self, calib: Optional[Dict[str, Any]] = None, k: float = 3.0):
-        """Initialize the NC upper-tail classifier.
+        """
+        Initialize the NC upper-tail classifier.
 
         Parameters
         ----------
@@ -198,7 +213,8 @@ class ROIClassifierNCUpper:
         self.method = c.get("method", "pc_nc_gaussian_rg") + f"_NCUpper_k{self.k:g}"
 
     def __call__(self, rois: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Classify ROIs using the NC upper-tail rule.
+        """
+        Classify ROIs using the NC upper-tail rule.
 
         Parameters
         ----------
@@ -238,15 +254,19 @@ class ROIClassifierNCUpper:
 
 
 class ROIClassifierPCLower:
-    """Classify ROIs by testing against the PC lower tail.
+    """
+    Classify ROIs by testing against the PC lower tail.
 
+    Notes
+    -----
     ROIs are labeled ``"neg"`` when their R/G ratio is at least ``k`` standard
     deviations below the positive control mean. Other ROIs are labeled
     ``"uncertain"``.
     """
 
     def __init__(self, calib: Optional[Dict[str, Any]] = None, k: float = 3.0):
-        """Initialize the PC lower-tail classifier.
+        """
+        Initialize the PC lower-tail classifier.
 
         Parameters
         ----------
@@ -264,7 +284,8 @@ class ROIClassifierPCLower:
         self.method = c.get("method", "pc_nc_gaussian_rg") + f"_PCLower_k{self.k:g}"
 
     def __call__(self, rois: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Classify ROIs using the PC lower-tail rule.
+        """
+        Classify ROIs using the PC lower-tail rule.
 
         Parameters
         ----------
@@ -304,8 +325,11 @@ class ROIClassifierPCLower:
 
 
 class ROIClassifierGaussian3Way:
-    """Classify ROIs into positive, negative, or uncertain by Gaussian R/G tests.
+    """
+    Classify ROIs into positive, negative, or uncertain by Gaussian R/G tests.
 
+    Notes
+    -----
     The classifier combines two one-sided tests:
 
     - ``"pos"`` if the R/G ratio is high relative to the negative control.
@@ -314,7 +338,8 @@ class ROIClassifierGaussian3Way:
     """
 
     def __init__(self, calib: Optional[Dict[str, Any]] = None, k: float = 2.0):
-        """Initialize the three-way Gaussian R/G classifier.
+        """
+        Initialize the three-way Gaussian R/G classifier.
 
         Parameters
         ----------
@@ -335,7 +360,8 @@ class ROIClassifierGaussian3Way:
         self.method = c.get("method", "pc_nc_gaussian_rg") + f"_3way_k{self.k:g}"
 
     def __call__(self, rois: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Classify ROIs into ``"pos"``, ``"neg"``, or ``"uncertain"``.
+        """
+        Classify ROIs into ``"pos"``, ``"neg"``, or ``"uncertain"``.
 
         Parameters
         ----------
@@ -379,8 +405,11 @@ class ROIClassifierGaussian3Way:
 
 
 class ROIClassifierGaussian2D3Way:
-    """Classify ROIs with two-dimensional Gaussian PC and NC models.
+    """
+    Classify ROIs with two-dimensional Gaussian PC and NC models.
 
+    Notes
+    -----
     Each ROI is represented by ``mean_r`` and ``mean_g``. The classifier
     compares the log-density under the positive control model with the
     log-density under the negative control model.
@@ -393,7 +422,8 @@ class ROIClassifierGaussian2D3Way:
     """
 
     def __init__(self, calib: Dict[str, Any], margin: float = 1.0):
-        """Initialize the two-dimensional Gaussian classifier.
+        """
+        Initialize the two-dimensional Gaussian classifier.
 
         Parameters
         ----------
@@ -438,7 +468,8 @@ class ROIClassifierGaussian2D3Way:
         inv: np.ndarray,
         logdet: float,
     ) -> float:
-        """Return the Gaussian log-density up to an additive constant.
+        """
+        Return the Gaussian log-density up to an additive constant.
 
         Parameters
         ----------
@@ -461,7 +492,8 @@ class ROIClassifierGaussian2D3Way:
         return -0.5 * (d @ inv @ d + logdet)
 
     def __call__(self, rois: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Classify ROIs into ``"pos"``, ``"neg"``, or ``"uncertain"``.
+        """
+        Classify ROIs into ``"pos"``, ``"neg"``, or ``"uncertain"``.
 
         Parameters
         ----------

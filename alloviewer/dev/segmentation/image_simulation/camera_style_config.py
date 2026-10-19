@@ -9,6 +9,105 @@ from .types import RNG, ChannelRange
 
 @dataclass
 class CameraStyleParams:
+    """
+    Store per-style ranges for tone, color, blur, noise, and histogram adjustments.
+
+    Attributes
+    ----------
+    name : str
+        Name identifying the item being processed.
+    exposure_range : Tuple[float, float]
+        Sampling bounds for the global exposure multiplier. Default is ``(1.0, 1.0)``.
+    c_range : Tuple[float, float]
+        Sampling bounds for the global intensity multiplier applied with the additive
+        brightness shift. Default is ``(1.0, 1.0)``.
+    b_range : Tuple[float, float]
+        Sampling bounds for the additive brightness shift. Default is ``(0.0, 0.0)``.
+    gamma_range : Tuple[float, float]
+        Sampling bounds for the intensity gamma exponent. Default is ``(1.0, 1.0)``.
+    channel_gain_range : ChannelRange
+        Per-channel lower and upper bounds for RGB gain multipliers. Default is ``((1.0,
+        1.0), (1.0, 1.0), (1.0, 1.0))``.
+    channel_shift_range : ChannelRange
+        Per-channel lower and upper bounds for additive RGB shifts. Default is ``((0.0,
+        0.0), (0.0, 0.0), (0.0, 0.0))``.
+    shadow_lift_range : Tuple[float, float]
+        Sampling bounds for the shadow-lifting adjustment. Default is ``(0.0, 0.0)``.
+    highlight_rolloff_range : Tuple[float, float]
+        Sampling bounds for the highlight compression adjustment. Default is ``(0.0, 0.0)``.
+    midtone_contrast_range : Tuple[float, float]
+        Sampling bounds for the midtone contrast adjustment. Default is ``(0.0, 0.0)``.
+    mix_range : Tuple[float, float]
+        Sampling bounds for cross-channel color mixing. Default is ``(0.0, 0.0)``.
+    wb_range : Tuple[float, float]
+        Sampling bounds for white-balance multipliers. Default is ``(1.0, 1.0)``.
+    saturation_range : Tuple[float, float]
+        Sampling bounds for the color-saturation multiplier. Default is ``(1.0, 1.0)``.
+    green_magenta_shift_range : Tuple[float, float]
+        Sampling bounds for shifts along the green/magenta color axis. Default is ``(0.0,
+        0.0)``.
+    blue_yellow_shift_range : Tuple[float, float]
+        Sampling bounds for shifts along the blue/yellow color axis. Default is ``(0.0,
+        0.0)``.
+    blur_sigma_range : Tuple[float, float]
+        Sampling bounds for spatial blur sigma, in pixels. Default is ``(0.0, 0.0)``.
+    sharpen_strength_range : Tuple[float, float]
+        Sampling bounds for unsharp-mask strength. Default is ``(0.0, 0.0)``.
+    global_blur_sigma_range : Tuple[float, float]
+        Sampling bounds for acquisition blur sigma, in pixels. Default is ``(0.0, 0.0)``.
+    photon_level_range : Tuple[float, float]
+        Sampling bounds for the photon count scale used in shot-noise simulation. Default is
+        ``(0.0, 0.0)``.
+    read_noise_range : Tuple[float, float]
+        Sampling bounds for additive sensor read-noise standard deviation. Default is
+        ``(0.0, 0.0)``.
+    vignette_amp_range : Tuple[float, float]
+        Sampling bounds for the camera-style vignette amplitude. Default is ``(0.0, 0.0)``.
+    illum_amp_range : Tuple[float, float]
+        Sampling bounds for uneven illumination amplitude. Default is ``(0.0, 0.0)``.
+    clip_prob : float
+        Probability of applying the style's additional clipping effect. Default is ``0.0``.
+    jpeg_prob : float
+        Probability of a JPEG compression and decompression pass. Default is ``0.0``.
+    jpeg_quality_range : Tuple[int, int]
+        Inclusive sampling bounds for JPEG quality. Default is ``(60, 95)``.
+    resize_prob : float
+        Probability of downsampling and resizing back to the original dimensions. Default is
+        ``0.0``.
+    resize_scale_range : Tuple[float, float]
+        Sampling bounds for the intermediate image-size multiplier. Default is ``(1.0,
+        1.0)``.
+    histogram_match_strength_range : Tuple[float, float]
+        Sampling bounds for interpolation toward a reference intensity distribution. Default
+        is ``(0.0, 0.0)``.
+    use_histogram_match : bool
+        Whether reference-quantile matching is enabled for the style. Default is ``True``.
+    histogram_region_mode : str
+        Region selection mode passed to the reference-quantile matching function. Default is
+        ``'all'``.
+    histogram_match_mode : str
+        Reference matching strategy passed to the quantile matching function. Default is
+        ``'project_to_band'``.
+    histogram_mask_blur_sigma : float
+        Spatial sigma for soft region blending during histogram matching, in pixels. Default
+        is ``1.5``.
+    median_match_strength : Tuple[float, float]
+        Sampling bounds for interpolation toward the reference channel medians. Default is
+        ``(0.0, 1.0)``.
+    use_median_match : bool
+        Whether per-channel median matching is enabled. Default is ``True``.
+    halo_prob : float
+        Probability of applying a bright-region halo effect. Default is ``0.0``.
+    halo_threshold_range : Tuple[float, float]
+        Sampling bounds for the intensity threshold that selects halo sources. Default is
+        ``(1.0, 1.0)``.
+    halo_sigma_range : Tuple[float, float]
+        Sampling bounds for halo blur width, in pixels. Default is ``(0.0, 0.0)``.
+    halo_strength_range : Tuple[float, float]
+        Sampling bounds for the additive halo intensity. Default is ``(0.0, 0.0)``.
+    halo_wash_strength_range : Tuple[float, float]
+        Sampling bounds for the halo's color-wash contribution. Default is ``(0.0, 0.0)``.
+    """
     name: str
 
     # global tone
@@ -84,6 +183,18 @@ class CameraStyleParams:
 
 @dataclass
 class CameraStyleConfig:
+    """
+    Store camera-style names and optional sampling probabilities.
+
+    Attributes
+    ----------
+    styles : Sequence[str]
+        Available camera-style names. Default is ``('microscope', 'iphone', 'googlepixel',
+        'simulated_raw')``.
+    probs : Optional[Sequence[float]]
+        Optional sampling weights aligned with styles; normalized to sum to one before
+        sampling. Default is ``None``.
+    """
     styles: Sequence[str] = (
         "microscope",
         "iphone",
@@ -93,6 +204,19 @@ class CameraStyleConfig:
     probs: Optional[Sequence[float]] = None
 
     def sample_style(self, rng: RNG) -> str:
+        """
+        Sample a camera style uniformly or according to normalized weights.
+
+        Parameters
+        ----------
+        rng : RNG
+            NumPy random-number generator used for sampling.
+
+        Returns
+        -------
+        str
+            Depending on the input and branch, returns ``self.styles[0]``, ``self.styles[idx]``.
+        """
         if len(self.styles) == 1:
             return self.styles[0]
 
@@ -112,6 +236,25 @@ def with_histogram_adherence(
     """
     Return a modified style registry with stronger or weaker histogram adherence.
 
+    Parameters
+    ----------
+    registry : Dict[str, CameraStyleParams]
+        Mapping from camera-style names to their parameter objects.
+    mode : str
+        Histogram-adherence preset: default, strict, figure, lenient, or off.
+
+    Returns
+    -------
+    Dict[str, CameraStyleParams]
+        A modified style registry with stronger or weaker histogram adherence.
+
+    Raises
+    ------
+    ValueError
+        mode must be one of: 'strict', 'figure', 'default', 'lenient', 'off'
+
+    Notes
+    -----
     mode:
       - "strict": for PCA/showoff datasets; strongly follows real histogram cache
       - "default": unchanged
@@ -557,6 +700,15 @@ STYLE_PARAMS_REGISTRY: Dict[str, CameraStyleParams] = {
 ###############
 
 def diverse_cameras() -> CameraStyleConfig:
+    """
+    Mix microscopy, phone, generic monochrome, and raw simulated styles uniformly.
+
+    Returns
+    -------
+    CameraStyleConfig
+        Uniform sampler over microscope, iPhone, Google Pixel, generic monochrome, and raw
+        simulation styles.
+    """
     return CameraStyleConfig(
         styles=(
             "microscope",
@@ -569,7 +721,15 @@ def diverse_cameras() -> CameraStyleConfig:
     )
 
 def diverse_cameras_showoff() -> CameraStyleConfig:
-    """without generic monochrome, just for fig S2"""
+    """
+    without generic monochrome, just for fig S2
+
+    Returns
+    -------
+    CameraStyleConfig
+        Uniform sampler over microscope, iPhone, Google Pixel, acquired monochrome, and raw
+        simulation styles.
+    """
     return CameraStyleConfig(
         styles=(
             "microscope",
@@ -583,6 +743,14 @@ def diverse_cameras_showoff() -> CameraStyleConfig:
 
 
 def diverse_cameras_with_monochrome() -> CameraStyleConfig:
+    """
+    Create a uniform style mix that also includes acquired monochrome images.
+
+    Returns
+    -------
+    CameraStyleConfig
+        A uniform style mix that also includes acquired monochrome images.
+    """
     return CameraStyleConfig(
         styles=(
             "microscope",
@@ -597,6 +765,14 @@ def diverse_cameras_with_monochrome() -> CameraStyleConfig:
 
 
 def phone_mix_style() -> CameraStyleConfig:
+    """
+    Create a uniform microscope, iPhone, and Google Pixel style mixture.
+
+    Returns
+    -------
+    CameraStyleConfig
+        A uniform microscope, iPhone, and Google Pixel style mixture.
+    """
     return CameraStyleConfig(
         styles=("microscope", "iphone", "googlepixel"),
         probs=None,
@@ -604,6 +780,14 @@ def phone_mix_style() -> CameraStyleConfig:
 
 
 def googlepixel_style() -> CameraStyleConfig:
+    """
+    Select only the Google Pixel camera style.
+
+    Returns
+    -------
+    CameraStyleConfig
+        Only the Google Pixel camera style.
+    """
     return CameraStyleConfig(
         styles=("googlepixel",),
         probs=None,
@@ -611,6 +795,14 @@ def googlepixel_style() -> CameraStyleConfig:
 
 
 def iphone_style() -> CameraStyleConfig:
+    """
+    Select only the iPhone camera style.
+
+    Returns
+    -------
+    CameraStyleConfig
+        Only the iPhone camera style.
+    """
     return CameraStyleConfig(
         styles=("iphone",),
         probs=None,
@@ -618,6 +810,14 @@ def iphone_style() -> CameraStyleConfig:
 
 
 def microscope_only_style() -> CameraStyleConfig:
+    """
+    Select only the microscope camera style.
+
+    Returns
+    -------
+    CameraStyleConfig
+        Only the microscope camera style.
+    """
     return CameraStyleConfig(
         styles=("microscope",),
         probs=None,
@@ -625,6 +825,14 @@ def microscope_only_style() -> CameraStyleConfig:
 
 
 def monochrome_generic_style() -> CameraStyleConfig:
+    """
+    Select only the generic monochrome camera style.
+
+    Returns
+    -------
+    CameraStyleConfig
+        Only the generic monochrome camera style.
+    """
     return CameraStyleConfig(
         styles=("monochrome_generic",),
         probs=None,
@@ -632,6 +840,14 @@ def monochrome_generic_style() -> CameraStyleConfig:
 
 
 def monochrome_real_style() -> CameraStyleConfig:
+    """
+    Select only the acquired monochrome camera style.
+
+    Returns
+    -------
+    CameraStyleConfig
+        Only the acquired monochrome camera style.
+    """
     return CameraStyleConfig(
         styles=("monochrome_real",),
         probs=None,
@@ -639,6 +855,14 @@ def monochrome_real_style() -> CameraStyleConfig:
 
 
 def simulated_raw_style() -> CameraStyleConfig:
+    """
+    Select the raw simulated-image style.
+
+    Returns
+    -------
+    CameraStyleConfig
+        The raw simulated-image style.
+    """
     return CameraStyleConfig(
         styles=("simulated_raw",),
         probs=None,

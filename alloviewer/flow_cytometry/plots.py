@@ -33,6 +33,20 @@ ProgressCallback = Callable[[ProgressEvent], None]
 # -------------------------
 
 def _safe_decode(value: Any) -> str:
+    """
+    Decode and strip FCS metadata values, returning empty text for None.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``''``, ``value.decode(enc).strip()``,
+        ``value.decode(errors='ignore').strip()``, ``str(value).strip()``.
+    """
     if value is None:
         return ""
 
@@ -48,10 +62,38 @@ def _safe_decode(value: Any) -> str:
 
 
 def _normalize_meta_key(key: Any) -> str:
+    """
+    Normalize metadata key case, spacing, underscores, and hyphens.
+
+    Parameters
+    ----------
+    key : Any
+        Mapping key or attribute name selected by the helper.
+
+    Returns
+    -------
+    str
+        Computed value of ``str(key).strip().lower().replace('_', ' ').replace('-', ' ')``.
+    """
     return str(key).strip().lower().replace("_", " ").replace("-", " ")
 
 
 def _extract_tube_name_from_meta(meta: Dict[str, Any], fallback: str) -> str:
+    """
+    Choose a tube or sample name from known metadata keys.
+
+    Parameters
+    ----------
+    meta : Dict[str, Any]
+        FCS TEXT metadata mapping searched for a nonempty tube or sample name.
+    fallback : str
+        Value returned when no usable metadata value is found.
+
+    Returns
+    -------
+    str
+        A tube or sample name from known metadata keys.
+    """
     if not meta:
         return fallback
 
@@ -85,6 +127,19 @@ def _extract_tube_name_from_meta(meta: Dict[str, Any], fallback: str) -> str:
 
 
 def _metadata_from_fcs_object(fcs: Any) -> Dict[str, Any]:
+    """
+    Look for a metadata dictionary on an FCS object or its nested reader.
+
+    Parameters
+    ----------
+    fcs : Any
+        Loaded FCSFile or compatible event and channel container.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Depending on the input and branch, returns ``dict(value)``, ``{}``.
+    """
     for attr in ("text", "metadata", "meta", "keywords", "fcs_metadata"):
         value = getattr(fcs, attr, None)
         if isinstance(value, dict):
@@ -104,6 +159,19 @@ def _metadata_from_fcs_object(fcs: Any) -> Dict[str, Any]:
 
 
 def _metadata_from_path(path_like: str) -> Dict[str, Any]:
+    """
+    Read FCS TEXT metadata, returning an empty mapping on failure.
+
+    Parameters
+    ----------
+    path_like : str
+        Path-like value identifying an FCS file.
+
+    Returns
+    -------
+    Dict[str, Any]
+        FCS TEXT metadata, returning an empty mapping on failure.
+    """
     try:
         path = Path(str(path_like))
         if not path.exists() or path.suffix.lower() != ".fcs":
@@ -116,6 +184,24 @@ def _metadata_from_path(path_like: str) -> Dict[str, Any]:
 
 
 def _tube_name_for_file(*, fcs: Any, fp: str, fallback: str) -> str:
+    """
+    Resolve a display name from cached object metadata, then the FCS file.
+
+    Parameters
+    ----------
+    fcs : Any
+        Loaded FCSFile or compatible event and channel container.
+    fp : str
+        Path identifying the source FCS file.
+    fallback : str
+        Value returned when no usable metadata value is found.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``tube``,
+        ``_extract_tube_name_from_meta(meta, fallback)``.
+    """
     meta = _metadata_from_fcs_object(fcs)
     tube = _extract_tube_name_from_meta(meta, fallback)
     if tube != fallback:
@@ -126,7 +212,22 @@ def _tube_name_for_file(*, fcs: Any, fp: str, fallback: str) -> str:
 
 
 def _raw_cutoff_from_transformed(cutoff_t: float, cofactor: float) -> float:
-    """Invert the asinh(raw/cofactor) transform used for IgG display cutoffs."""
+    """
+    Invert the asinh(raw/cofactor) transform used for IgG display cutoffs.
+
+    Parameters
+    ----------
+    cutoff_t : float
+        IgG cutoff after the asinh transformation.
+    cofactor : float
+        Positive scale factor in asinh(raw / cofactor).
+
+    Returns
+    -------
+    float
+        Depending on the input and branch, returns ``float('nan')``, ``float(np.sinh(c) *
+        k)``.
+    """
     try:
         c = float(cutoff_t)
         k = float(cofactor)
@@ -146,6 +247,29 @@ def _build_payload(
     label_to_marker: Dict[str, str],
     marker_to_label: Dict[str, str],
 ) -> Dict[str, Any]:
+    """
+    Serialize sample results, panel assignments, and gate-specific cutoffs.
+
+    Parameters
+    ----------
+    fitted : FittedGater
+        Fitted gating state with calibration, clusterer, and control statistics.
+    results : object
+        Per-sample flow-cytometry analysis results.
+    marker_to_population : Dict[str, str]
+        Mapping from marker names to population display labels.
+    gate_options : List[str]
+        Available gate labels in display order.
+    label_to_marker : Dict[str, str]
+        Mapping from population display labels to marker names.
+    marker_to_label : Dict[str, str]
+        Mapping from marker names to population display labels.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Computed value of ``payload``.
+    """
     display_label = make_display_label_fn(marker_to_label)
 
     payload: Dict[str, Any] = {
@@ -211,6 +335,51 @@ def build_plot_cache_entry_for_file(
     """
     Build plot-cache data for one FCS file.
 
+    Parameters
+    ----------
+    sample : object
+        Sample object identifying source files, sample name, and control role.
+    fp : str
+        Path identifying the source FCS file.
+    fcs : object
+        Loaded FCSFile or compatible event and channel container.
+    gater : object
+        Gater instance used to analyze files with the fitted state.
+    fitted : FittedGater
+        Fitted gating state with calibration, clusterer, and control statistics.
+    marker_names : List[str]
+        Ordered marker names corresponding to the marker feature columns.
+    label_to_marker : Dict[str, str]
+        Mapping from population display labels to marker names.
+    marker_to_pop : Dict[str, str]
+        Mapping from marker names to population names.
+    gate_options : List[str]
+        Available gate labels in display order.
+    cutoff_by_gate : Dict[str, float]
+        IgG positivity thresholds keyed by gate name.
+    file_metrics_by_key : Dict[str, Dict[str, Dict[str, Any]]]
+        Per-file population metrics keyed by normalized source-file identifier.
+    sample_combined_metrics_by_name : Dict[str, Dict[str, Dict[str, Any]]]
+        Pooled population metrics keyed by sample name.
+    max_points : int
+        Maximum number of sampled scatter points used for plotting.
+    rng : np.random.Generator
+        NumPy random-number generator used for sampling.
+
+    Returns
+    -------
+    tuple[str, Dict[str, Any]]
+        Tuple containing ``key``, ``entry``, in that order.
+
+    Raises
+    ------
+    ValueError
+        {fp}: file analysis has no events.
+    RuntimeError
+        {fp}: marker mask {marker_name} leaks outside cleaned lymph
+
+    Notes
+    -----
     This is the file-level unit used for progress tracking.
     It uses gater.analyze_file_cached(fcs, fitted).
     """
@@ -381,6 +550,42 @@ def make_results_payload(
     **kwargs,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
+    Build the frontend result mapping and per-file plotting cache.
+
+    Parameters
+    ----------
+    ds : object
+        Dataset of FCS samples and controls.
+    gater : object
+        Gater instance used to analyze files with the fitted state.
+    fitted : FittedGater
+        Fitted gating state with calibration, clusterer, and control statistics.
+    results : object
+        Per-sample flow-cytometry analysis results.
+    marker_to_population : Dict[str, str]
+        Mapping from marker names to population display labels.
+    max_points : int
+        Maximum number of sampled scatter points used for plotting. Default is ``20000``.
+    seed : int
+        Random seed for reproducible sampling. Default is ``0``.
+    progress_cb : Optional[ProgressCallback]
+        Callback receiving progress-event dictionaries; None disables progress events.
+        Default is ``None``.
+    **kwargs : dict
+        Accepted by the interface but not read by this implementation.
+
+    Returns
+    -------
+    tuple
+        JSON-compatible result payload and per-file plot cache, in that order.
+
+    Raises
+    ------
+    AttributeError
+        Gater must implement analyze_file_cached(fcs, fitted) for plot caching.
+
+    Notes
+    -----
     Build:
       - JSON payload for the frontend
       - plot_cache with one entry per file
@@ -473,6 +678,23 @@ def make_results_payload(
     return payload, plot_cache
 
 def _as_bool_mask(values, fallback_len: int, fallback: bool = True) -> np.ndarray:
+    """
+    Return a boolean mask or a constant fallback mask when missing or mis-sized.
+
+    Parameters
+    ----------
+    values : object
+        Numeric values used to compute the requested statistic or transformation.
+    fallback_len : int
+        Required mask length.
+    fallback : bool
+        Value returned when no usable metadata value is found. Default is ``True``.
+
+    Returns
+    -------
+    numpy.ndarray
+        A boolean mask or a constant fallback mask when missing or mis-sized.
+    """
     if values is None:
         return np.full(fallback_len, fallback, dtype=bool)
 
@@ -488,6 +710,23 @@ def _mask_for_final_gate(entry: Dict[str, Any], gate: str, n: int) -> np.ndarray
     """
     Return the event mask used for final IgG display for one cached file.
 
+    Parameters
+    ----------
+    entry : Dict[str, Any]
+        Cached event arrays, masks, and metadata for one FCS file.
+    gate : str
+        Population gate label; an empty string delegates selection to the result-view
+        builder.
+    n : int
+        Total event count used to allocate the gate mask.
+
+    Returns
+    -------
+    numpy.ndarray
+        The event mask used for final IgG display for one cached file.
+
+    Notes
+    -----
     The plot cache stores downsampled values only, so this mask works on the
     downsampled IgG vector.
     """
@@ -513,6 +752,22 @@ def _mask_for_final_gate(entry: Dict[str, Any], gate: str, n: int) -> np.ndarray
 
 
 def _sample_line_values(values: np.ndarray, max_values: int) -> List[float]:
+    """
+    Keep finite values and reduce long vectors using evenly spaced indices.
+
+    Parameters
+    ----------
+    values : numpy.ndarray
+        Numeric values used to compute the requested statistic or transformation.
+    max_values : int
+        Maximum number of values retained in the sampled vector.
+
+    Returns
+    -------
+    List[float]
+        Depending on the input and branch, returns ``values.astype(float).tolist()``,
+        ``values[idx].astype(float).tolist()``.
+    """
     values = values[np.isfinite(values)]
 
     if values.size <= max_values:
@@ -523,6 +778,19 @@ def _sample_line_values(values: np.ndarray, max_values: int) -> List[float]:
 
 
 def _short_file_label(entry: Dict[str, Any]) -> str:
+    """
+    Return the basename of a cache entry's raw or stored file key.
+
+    Parameters
+    ----------
+    entry : Dict[str, Any]
+        Cached event arrays, masks, and metadata for one FCS file.
+
+    Returns
+    -------
+    str
+        The basename of a cache entry's raw or stored file key.
+    """
     raw = entry.get("file_key_raw") or entry.get("file_key") or ""
     name = Path(str(raw)).name
     return name or "file"
@@ -539,6 +807,32 @@ def _build_single_file_line_series(
 ) -> Dict[str, Any]:
 
     # Curves use transformed IgG; cards/report can still use raw IgG.
+    """
+    Build one file's gated IgG values, medians, and positive-event counts.
+
+    Parameters
+    ----------
+    entry : Dict[str, Any]
+        Cached event arrays, masks, and metadata for one FCS file.
+    gate : str
+        Population gate label; an empty string delegates selection to the result-view
+        builder.
+    label : str
+        Display label or identifier for the corresponding item.
+    color : str
+        Color used to render the corresponding graphical element.
+    cutoff : float
+        Accepted by the interface but not read by this implementation.
+    max_line_values : int
+        Maximum number of finite values retained for each IgG curve.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``label``, ``color``, ``values``, ``value_scale``,
+        ``x_label``, ``values_raw``, ``raw_median``, ``transformed_median``, ``n_total``,
+        ``n_pos``, ``pos_pct``, ``filename``, ``tube_name``, ``sample_name``, ``role``.
+    """
     igg_values = entry.get("igg", [])
     igg_raw_values = entry.get("igg_raw")
 
@@ -644,6 +938,31 @@ def _build_control_file_line_series(
     """
     Build one histogram curve per control file.
 
+    Parameters
+    ----------
+    plot_cache : Dict[str, Any]
+        Cached per-file FCXM plotting data.
+    gate : str
+        Population gate label; an empty string delegates selection to the result-view
+        builder.
+    role : str
+        Sample role: NC for negative control, PC for positive control, or SAMPLE.
+    role_label : str
+        Human-readable label for the control or sample role.
+    colors : List[str]
+        Colors used for the corresponding plotted populations or sample groups.
+    cutoff : float
+        IgG positivity cutoff in the units of the supplied values.
+    max_line_values : int
+        Maximum number of finite values retained for each IgG curve.
+
+    Returns
+    -------
+    List[Dict[str, Any]]
+        One histogram curve per control file.
+
+    Notes
+    -----
     This is intentionally file-level. Do not combine controls here, because
     combined NC/PC curves hide replicate-level shifts.
     """
@@ -686,6 +1005,30 @@ def build_results_response_from_cache(
     max_line_values: int = 2000,
 ) -> Dict[str, Any]:
     """
+    Build gate plots and selected population metrics from a file cache.
+
+    Parameters
+    ----------
+    plot_cache : Dict[str, Any]
+        Cached per-file FCXM plotting data.
+    selected_key : str
+        Cache key identifying the requested source file.
+    selected_gate : str
+        Name of the selected end gate; the function supplies its fallback when empty.
+    max_points_final : int
+        Maximum event points rendered in the final gate's scatter series. Default is
+        ``2000``.
+    max_line_values : int
+        Maximum number of finite values retained for each IgG curve. Default is ``2000``.
+
+    Returns
+    -------
+    dict
+        Frontend response containing gate options, gating plots, final scatter and intensity
+        series, cutoff, and selected file/sample metrics.
+
+    Notes
+    -----
     Returns:
       - gating_plots: full gating strategy for selected file
       - final_scatter_series + line_series: overlay for selected end-gate

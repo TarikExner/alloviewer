@@ -25,12 +25,50 @@ def _generate_main_figure(
     simulation_showcase: np.ndarray,
     simulation_tile_info: list[dict[str, Any]],
 ) -> None:
+    """
+    Assemble and save the figure showing the simulation workflow and parameter examples.
+
+    Parameters
+    ----------
+    sketch_dir : str
+        Directory containing workflow and schematic illustrations.
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    figure_name : str
+        Base name used for the output figure files.
+    simulation_showcase : numpy.ndarray
+        Prepared simulation examples used in the figure panel.
+    simulation_tile_info : list[dict[str, Any]]
+        Metadata identifying the simulation image tiles displayed in the figure.
+
+    Notes
+    -----
+    Creates Matplotlib subplots and writes the figure outputs selected in this module. Figure input data is supplied by the enclosing preparation workflow.
+    """
     def generate_subfigure_a(
         fig: Figure,
         ax: Axes,
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel A of Figure 1 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -48,6 +86,24 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel B of Figure 1 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -149,6 +205,18 @@ def figure_1_generation(
     **kwargs
 ) -> None:
 
+    """
+    Prepare the data and generate Figure 1 showing the simulation workflow and parameter examples.
+
+    Parameters
+    ----------
+    sketch_dir : str
+        Directory containing workflow and schematic illustrations.
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    **kwargs : dict
+        Accepted by the interface but not read by this implementation.
+    """
     simulation_showcase, simulation_tile_info = make_simulation_parameter_mosaic()
 
     _generate_main_figure(

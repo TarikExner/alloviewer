@@ -17,6 +17,19 @@ from . import figure_utils as utils
 
 
 def _dedup_legend(ax: Axes) -> Tuple[List, List]:
+    """
+    Return legend handles and labels with duplicate labels removed.
+
+    Parameters
+    ----------
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+
+    Returns
+    -------
+    Tuple[List, List]
+        Tuple containing ``h2``, ``l2``, in that order.
+    """
     handles, labels = ax.get_legend_handles_labels()
     seen = set()
     h2, l2 = [], []
@@ -40,6 +53,28 @@ def _plot_lines(
     """
     One line per (unet_mode, seed, target). Legend grouped by unet_mode.
     Inset is placed in the TOP RIGHT corner.
+
+    Parameters
+    ----------
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    data : pandas.DataFrame
+        Input data consumed by this analysis or plotting operation.
+    metric : str
+        Metric name or alias; None means no metric selected.
+    title : str
+        Text displayed as the plot or panel title.
+    show_legend : bool
+        Whether to display the plot legend.
+    inset_frac : float
+        Fraction of the panel occupied by the inset. Default is ``0.25``.
+    inset_size : str
+        Inset side length in pixels. Default is ``'35%'``.
+
+    Returns
+    -------
+    Tuple[List, List]
+        Depending on the input and branch, returns ``([], [])``, ``(h, l)``.
     """
     if data.empty or metric not in data.columns:
         ax.set_title(f"{title} (no data)")
@@ -100,6 +135,24 @@ def _generate_main_figure(
     inset_frac: float = 0.5,
 ):
 
+    """
+    Assemble and save the figure showing training and validation loss curves.
+
+    Parameters
+    ----------
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    figure_name : str
+        Base name used for the output figure files.
+    data : pandas.DataFrame
+        Input data consumed by this analysis or plotting operation.
+    inset_frac : float
+        Fraction of the panel occupied by the inset. Default is ``0.5``.
+
+    Notes
+    -----
+    Creates Matplotlib subplots and writes the figure outputs selected in this module. Figure input data is supplied by the enclosing preparation workflow.
+    """
     def generate_subfigure_a(
         fig: Figure, ax: Axes, gs: SubplotSpec, subfigure_label
     ) -> None:
@@ -108,6 +161,22 @@ def _generate_main_figure(
         - 1x3 plots with shared y-axis
         - Right-side legend column (ncol=1)
         - Only the left plot shows y-label/ticks
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str or None
+            Panel label drawn next to the subplot.
+
+        Raises
+        ------
+        ValueError
+            Expected column 'split' in the dataframe.
         """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=-0.4)
@@ -198,6 +267,22 @@ def _generate_main_figure(
         - Grid of selected metrics for mode == "tiles"
         - Only leftmost axes per row show y-label "loss value"; others hide y labels
         - Right-side legend column (ncol=1) spanning rows
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str or None
+            Panel label drawn next to the subplot.
+
+        Raises
+        ------
+        ValueError
+            Expected column 'split' in the dataframe.
         """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=-0.4)
@@ -316,6 +401,20 @@ def figure_S4_generation(
     validation_results_dir: str,
     **kwargs
 ):
+    """
+    Prepare the data and generate Figure S4 showing training and validation loss curves.
+
+    Parameters
+    ----------
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    model_output_dir : str
+        Directory containing trained model checkpoints and training outputs.
+    validation_results_dir : str
+        Directory containing cached validation tables and analysis results.
+    **kwargs : dict
+        Accepted by the interface but not read by this implementation.
+    """
     loss_data = get_loss_data(
         model_output_dir=model_output_dir, output_dir=validation_results_dir
     )

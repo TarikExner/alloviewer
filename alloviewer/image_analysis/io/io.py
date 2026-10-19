@@ -21,7 +21,8 @@ def infer_bit_depth_and_normalize_scale(
     *,
     fast: bool = True,
 ) -> Tuple[np.ndarray, Optional[int]]:
-    """Infer image bit depth and scale image data to ``float32`` in ``[0, 1]``.
+    """
+    Infer image bit depth and scale image data to ``float32`` in ``[0, 1]``.
 
     Parameters
     ----------
@@ -209,7 +210,8 @@ def infer_bit_depth_and_normalize_scale(
 
 
 def read_cv2_from_path(path: Path, page: int, report: LoadReport) -> np.ndarray:
-    """Read an image from disk with OpenCV.
+    """
+    Read an image from disk with OpenCV.
 
     Parameters
     ----------
@@ -267,7 +269,8 @@ def read_cv2_from_bytes_or_file(
     page: int,
     report: LoadReport,
 ) -> np.ndarray:
-    """Read an image from bytes or a file-like object with OpenCV.
+    """
+    Read an image from bytes or a file-like object with OpenCV.
 
     Parameters
     ----------
@@ -332,7 +335,8 @@ def open_image(
     base_dir: Optional[Union[str, Path]] = None,
     max_mp: Optional[float] = 200.0,
 ) -> Tuple[np.ndarray, LoadReport]:
-    """Open an image with OpenCV without scaling or channel normalization.
+    """
+    Open an image with OpenCV without scaling or channel normalization.
 
     Parameters
     ----------
@@ -342,7 +346,7 @@ def open_image(
     page : int, optional
         Page index for multi-page TIFF files on disk. The default is ``0``.
     base_dir : str or pathlib.Path or None, optional
-        Optional root directory used to resolve relative paths.
+        Optional root directory used to resolve relative paths. Default is ``None``.
     max_mp : float or None, optional
         Maximum allowed image size in megapixels. If ``None``, no size check is
         applied. The default is ``200.0``.
@@ -412,14 +416,16 @@ def scale_image(
     *,
     fast: bool = False,
 ) -> Tuple[np.ndarray, LoadReport]:
-    """Scale a raw image array to ``float32`` in ``[0, 1]``.
+    """
+    Scale a raw image array to ``float32`` in ``[0, 1]``.
 
     Parameters
     ----------
     arr : numpy.ndarray
         Raw image array.
     report : LoadReport or None, optional
-        Existing load report to update. If ``None``, a new report is created.
+        Existing load report to update. If ``None``, a new report is created. Default is
+        ``None``.
     fast : bool, optional
         If ``True``, skips percentile-based uint16 bit-depth detection. The
         default is ``False``.
@@ -464,7 +470,8 @@ def load_image(
     fast_scale: bool = True,
     **kwargs: Any,
 ) -> Tuple[np.ndarray, LoadReport]:
-    """Load an image and return RGB data.
+    """
+    Load an image and return RGB data.
 
     Parameters
     ----------
@@ -474,7 +481,7 @@ def load_image(
     page : int, optional
         Page index for multi-page TIFF files on disk. The default is ``0``.
     base_dir : str or pathlib.Path or None, optional
-        Optional root directory used to resolve relative paths.
+        Optional root directory used to resolve relative paths. Default is ``None``.
     max_mp : float or None, optional
         Maximum allowed image size in megapixels. If ``None``, no size check is
         applied. The default is ``200.0``.
@@ -531,7 +538,8 @@ def load_images(
     scale: bool = True,
     **kwargs: Any,
 ) -> List[np.ndarray]:
-    """Load multiple images from one directory.
+    """
+    Load multiple images from one directory.
 
     Parameters
     ----------

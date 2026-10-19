@@ -47,6 +47,30 @@ PANEL = Panel(
 
 
 def _events_to_dataframe(events: Any, fcs: FCSFile) -> pd.DataFrame:
+    """
+    Convert a two-dimensional event array to a channel-labeled DataFrame.
+
+    Parameters
+    ----------
+    events : Any
+        Event matrix with one row per event and one column per measurement channel.
+    fcs : FCSFile
+        Loaded FCSFile or compatible event and channel container.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Depending on the input and branch, returns ``events.copy()``, ``pd.DataFrame(events,
+        columns=channel_names)``.
+
+    Raises
+    ------
+    TypeError
+        Unsupported events type: {type(events)}
+    ValueError
+        Expected 2D events array, got shape {events.shape} Mismatch between event columns
+        and FCS channels: {events.shape[1]} vs {len(channel_names)}
+    """
     if isinstance(events, pd.DataFrame):
         return events.copy()
 
@@ -68,6 +92,21 @@ def _events_to_dataframe(events: Any, fcs: FCSFile) -> pd.DataFrame:
 
 
 def _k_formatter(x, pos):
+    """
+    Format tick values with a k suffix for thousands.
+
+    Parameters
+    ----------
+    x : object
+        Scalar value to format or convert using the helper's stated rules.
+    pos : object
+        Accepted by the interface but not read by this implementation.
+
+    Returns
+    -------
+    str
+        Tick values with a k suffix for thousands.
+    """
     if abs(x) < 1e-12:
         return "0"
     if abs(x) >= 1000:
@@ -83,6 +122,25 @@ def _subsample_xy(
     n_max: int,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Subsample paired coordinate vectors with shared random indices.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        First numeric vector aligned elementwise with the other vector.
+    y : numpy.ndarray
+        Second numeric vector aligned elementwise with the other vector.
+    n_max : int
+        Maximum number of paired points retained.
+    rng : np.random.Generator
+        NumPy random-number generator used for sampling.
+
+    Returns
+    -------
+    tuple[numpy.ndarray, numpy.ndarray]
+        Depending on the input and branch, returns ``(x, y)``, ``(x[idx], y[idx])``.
+    """
     if x.size <= n_max:
         return x, y
 
@@ -91,10 +149,42 @@ def _subsample_xy(
 
 
 def _prepare_panel_a_image(panel_a_image_path: str) -> np.ndarray:
+    """
+    Load the panel-A illustration as a NumPy array.
+
+    Parameters
+    ----------
+    panel_a_image_path : str
+        Path to the image displayed in panel A.
+
+    Returns
+    -------
+    numpy.ndarray
+        The panel-A illustration as a NumPy array.
+    """
     return np.asarray(Image.open(panel_a_image_path))
 
 
 def _select_best_setting_overall_from_summary(summary_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Select the setting with the highest mean F1 across the focus gates.
+
+    Parameters
+    ----------
+    summary_df : pandas.DataFrame
+        Summary table of validation scores and run settings.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The setting with the highest mean F1 across the focus gates.
+
+    Raises
+    ------
+    ValueError
+        summary_df is missing required columns: {missing} No rows found for focus gates
+        lymphocytes/t_cells/b_cells in summary_df.
+    """
     required_cols = {
         "algorithm",
         "algorithm_params_json",
@@ -127,6 +217,27 @@ def _prepare_panel_c_data(
     metrics_df: pd.DataFrame,
     summary_df: pd.DataFrame,
 ) -> pd.DataFrame:
+    """
+    Select validation rows for the best setting and assign display gate labels.
+
+    Parameters
+    ----------
+    metrics_df : pandas.DataFrame
+        Per-file or per-experiment validation metric table.
+    summary_df : pandas.DataFrame
+        Summary table of validation scores and run settings.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Validation rows for the best setting and assign display gate labels.
+
+    Raises
+    ------
+    ValueError
+        metrics_df is missing required columns: {missing_metrics} Panel C data is empty
+        after selecting the best algorithm setting.
+    """
     required_metric_cols = {
         "experiment",
         "algorithm",
@@ -190,6 +301,37 @@ def _prepare_panel_b_data(
     algorithm: str = "parc",
     resolution_parameter: float = 4.0,
 ) -> dict[str, Any]:
+    """
+    Fit the selected clustering setting and prepare predicted-versus-reference gating panels.
+
+    Parameters
+    ----------
+    data_dir : str
+        Root directory containing the source image or FCS dataset.
+    experiment : str
+        Experiment identifier selecting the corresponding FCS files and reference table.
+    sample_name : str
+        Name identifying the sample whose events or measurements are shown.
+    algorithm : str
+        Name selecting the clustering backend. Default is ``'parc'``.
+    resolution_parameter : float
+        Resolution parameter passed to PARC's community-detection configuration. Default is
+        ``4.0``.
+
+    Returns
+    -------
+    dict[str, Any]
+        Result mapping with keys ``experiment``, ``sample_name``, ``config``, ``panels``,
+        ``igg_all``.
+
+    Raises
+    ------
+    ValueError
+        Sample '{sample_name}' not found in {experiment}. First available samples:
+        {available} No ground-truth rows found for sample '{sample_name}' Event count
+        mismatch for '{sample_name}': {gt_df.shape[0]} rows in CSV vs {events.shape[0]}
+        events
+    """
     config = GatingConfig(
         clusterer=PARCConfig(resolution_parameter=resolution_parameter)
     )
@@ -383,6 +525,26 @@ def _generate_subfigure_a(
     subfigure_label: str,
     panel_a_image: np.ndarray,
 ) -> None:
+    """
+    Draw panel A of Figure 5 on the supplied figure and subplot grid.
+
+    Parameters
+    ----------
+    fig : Figure
+        Matplotlib figure containing the subplot grid.
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    gs : SubplotSpec
+        Subplot specification defining the area available to this panel.
+    subfigure_label : str
+        Panel label drawn next to the subplot.
+    panel_a_image : numpy.ndarray
+        Loaded image displayed in panel A.
+
+    Notes
+    -----
+    Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+    """
     ax.axis("off")
     utils.figure_label(ax, subfigure_label, x=0)
 
@@ -414,6 +576,54 @@ def _generate_subfigure_b(
     max_points_per_layer: int = 500,
     random_state: int = 42,
 ) -> None:
+    """
+    Draw panel B of Figure 5 on the supplied figure and subplot grid.
+
+    Parameters
+    ----------
+    fig : Figure
+        Matplotlib figure containing the subplot grid.
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    gs : SubplotSpec
+        Subplot specification defining the area available to this panel.
+    subfigure_label : str
+        Panel label drawn next to the subplot.
+    plot_data : dict[str, Any]
+        Prepared coordinates, labels, and gate information used for plotting.
+    black_dot_size : float
+        Marker area for the background event layer. Default is ``3.5``.
+    black_dot_alpha : float
+        Opacity of the background event layer. Default is ``0.35``.
+    gt_point_size : float
+        Marker area for ground-truth event points. Default is ``4.0``.
+    pred_point_size : float
+        Marker area for predicted event points. Default is ``4.0``.
+    gt_point_alpha : float
+        Opacity of ground-truth event points. Default is ``0.35``.
+    pred_point_alpha : float
+        Opacity of predicted event points. Default is ``0.35``.
+    kde_levels : int
+        Number or sequence of contour levels used for kernel-density plotting. Default is
+        ``6``.
+    kde_thresh : float
+        Lower density threshold passed to the kernel-density plot. Default is ``0.1``.
+    kde_bw_adjust : float
+        Bandwidth multiplier for the kernel-density estimate. Default is ``1.0``.
+    kde_linewidth : float
+        Line width of the density contours. Default is ``1.0``.
+    biex_linthresh : float
+        Linear-region threshold used for the biexponential-style axis scale. Default is
+        ``100.0``.
+    max_points_per_layer : int
+        Maximum sampled points rendered in each scatter layer. Default is ``500``.
+    random_state : int
+        Random seed used by fitting and sampling steps. Default is ``42``.
+
+    Notes
+    -----
+    Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+    """
     ax.axis("off")
     utils.figure_label(ax, subfigure_label, x=0)
 
@@ -687,6 +897,26 @@ def _generate_subfigure_c(
     subfigure_label: str,
     plot_df: pd.DataFrame,
 ) -> None:
+    """
+    Draw panel C of Figure 5 on the supplied figure and subplot grid.
+
+    Parameters
+    ----------
+    fig : Figure
+        Matplotlib figure containing the subplot grid.
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    gs : SubplotSpec
+        Subplot specification defining the area available to this panel.
+    subfigure_label : str
+        Panel label drawn next to the subplot.
+    plot_df : pandas.DataFrame
+        Prepared DataFrame containing the values and labels used by the plot.
+
+    Notes
+    -----
+    Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+    """
     ax.axis("off")
     utils.figure_label(ax, subfigure_label, x=0)
 
@@ -746,6 +976,26 @@ def _generate_main_figure(
     panel_b_plot_data: dict[str, Any],
     panel_c_plot_df: pd.DataFrame,
 ) -> None:
+    """
+    Assemble and save the figure showing flow-cytometry gating examples and validation scores.
+
+    Parameters
+    ----------
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    figure_name : str
+        Base name used for the output figure files.
+    panel_a_image : numpy.ndarray
+        Loaded image displayed in panel A.
+    panel_b_plot_data : dict[str, Any]
+        Prepared data for the panel B plot.
+    panel_c_plot_df : pandas.DataFrame
+        Prepared tabular data for the panel C plot.
+
+    Notes
+    -----
+    Creates Matplotlib subplots and writes the figure outputs selected in this module. Figure input data is supplied by the enclosing preparation workflow.
+    """
     fig = plt.figure(
         layout="constrained",
         figsize=(cfg.FIGURE_WIDTH_FULL, cfg.FIGURE_HEIGHT_FULL),
@@ -811,6 +1061,22 @@ def figure_5_generation(
     **kwargs,
 ) -> None:
 
+    """
+    Prepare the data and generate Figure 5 showing flow-cytometry gating examples and validation scores.
+
+    Parameters
+    ----------
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    validation_results_dir : str
+        Directory containing cached validation tables and analysis results.
+    sketch_dir : str
+        Directory containing workflow and schematic illustrations.
+    flow_data_dir : str
+        Root directory containing FCS data and reference gating tables.
+    **kwargs : dict
+        Additional options read by this helper: ``panel_a_image_path``.
+    """
     panel_a_image_path = kwargs.get(
         "panel_a_image_path",
         os.path.join(sketch_dir, "sketch_3A.jpg"),

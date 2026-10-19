@@ -63,6 +63,14 @@ PANEL = Panel(
 
 @contextmanager
 def _stage_timer() -> Generator[dict[str, float], None, None]:
+    """
+    Yield a metric mapping and record elapsed seconds when the context exits.
+
+    Yields
+    ------
+    dict
+        Mutable mapping populated with runtime_s when the context exits.
+    """
     payload: dict[str, float] = {}
     t0 = time.perf_counter()
     try:
@@ -75,6 +83,8 @@ class MemoryMonitor:
     """
     Windows-safe memory monitor.
 
+    Notes
+    -----
     Preferred source:
     - psutil RSS for current process, if available
 
@@ -83,6 +93,9 @@ class MemoryMonitor:
     """
 
     def __init__(self) -> None:
+        """
+        Start RSS or Python-allocation monitoring according to available dependencies.
+        """
         self._use_psutil = psutil is not None
         self._process = psutil.Process(os.getpid()) if self._use_psutil else None
         self._rss_start_mb = self._get_rss_mb() if self._use_psutil else np.nan
@@ -95,10 +108,26 @@ class MemoryMonitor:
                 self._is_tracing_here = True
 
     def _get_rss_mb(self) -> float:
+        """
+        Read resident memory from psutil and express it in MiB.
+
+        Returns
+        -------
+        float
+            Resident memory from psutil and express it in MiB.
+        """
         assert self._process is not None
         return float(self._process.memory_info().rss) / (1024.0 * 1024.0)
 
     def stop(self) -> dict[str, Any]:
+        """
+        Collect memory measurements and stop tracing if this monitor started it.
+
+        Returns
+        -------
+        dict[str, Any]
+            Memory measurements and stop tracing if this monitor started it.
+        """
         out: dict[str, Any] = {}
 
         if self._use_psutil:
@@ -121,24 +150,101 @@ class MemoryMonitor:
 
 
 def _read_csv(data_dir: str, experiment: EXPERIMENTS) -> pd.DataFrame:
+    """
+    Load an experiment's reference event-expression CSV.
+
+    Parameters
+    ----------
+    data_dir : str
+        Root directory containing the source image or FCS dataset.
+    experiment : EXPERIMENTS
+        Experiment identifier selecting the corresponding FCS files and reference table.
+
+    Returns
+    -------
+    pandas.DataFrame
+        An experiment's reference event-expression CSV.
+    """
     return pd.read_csv(os.path.join(data_dir, f"{experiment}_expr_data.csv"))
 
 
 def _read_fcs(data_dir: str, experiment: EXPERIMENTS, fcs_file: str) -> FCSFile:
+    """
+    Load an FCS file from the selected experiment folder.
+
+    Parameters
+    ----------
+    data_dir : str
+        Root directory containing the source image or FCS dataset.
+    experiment : EXPERIMENTS
+        Experiment identifier selecting the corresponding FCS files and reference table.
+    fcs_file : str
+        Path to the FCS file whose metadata and event matrix are read.
+
+    Returns
+    -------
+    FCSFile
+        An FCS file from the selected experiment folder.
+    """
     return FCSFile(os.path.join(data_dir, experiment, fcs_file))
 
 
 def _create_fcs_file_list(data_dir: str, experiment: EXPERIMENTS) -> list[str]:
+    """
+    List and sort .fcs filenames within an experiment folder.
+
+    Parameters
+    ----------
+    data_dir : str
+        Root directory containing the source image or FCS dataset.
+    experiment : EXPERIMENTS
+        Experiment identifier selecting the corresponding FCS files and reference table.
+
+    Returns
+    -------
+    list[str]
+        Computed value of ``sorted([file for file in file_list if file.endswith('.fcs')])``.
+    """
     file_list = os.listdir(os.path.join(data_dir, experiment))
     return sorted([file for file in file_list if file.endswith(".fcs")])
 
 
 def _create_fcs_file_list_full_path(data_dir: str, experiment: EXPERIMENTS) -> list[str]:
+    """
+    Build full paths for the experiment's sorted FCS files.
+
+    Parameters
+    ----------
+    data_dir : str
+        Root directory containing the source image or FCS dataset.
+    experiment : EXPERIMENTS
+        Experiment identifier selecting the corresponding FCS files and reference table.
+
+    Returns
+    -------
+    list[str]
+        Full paths for the experiment's sorted FCS files.
+    """
     fcs_files = _create_fcs_file_list(data_dir, experiment)
     return [os.path.join(data_dir, experiment, file) for file in fcs_files]
 
 
 def _create_dataset(data_dir: str, experiment: EXPERIMENTS) -> Dataset:
+    """
+    Load experiment samples with roles read from role_map.csv.
+
+    Parameters
+    ----------
+    data_dir : str
+        Root directory containing the source image or FCS dataset.
+    experiment : EXPERIMENTS
+        Experiment identifier selecting the corresponding FCS files and reference table.
+
+    Returns
+    -------
+    Dataset
+        Experiment samples with roles read from role_map.csv.
+    """
     role_map = pd.read_csv(os.path.join(data_dir, "role_map.csv"))
 
     fcs_files = _create_fcs_file_list(data_dir, experiment)
@@ -160,6 +266,31 @@ def _calculate_overlap(
     comp_vector: np.ndarray,
     overlap_fn: Literal["f1", "jaccard"],
 ) -> float:
+    """
+    Compute support-weighted F1 or Jaccard agreement with a reference gate.
+
+    Parameters
+    ----------
+    ground_truth_df : pandas.DataFrame
+        Reference event table containing boolean gate columns.
+    gate : str
+        Population gate label; an empty string delegates selection to the result-view
+        builder.
+    comp_vector : numpy.ndarray
+        Predicted boolean event-selection mask aligned to the reference rows.
+    overlap_fn : Literal['f1', 'jaccard']
+        Agreement metric, either f1 or jaccard; the implementation uses support weighting.
+
+    Returns
+    -------
+    float
+        Support-weighted F1 or Jaccard agreement with a reference gate.
+
+    Raises
+    ------
+    ValueError
+        Unknown overlap_fn: {overlap_fn}
+    """
     gt_vector = ground_truth_df[gate].astype(bool).to_numpy()
     comp_vector = np.asarray(comp_vector, dtype=bool)
 
@@ -176,6 +307,24 @@ def _confusion_counts(
     gate: str,
     comp_vector: np.ndarray,
 ) -> dict[str, int]:
+    """
+    Count true and false positives and negatives for a predicted event mask.
+
+    Parameters
+    ----------
+    ground_truth_df : pandas.DataFrame
+        Reference event table containing boolean gate columns.
+    gate : str
+        Population gate label; an empty string delegates selection to the result-view
+        builder.
+    comp_vector : numpy.ndarray
+        Predicted boolean event-selection mask aligned to the reference rows.
+
+    Returns
+    -------
+    dict[str, int]
+        Result mapping with keys ``tp``, ``tn``, ``fp``, ``fn``.
+    """
     gt_vector = ground_truth_df[gate].astype(bool).to_numpy()
     comp_vector = np.asarray(comp_vector, dtype=bool)
 
@@ -194,6 +343,33 @@ def _build_metric_row(
     gt_df: pd.DataFrame,
     comp_vector: np.ndarray,
 ) -> dict[str, Any]:
+    """
+    Collect gate overlap, confusion counts, and algorithm settings for one file.
+
+    Parameters
+    ----------
+    experiment : str
+        Experiment identifier selecting the corresponding FCS files and reference table.
+    algorithm : str
+        Name selecting the clustering backend.
+    algorithm_params : dict[str, Any]
+        Parameter mapping for the selected clustering algorithm.
+    file_name : str
+        File path or unique basename identifying the selected FCS file.
+    gate_name : str
+        Human-readable name of the gate being scored.
+    gate_column : str
+        Reference-table column containing the gate membership mask.
+    gt_df : pandas.DataFrame
+        Reference event table for the selected file.
+    comp_vector : numpy.ndarray
+        Predicted boolean event-selection mask aligned to the reference rows.
+
+    Returns
+    -------
+    dict[str, Any]
+        Gate overlap, confusion counts, and algorithm settings for one file.
+    """
     comp_vector = np.asarray(comp_vector, dtype=bool)
     counts = _confusion_counts(gt_df, gate_column, comp_vector)
     return {
@@ -212,6 +388,19 @@ def _build_metric_row(
 
 
 def _iter_sweep_configs(base_config: Optional[GatingConfig] = None):
+    """
+    Yield FlowSOM, PARC, and HDBSCAN parameter-sweep configurations.
+
+    Parameters
+    ----------
+    base_config : Optional[GatingConfig]
+        Base gating configuration copied for each sweep setting. Default is ``None``.
+
+    Yields
+    ------
+    dict
+        Algorithm name, its parameter mapping, and the corresponding GatingConfig.
+    """
     base = base_config or GatingConfig()
 
     flowsom_clusters = [1, 2, 4, 8, 15, 30]
@@ -271,6 +460,28 @@ def _compute_qc_and_lymphocyte_metrics(
     dict[str, Any],
     dict[str, Any],
 ]:
+    """
+    Run QC, marker calibration, and lymphocyte gating and collect reference metrics.
+
+    Parameters
+    ----------
+    data_dir : str
+        Root directory containing the source image or FCS dataset.
+    experiment : str
+        Experiment identifier selecting the corresponding FCS files and reference table.
+    config : GatingConfig
+        Flow-cytometry gating and clustering configuration.
+    algorithm : str
+        Name selecting the clustering backend.
+    algorithm_params : dict[str, Any]
+        Parameter mapping for the selected clustering algorithm.
+
+    Returns
+    -------
+    tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, float], dict[str, Any], dict[str, Any]]
+        Tuple containing ``file_records``, ``metric_rows``, ``stage_times``,
+        ``marker_cofactors``, ``marker_thresholds``, in that order.
+    """
     ground_truth_df = _read_csv(data_dir, experiment)
     ds = _create_dataset(data_dir, experiment)
     qc_gater = QCGater(panel=PANEL, config=config.qc)
@@ -388,6 +599,33 @@ def _compute_cluster_metrics(
     marker_cofactors: dict[str, Any],
     marker_thresholds: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, float], dict[str, Any]]:
+    """
+    Fit clusters, assign population labels, and score event-level gate predictions.
+
+    Parameters
+    ----------
+    file_records : list[dict[str, Any]]
+        Per-file event arrays, masks, and metadata retained by the validation workflow.
+    ground_truth_df : pandas.DataFrame
+        Reference event table containing boolean gate columns.
+    experiment : str
+        Experiment identifier selecting the corresponding FCS files and reference table.
+    config : GatingConfig
+        Flow-cytometry gating and clustering configuration.
+    algorithm : str
+        Name selecting the clustering backend.
+    algorithm_params : dict[str, Any]
+        Parameter mapping for the selected clustering algorithm.
+    marker_cofactors : dict[str, Any]
+        Per-marker asinh scale factors fitted on the dataset.
+    marker_thresholds : dict[str, Any]
+        Per-marker positive thresholds in transformed units.
+
+    Returns
+    -------
+    tuple[list[dict[str, Any]], dict[str, float], dict[str, Any]]
+        Tuple containing ``metric_rows``, ``stage_times``, ``stage_info``, in that order.
+    """
     metric_rows: list[dict[str, Any]] = []
     stage_times: dict[str, float] = {}
     stage_info: dict[str, Any] = {}
@@ -496,6 +734,27 @@ def run_single_flow_validation(
     algorithm: str,
     algorithm_params: dict[str, Any],
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """
+    Evaluate one experiment and clustering setting with runtime and memory measurements.
+
+    Parameters
+    ----------
+    data_dir : str
+        Root directory containing the source image or FCS dataset.
+    experiment : EXPERIMENTS
+        Experiment identifier selecting the corresponding FCS files and reference table.
+    config : GatingConfig
+        Flow-cytometry gating and clustering configuration.
+    algorithm : str
+        Name selecting the clustering backend.
+    algorithm_params : dict[str, Any]
+        Parameter mapping for the selected clustering algorithm.
+
+    Returns
+    -------
+    tuple[pandas.DataFrame, dict[str, Any]]
+        Tuple containing ``metrics_df``, ``run_info``, in that order.
+    """
     monitor = MemoryMonitor()
     overall_t0 = time.perf_counter()
 
@@ -553,6 +812,25 @@ def run_flow_validation(
     experiments_to_run: Optional[list[EXPERIMENTS]] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 
+    """
+    Run all selected flow-gating settings and optionally save detailed and summary CSVs.
+
+    Parameters
+    ----------
+    data_dir : str
+        Root directory containing the source image or FCS dataset.
+    output_dir : Optional[str]
+        Directory in which generated outputs are stored. Default is ``None``.
+    base_config : Optional[GatingConfig]
+        Base gating configuration copied for each sweep setting. Default is ``None``.
+    experiments_to_run : Optional[list[EXPERIMENTS]]
+        Experiment identifiers to evaluate; None uses the module defaults.
+
+    Returns
+    -------
+    tuple[pandas.DataFrame, pandas.DataFrame, pandas.DataFrame]
+        Tuple containing ``metrics_df``, ``summary_df``, ``runs_df``, in that order.
+    """
     experiments = experiments_to_run or [
         "exp1", "exp2", "exp3", "exp4",
         "val_exp_1", "val_exp_2", "val_exp_3", "val_exp_4", "val_exp_5",

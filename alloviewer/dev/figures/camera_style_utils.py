@@ -52,6 +52,28 @@ def _load_reviewed_valid_mask(
     """
     Load the reviewed valid-pixel mask for one real image.
 
+    Parameters
+    ----------
+    image_path : str | Path
+        Image path relative to the job root.
+    annotation_dir : str | Path
+        Directory containing image or cell annotation files. Default is
+        ``DEFAULT_ANNOTATION_DIR``.
+
+    Returns
+    -------
+    tuple[numpy.ndarray, dict]
+        Tuple containing ``valid_mask``, ``metadata``, in that order.
+
+    Raises
+    ------
+    ValueError
+        Expected a 2D reviewed mask for {image_path}, got {labels.shape}. Well-mask shape
+        {well_mask.shape} does not match region-mask shape {labels.shape} for {image_path}.
+        No reviewed foreground/background pixels remain for {image_path}.
+
+    Notes
+    -----
     Used pixels are exactly:
       - inside the saved well mask
       - class 1 (background) or class 2 (foreground)
@@ -112,6 +134,22 @@ def _build_feature_source_inventory(
 ) -> dict:
     """
     Build a stable inventory used to decide whether a feature cache is stale.
+
+    Parameters
+    ----------
+    image_paths : Sequence[Path]
+        Paths to the images included in the operation.
+    annotation_dir : str | Path
+        Directory containing image or cell annotation files.
+    use_reviewed_regions : bool
+        Whether to restrict image statistics to saved reviewed annotation regions.
+    require_annotations : bool
+        Whether images without complete region annotations are excluded.
+
+    Returns
+    -------
+    dict
+        Result mapping with keys ``n_images``, ``entries``, ``latest_mtime``.
     """
     entries = []
     latest_mtime = 0.0
@@ -185,6 +223,36 @@ def _feature_cache_is_current(
 ) -> bool:
     """
     Check cache version, settings, source list, and modification times.
+
+    Parameters
+    ----------
+    payload : dict
+        Loaded feature-cache mapping whose metadata is checked.
+    final_cache_path : Path
+        Destination for the final computed feature cache.
+    image_paths : Sequence[Path]
+        Paths to the images included in the operation.
+    annotation_dir : str | Path
+        Directory containing image or cell annotation files.
+    normalize_imgs : bool
+        Whether to normalize image intensities during dataset loading.
+    use_reviewed_regions : bool
+        Whether to restrict image statistics to saved reviewed annotation regions.
+    require_annotations : bool
+        Whether images without complete region annotations are excluded.
+    hist_bins : int
+        Number of histogram bins.
+    percentiles : Sequence[float]
+        Percentiles to include as image-distribution features.
+    sample_pixels : Optional[int]
+        Maximum number of pixels sampled per image for feature estimation.
+    normalized_hist_range : Tuple[float, float]
+        Value interval used for histograms of normalized image channels.
+
+    Returns
+    -------
+    bool
+        Boolean result of the stated condition check.
     """
     if not isinstance(payload, dict):
         return False
@@ -247,6 +315,14 @@ def _feature_cache_is_current(
 
 
 def _unet_mean_std_numpy() -> tuple[np.ndarray, np.ndarray]:
+    """
+    Return UNet RGB normalization constants as broadcastable channel-last arrays.
+
+    Returns
+    -------
+    tuple[numpy.ndarray, numpy.ndarray]
+        Tuple containing ``mean``, ``std``, in that order.
+    """
     mean = np.asarray(UNET_MEAN, dtype=np.float32).reshape(1, 1, 3)
     std = np.asarray(UNET_STD, dtype=np.float32).reshape(1, 1, 3)
     return mean, std
@@ -256,6 +332,21 @@ def normalize_rgb_image_with_unet(img_hwc: np.ndarray) -> np.ndarray:
     """
     img_hwc : float32 RGB image in [0,1], shape [H,W,3]
     returns : normalized float32 RGB image, shape [H,W,3]
+
+    Parameters
+    ----------
+    img_hwc : numpy.ndarray
+        RGB image with shape (height, width, 3).
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``(img_hwc - mean) / std``.
+
+    Raises
+    ------
+    ValueError
+        Expected HWC RGB image, got {img_hwc.shape}
     """
     img_hwc = np.asarray(img_hwc, dtype=np.float32)
     if img_hwc.ndim != 3 or img_hwc.shape[2] != 3:
@@ -269,6 +360,21 @@ def denormalize_rgb_image_with_unet(img_hwc: np.ndarray) -> np.ndarray:
     """
     img_hwc : normalized float32 RGB image, shape [H,W,3]
     returns : denormalized float32 RGB image, shape [H,W,3]
+
+    Parameters
+    ----------
+    img_hwc : numpy.ndarray
+        RGB image with shape (height, width, 3).
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``img_hwc * std + mean``.
+
+    Raises
+    ------
+    ValueError
+        Expected HWC RGB image, got {img_hwc.shape}
     """
     img_hwc = np.asarray(img_hwc, dtype=np.float32)
     if img_hwc.ndim != 3 or img_hwc.shape[2] != 3:
@@ -280,6 +386,25 @@ def denormalize_rgb_image_with_unet(img_hwc: np.ndarray) -> np.ndarray:
 
 def denormalize_dataset_imgs(imgs_norm: torch.Tensor) -> torch.Tensor:
     """
+    Undo dataset channel normalization to recover image-space intensities.
+
+    Parameters
+    ----------
+    imgs_norm : torch.Tensor
+        Normalized image tensors used for feature extraction or display.
+
+    Returns
+    -------
+    torch.Tensor
+        Denormalized image tensor with the same rank as the input.
+
+    Raises
+    ------
+    ValueError
+        Expected [3,H,W] or [T,3,H,W], got shape {tuple(imgs_norm.shape)}
+
+    Notes
+    -----
     imgs_norm: [T,3,H,W] or [3,H,W], already normalized with UNET_MEAN/UNET_STD
     returns : same rank in image space
     """
@@ -315,6 +440,22 @@ def denormalize_dataset_imgs(imgs_norm: torch.Tensor) -> torch.Tensor:
 def _ensure_tile_tensor(imgs_t: torch.Tensor) -> torch.Tensor:
     """
     Ensure tensor shape is [T,3,H,W].
+
+    Parameters
+    ----------
+    imgs_t : torch.Tensor
+        Image tensor batch produced by the dataset loader.
+
+    Returns
+    -------
+    torch.Tensor
+        Depending on the input and branch, returns ``imgs_t.unsqueeze(0)``, ``imgs_t``.
+
+    Raises
+    ------
+    ValueError
+        Expected [3,H,W], got {tuple(imgs_t.shape)} Expected [T,3,H,W], got
+        {tuple(imgs_t.shape)} Expected [3,H,W] or [T,3,H,W], got {tuple(imgs_t.shape)}
     """
     if imgs_t.ndim == 3:
         if imgs_t.shape[0] != 3:
@@ -330,6 +471,19 @@ def _ensure_tile_tensor(imgs_t: torch.Tensor) -> torch.Tensor:
 
 
 def _safe_skew(x: np.ndarray) -> float:
+    """
+    Compute the third standardized moment, using zero for empty or constant values.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        Numeric observations used to compute the statistic or transformation.
+
+    Returns
+    -------
+    float
+        The third standardized moment, using zero for empty or constant values.
+    """
     x = np.asarray(x, dtype=np.float32)
     if x.size == 0:
         return 0.0
@@ -347,6 +501,22 @@ def _build_feature_names(
     hist_bins: int = 16,
     percentiles: Sequence[float] = (1, 5, 25, 50, 75, 95, 99),
 ) -> list[str]:
+    """
+    Build the ordered names for image statistics, percentiles, and histograms.
+
+    Parameters
+    ----------
+    hist_bins : int
+        Number of histogram bins. Default is ``16``.
+    percentiles : Sequence[float]
+        Percentiles to include as image-distribution features. Default is ``(1, 5, 25, 50,
+        75, 95, 99)``.
+
+    Returns
+    -------
+    list[str]
+        The ordered names for image statistics, percentiles, and histograms.
+    """
     feature_names: list[str] = []
 
     for ch in ("r", "g", "b"):
@@ -403,6 +573,50 @@ def extract_feature_row_from_rgb_image(
     """
     Extract one feature row from one RGB image.
 
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input image array.
+    hist_bins : int
+        Number of histogram bins. Default is ``16``.
+    percentiles : Sequence[float]
+        Percentiles to include as image-distribution features. Default is ``(1, 5, 25, 50,
+        75, 95, 99)``.
+    sample_pixels : Optional[int]
+        Maximum number of pixels sampled per image for feature estimation. Default is
+        ``300000``.
+    rng : Optional[np.random.Generator]
+        NumPy random-number generator used for sampling. Default is ``None``.
+    phone_label : str
+        Display label assigned to the phone-image group. Default is ``'synthetic'``.
+    path_label : str
+        Label derived from the image source path. Default is ``'<in_memory>'``.
+    hist_range : Optional[Tuple[float, float]]
+        Lower and upper intensity bounds used for the histogram. Default is ``(0.0, 1.0)``.
+    dark_threshold : Optional[float]
+        Intensity cutoff used to measure the fraction of dark pixels. Default is ``0.02``.
+    bright_threshold : Optional[float]
+        Intensity cutoff used to measure the fraction of bright pixels. Default is ``0.98``.
+    clip_input : bool
+        Whether input intensities are clipped before feature extraction. Default is
+        ``True``.
+    pixel_mask : Optional[numpy.ndarray]
+        Optional spatial mask selecting pixels for image statistics. Default is ``None``.
+
+    Returns
+    -------
+    dict
+        One feature row from one RGB image.
+
+    Raises
+    ------
+    ValueError
+        img must be 3D, got shape {img.shape} Expected RGB image, got shape {img.shape}
+        pixel_mask shape {mask.shape} does not match image shape {(H, W)}. pixel_mask
+        contains no True pixels.
+
+    Notes
+    -----
     Supports:
       - HWC [H,W,3]
       - CHW [3,H,W]
@@ -431,6 +645,24 @@ def extract_feature_row_from_rgb_image(
     percentiles = tuple(float(p) for p in percentiles)
 
     def _norm_hist(x: np.ndarray, bins: int, value_range: Tuple[float, float]) -> np.ndarray:
+        """
+        Compute a histogram normalized by its total count with a small denominator guard.
+
+        Parameters
+        ----------
+        x : numpy.ndarray
+            Numeric observations used to compute the statistic or transformation.
+        bins : int
+            Number of histogram bins, or explicit bin edges where supported by the called
+            histogram routine.
+        value_range : Tuple[float, float]
+            Lower and upper histogram bounds.
+
+        Returns
+        -------
+        numpy.ndarray
+            A histogram normalized by its total count with a small denominator guard.
+        """
         h, _ = np.histogram(x, bins=bins, range=value_range)
         h = h.astype(np.float32)
         h /= (h.sum() + 1e-8)
@@ -538,6 +770,23 @@ def get_feature_cache_path(
     cache_path: str | Path = STYLE_CACHE_PATH,
     normalized: bool = False,
 ) -> Path:
+    """
+    Add a normalized suffix to the feature cache path when requested.
+
+    Parameters
+    ----------
+    cache_path : str | Path
+        Path to the persisted intermediate-data cache. Default is ``STYLE_CACHE_PATH``.
+    normalized : bool
+        Whether to use features computed from UNet-normalized images. Default is ``False``.
+
+    Returns
+    -------
+    Path
+        Depending on the input and branch, returns
+        ``cache_path.with_name(f'{cache_path.stem}_normalized{cache_path.suffix}')``,
+        ``cache_path``.
+    """
     cache_path = Path(cache_path)
     if normalized:
         return cache_path.with_name(f"{cache_path.stem}_normalized{cache_path.suffix}")
@@ -564,6 +813,59 @@ def extract_real_image_feature_table(
     """
     Build and cache feature statistics from real images.
 
+    Parameters
+    ----------
+    folders : Optional[Sequence[str | Path]]
+        Folders containing source images. Default is ``None``.
+    exts : Sequence[str]
+        Image filename extensions included in collection. Default is ``('.png', '.jpg',
+        '.jpeg', '.tif', '.tiff')``.
+    hist_bins : int
+        Number of histogram bins. Default is ``16``.
+    percentiles : Sequence[float]
+        Percentiles to include as image-distribution features. Default is ``(1, 5, 25, 50,
+        75, 95, 99)``.
+    sample_pixels : Optional[int]
+        Maximum number of pixels sampled per image for feature estimation. Default is
+        ``300000``.
+    recursive : bool
+        Whether to include images in nested folders. Default is ``True``.
+    ignore_failures : bool
+        Whether to skip an image that raises an error and continue processing. Default is
+        ``True``.
+    cache_path : str | Path
+        Path to the persisted intermediate-data cache. Default is ``STYLE_CACHE_PATH``.
+    force_recompute : bool
+        If True, regenerate data even when the cache exists. Default is ``False``.
+    normalize_imgs : bool
+        Whether to normalize image intensities during dataset loading. Default is ``False``.
+    normalized_hist_range : Tuple[float, float]
+        Value interval used for histograms of normalized image channels. Default is ``(-3.0,
+        3.0)``.
+    rng_seed : int
+        Seed used to initialize random sampling. Default is ``0``.
+    annotation_dir : str | Path
+        Directory containing image or cell annotation files. Default is
+        ``DEFAULT_ANNOTATION_DIR``.
+    use_reviewed_regions : bool
+        Whether to restrict image statistics to saved reviewed annotation regions. Default
+        is ``True``.
+    require_annotations : bool
+        Whether images without complete region annotations are excluded. Default is
+        ``True``.
+
+    Returns
+    -------
+    tuple
+        And cache feature statistics from real images.
+
+    Raises
+    ------
+    RuntimeError
+        No usable real images were processed.
+
+    Notes
+    -----
     The default input folders are exactly ``EXT_IMAGES_FOLDERS`` imported from
     ``histogram_capture``.
 
@@ -855,6 +1157,44 @@ def rebuild_style_feature_cache(
 ):
     """
     Force-rebuild one of the two caches.
+
+    Parameters
+    ----------
+    folders : Optional[Sequence[str | Path]]
+        Folders containing source images. Default is ``None``.
+    cache_path : str | Path
+        Path to the persisted intermediate-data cache. Default is ``STYLE_CACHE_PATH``.
+    exts : Sequence[str]
+        Image filename extensions included in collection. Default is ``('.png', '.jpg',
+        '.jpeg', '.tif', '.tiff')``.
+    hist_bins : int
+        Number of histogram bins. Default is ``16``.
+    percentiles : Sequence[float]
+        Percentiles to include as image-distribution features. Default is ``(1, 5, 25, 50,
+        75, 95, 99)``.
+    sample_pixels : Optional[int]
+        Maximum number of pixels sampled per image for feature estimation. Default is
+        ``300000``.
+    normalize_imgs : bool
+        Whether to normalize image intensities during dataset loading. Default is ``False``.
+    normalized_hist_range : Tuple[float, float]
+        Value interval used for histograms of normalized image channels. Default is ``(-3.0,
+        3.0)``.
+    annotation_dir : str | Path
+        Directory containing image or cell annotation files. Default is
+        ``DEFAULT_ANNOTATION_DIR``.
+    use_reviewed_regions : bool
+        Whether to restrict image statistics to saved reviewed annotation regions. Default
+        is ``True``.
+    require_annotations : bool
+        Whether images without complete region annotations are excluded. Default is
+        ``True``.
+
+    Returns
+    -------
+    tuple
+        Feature rows, the ordered feature-name list, and the numeric feature matrix X, in
+        that order, after rebuilding the cache.
     """
     return extract_real_image_feature_table(
         folders=folders,
@@ -879,6 +1219,32 @@ def summarize_features_by_phone(
     q_lo: float = 0.10,
     q_hi: float = 0.90,
 ):
+    """
+    Summarize feature means, spreads, medians, and quantile bands by device.
+
+    Parameters
+    ----------
+    rows : list[dict]
+        Rows included in the generated table or file.
+    feature_names : Sequence[str]
+        Feature column names in their intended order.
+    phones : Sequence[str]
+        Device labels included in the summary. Default is ``DEFAULT_DEVICE_ORDER``.
+    q_lo : float
+        Lower quantile defining the summary interval. Default is ``0.1``.
+    q_hi : float
+        Upper quantile defining the summary interval. Default is ``0.9``.
+
+    Returns
+    -------
+    object
+        Feature means, spreads, medians, and quantile bands by device.
+
+    Raises
+    ------
+    ValueError
+        rows is empty Need 0 <= q_lo < q_hi <= 1
+    """
     if not rows:
         raise ValueError("rows is empty")
 
@@ -928,6 +1294,30 @@ def compare_real_and_synthetic_feature_tables(
     q_lo: float = 0.10,
     q_hi: float = 0.90,
 ) -> list[dict]:
+    """
+    Compare real and simulated feature distributions within each device group.
+
+    Parameters
+    ----------
+    real_rows : Sequence[dict]
+        Feature records derived from acquired images.
+    synthetic_rows : Sequence[dict]
+        Feature records derived from simulated images.
+    feature_names : Sequence[str]
+        Feature column names in their intended order.
+    group_names : Sequence[str]
+        Device or acquisition-group names used to align the comparisons. Default is
+        ``DEFAULT_DEVICE_ORDER``.
+    q_lo : float
+        Lower quantile defining the summary interval. Default is ``0.1``.
+    q_hi : float
+        Upper quantile defining the summary interval. Default is ``0.9``.
+
+    Returns
+    -------
+    list[dict]
+        Computed value of ``out``.
+    """
     out = []
 
     for group in group_names:
@@ -1007,6 +1397,19 @@ def compare_real_and_synthetic_feature_tables(
 
 
 def _extract_style_name_from_extras(extras: Dict[str, Any]) -> str:
+    """
+    Find the camera-style label in dataset metadata, falling back to synthetic.
+
+    Parameters
+    ----------
+    extras : Dict[str, Any]
+        Additional dataset metadata containing camera-style information.
+
+    Returns
+    -------
+    str
+        The camera-style label in dataset metadata, falling back to synthetic.
+    """
     if not isinstance(extras, dict):
         return "synthetic"
 
@@ -1051,6 +1454,44 @@ def collect_synthetic_feature_rows_from_dataset(
     """
     Collect feature rows from a dataset whose stored images are already normalized.
 
+    Parameters
+    ----------
+    dataset : object
+        Image dataset supplying synthetic samples, targets, and metadata.
+    n_synthetic : int
+        Number of synthetic images or samples requested for the comparison. Default is
+        ``100``.
+    hist_bins : int
+        Number of histogram bins. Default is ``16``.
+    percentiles : Sequence[float]
+        Percentiles to include as image-distribution features. Default is ``(1, 5, 25, 50,
+        75, 95, 99)``.
+    sample_pixels : Optional[int]
+        Maximum number of pixels sampled per image for feature estimation. Default is
+        ``300000``.
+    rng_seed : int
+        Seed used to initialize random sampling. Default is ``0``.
+    use_first_tile_only : bool
+        Whether to use only the first tile from each source image. Default is ``True``.
+    normalized_features : bool
+        Feature matrix after the normalization used for the comparison. Default is
+        ``False``.
+    normalized_hist_range : Tuple[float, float]
+        Value interval used for histograms of normalized image channels. Default is ``(-3.0,
+        3.0)``.
+
+    Returns
+    -------
+    list[dict]
+        Feature rows from a dataset whose stored images are already normalized.
+
+    Raises
+    ------
+    ValueError
+        Expected dataset[i] to return at least (imgs_t, target, extras)
+
+    Notes
+    -----
     normalized_features=False:
         dataset images are first denormalized, then image-space features are extracted.
 
@@ -1131,6 +1572,19 @@ def collect_synthetic_feature_rows_from_dataset(
 
 
 def _ordered_labels_present(labels: Sequence[str]) -> list[str]:
+    """
+    Order present device labels by the configured order, then append sorted extras.
+
+    Parameters
+    ----------
+    labels : Sequence[str]
+        Device-group labels whose display order is determined.
+
+    Returns
+    -------
+    list[str]
+        Computed value of ``ordered + extras``.
+    """
     labels_set = {str(x).lower() for x in labels}
 
     ordered = [x for x in DEFAULT_DEVICE_ORDER if x in labels_set]
@@ -1145,6 +1599,25 @@ def _select_pca_features(
     feature_subset: Optional[Sequence[str]] = None,
     drop_size_features: bool = True,
 ) -> list[str]:
+    """
+    Select an explicit feature subset or apply size and normalization exclusions.
+
+    Parameters
+    ----------
+    feature_names : Sequence[str]
+        Feature column names in their intended order.
+    normalized : bool
+        Whether to use features computed from UNet-normalized images.
+    feature_subset : Optional[Sequence[str]]
+        Explicit feature names to retain; None uses the default feature selection.
+    drop_size_features : bool
+        Whether to exclude image-size features from the comparison. Default is ``True``.
+
+    Returns
+    -------
+    list[str]
+        An explicit feature subset or apply size and normalization exclusions.
+    """
     if feature_subset is not None:
         return list(feature_subset)
 
@@ -1187,6 +1660,78 @@ def plot_real_and_synthetic_pca(
     """
     PCA comparison between real images and dataset images.
 
+    Parameters
+    ----------
+    dataset : object
+        Image dataset supplying synthetic samples, targets, and metadata.
+    folders : Optional[Sequence[str | Path]]
+        Folders containing source images. Default is ``None``.
+    cache_path : str | Path
+        Path to the persisted intermediate-data cache. Default is ``STYLE_CACHE_PATH``.
+    n_synthetic : int
+        Number of synthetic images or samples requested for the comparison. Default is
+        ``100``.
+    normalized : bool
+        Whether to use features computed from UNet-normalized images. Default is ``False``.
+    feature_subset : Optional[Sequence[str]]
+        Explicit feature names to retain; None uses the default feature selection.
+    drop_size_features : bool
+        Whether to exclude image-size features from the comparison. Default is ``True``.
+    hist_bins : int
+        Number of histogram bins. Default is ``16``.
+    percentiles : Sequence[float]
+        Percentiles to include as image-distribution features. Default is ``(1, 5, 25, 50,
+        75, 95, 99)``.
+    sample_pixels : Optional[int]
+        Maximum number of pixels sampled per image for feature estimation. Default is
+        ``300000``.
+    rng_seed : int
+        Seed used to initialize random sampling. Default is ``0``.
+    alpha_real : float
+        Opacity of plotted points representing real images. Default is ``0.45``.
+    alpha_syn : float
+        Opacity of plotted points representing synthetic images. Default is ``0.8``.
+    s_real : float
+        Scatter-marker area for real-image points. Default is ``16``.
+    s_syn : float
+        Scatter-marker area for synthetic-image points. Default is ``36``.
+    use_first_tile_only : bool
+        Whether to use only the first tile from each source image. Default is ``True``.
+    normalized_hist_range : Tuple[float, float]
+        Value interval used for histograms of normalized image channels. Default is ``(-3.0,
+        3.0)``.
+    title : Optional[str]
+        Text displayed as the plot or panel title. Default is ``None``.
+    force_recompute_real_cache : bool
+        Whether to rebuild the real-image feature cache despite an existing cache file.
+        Default is ``False``.
+    annotation_dir : str | Path
+        Directory containing image or cell annotation files. Default is
+        ``DEFAULT_ANNOTATION_DIR``.
+    use_reviewed_regions : bool
+        Whether to restrict image statistics to saved reviewed annotation regions. Default
+        is ``True``.
+    require_annotations : bool
+        Whether images without complete region annotations are excluded. Default is
+        ``True``.
+
+    Returns
+    -------
+    dict
+        Result mapping with keys ``cache_path_used``, ``normalized``, ``real_rows``,
+        ``synthetic_rows``, ``feature_names_used``, ``X_scaled``, ``X_pca``, ``labels``,
+        ``is_real``, ``scaler``, ``pca``.
+
+    Raises
+    ------
+    ValueError
+        No features selected for PCA Need at least two images for PCA. Need at least two
+        finite features for PCA.
+    RuntimeError
+        No synthetic rows were collected from the dataset.
+
+    Notes
+    -----
     normalized=False:
         real cache is image-space cache.
         dataset images are denormalized before feature extraction.
@@ -1366,6 +1911,62 @@ def plot_real_image_pca(
 ):
     """
     Plot PCA for external/real images only.
+
+    Parameters
+    ----------
+    folders : Optional[Sequence[str | Path]]
+        Folders containing source images. Default is ``None``.
+    cache_path : str | Path
+        Path to the persisted intermediate-data cache. Default is ``STYLE_CACHE_PATH``.
+    normalized : bool
+        Whether to use features computed from UNet-normalized images. Default is ``False``.
+    feature_subset : Optional[Sequence[str]]
+        Explicit feature names to retain; None uses the default feature selection.
+    drop_size_features : bool
+        Whether to exclude image-size features from the comparison. Default is ``True``.
+    hist_bins : int
+        Number of histogram bins. Default is ``16``.
+    percentiles : Sequence[float]
+        Percentiles to include as image-distribution features. Default is ``(1, 5, 25, 50,
+        75, 95, 99)``.
+    sample_pixels : Optional[int]
+        Maximum number of pixels sampled per image for feature estimation. Default is
+        ``300000``.
+    rng_seed : int
+        Seed used to initialize random sampling. Default is ``0``.
+    normalized_hist_range : Tuple[float, float]
+        Value interval used for histograms of normalized image channels. Default is ``(-3.0,
+        3.0)``.
+    force_recompute_real_cache : bool
+        Whether to rebuild the real-image feature cache despite an existing cache file.
+        Default is ``False``.
+    annotation_dir : str | Path
+        Directory containing image or cell annotation files. Default is
+        ``DEFAULT_ANNOTATION_DIR``.
+    use_reviewed_regions : bool
+        Whether to restrict image statistics to saved reviewed annotation regions. Default
+        is ``True``.
+    require_annotations : bool
+        Whether images without complete region annotations are excluded. Default is
+        ``True``.
+    title : Optional[str]
+        Text displayed as the plot or panel title. Default is ``None``.
+    point_size : float
+        Scatter-marker area used for the plotted observations. Default is ``28``.
+    alpha : float
+        Opacity used to render the plotted observations. Default is ``0.75``.
+
+    Returns
+    -------
+    dict
+        Result mapping with keys ``cache_path_used``, ``normalized``, ``real_rows``,
+        ``feature_names_used``, ``X_scaled``, ``X_pca``, ``labels``, ``scaler``, ``pca``.
+
+    Raises
+    ------
+    ValueError
+        No features selected for PCA Need at least two real images for PCA. Need at least
+        two finite features for PCA.
     """
     real_rows, feature_names, _ = extract_real_image_feature_table(
         folders=folders,

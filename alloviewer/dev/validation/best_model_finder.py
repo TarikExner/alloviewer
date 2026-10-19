@@ -61,14 +61,53 @@ _EPOCH_RE = re.compile(r"(?:^|[_-])epoch[_-]?(\d+)(?:\D|$)", re.IGNORECASE)
 # -------------------------------------------------------------------------
 
 def _decode_json_maybe(x: Any) -> Dict[str, Any]:
+    """
+    Decode metadata through the shared validation helper.
+
+    Parameters
+    ----------
+    x : Any
+        Value or serialized metadata to convert into JSON-compatible Python data.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Computed value of ``val_utils.decode_json_maybe(x)``.
+    """
     return val_utils.decode_json_maybe(x)
 
 
 def _load_human_roi_counts(csv_dir: str) -> pd.DataFrame:
+    """
+    Load per-image human ROI counts using the shared validation helper.
+
+    Parameters
+    ----------
+    csv_dir : str
+        Directory containing human-annotation count CSVs.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Per-image human ROI counts using the shared validation helper.
+    """
     return val_utils.load_human_roi_counts(csv_dir)
 
 
 def _count_positive_labels(labels: np.ndarray) -> int:
+    """
+    Count unique positive instance labels with a shared-helper fallback.
+
+    Parameters
+    ----------
+    labels : numpy.ndarray
+        Integer instance-label image; zero denotes background.
+
+    Returns
+    -------
+    int
+        Unique positive instance labels with a shared-helper fallback.
+    """
     fn = getattr(val_utils, "count_positive_labels", None)
     if fn is None:
         fn = getattr(val_utils, "_count_positive_labels", None)
@@ -78,6 +117,25 @@ def _count_positive_labels(labels: np.ndarray) -> int:
 
 
 def _extract_image_identity(meta: Dict[str, Any]) -> Tuple[str, str]:
+    """
+    Read folder and image name through the supported validation helper.
+
+    Parameters
+    ----------
+    meta : Dict[str, Any]
+        Image or tile metadata containing source identity, scene settings, and spatial
+        transforms.
+
+    Returns
+    -------
+    Tuple[str, str]
+        Tuple containing ``str(folder)``, ``str(image_name)``, in that order.
+
+    Raises
+    ------
+    AttributeError
+        .utils must define extract_image_identity or _extract_image_identity.
+    """
     fn = getattr(val_utils, "extract_image_identity", None)
     if fn is None:
         fn = getattr(val_utils, "_extract_image_identity", None)
@@ -94,6 +152,29 @@ def _extract_full_hw(
     tile_metas: Sequence[Dict[str, Any]],
     tile_hw: Tuple[int, int],
 ) -> Tuple[int, int]:
+    """
+    Read full-image height and width through the supported metadata helper.
+
+    Parameters
+    ----------
+    meta : Dict[str, Any]
+        Image or tile metadata containing source identity, scene settings, and spatial
+        transforms.
+    tile_metas : Sequence[Dict[str, Any]]
+        Metadata for each tile, including its position in the full image.
+    tile_hw : Tuple[int, int]
+        Tile height and width in pixels.
+
+    Returns
+    -------
+    Tuple[int, int]
+        Tuple containing ``int(full_hw[0])``, ``int(full_hw[1])``, in that order.
+
+    Raises
+    ------
+    AttributeError
+        .utils must define extract_full_hw or _extract_full_hw.
+    """
     fn = getattr(val_utils, "extract_full_hw", None)
     if fn is None:
         fn = getattr(val_utils, "_extract_full_hw", None)
@@ -108,6 +189,28 @@ def _stitch_prob_tiles(
     tile_metas: Sequence[Dict[str, Any]],
     full_hw: Tuple[int, int],
 ) -> np.ndarray:
+    """
+    Combine tiled probability predictions using the shared stitching helper.
+
+    Parameters
+    ----------
+    prob_tiles : numpy.ndarray
+        Per-tile probability maps to reconstruct into a full image.
+    tile_metas : Sequence[Dict[str, Any]]
+        Metadata for each tile, including its position in the full image.
+    full_hw : Tuple[int, int]
+        Full-image height and width in pixels.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``fn(prob_tiles, tile_metas, full_hw)``.
+
+    Raises
+    ------
+    AttributeError
+        .utils must define stitch_prob_tiles.
+    """
     fn = getattr(val_utils, "stitch_prob_tiles", None)
     if fn is None:
         raise AttributeError(".utils must define stitch_prob_tiles.")
@@ -115,6 +218,20 @@ def _stitch_prob_tiles(
 
 
 def _as_numpy_prediction(x: Any) -> np.ndarray:
+    """
+    Convert model predictions to NumPy arrays with a shared-helper fallback.
+
+    Parameters
+    ----------
+    x : Any
+        Input array or tensor to convert, resize, normalize, or smooth as described above.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``np.asarray(fn(x))``,
+        ``x.detach().float().cpu().numpy()``, ``np.asarray(x)``.
+    """
     fn = getattr(val_utils, "as_numpy_prediction", None)
     if fn is None:
         fn = getattr(val_utils, "_as_numpy_prediction", None)
@@ -132,7 +249,19 @@ def _as_numpy_prediction(x: Any) -> np.ndarray:
 # -------------------------------------------------------------------------
 
 def parse_epoch_from_model_file(path: str) -> Optional[int]:
-    """Return epoch number parsed from a checkpoint filename."""
+    """
+    Return epoch number parsed from a checkpoint filename.
+
+    Parameters
+    ----------
+    path : str
+        Filesystem path of the file or directory processed by this helper.
+
+    Returns
+    -------
+    Optional[int]
+        Epoch number parsed from a checkpoint filename.
+    """
     name = os.path.basename(path)
     m = _EPOCH_RE.search(name)
     if m is None:
@@ -148,6 +277,21 @@ def detect_dataset_mode_from_model_file(
     """
     Return dataset mode detected from a checkpoint filename.
 
+    Parameters
+    ----------
+    path : str
+        Filesystem path of the file or directory processed by this helper.
+    known_dataset_modes : Sequence[str]
+        Recognized dataset-mode labels searched in model metadata or filenames. Default is
+        ``KNOWN_DATASET_MODES``.
+
+    Returns
+    -------
+    Optional[str]
+        Dataset mode detected from a checkpoint filename.
+
+    Notes
+    -----
     The function uses substring matching against known dataset mode names.
     This is intentional because checkpoint filenames already encode modes such as
     'crop_well_resize', 'pad_resize', or 'tiles'.
@@ -164,12 +308,37 @@ def detect_dataset_mode_from_model_file(
 
 
 def epoch_model_pattern(unet_mode: str) -> str:
-    """Checkpoint pattern for one model size."""
+    """
+    Checkpoint pattern for one model size.
+
+    Parameters
+    ----------
+    unet_mode : str
+        UNet model size selected by the pipeline.
+
+    Returns
+    -------
+    str
+        Computed value of ``f'{unet_mode}_*_epoch_*.pth'``.
+    """
     return f"{unet_mode}_*_epoch_*.pth"
 
 
 def _sort_model_paths_by_epoch(paths: Sequence[str]) -> List[str]:
-    """Sort checkpoint paths by parsed epoch, then filename."""
+    """
+    Sort checkpoint paths by parsed epoch, then filename.
+
+    Parameters
+    ----------
+    paths : Sequence[str]
+        File or directory paths to include in the operation.
+
+    Returns
+    -------
+    list of str
+        Checkpoint paths sorted by parsed epoch and then basename; paths without an epoch
+        sort after recognized epochs.
+    """
     return sorted(
         [str(p) for p in paths],
         key=lambda p: (
@@ -192,13 +361,29 @@ def filter_model_paths_by_dataset_mode(
 
     Parameters
     ----------
-    model_paths:
+    model_paths : Sequence[str]
         Checkpoint paths.
-    dataset_mode:
+    dataset_mode : Optional[str]
         Dataset mode to keep. Defaults to 'tiles'.
         Pass None to keep all dataset modes.
-    known_dataset_modes:
-        Dataset mode names expected in checkpoint filenames.
+    known_dataset_modes : Sequence[str]
+        Dataset mode names expected in checkpoint filenames. Default is
+        ``KNOWN_DATASET_MODES``.
+
+    Returns
+    -------
+    List[str]
+        Depending on the input and branch, returns
+        ``_sort_model_paths_by_epoch(model_paths)``, ``out``.
+
+    Raises
+    ------
+    ValueError
+        Unknown dataset_mode={dataset_mode}. Expected one of {list(known_dataset_modes)} or
+        None.
+    FileNotFoundError
+        No checkpoint files remained after dataset-mode filtering.
+        dataset_mode={dataset_mode}
     """
     if dataset_mode is None:
         return _sort_model_paths_by_epoch(model_paths)
@@ -243,15 +428,26 @@ def filter_model_paths_by_epoch(
 
     Parameters
     ----------
-    model_paths:
+    model_paths : Sequence[str]
         Checkpoint paths.
-    include_epochs:
+    include_epochs : Optional[Sequence[int]]
         Optional explicit set/list of epochs to keep, e.g. [5, 10, 15, 20, 25, 30, 35, 40].
-        If provided, only these epochs are kept.
-    min_epoch:
-        Optional lower epoch bound, inclusive.
-    max_epoch:
-        Optional upper epoch bound, inclusive.
+        If provided, only these epochs are kept. Default is ``None``.
+    min_epoch : Optional[int]
+        Optional lower epoch bound, inclusive. Default is ``None``.
+    max_epoch : Optional[int]
+        Optional upper epoch bound, inclusive. Default is ``None``.
+
+    Returns
+    -------
+    List[str]
+        Computed value of ``out``.
+
+    Raises
+    ------
+    FileNotFoundError
+        No checkpoint files remained after epoch filtering. include_epochs={include_epochs},
+        min_epoch={min_epoch}, max_epoch={max_epoch}
     """
     include_set = None
     if include_epochs is not None:
@@ -299,6 +495,36 @@ def find_epoch_model_files(
     """
     Find saved epoch checkpoints for one UNet size and dataset mode.
 
+    Parameters
+    ----------
+    model_dir : str
+        Directory containing model checkpoint files.
+    unet_mode : UNetMode
+        UNet model size selected by the pipeline. Default is ``DEFAULT_UNET_MODE``.
+    dataset_mode : Optional[DatasetMode]
+        Dataset sampling mode used to select the corresponding training or validation data.
+        Default is ``DEFAULT_DATASET_MODE``.
+    model_pattern : Optional[str]
+        Filename pattern used to collect model checkpoints. Default is ``None``.
+    include_epochs : Optional[Sequence[int]]
+        Optional explicit set of checkpoint epochs to retain. Default is ``None``.
+    min_epoch : Optional[int]
+        Minimum checkpoint epoch to include. Default is ``None``.
+    max_epoch : Optional[int]
+        Maximum checkpoint epoch to include. Default is ``None``.
+
+    Returns
+    -------
+    List[str]
+        Saved epoch checkpoints for one UNet size and dataset mode.
+
+    Raises
+    ------
+    FileNotFoundError
+        No epoch model files matching pattern '{pattern}' were found in {model_dir}.
+
+    Notes
+    -----
     By default this searches only files such as:
       small_*_epoch_0050.pth
 
@@ -340,6 +566,21 @@ def _first_existing_column(
     columns: Sequence[str],
     candidates: Sequence[str],
 ) -> Optional[str]:
+    """
+    Select the first available candidate column, then try case-insensitive matching.
+
+    Parameters
+    ----------
+    columns : Sequence[str]
+        Optional one-based plate columns to include.
+    candidates : Sequence[str]
+        Candidate names examined in priority order.
+
+    Returns
+    -------
+    Optional[str]
+        The first available candidate column, then try case-insensitive matching.
+    """
     col_set = set(columns)
     for c in candidates:
         if c in col_set:
@@ -366,6 +607,41 @@ def load_imagej_coordinate_points(
     """
     Load ImageJ-derived coordinate detections from ./human_annotations/results.csv.
 
+    Parameters
+    ----------
+    csv_dir : str
+        Directory containing human-annotation count CSVs.
+    csv_filename : str
+        Filename of the coordinate-annotation CSV within the supplied folder. Default is
+        ``DEFAULT_IMAGEJ_POINTS_CSV_FILE``.
+    folder_col : str
+        Column containing the source folder identifier. Default is ``'Folder'``.
+    image_col : Optional[str]
+        Column containing the image filename or identifier. Default is
+        ``DEFAULT_IMAGEJ_FILE_COL``.
+    x_col : Optional[str]
+        DataFrame column plotted on the horizontal axis. Default is
+        ``DEFAULT_IMAGEJ_X_COL``.
+    y_col : Optional[str]
+        DataFrame column plotted on the vertical axis. Default is ``DEFAULT_IMAGEJ_Y_COL``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ImageJ-derived coordinate detections from ./human_annotations/results.csv.
+
+    Raises
+    ------
+    FileNotFoundError
+        ImageJ coordinate CSV not found: {csv_path}
+    ValueError
+        ImageJ coordinate CSV is missing folder column {folder_col}. Available columns:
+        {list(df.columns)} Could not infer image-name column in ImageJ coordinate CSV.
+        Available columns: {list(df.columns)} Could not infer ImageJ coordinate columns.
+        Missing: {missing}. Available columns: {list(df.columns)}
+
+    Notes
+    -----
     Expected columns in the current file:
         Folder
         file_name
@@ -446,7 +722,19 @@ def load_imagej_coordinate_points(
 
 
 def make_imagej_points_lookup(points_df: pd.DataFrame) -> Dict[Tuple[str, str], pd.DataFrame]:
-    """Map (Folder, image_name) to the corresponding ImageJ point dataframe."""
+    """
+    Map (Folder, image_name) to the corresponding ImageJ point dataframe.
+
+    Parameters
+    ----------
+    points_df : pandas.DataFrame
+        Dataframe containing manual point annotations and source image identifiers.
+
+    Returns
+    -------
+    Dict[Tuple[str, str], pandas.DataFrame]
+        Computed value of ``lookup``.
+    """
     lookup: Dict[Tuple[str, str], pd.DataFrame] = {}
     for key, grp in points_df.groupby(["Folder", "image_name"], dropna=False):
         folder, image_name = key
@@ -464,7 +752,23 @@ def _segmenter_cfg_for_model(
     unet_mode: UNetMode,
     base_cfg: Optional[SegmenterConfig],
 ) -> SegmenterConfig:
-    """Copy/create a SegmenterConfig and point it to one checkpoint."""
+    """
+    Copy/create a SegmenterConfig and point it to one checkpoint.
+
+    Parameters
+    ----------
+    model_path : str
+        Path to the model checkpoint loaded for evaluation.
+    unet_mode : UNetMode
+        UNet model size selected by the pipeline.
+    base_cfg : Optional[SegmenterConfig]
+        Base segmenter configuration copied before setting the model path.
+
+    Returns
+    -------
+    SegmenterConfig
+        Computed value of ``cfg``.
+    """
     if base_cfg is None:
         cfg = SegmenterConfig(
             unet_mode=unet_mode,
@@ -492,6 +796,36 @@ def segment_one_h5_entry_with_labels(
     """
     Segment one tiled H5 entry and return full-image instance labels.
 
+    Parameters
+    ----------
+    segmenter : SegmenterUNet
+        Callable UNet instance segmenter used to process the image.
+    imgs_tiles : numpy.ndarray
+        Image tensor containing the tiles of one image or batch.
+    meta : Dict[str, Any]
+        Image or tile metadata containing source identity, scene settings, and spatial
+        transforms.
+    update_cell_mask : bool
+        Whether instance segmentation replaces the cell-foreground probability mask with the
+        final instance foreground. Default is ``False``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``Folder``, ``image_name``, ``instance_labels``,
+        ``unet_roi_count``.
+
+    Raises
+    ------
+    ValueError
+        Expected imgs_tiles with shape [n_tiles, 3, tile_h, tile_w], got {imgs_tiles.shape}.
+        Metadata must contain a non-empty list under key 'tiles'. Expected at least 4
+        probability channels: cell, bound, center, energy. Got shape {probs_full.shape}.
+    RuntimeError
+        Segmenter has no instance segmenter. Set cfg.compute_instances=True.
+
+    Notes
+    -----
     This mirrors the count-only segmentation path, but keeps instance_labels so
     ImageJ coordinate hits can be evaluated.
     """
@@ -550,6 +884,27 @@ def segment_one_h5_entry_with_labels(
 
 
 def _round_coordinate(value: float, mode: CoordinateRounding) -> int:
+    """
+    Convert a coordinate to an integer using round, floor, or ceil.
+
+    Parameters
+    ----------
+    value : float
+        Input value to validate, convert, or format as specified by this helper.
+    mode : CoordinateRounding
+        Coordinate rounding rule: round, floor, or ceil.
+
+    Returns
+    -------
+    int
+        Depending on the input and branch, returns ``int(np.rint(value))``,
+        ``int(np.floor(value))``, ``int(np.ceil(value))``.
+
+    Raises
+    ------
+    ValueError
+        Unknown coordinate rounding mode: {mode}
+    """
     if mode == "round":
         return int(np.rint(value))
     if mode == "floor":
@@ -560,6 +915,21 @@ def _round_coordinate(value: float, mode: CoordinateRounding) -> int:
 
 
 def _safe_div(num: float, den: float) -> float:
+    """
+    Divide two values, returning NaN for a zero or nonfinite denominator.
+
+    Parameters
+    ----------
+    num : float
+        Numerator of the ratio.
+    den : float
+        Denominator of the ratio; invalid or zero values use the function's fallback.
+
+    Returns
+    -------
+    float
+        Depending on the input and branch, returns ``float('nan')``, ``float(num / den)``.
+    """
     if den == 0 or not np.isfinite(den):
         return float("nan")
     return float(num / den)
@@ -576,6 +946,32 @@ def _find_instance_at_point(
     """
     Find the predicted instance label at or near an ImageJ coordinate.
 
+    Parameters
+    ----------
+    labels : numpy.ndarray
+        Integer instance-label image; zero denotes background.
+    x : float
+        Horizontal column coordinate in pixels.
+    y : float
+        Vertical row coordinate in pixels.
+    radius_px : int
+        Search radius around an annotation point, in pixels. Default is ``0``.
+    coordinate_rounding : CoordinateRounding
+        Rule used to convert point coordinates to integer pixel indices. Default is
+        ``'round'``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        The predicted instance label at or near an ImageJ coordinate.
+
+    Raises
+    ------
+    ValueError
+        Expected 2D instance labels, got shape {labels.shape}.
+
+    Notes
+    -----
     Coordinates use image convention:
         x = column
         y = row
@@ -675,7 +1071,43 @@ def match_imagej_points_to_labels(
     point_match_radius_px: int = 3,
     coordinate_rounding: CoordinateRounding = "round",
 ) -> pd.DataFrame:
-    """Return one row per ImageJ coordinate with the matched predicted instance id."""
+    """
+    Return one row per ImageJ coordinate with the matched predicted instance id.
+
+    Parameters
+    ----------
+    labels : numpy.ndarray
+        Integer instance-label image; zero denotes background.
+    points_df : pandas.DataFrame
+        Dataframe containing manual point annotations and source image identifiers.
+    folder : str
+        Folder path or dataset folder label associated with the image.
+    image_name : str
+        Filename or image identifier used for lookup or output naming.
+    image_index : int
+        Index of the image record within its dataset.
+    unet_mode : str
+        UNet model size selected by the pipeline.
+    dataset_mode : Optional[str]
+        Dataset sampling mode used to select the corresponding training or validation data.
+    epoch : int
+        Current training epoch number.
+    model_file : str
+        Model checkpoint filename.
+    model_path : str
+        Path to the model checkpoint loaded for evaluation.
+    point_match_radius_px : int
+        Maximum distance in pixels for matching an annotated point to a predicted instance.
+        Default is ``3``.
+    coordinate_rounding : CoordinateRounding
+        Rule used to convert point coordinates to integer pixel indices. Default is
+        ``'round'``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per ImageJ coordinate with the matched predicted instance id.
+    """
     rows: List[Dict[str, Any]] = []
 
     for _, point in points_df.iterrows():
@@ -721,6 +1153,20 @@ def summarize_imagej_matches_for_image(
     """
     Summarize ImageJ-coordinate-to-instance matching for one image.
 
+    Parameters
+    ----------
+    labels : numpy.ndarray
+        Integer instance-label image; zero denotes background.
+    point_matches : pandas.DataFrame
+        Rows describing annotation-to-instance matches for one image.
+
+    Returns
+    -------
+    Dict[str, Any]
+        ImageJ-coordinate-to-instance matching for one image.
+
+    Notes
+    -----
     The output keeps object-level counts to derive precision, recall, F1/Dice,
     and Jaccard later.
 
@@ -808,7 +1254,55 @@ def run_one_model_on_h5(
     desc: Optional[str] = None,
     return_point_matches: bool = False,
 ) -> Any:
-    """Run one checkpoint on all entries in the human-count H5 file."""
+    """
+    Run one checkpoint on all entries in the human-count H5 file.
+
+    Parameters
+    ----------
+    h5_path : str
+        Path to the simulated-image HDF5 dataset.
+    model_path : str
+        Path to the model checkpoint loaded for evaluation.
+    unet_mode : UNetMode
+        UNet model size selected by the pipeline. Default is ``DEFAULT_UNET_MODE``.
+    dataset_mode : Optional[str]
+        Dataset sampling mode used to select the corresponding training or validation data.
+        Default is ``None``.
+    segmenter_cfg : Optional[SegmenterConfig]
+        Configuration used to construct the instance segmenter. Default is ``None``.
+    imagej_points_lookup : Optional[Dict[Tuple[str, str], pandas.DataFrame]]
+        Mapping from source folder and image name to ImageJ annotation points. Default is
+        ``None``.
+    point_match_radius_px : int
+        Maximum distance in pixels for matching an annotated point to a predicted instance.
+        Default is ``3``.
+    coordinate_rounding : CoordinateRounding
+        Rule used to convert point coordinates to integer pixel indices. Default is
+        ``'round'``.
+    update_cell_mask : bool
+        Whether instance segmentation replaces the cell-foreground probability mask with the
+        final instance foreground. Default is ``False``.
+    desc : Optional[str]
+        Progress-bar description. Default is ``None``.
+    return_point_matches : bool
+        Whether to include the individual annotation-to-instance matches in the result.
+        Default is ``False``.
+
+    Returns
+    -------
+    Any
+        Depending on the input and branch, returns ``image_df``, ``(image_df,
+        point_match_df)``.
+
+    Raises
+    ------
+    FileNotFoundError
+        H5 file not found: {h5_path} Model file not found: {model_path}
+    ValueError
+        Could not parse epoch from model file: {model_path}
+    KeyError
+        H5 file must contain datasets '/imgs' and '/meta'.
+    """
     if not os.path.isfile(h5_path):
         raise FileNotFoundError(f"H5 file not found: {h5_path}")
     if not os.path.isfile(model_path):
@@ -940,6 +1434,24 @@ def run_one_model_on_h5(
 
 
 def _safe_corr(x: np.ndarray, y: np.ndarray, *, method: str = "pearson") -> float:
+    """
+    Compute Pearson or rank-based Spearman correlation when both vectors vary.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        First numeric vector aligned elementwise with the other vector.
+    y : numpy.ndarray
+        Second numeric vector aligned elementwise with the other vector.
+    method : str
+        Correlation method passed to pandas, such as pearson or spearman. Default is
+        ``'pearson'``.
+
+    Returns
+    -------
+    float
+        Pearson or rank-based Spearman correlation when both vectors vary.
+    """
     if x.size < 2 or y.size < 2:
         return float("nan")
     if np.nanstd(x) <= 1e-12 or np.nanstd(y) <= 1e-12:
@@ -956,7 +1468,19 @@ def _safe_corr(x: np.ndarray, y: np.ndarray, *, method: str = "pearson") -> floa
 def summarize_imagej_coordinate_agreement(
     per_image_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Summarize ImageJ-coordinate proxy metrics for each checkpoint."""
+    """
+    Summarize ImageJ-coordinate proxy metrics for each checkpoint.
+
+    Parameters
+    ----------
+    per_image_df : pandas.DataFrame
+        Dataframe containing one set of measurements per evaluated image.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ImageJ-coordinate proxy metrics for each checkpoint.
+    """
     required = {
         "unet_mode",
         "dataset_mode",
@@ -1033,7 +1557,28 @@ def summarize_count_errors(
     *,
     selection_metric: str = "mae",
 ) -> pd.DataFrame:
-    """Summarize manual-count agreement and ImageJ-coordinate proxy metrics."""
+    """
+    Summarize manual-count agreement and ImageJ-coordinate proxy metrics.
+
+    Parameters
+    ----------
+    per_image_df : pandas.DataFrame
+        Dataframe containing one set of measurements per evaluated image.
+    selection_metric : str
+        Metric used to rank model or method summaries. Default is ``'mae'``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Manual-count agreement and ImageJ-coordinate proxy metrics.
+
+    Raises
+    ------
+    ValueError
+        per_image_df is missing required columns: {sorted(missing)}
+        selection_metric='{selection_metric}' is not present in summary columns:
+        {list(summary.columns)}
+    """
     required = {
         "unet_mode",
         "dataset_mode",
@@ -1176,6 +1721,70 @@ def compare_human_counts_for_epoch_models(
     """
     Run saved epoch checkpoints for one UNet size and dataset mode on the human-count image set.
 
+    Parameters
+    ----------
+    h5_path : str
+        Path to the simulated-image HDF5 dataset. Default is ``DEFAULT_H5_PATH``.
+    human_csv_dir : str
+        Directory containing the human-annotation CSV files. Default is
+        ``DEFAULT_HUMAN_CSV_DIR``.
+    model_dir : str
+        Directory containing model checkpoint files. Default is ``DEFAULT_MODEL_DIR``.
+    output_dir : str
+        Directory in which generated outputs are stored. Default is ``DEFAULT_OUTPUT_DIR``.
+    unet_mode : UNetMode
+        UNet model size selected by the pipeline. Default is ``DEFAULT_UNET_MODE``.
+    dataset_mode : Optional[DatasetMode]
+        Dataset sampling mode used to select the corresponding training or validation data.
+        Default is ``DEFAULT_DATASET_MODE``.
+    model_pattern : Optional[str]
+        Filename pattern used to collect model checkpoints. Default is ``None``.
+    model_paths : Optional[Sequence[str]]
+        Paths to model checkpoints considered for evaluation. Default is ``None``.
+    include_epochs : Optional[Sequence[int]]
+        Optional explicit set of checkpoint epochs to retain. Default is
+        ``DEFAULT_INCLUDE_EPOCHS``.
+    min_epoch : Optional[int]
+        Minimum checkpoint epoch to include. Default is ``DEFAULT_MIN_EPOCH``.
+    max_epoch : Optional[int]
+        Maximum checkpoint epoch to include. Default is ``DEFAULT_MAX_EPOCH``.
+    segmenter_cfg : Optional[SegmenterConfig]
+        Configuration used to construct the instance segmenter. Default is ``None``.
+    selection_metric : str
+        Metric used to rank model or method summaries. Default is ``'mae'``.
+    update_cell_mask : bool
+        Whether instance segmentation replaces the cell-foreground probability mask with the
+        final instance foreground. Default is ``False``.
+    imagej_points_csv_filename : str
+        Filename of the ImageJ coordinate CSV inside the annotation directory. Default is
+        ``DEFAULT_IMAGEJ_POINTS_CSV_FILE``.
+    imagej_folder_col : str
+        Column identifying the folder in the ImageJ annotation table. Default is
+        ``'Folder'``.
+    imagej_image_col : Optional[str]
+        Column identifying the image in the ImageJ annotation table. Default is
+        ``DEFAULT_IMAGEJ_FILE_COL``.
+    imagej_x_col : Optional[str]
+        Column containing ImageJ horizontal point coordinates. Default is
+        ``DEFAULT_IMAGEJ_X_COL``.
+    imagej_y_col : Optional[str]
+        Column containing ImageJ vertical point coordinates. Default is
+        ``DEFAULT_IMAGEJ_Y_COL``.
+    point_match_radius_px : int
+        Maximum distance in pixels for matching an annotated point to a predicted instance.
+        Default is ``3``.
+    coordinate_rounding : CoordinateRounding
+        Rule used to convert point coordinates to integer pixel indices. Default is
+        ``'round'``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``per_image``, ``imagej_point_matches``,
+        ``imagej_summary``, ``summary``, ``selected``, ``paths``.
+
+    Notes
+    -----
     Writes directly to output_dir:
       - per_image_counts_by_epoch.csv
       - per_imagej_point_matches_by_epoch.csv
@@ -1408,6 +2017,36 @@ def run_epoch_model_human_count_comparison(
     """
     Convenience runner.
 
+    Parameters
+    ----------
+    unet_mode : UNetMode
+        UNet model size selected by the pipeline. Default is ``DEFAULT_UNET_MODE``.
+    dataset_mode : Optional[DatasetMode]
+        Dataset sampling mode used to select the corresponding training or validation data.
+        Default is ``DEFAULT_DATASET_MODE``.
+    include_epochs : Optional[Sequence[int]]
+        Optional explicit set of checkpoint epochs to retain. Default is
+        ``DEFAULT_INCLUDE_EPOCHS``.
+    min_epoch : Optional[int]
+        Minimum checkpoint epoch to include. Default is ``DEFAULT_MIN_EPOCH``.
+    max_epoch : Optional[int]
+        Maximum checkpoint epoch to include. Default is ``DEFAULT_MAX_EPOCH``.
+    selection_metric : str
+        Metric used to rank model or method summaries. Default is ``'mae'``.
+    point_match_radius_px : int
+        Maximum distance in pixels for matching an annotated point to a predicted instance.
+        Default is ``3``.
+    coordinate_rounding : CoordinateRounding
+        Rule used to convert point coordinates to integer pixel indices. Default is
+        ``'round'``.
+
+    Returns
+    -------
+    object
+        Computed value of ``out``.
+
+    Notes
+    -----
     Defaults:
       unet_mode='small'
       dataset_mode='tiles'

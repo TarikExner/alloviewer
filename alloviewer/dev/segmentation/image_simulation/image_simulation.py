@@ -177,34 +177,277 @@ def simulate_image(
     return_aux_targets=False
 ):
     """
-    Returns:
-      image: (H, W, 3) float32 in [0,1]
-      meta: dict with centers, labels, well_center, radius_px, final_sigmas
-      targets, if return_targets:
-        instance_labels: int32 (H,W), all true inside-well cell instances
-        cell_mask: float32 (H,W), all true inside-well cells
-        boundary: float32 (H,W), soft inside/outside boundary ring around instance_labels
+    Render a synthetic RGB well image and cell geometry with optional training targets.
 
-        optional debug/audit entries:
-          instance_labels_sigma_filtered: int32 (H,W), sigma-thresholded subset
-          cell_mask_sigma_filtered: float32 (H,W), sigma-thresholded subset
-          final_sigmas: float32 (n_cells,), sampled render sigmas
-          focus_keep_ids: int32 array, labels kept by sigma threshold
+    Parameters
+    ----------
+    H : int
+        Image height in pixels. Default is ``512``.
+    W : int
+        Image width in pixels. Default is ``512``.
+    well_radius_frac : float
+        Well radius as a fraction of the shorter image dimension. Default is ``0.42``.
+    well_center_jitter : float
+        Standard deviation of center displacement as a fraction of the shorter image
+        dimension. Default is ``0.02``.
+    background_level : float
+        Base intensity of the simulated well background before color and illumination
+        effects. Default is ``0.08``.
+    edge_boost : float
+        Amplitude added to the radial background illumination profile. Default is ``0.25``.
+    radial_gamma : float
+        Exponent of normalized radius in the background illumination profile. Default is
+        ``1.2``.
+    vignette_strength : float
+        Coefficient of quadratic darkening away from the image center. Default is ``0.2``.
+    background_texture_enable : bool
+        Whether to multiply the well interior by a random texture field. Default is
+        ``True``.
+    background_texture_sigma_fine : float
+        Fine texture Gaussian width in full-resolution pixels. Default is ``0.7``.
+    background_texture_sigma_coarse : float
+        Coarse texture Gaussian width in full-resolution pixels. Default is ``4.0``.
+    background_texture_fine_weight : float
+        Relative weight of the fine texture component. Default is ``0.85``.
+    background_texture_coarse_weight : float
+        Relative weight of the coarse texture component. Default is ``0.15``.
+    background_texture_strength : float
+        Amplitude of the standardized multiplicative texture variation. Default is ``0.05``.
+    background_texture_clip : tuple
+        Lower and upper clipping bounds for the texture multiplier. Default is ``(0.1,
+        1.6)``.
+    background_texture_downsample : int
+        Factor used to reduce the random texture grid before interpolation. Default is
+        ``4``.
+    background_texture_fullres_fine_strength : float
+        Additional full-resolution noise amplitude when texture generation uses a reduced
+        grid. Default is ``0.005``.
+    n_cells : int
+        Number of true cell instances requested for the simulated image. Default is ``150``.
+    cell_diameter_bounds_by_short_side : tuple
+        Calibration rows of (short image side, minimum diameter, maximum diameter), in
+        pixels; None selects the legacy diameter model. Default is ``((1620.0, 5.0, 8.0),
+        (3024.0, 11.0, 14.0))``.
+    cell_diameter_center_margin_frac : float
+        Fraction of the calibrated diameter interval excluded when sampling its central
+        diameter. Default is ``0.2``.
+    cell_diameter_sigma_frac : float
+        Diameter spread as a fraction of the calibrated diameter interval. Default is
+        ``0.18``.
+    cell_diameter_min_sigma_px : float
+        Minimum standard deviation of sampled cell diameters, in pixels. Default is
+        ``0.25``.
+    cell_diameter : int
+        Reference cell diameter in pixels for the legacy size model. Default is ``20``.
+    cell_diameter_reference_short_side : float
+        Reference short image dimension in pixels for legacy diameter scaling. Default is
+        ``1620.0``.
+    cell_diameter_size_exponent : float
+        Power applied to the image-size ratio in the legacy diameter model. Default is
+        ``0.75``.
+    cell_diameter_scale_clip : tuple
+        Optional lower and upper bounds on the legacy diameter scale factor. Default is
+        ``(0.85, 2.0)``.
+    large_cell_frac : float
+        Fraction of cells assigned to the larger-cell component, clipped to [0, 1]. Default
+        is ``0.0``.
+    large_cell_diameter_factor : float
+        Multiplier for large-cell diameters in the legacy model only. Default is ``1.5``.
+    cell_ellipse_enable : bool
+        Whether cells use elliptical cores instead of circular cores. Default is ``True``.
+    cell_axis_jitter : float
+        Half-width of the uniform axis-ratio interval around one. Default is ``0.2``.
+    cell_random_rotation : bool
+        Whether to sample each ellipse orientation over a full rotation. Default is
+        ``True``.
+    cell_intensity_range : tuple
+        Lower and upper bounds for the per-cell brightness multiplier. Default is ``(0.7,
+        1.05)``.
+    frac_positive : float
+        Simulated fraction of positive cells, on a 0-1 scale. Default is ``0.5``.
+    color_jitter : float
+        Standard deviation of multiplicative Gaussian jitter in each RGB component. Default
+        is ``0.07``.
+    sigma_in : tuple
+        Lower and upper bounds of the in-focus cell rendering sigma, in pixels. Default is
+        ``(0.5, 1.0)``.
+    sigma_out : tuple
+        Lower and upper bounds of the out-of-focus cell rendering sigma, in pixels. Default
+        is ``(1.6, 3.2)``.
+    focus_frac_in : float
+        Probability of selecting the in-focus rendering-sigma range. Default is ``1.0``.
+    in_focus_sigma_thresh : float or None
+        Optional maximum sigma for the additional focus-filtered audit masks; standard
+        targets retain all cells. Default is ``None``.
+    boundary_width : int
+        Accepted by the interface but not read by this implementation. Default is ``1``.
+    rim_bias : float
+        Probability of sampling a center in the outer annulus of the well. Default is
+        ``0.85``.
+    rim_band : float
+        Width of the outer annulus as a fraction of well radius. Default is ``0.12``.
+    edge_clamp : float
+        Strength of shifting annular cell centers toward the well wall. Default is ``0.65``.
+    cluster_enable : bool
+        Whether to assign and place groups of neighboring cells. Default is ``True``.
+    clustered_cell_frac : float
+        Fraction of cells selected for cluster assignment. Default is ``0.35``.
+    cluster_size_range : tuple
+        Inclusive lower and upper bounds on cells per cluster. Default is ``(2, 8)``.
+    cluster_contact_factor_range : tuple
+        Range of center separation factors relative to the sum of cell radii for chain-like
+        clusters. Default is ``(0.95, 1.08)``.
+    cluster_core_min_sep_factor : float
+        Minimum separation factor relative to summed core radii during cluster placement.
+        Default is ``0.8``.
+    cluster_chain_probability : float
+        Probability of extending a cluster from its most recent member. Default is ``0.7``.
+    cluster_angle_jitter : float
+        Angular variation applied when extending a chain-like cluster, in radians. Default
+        is ``0.65``.
+    cluster_packed_probability : float
+        Base probability of using compact placement for a cell cluster. Default is ``0.55``.
+    cluster_packed_size_bias_range : tuple
+        Cluster-size interval over which the preference for compact placement increases.
+        Default is ``(3, 15)``.
+    cluster_packed_contact_factor_range : tuple
+        Range of radius-based center separation factors for compact clusters. Default is
+        ``(0.88, 1.02)``.
+    cluster_packed_candidate_count : int
+        Number of trial positions scored for each compact-cluster placement step. Default is
+        ``8``.
+    cluster_packed_contact_bonus : float
+        Weight favoring candidate positions that contact existing cluster members. Default
+        is ``1.5``.
+    cluster_packed_region_join_probability : float
+        Probability of seeding a compact cluster beside a previously placed compact region.
+        Default is ``0.3``.
+    cluster_packed_region_contact_factor_range : tuple
+        Range of separation factors used when joining an existing compact region. Default is
+        ``(0.95, 1.12)``.
+    cluster_seed_tries : int
+        Maximum attempts to place a cluster's initial center. Default is ``120``.
+    cluster_member_tries : int
+        Maximum placement attempts per additional cluster member. Default is ``24``.
+    cluster_pack_min_sep_factor : float
+        Radius-based minimum separation factor used for cells in the same cluster during
+        overlap resolution. Default is ``0.84``.
+    min_cell_sep_px : float or None
+        Optional fixed center separation in pixels; None uses pair-specific cell radii.
+        Default is ``None``.
+    rim_min_sep_px : int
+        Additional minimum center spacing used for cells near the well rim, in pixels.
+        Default is ``4``.
+    pack_iters : int
+        Maximum iterations of pairwise overlap resolution. Default is ``20``.
+    pack_strength : float
+        Fraction of a detected overlap applied as a center displacement per iteration.
+        Default is ``0.45``.
+    wall_margin_px : float
+        Margin between a cell's placement radius and the well wall, in pixels. Default is
+        ``2.0``.
+    side_bias_enable : bool
+        Whether angular sampling favors a selected side of the well. Default is ``False``.
+    side_bias_theta : float
+        Preferred angle for the side-biased distribution, in radians. Default is ``0.0``.
+    side_bias_strength : float
+        Maximum mixture weight for side-biased rather than uniform angular sampling. Default
+        is ``0.75``.
+    side_bias_kappa : float
+        Concentration parameter of the side-biased von Mises distribution. Default is
+        ``5.0``.
+    side_bias_inner_frac : float
+        Normalized well radius below which side bias is disabled. Default is ``0.55``.
+    wall_blur_sigma : float
+        Gaussian width of the visible well-wall glow, in pixels. Default is ``12.0``.
+    ring_artifacts : int
+        Number of additional faint rings rendered around the well wall. Default is ``0``.
+    ring_sigma_range : tuple
+        Lower and upper Gaussian widths for ring artifacts, in pixels. Default is ``(6.0,
+        18.0)``.
+    ring_alpha_range : tuple
+        Lower and upper intensity amplitudes for ring artifacts. Default is ``(0.03,
+        0.12)``.
+    ghost_enable : bool
+        Whether to render blurred ghost cells outside the well without adding target
+        instances. Default is ``True``.
+    ghost_density : float
+        Ghost count relative to the number of true cells selected near the well rim. Default
+        is ``0.5``.
+    ghost_offset_px : float
+        Base outward displacement of ghost centers from the well wall, in pixels. Default is
+        ``10.0``.
+    ghost_offset_jitter : float
+        Random variation in ghost radial displacement, in pixels. Default is ``6.0``.
+    ghost_sigma : tuple
+        Lower and upper Gaussian widths of ghost rendering, in pixels. Default is ``(2.5,
+        6.0)``.
+    ghost_dilate : float
+        Scaling factor for the bounding radius of each ghost-rendering patch. Default is
+        ``1.0``.
+    ghost_intensity : tuple
+        Lower and upper ghost brightness multipliers. Default is ``(0.8, 1.4)``.
+    ghost_stretch : float
+        Major-to-minor axis ratio of elongated ghost patches. Default is ``3.0``.
+    ghost_trail : int
+        Number of offset patches used to render a ghost trail. Default is ``3``.
+    ghost_trail_decay : float
+        Multiplicative brightness decay between successive ghost-trail patches. Default is
+        ``0.6``.
+    dirt_density : float
+        Density controlling how many debris patches are generated in the well. Default is
+        ``0.0007``.
+    dirt_size : tuple
+        Lower and upper bounds controlling debris patch extent, in pixels. Default is ``(2,
+        4)``.
+    dirt_sigma : tuple
+        Lower and upper blur widths for debris patches, in pixels. Default is ``(1.2,
+        2.0)``.
+    dirt_alpha : tuple
+        Lower and upper intensity amplitudes for debris patches. Default is ``(0.01,
+        0.04)``.
+    reflect_enable : bool
+        Whether to add radial reflection artifacts outside the well. Default is ``True``.
+    reflect_n : int
+        Number of reflection patches around the well wall. Default is ``6``.
+    reflect_theta_sigma : float
+        Angular Gaussian width of each reflection, in radians. Default is ``0.1``.
+    reflect_radial_sigma : float
+        Radial Gaussian width of each reflection, in pixels. Default is ``8.0``.
+    reflect_offset_range : tuple
+        Range of outward radial reflection offsets from the wall, in pixels. Default is
+        ``(6.0, 24.0)``.
+    reflect_alpha_range : tuple
+        Lower and upper reflection intensity amplitudes. Default is ``(0.05, 0.2)``.
+    reflect_wobble : float
+        Amplitude of harmonic variation in the reflection shape. Default is ``0.35``.
+    reflect_harmonics : int
+        Number of harmonic terms used to vary reflection shape. Default is ``2``.
+    reflect_harmonic_decay : float
+        Amplitude decay between successive reflection harmonics. Default is ``0.55``.
+    seed : int or None
+        Random seed for reproducible sampling. Default is ``None``.
+    return_targets : bool
+        Whether to populate the third returned item with cell and instance targets; False
+        returns an empty dictionary in that position. Default is ``True``.
+    return_aux_targets : bool
+        Whether to add the boundary map and focus-filtered audit arrays when return_targets
+        is also True. Default is ``False``.
 
-    Notes:
-      - Visible cells are rendered from the final instance mask, not from an
-        independent Gaussian spot. This keeps the rendered cell body and label
-        geometry coupled.
-      - Core diameters are sampled from image-size-dependent measured bounds.
-        The old power-law scaling remains available only as a fallback.
-      - Clusters explicitly use lengthy or packed placement. Packed clusters
-        score a small local candidate set and may share a larger packed region.
-        Global overlap resolution still uses a KD-tree.
-      - The base render halo can be disabled; camera/acquisition halo may be added later.
-      - Boundary target settings are internal constants, not user parameters.
-      - focus_frac_in still affects sampled render sigmas, but the standard
-        training targets include all true inside-well cells. The sigma-filtered
-        outputs are debug/audit only.
+    Returns
+    -------
+    tuple
+        Always returns (image, meta, targets). The image is float32 with shape (H, W, 3) and
+        values clipped to [0, 1]. The metadata records scene geometry, cell labels,
+        diameters, clusters, sigmas, and sampled parameters. Targets is empty when
+        return_targets is False; otherwise it contains int32 instance_labels and float32
+        cell_mask arrays of shape (H, W). With return_aux_targets, targets also includes
+        boundary, instance_labels_sigma_filtered, cell_mask_sigma_filtered, final_sigmas,
+        and focus_keep_ids.
+
+    Notes
+    -----
+    Cell appearance is rendered from the final instance mask. Standard cell and instance targets retain all true inside-well cells regardless of focus; focus filtering affects only audit outputs. Boundary-target widths and sigma are internal constants. Ghosts, dirt, and reflections are image artifacts and do not create ground-truth cell instances.
     """
     rng = np.random.default_rng(seed)
     H = int(H)
@@ -213,6 +456,23 @@ def simulate_image(
 
     # ---------- fast blur helper (SciPy) ----------
     def blur(a, sigma):
+        """
+        Apply Gaussian smoothing to spatial axes while preserving color channels.
+
+        Parameters
+        ----------
+        a : object
+            Two-dimensional image or channel-last image array to smooth.
+        sigma : float
+            Standard deviation of the spatial Gaussian kernel, in pixels.
+
+        Returns
+        -------
+        object
+            Depending on the input and branch, returns ``a``, ``ndi.gaussian_filter(a,
+            sigma=float(sigma), mode='reflect')``, ``ndi.gaussian_filter(a, sigma=(float(sigma),
+            float(sigma), 0.0), mode='reflect')``.
+        """
         if sigma is None or sigma <= 0:
             return a
         if a.ndim == 2:
@@ -223,6 +483,19 @@ def simulate_image(
 
     # ---------- helpers ----------
     def jitter_color(base_rgb):
+        """
+        Randomly perturb RGB components and restore the original color-vector magnitude.
+
+        Parameters
+        ----------
+        base_rgb : numpy.ndarray
+            Base RGB vector before color jitter.
+
+        Returns
+        -------
+        object
+            Computed value of ``(c * scale).clip(0, 1)``.
+        """
         j = rng.normal(1.0, color_jitter, size=3).astype(np.float32)
         c = (base_rgb * j).clip(0, 1)
         scale = np.linalg.norm(base_rgb) / max(1e-6, np.linalg.norm(c))
@@ -439,6 +712,14 @@ def simulate_image(
     ).astype(np.float32)
 
     def sample_radius():
+        """
+        Sample a cell-center radius with the configured rim bias and edge clamp.
+
+        Returns
+        -------
+        object
+            Computed value of ``float(np.clip(r, 0.05 * R, 0.985 * R))``.
+        """
         a = (1.0 - rim_band) * R
         if rng.random() < rim_bias:
             r = np.sqrt(a * a + rng.random() * (R * R - a * a))
@@ -450,6 +731,20 @@ def simulate_image(
         return float(np.clip(r, 0.05 * R, 0.985 * R))
 
     def sample_theta(r):
+        """
+        Sample a cell-center angle with optional radius-dependent side bias.
+
+        Parameters
+        ----------
+        r : float
+            Radial distance of the sampled center from the well center, in pixels.
+
+        Returns
+        -------
+        object
+            Depending on the input and branch, returns ``rng.uniform(-np.pi, np.pi)``,
+            ``rng.vonmises(side_bias_theta, kappa)``.
+        """
         if not side_bias_enable:
             return rng.uniform(-np.pi, np.pi)
         f0 = float(np.clip(side_bias_inner_frac, 0.0, 0.99))
@@ -724,6 +1019,30 @@ def simulate_image(
 
     # ---------- elongated ghosts OUTSIDE the wall (not in masks) ----------
     def draw_elliptical_gaussian(dst, gy, gx, sig_minor, stretch, angle_rad, amp, col, ref_diameter):
+        """
+        Add a clipped elliptical Gaussian color patch to the destination image.
+
+        Parameters
+        ----------
+        dst : numpy.ndarray
+            Destination image modified in place.
+        gy : float
+            Vertical center coordinate of the Gaussian patch.
+        gx : float
+            Horizontal center coordinate of the Gaussian patch.
+        sig_minor : float
+            Gaussian width along the minor axis.
+        stretch : float
+            Major-to-minor axis scaling factor.
+        angle_rad : float
+            Rotation angle in radians.
+        amp : object
+            Intensity amplitude multiplied by the Gaussian color patch.
+        col : numpy.ndarray
+            RGB color vector used for the simulated patch.
+        ref_diameter : float
+            Reference cell diameter used to scale the patch.
+        """
         sig_x = sig_minor * stretch
         sig_y = sig_minor
         radius = int(np.ceil(ghost_dilate * (0.5 * float(ref_diameter) + 3 * max(sig_x, sig_y))))
@@ -773,6 +1092,20 @@ def simulate_image(
         ang = np.arctan2(yy - cy, xx - cx).astype(np.float32)
 
         def angle_wrap(a):
+            """
+            Wrap angles into the half-open interval from minus pi to pi.
+
+            Parameters
+            ----------
+            a : object
+                Angle or angle array to wrap, in radians.
+
+            Returns
+            -------
+            object
+                Computed value of ``((a + np.float32(np.pi)) % np.float32(2.0 * np.pi) -
+                np.float32(np.pi)).astype(np.float32)``.
+            """
             return ((a + np.float32(np.pi)) % np.float32(2.0 * np.pi) - np.float32(np.pi)).astype(np.float32)
 
         refl = np.zeros((H, W), dtype=np.float32)

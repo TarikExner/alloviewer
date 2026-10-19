@@ -54,7 +54,8 @@ def create_plate(
     image_order: List[str],
     image_paths: List[str],
 ) -> Plate:
-    """Create a plate object from images and a well layout.
+    """
+    Create a plate object from images and a well layout.
 
     Parameters
     ----------
@@ -96,7 +97,8 @@ def create_plate(
 
 
 def frac_pos_raw(wr: WellResult) -> float:
-    """Compute the raw positive ROI fraction in percent.
+    """
+    Compute the raw positive ROI fraction in percent.
 
     Parameters
     ----------
@@ -121,7 +123,8 @@ def frac_pos_raw(wr: WellResult) -> float:
 
 
 def convert_frac_pos_to_score(frac_pos: int) -> int:
-    """Convert a positive fraction to a discrete score.
+    """
+    Convert a positive fraction to a discrete score.
 
     Parameters
     ----------
@@ -146,7 +149,8 @@ def convert_frac_pos_to_score(frac_pos: int) -> int:
 
 
 def _safe_float(x: Any, default: float = np.nan) -> float:
-    """Convert a value to float with a fallback.
+    """
+    Convert a value to float with a fallback.
 
     Parameters
     ----------
@@ -169,7 +173,8 @@ def _safe_float(x: Any, default: float = np.nan) -> float:
 
 
 def _mean_or_nan(xs: List[float]) -> float:
-    """Return the mean of finite values or NaN.
+    """
+    Return the mean of finite values or NaN.
 
     Parameters
     ----------
@@ -186,7 +191,8 @@ def _mean_or_nan(xs: List[float]) -> float:
 
 
 def _median_or_nan(xs: List[float]) -> float:
-    """Return the median of finite values or NaN.
+    """
+    Return the median of finite values or NaN.
 
     Parameters
     ----------
@@ -203,7 +209,8 @@ def _median_or_nan(xs: List[float]) -> float:
 
 
 def _sd_or_nan(xs: List[float]) -> float:
-    """Return the sample standard deviation of finite values or NaN.
+    """
+    Return the sample standard deviation of finite values or NaN.
 
     Parameters
     ----------
@@ -221,7 +228,8 @@ def _sd_or_nan(xs: List[float]) -> float:
 
 
 def _range_or_nan(xs: List[float]) -> float:
-    """Return the range of finite values or NaN.
+    """
+    Return the range of finite values or NaN.
 
     Parameters
     ----------
@@ -239,7 +247,8 @@ def _range_or_nan(xs: List[float]) -> float:
 
 
 def _roi_label_counts(wr: WellResult) -> Dict[str, int]:
-    """Count positive, negative, and uncertain ROIs.
+    """
+    Count positive, negative, and uncertain ROIs.
 
     Parameters
     ----------
@@ -266,7 +275,8 @@ def _roi_label_counts(wr: WellResult) -> Dict[str, int]:
 
 
 def _uncertain_fraction(wr: WellResult) -> float:
-    """Compute the fraction of uncertain ROIs.
+    """
+    Compute the fraction of uncertain ROIs.
 
     Parameters
     ----------
@@ -293,7 +303,23 @@ def is_borderline_value(
     borderline_low: float,
     borderline_high: float,
 ) -> bool:
-    """Return whether a measured corrected fraction is in the review band."""
+    """
+    Return whether a measured corrected fraction is in the review band.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+    borderline_low : float
+        Lower bound of the borderline positive-percentage interval.
+    borderline_high : float
+        Upper bound of the borderline positive-percentage interval.
+
+    Returns
+    -------
+    bool
+        Whether a measured corrected fraction is in the review band.
+    """
     measured = _safe_float(value)
 
     return (
@@ -303,7 +329,22 @@ def is_borderline_value(
 
 
 def binary_call_from_value(value: Any, *, positive_cutoff: float) -> str:
-    """Classify a measured fraction by the positivity cutoff."""
+    """
+    Classify a measured fraction by the positivity cutoff.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+    positive_cutoff : float
+        Positive-percentage threshold used to assign a positive call.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``'not_available'``, ``'positive' if
+        measured >= float(positive_cutoff) else 'negative'``.
+    """
     measured = _safe_float(value)
 
     if np.isnan(measured):
@@ -320,8 +361,39 @@ def build_pra_result(
     effective_calls: Dict[str, str] | None = None,
     manual_override_wells: set[str] | None = None,
 ) -> Dict[str, Any]:
-    """Build a PRA assay result summary.
+    """
+    Build a PRA assay result summary.
 
+    Parameters
+    ----------
+    sample_ids : List[str]
+        Ordered identifiers of sample wells included in the aggregate result.
+    sample_corr : List[float]
+        Control-corrected positive percentages aligned with sample_ids.
+    positive_cutoff : float
+        Positive-percentage threshold used to assign a positive call.
+    config : Dict[str, Any]
+        Assay summary configuration containing positivity and borderline thresholds.
+    effective_calls : Dict[str, str] | None
+        Optional mapping of well IDs to explicit positive or negative calls. Default is
+        ``None``.
+    manual_override_wells : set[str] | None
+        Identifiers of wells whose positive or negative call was assigned manually. Default
+        is ``None``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``pra_percent``, ``positive_panel_wells``,
+        ``valid_panel_wells``, ``mean_corrected_frac_pos``, ``median_corrected_frac_pos``,
+        ``max_corrected_frac_pos``, ``n_weak_positive``, ``n_moderate_positive``,
+        ``n_strong_positive``, ``positive_wells``, ``effective_positive_wells``,
+        ``effective_negative_wells``, ``borderline_panel_wells``, ``borderline_wells``,
+        ``positive_borderline_wells``, ``negative_borderline_wells``,
+        ``manual_override_applied``, ``manual_override_count``, ``manual_override_wells``.
+
+    Notes
+    -----
     Positive/negative classification follows the configured positivity cutoff.
     The borderline band is retained as a separate measurement-derived flag so
     a well can be reported as, for example, "positive, borderline".
@@ -343,6 +415,22 @@ def build_pra_result(
     borderline_high = float(config["borderline_high"])
 
     def effective_call(well_id: str, value: float) -> str:
+        """
+        Resolve an explicit PRA well call or compare its value with the cutoff.
+
+        Parameters
+        ----------
+        well_id : str
+            Plate well identifier, such as ``A1``.
+        value : float
+            Input value to validate, convert, or format as specified by this helper.
+
+        Returns
+        -------
+        str
+            Depending on the input and branch, returns ``call``, ``binary_call_from_value(value,
+            positive_cutoff=positive_cutoff)``.
+        """
         call = normalized_calls.get(str(well_id).upper())
 
         if call in {"positive", "negative"}:
@@ -431,7 +519,25 @@ def automated_well_call(
     pra_positive_cutoff: float,
     config: Dict[str, Any],
 ) -> str:
-    """Return the binary automated call for one measured well."""
+    """
+    Return the binary automated call for one measured well.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+    assay_type : str
+        Assay selector used to choose PRA or crossmatch summary rules.
+    pra_positive_cutoff : float
+        Positive-percentage threshold applied to PRA sample wells.
+    config : Dict[str, Any]
+        Assay summary configuration containing positivity and borderline thresholds.
+
+    Returns
+    -------
+    str
+        The binary automated call for one measured well.
+    """
     positive_cutoff = (
         float(pra_positive_cutoff)
         if str(assay_type).lower() == "pra"
@@ -448,7 +554,26 @@ def _aggregate_effective_calls(
     fallback_value: float,
     positive_cutoff: float,
 ) -> str:
-    """Aggregate binary well calls without returning a review-only class."""
+    """
+    Aggregate binary well calls without returning a review-only class.
+
+    Parameters
+    ----------
+    calls : List[str]
+        Effective positive or negative calls to aggregate.
+    tie_break_calls : List[str] | None
+        Secondary call sequence consulted when the primary calls are tied.
+    fallback_value : float
+        Numeric value used to determine the call when no usable call sequence is available.
+    positive_cutoff : float
+        Positive-percentage threshold used to assign a positive call.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``'positive'``, ``'negative'``,
+        ``binary_call_from_value(fallback_value, positive_cutoff=positive_cutoff)``.
+    """
     positive_count = sum(call == "positive" for call in calls)
     negative_count = sum(call == "negative" for call in calls)
 
@@ -485,8 +610,45 @@ def build_crossmatch_result(
     effective_calls: Dict[str, str] | None = None,
     manual_override_wells: set[str] | None = None,
 ) -> Dict[str, Any]:
-    """Build a binary crossmatch result with separate borderline flags.
+    """
+    Build a binary crossmatch result with separate borderline flags.
 
+    Parameters
+    ----------
+    sample_ids : List[str]
+        Ordered identifiers of sample wells included in the aggregate result.
+    sample_raw : List[float]
+        Uncorrected sample positive percentages aligned with the sample wells.
+    sample_corr : List[float]
+        Control-corrected positive percentages aligned with sample_ids.
+    positive_cutoff : float
+        Positive-percentage threshold used to assign a positive call.
+    borderline_low : float
+        Lower bound of the borderline positive-percentage interval.
+    borderline_high : float
+        Upper bound of the borderline positive-percentage interval.
+    max_replicate_range : float
+        Largest acceptable range across control replicates in percentage points.
+    effective_calls : Dict[str, str] | None
+        Optional mapping of well IDs to explicit positive or negative calls. Default is
+        ``None``.
+    manual_override_wells : set[str] | None
+        Identifiers of wells whose positive or negative call was assigned manually. Default
+        is ``None``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``final_call``, ``final_borderline``,
+        ``final_call_source``, ``sample_corrected_frac_pos``, ``sample_raw_frac_pos``,
+        ``margin_from_cutoff``, ``replicate_sd``, ``replicate_range``,
+        ``replicate_discordant``, ``requires_review``, ``sample_wells``,
+        ``effective_positive_wells``, ``effective_negative_wells``, ``borderline_wells``,
+        ``effective_borderline_wells``, ``manual_override_applied``,
+        ``manual_override_count``, ``manual_override_wells``.
+
+    Notes
+    -----
     A user declaration replaces the automated call for that well. When at least
     one declaration is active, the final result is recalculated from all effective
     replicate calls. The majority is used; ties are resolved first by the manual
@@ -604,6 +766,19 @@ def build_crossmatch_result(
 
 
 def _well_column(well_id: str) -> int | None:
+    """
+    Read the trailing integer column from a well ID, or return None.
+
+    Parameters
+    ----------
+    well_id : str
+        Plate well identifier, such as ``A1``.
+
+    Returns
+    -------
+    int | None
+        The trailing integer column from a well ID, or return None.
+    """
     digits = ""
 
     for character in reversed(str(well_id)):
@@ -620,6 +795,25 @@ def _well_column(well_id: str) -> int | None:
 def _normalize_crossmatch_column_modes(
     column_modes: Dict[int, str] | None,
 ) -> Dict[int, str]:
+    """
+    Normalize and validate column numbers and crossmatch cell labels.
+
+    Parameters
+    ----------
+    column_modes : Dict[int, str] | None
+        Mapping from one-based column numbers to ``T``, ``B``, ``T/B``, or ``empty``.
+
+    Returns
+    -------
+    Dict[int, str]
+        Depending on the input and branch, returns ``{}``, ``normalized``.
+
+    Raises
+    ------
+    ValueError
+        Crossmatch column index must be between 1 and 10: {column} Unsupported crossmatch
+        cell mode for column {column}: {mode}
+    """
     if not column_modes:
         return {}
 
@@ -654,6 +848,32 @@ def _build_run_validity_summary(
     max_replicate_range: float,
     qc_warnings: List[str] | None = None,
 ) -> Dict[str, Any]:
+    """
+    Summarize raw control separation, replicate spread, and QC warnings.
+
+    Parameters
+    ----------
+    pc_ids : List[str]
+        Well IDs assigned to positive controls.
+    nc_ids : List[str]
+        Well IDs assigned to negative controls.
+    raw_frac : Callable[[str], float]
+        Callable returning a raw positive-cell percentage for a well ID.
+    min_dynamic_range : float
+        Minimum acceptable positive-minus-negative control separation in percentage points.
+    max_replicate_range : float
+        Largest acceptable range across control replicates in percentage points.
+    qc_warnings : List[str] | None
+        QC warning strings to include in the run summary. Default is ``None``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``status``, ``pc_mean_raw``, ``nc_mean_raw``,
+        ``dynamic_range``, ``pc_replicate_range``, ``nc_replicate_range``,
+        ``n_positive_controls``, ``n_negative_controls``, ``positive_control_wells``,
+        ``negative_control_wells``, ``control_warnings``.
+    """
     pc_raw = [raw_frac(well_id) for well_id in pc_ids]
     nc_raw = [raw_frac(well_id) for well_id in nc_ids]
     pc_mean = _mean_or_nan(pc_raw)
@@ -708,8 +928,38 @@ def build_cdc_summary(
     effective_calls: Dict[str, str] | None = None,
     manual_override_wells: set[str] | None = None,
 ) -> Dict[str, Any]:
-    """Build CDC run validity, assay-result, and QC summaries.
+    """
+    Build CDC run validity, assay-result, and QC summaries.
 
+    Parameters
+    ----------
+    per_well : Dict[str, WellResult]
+        Mapping of well IDs to ROI measurements and well results.
+    plate : Plate
+        Plate object containing well results and layout metadata.
+    config : Dict[str, Any]
+        Assay summary configuration containing positivity and borderline thresholds.
+    assay_type : str
+        Assay selector used to choose PRA or crossmatch summary rules. Default is ``'pra'``.
+    column_modes : Dict[int, str] | None
+        Mapping from one-based column numbers to ``T``, ``B``, ``T/B``, or ``empty``.
+        Default is ``None``.
+    effective_calls : Dict[str, str] | None
+        Optional mapping of well IDs to explicit positive or negative calls. Default is
+        ``None``.
+    manual_override_wells : set[str] | None
+        Identifiers of wells whose positive or negative call was assigned manually. Default
+        is ``None``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``assay_type``, ``run_validity``, ``assay_result``, ``qc``,
+        ``column_modes``, ``manual_override_applied``, ``manual_override_count``,
+        ``manual_override_wells``.
+
+    Notes
+    -----
     For crossmatch assays, ``column_modes`` groups sample wells into T-cell,
     B-cell, and combined T/B-cell result summaries while retaining the overall
     crossmatch result for compatibility and auditing.
@@ -727,6 +977,19 @@ def build_cdc_summary(
     sample_ids = [well.well_id for well in plate.get("sample")]
 
     def raw_frac(well_id: str) -> float:
+        """
+        Read a well's raw positive percentage from the enclosing result mapping.
+
+        Parameters
+        ----------
+        well_id : str
+            Plate well identifier, such as ``A1``.
+
+        Returns
+        -------
+        float
+            A well's raw positive percentage from the enclosing result mapping.
+        """
         return (
             frac_pos_raw(per_well[well_id])
             if well_id in per_well
@@ -734,6 +997,19 @@ def build_cdc_summary(
         )
 
     def corr_frac(well_id: str) -> float:
+        """
+        Read a well's corrected positive percentage from the enclosing result mapping.
+
+        Parameters
+        ----------
+        well_id : str
+            Plate well identifier, such as ``A1``.
+
+        Returns
+        -------
+        float
+            A well's corrected positive percentage from the enclosing result mapping.
+        """
         if well_id not in per_well:
             return float("nan")
 
@@ -889,7 +1165,8 @@ def build_cdc_summary(
 
 
 def _roi_label_to_rgb(label: Any) -> Tuple[int, int, int]:
-    """Map an ROI label to an RGB color.
+    """
+    Map an ROI label to an RGB color.
 
     Parameters
     ----------
@@ -914,7 +1191,8 @@ def _roi_label_to_rgb(label: Any) -> Tuple[int, int, int]:
 
 
 def _safe_int(value: Any) -> Optional[int]:
-    """Convert a value to int with a ``None`` fallback.
+    """
+    Convert a value to int with a ``None`` fallback.
 
     Parameters
     ----------
@@ -936,7 +1214,8 @@ def _safe_int(value: Any) -> Optional[int]:
 
 
 def _roi_instance_id(roi: Any, fallback_id: int) -> int:
-    """Return an instance ID from an ROI object or dictionary.
+    """
+    Return an instance ID from an ROI object or dictionary.
 
     Parameters
     ----------
@@ -980,7 +1259,8 @@ def save_segmented_preview(
     out_path: str | Path,
     max_size: int = 900,
 ) -> None:
-    """Save a color-coded segmentation preview with black ROI outlines.
+    """
+    Save a color-coded segmentation preview with black ROI outlines.
 
     Parameters
     ----------
@@ -1078,7 +1358,8 @@ def save_segmented_preview(
 
 
 def to_jsonable(obj: Any) -> Any:
-    """Convert common NumPy objects into JSON-compatible Python objects.
+    """
+    Convert common NumPy objects into JSON-compatible Python objects.
 
     Parameters
     ----------
@@ -1113,7 +1394,8 @@ def build_unet_by_mode(
     mode: str,
     builders: Dict[str, Callable[..., torch.nn.Module]],
 ) -> Callable[..., torch.nn.Module]:
-    """Return a UNet builder for a given model size.
+    """
+    Return a UNet builder for a given model size.
 
     Parameters
     ----------
@@ -1140,7 +1422,8 @@ def build_unet_by_mode(
 
 
 def to_chw_numpy(img: np.ndarray) -> np.ndarray:
-    """Convert an image to ``(3, H, W)`` float32 in ``[0, 1]``.
+    """
+    Convert an image to ``(3, H, W)`` float32 in ``[0, 1]``.
 
     Parameters
     ----------
@@ -1184,7 +1467,8 @@ def to_chw_numpy(img: np.ndarray) -> np.ndarray:
 
 
 def normalize_tensor(x: torch.Tensor) -> torch.Tensor:
-    """Normalize an image tensor with UNet training statistics.
+    """
+    Normalize an image tensor with UNet training statistics.
 
     Parameters
     ----------
@@ -1216,7 +1500,8 @@ def to_tensor_tiles(
     device: torch.device,
     normalize: bool = True,
 ) -> torch.Tensor:
-    """Convert tile arrays to a torch tensor.
+    """
+    Convert tile arrays to a torch tensor.
 
     Parameters
     ----------
@@ -1266,7 +1551,8 @@ def iter_sliding_windows(
     tile_size: int,
     overlap: int,
 ) -> Iterator[Tuple[int, int, int, int]]:
-    """Yield sliding-window coordinates for an image.
+    """
+    Yield sliding-window coordinates for an image.
 
     Parameters
     ----------
@@ -1314,7 +1600,8 @@ def tile_image_numpy(
     overlap: int,
     pad_value: float = 0.0,
 ) -> Tuple[np.ndarray, Tuple[int, int]]:
-    """Split a CHW image into fixed-size tiles.
+    """
+    Split a CHW image into fixed-size tiles.
 
     Parameters
     ----------
@@ -1371,7 +1658,8 @@ def reconstruct_from_tiles_probability(
     tile_size: int,
     overlap: int,
 ) -> np.ndarray:
-    """Reconstruct full probability maps by averaging overlapping tiles.
+    """
+    Reconstruct full probability maps by averaging overlapping tiles.
 
     Parameters
     ----------
@@ -1430,7 +1718,8 @@ def reconstruct_from_tiles_probability(
 
 
 def as_contiguous_f32(x: Optional[np.ndarray]) -> Optional[np.ndarray]:
-    """Convert an array to contiguous float32.
+    """
+    Convert an array to contiguous float32.
 
     Parameters
     ----------
@@ -1459,7 +1748,8 @@ def hysteresis_mask(
     min_hole_area: int,
     min_object_area: int,
 ) -> np.ndarray:
-    """Create a binary cell mask using two-threshold hysteresis.
+    """
+    Create a binary cell mask using two-threshold hysteresis.
 
     Parameters
     ----------
@@ -1520,7 +1810,8 @@ def hysteresis_mask(
 
 
 def smooth01(x: np.ndarray, sigma: float) -> np.ndarray:
-    """Smooth and clip a probability map.
+    """
+    Smooth and clip a probability map.
 
     Parameters
     ----------
@@ -1551,7 +1842,8 @@ def make_markers(
     center_min_distance: int,
     center_thr: float,
 ) -> np.ndarray:
-    """Create watershed markers from center probabilities or mask components.
+    """
+    Create watershed markers from center probabilities or mask components.
 
     Parameters
     ----------
@@ -1610,6 +1902,26 @@ def add_roi_borders(
     """
     Add a two-pixel black border around every labeled ROI.
 
+    Parameters
+    ----------
+    preview : numpy.ndarray
+        Image array on which ROI borders are drawn for display.
+    instance_labels : numpy.ndarray
+        Two-dimensional integer instance map; zero denotes background.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``output``.
+
+    Raises
+    ------
+    ValueError
+        Instance labels and preview have different image dimensions. Unsupported preview
+        shape: {output.shape}
+
+    Notes
+    -----
     Boundaries between touching instances are also marked.
     """
     output = preview.copy()

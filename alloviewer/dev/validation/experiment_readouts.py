@@ -28,6 +28,19 @@ from ...image_analysis.utils import (
 
 
 def _layout_dict(layout: Any) -> Dict[str, str]:
+    """
+    Copy well roles from a layout object or mapping.
+
+    Parameters
+    ----------
+    layout : Any
+        Plate layout mapping well positions to their assay roles.
+
+    Returns
+    -------
+    Dict[str, str]
+        Depending on the input and branch, returns ``dict(layout.wells)``, ``dict(layout)``.
+    """
     if hasattr(layout, "wells"):
         return dict(layout.wells)
     return dict(layout)
@@ -38,6 +51,16 @@ def natural_image_sort_key(name: str):
     Sort filenames by embedded numbers.
     Example:
         Bild_2.tif < Bild_10.tif
+
+    Parameters
+    ----------
+    name : str
+        Name identifying the item being processed.
+
+    Returns
+    -------
+    object
+        Computed value of ``out``.
     """
     parts = re.split(r"(\d+)", str(name))
     out = []
@@ -53,6 +76,22 @@ def list_image_files(
     folder: Path,
     allowed_suffixes: Iterable[str] = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"),
 ) -> list[Path]:
+    """
+    List supported images in one folder using natural filename order.
+
+    Parameters
+    ----------
+    folder : Path
+        Folder path or dataset folder label associated with the image.
+    allowed_suffixes : Iterable[str]
+        Image filename suffixes accepted during collection. Default is ``('.png', '.jpg',
+        '.jpeg', '.tif', '.tiff', '.bmp')``.
+
+    Returns
+    -------
+    list[Path]
+        Computed value of ``sorted(files, key=lambda p: natural_image_sort_key(p.name))``.
+    """
     allowed_suffixes = {s.lower() for s in allowed_suffixes}
     files = [
         p for p in folder.iterdir()
@@ -65,11 +104,21 @@ def frac_pos_raw_from_labels(labels: Iterable[str]) -> float:
     """
     Proper fraction positive in percent (0-100).
 
-    Uses:
-        100 * n_pos / (n_pos + n_neg)
+    Parameters
+    ----------
+    labels : Iterable[str]
+        Per-cell classification labels used to count positive cells.
+
+    Returns
+    -------
+    float
+        Depending on the input and branch, returns ``np.nan``, ``100.0 * (n_pos / denom)``.
 
     Notes
     -----
+    Uses:
+        100 * n_pos / (n_pos + n_neg)
+
     - 'uncertain' labels are ignored
     - returns np.nan if there are no pos/neg labels
     """
@@ -100,6 +149,30 @@ def prepare_valid_folders_and_copy_images(
     """
     Keep only folders with exactly len(image_order) images.
 
+    Parameters
+    ----------
+    folders : Iterable[str]
+        Folders containing source images.
+    src_root : str | Path
+        Root of the source file tree. Default is ``'./ext_images'``.
+    dst_root : str | Path
+        Root of the destination file tree. Default is ``'./experiment_readout_images'``.
+    image_order : Sequence[str]
+        Well IDs in the same order as the uploaded image filenames. Default is
+        ``PRA_GENERIC_IMAGE_ORDER``.
+    allowed_suffixes : Iterable[str]
+        Image filename suffixes accepted during collection. Default is ``('.png', '.jpg',
+        '.jpeg', '.tif', '.tiff', '.bmp')``.
+    verbose : bool
+        Whether to emit progress information. Default is ``True``.
+
+    Returns
+    -------
+    tuple[dict[str, dict[str, str]], list[str]]
+        Tuple containing ``folder_to_image_map``, ``valid_folders``, in that order.
+
+    Notes
+    -----
     For each valid folder:
     - sort images in acquisition order
     - copy them to dst_root / folder if needed
@@ -169,6 +242,42 @@ def reshape_scores_with_images(
     Convert a wide manual score sheet to long format and add:
         Folder | well | image_name | role | Annotator | score
 
+    Parameters
+    ----------
+    csv_path_or_df : str or pandas.DataFrame
+        Input CSV path or an already loaded dataframe.
+    sep : str
+        Column separator used when reading the CSV input. Default is ``';'``.
+    src_root : str | Path
+        Root of the source file tree. Default is ``'./ext_images'``.
+    dst_root : str | Path
+        Root of the destination file tree. Default is ``'./experiment_readout_images'``.
+    layout : Any
+        Plate layout mapping well positions to their assay roles. Default is
+        ``PRA_GENERIC_LAYOUT``.
+    image_order : Sequence[str]
+        Well IDs in the same order as the uploaded image filenames. Default is
+        ``PRA_GENERIC_IMAGE_ORDER``.
+    allowed_suffixes : Iterable[str]
+        Image filename suffixes accepted during collection. Default is ``('.png', '.jpg',
+        '.jpeg', '.tif', '.tiff', '.bmp')``.
+    drop_missing_scores : bool
+        Whether to omit rows whose manual score is absent. Default is ``False``.
+    verbose : bool
+        Whether to emit progress information. Default is ``True``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Computed value of ``out.reset_index(drop=True)``.
+
+    Raises
+    ------
+    ValueError
+        Input must contain a 'Folder' column.
+
+    Notes
+    -----
     Also copies valid image folders to dst_root.
     """
     if isinstance(csv_path_or_df, pd.DataFrame):
@@ -251,6 +360,63 @@ def score_imagej_rois(
     """
     Score ImageJ ROI CSVs folder by folder.
 
+    Parameters
+    ----------
+    csv_path_or_df : str or pandas.DataFrame
+        Input CSV path or an already loaded dataframe.
+    sep : str
+        Column separator used when reading the CSV input. Default is ``','``.
+    folder_col : str
+        Column containing the source folder identifier. Default is ``'Folder'``.
+    image_col : str
+        Column containing the image filename or identifier. Default is ``'file_name'``.
+    red_col : str
+        Column containing mean red-channel intensity for an annotated region. Default is
+        ``'mean_red'``.
+    green_col : str
+        Column containing mean green-channel intensity for an annotated region. Default is
+        ``'mean_green'``.
+    blue_col : Optional[str]
+        Column containing mean blue-channel intensity for an annotated region. Default is
+        ``'mean_blue'``.
+    x_col : Optional[str]
+        DataFrame column plotted on the horizontal axis. Default is ``'X'``.
+    y_col : Optional[str]
+        DataFrame column plotted on the vertical axis. Default is ``'Y'``.
+    layout : Any
+        Plate layout mapping well positions to their assay roles. Default is
+        ``PRA_GENERIC_LAYOUT``.
+    image_order : Sequence[str]
+        Well IDs in the same order as the uploaded image filenames. Default is
+        ``PRA_GENERIC_IMAGE_ORDER``.
+    calibrator_cls : Optional[Type]
+        Color calibrator class instantiated for the measurements. Default is ``None``.
+    classifier_cls : Optional[Type]
+        Cell classifier class instantiated for the calibrated measurements. Default is
+        ``None``.
+    classifier_kwargs : Optional[Dict[str, Any]]
+        Keyword arguments passed to the cell classifier constructor. Default is ``None``.
+    image_sort_key : Callable[[str], Any]
+        Callable used to order images before assigning well positions. Default is
+        ``natural_image_sort_key``.
+    require_exactly_n_images : bool
+        Required image count, or None to omit that exact-count check. Default is ``True``.
+    verbose : bool
+        Whether to emit progress information. Default is ``True``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Computed value of ``out``.
+
+    Raises
+    ------
+    ValueError
+        Please pass calibrator_cls, e.g. PCNCMedianCalibrator Please pass classifier_cls,
+        e.g. ROIClassifierMedianRG Missing required columns: {missing}
+
+    Notes
+    -----
     Output columns:
         folder, image_name, well_id, role,
         frac_pos, corrected_frac_pos,
@@ -444,6 +610,38 @@ def imagej_scores_to_annotator_rows(
 ) -> pd.DataFrame:
     """
     Convert output of score_imagej_rois(...) into the shared long schema.
+
+    Parameters
+    ----------
+    imagej_df : pandas.DataFrame
+        Dataframe of ImageJ measurement scores.
+    folder_col : str
+        Column containing the source folder identifier. Default is ``'folder'``.
+    well_col : str
+        Column containing the well identifier. Default is ``'well_id'``.
+    image_col : str
+        Column containing the image filename or identifier. Default is ``'image_name'``.
+    role_col : str
+        Column identifying sample, positive-control, and negative-control roles. Default is
+        ``'role'``.
+    raw_score_col : str
+        Column containing the unadjusted score. Default is ``'final_score'``.
+    adjusted_score_col : str
+        Column containing the score after control-based adjustment. Default is
+        ``'final_score_corrected'``.
+    annotator_name : str
+        Name assigned to the annotator or method in the output rows. Default is
+        ``'imageJ'``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Computed value of ``df.reset_index(drop=True)``.
+
+    Raises
+    ------
+    ValueError
+        ImageJ dataframe is missing required columns: {missing}
     """
     df = imagej_df.copy().rename(
         columns={
@@ -495,6 +693,37 @@ def score_unet_folders(
     Run UNET folder by folder and return rows in the shared long schema:
         Folder | well | image_name | role | Annotator |
         score | adjusted_score | frac_pos | corrected_frac_pos | n_rois
+
+    Parameters
+    ----------
+    mapping_df : pandas.DataFrame
+        Dataframe mapping experiment folders and images to well information.
+    image_base_path : str
+        Root directory used to resolve image-folder references.
+    unet_config : Any
+        Configuration used to construct the UNet image segmenter.
+    layout : Any
+        Plate layout mapping well positions to their assay roles. Default is
+        ``PRA_GENERIC_LAYOUT``.
+    image_order : Sequence[str]
+        Well IDs in the same order as the uploaded image filenames. Default is
+        ``PRA_GENERIC_IMAGE_ORDER``.
+    annotator_name : str
+        Name assigned to the annotator or method in the output rows. Default is ``'unet'``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Computed value of ``out.reset_index(drop=True)``.
+
+    Raises
+    ------
+    ValueError
+        mapping_df is missing required columns: {missing} mapping_df must have unique Folder + well rows.
+        Examples:
+        {mapping_df.loc[dups].head()} Invalid number of images in {image_storage_dir}: {len(image_names)} instead of {len(image_order)}
+    FileNotFoundError
+        Image folder not found: {image_storage_dir}
     """
     required = ["Folder", "well", "image_name", "role"]
     missing = [c for c in required if c not in mapping_df.columns]
@@ -631,6 +860,21 @@ def concat_annotator_frames(
     """
     Concatenate annotator tables in the shared long schema.
     Missing columns are filled with np.nan.
+
+    Parameters
+    ----------
+    frames : Sequence[pandas.DataFrame]
+        Annotator dataframes to concatenate into a combined table.
+    preferred_cols : Sequence[str]
+        Column order to apply before appending any remaining columns. Default is
+        ``('Folder', 'well', 'image_name', 'role', 'Annotator', 'score', 'adjusted_score',
+        'frac_pos', 'corrected_frac_pos', 'n_rois')``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Depending on the input and branch, returns
+        ``pd.DataFrame(columns=list(preferred_cols))``, ``out``.
     """
     frames = [f.copy() for f in frames if f is not None and len(f) > 0]
     if len(frames) == 0:
@@ -684,6 +928,56 @@ def build_total_result_dataframe(
     Full pipeline that returns one long dataframe containing:
         manual annotators + imageJ + unet
 
+    Parameters
+    ----------
+    score_sheet_file_path : str
+        Path to the spreadsheet or delimited file containing manual scores.
+    imagej_csv_path : str
+        Path to exported ImageJ region measurements.
+    unet_config : Any
+        Configuration used to construct the UNet image segmenter.
+    score_sheet_sep : str
+        Delimiter used when reading the manual score sheet. Default is ``';'``.
+    imagej_sep : str
+        Delimiter used when reading the ImageJ measurement CSV. Default is ``','``.
+    ext_image_root : str | Path
+        Root containing external image datasets. Default is ``'./ext_images'``.
+    experiment_image_root : str | Path
+        Root containing experiment image folders. Default is
+        ``'./experiment_readout_images'``.
+    layout : Any
+        Plate layout mapping well positions to their assay roles. Default is
+        ``PRA_GENERIC_LAYOUT``.
+    image_order : Sequence[str]
+        Well IDs in the same order as the uploaded image filenames. Default is
+        ``PRA_GENERIC_IMAGE_ORDER``.
+    imagej_calibrator_cls : Type
+        Calibrator class used for ImageJ-derived measurements. Default is
+        ``PCNCGaussian2DCalibrator``.
+    imagej_classifier_cls : Type
+        Classifier class used for ImageJ-derived measurements. Default is
+        ``ROIClassifierGaussian2D3Way``.
+    imagej_classifier_kwargs : Optional[Dict[str, Any]]
+        Keyword arguments passed to the ImageJ measurement classifier. Default is ``None``.
+    imagej_annotator_name : str
+        Method name assigned to ImageJ-derived output rows. Default is ``'imageJ'``.
+    unet_annotator_name : str
+        Method name assigned to UNet-derived output rows. Default is ``'unet'``.
+    drop_missing_manual_scores : bool
+        Whether rows without manual scores are excluded from the result. Default is
+        ``False``.
+    output_csv_path : Optional[str]
+        Optional destination for the generated CSV table. Default is ``None``.
+    verbose : bool
+        Whether to emit progress information. Default is ``True``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Computed value of ``total_df``.
+
+    Notes
+    -----
     Final schema:
         Folder | well | image_name | role | Annotator | score | adjusted_score
     """
@@ -782,6 +1076,29 @@ def run_external_experiments(
 ) -> pd.DataFrame:
     """
     Convenience wrapper around build_total_result_dataframe(...).
+
+    Parameters
+    ----------
+    score_sheet_file_path : str
+        Path to the spreadsheet or delimited file containing manual scores.
+    imagej_csv_path : str
+        Path to exported ImageJ region measurements.
+    image_base_path : str
+        Root directory used to resolve image-folder references.
+    csv_output_file : str
+        Destination for the generated CSV result table.
+    unet_config : Any
+        Configuration used to construct the UNet image segmenter.
+    score_sheet_sep : str
+        Delimiter used when reading the manual score sheet. Default is ``';'``.
+    imagej_sep : str
+        Delimiter used when reading the ImageJ measurement CSV. Default is ``','``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Combined long-format table of manual, ImageJ, and UNet measurements written to the
+        requested CSV output.
     """
     return build_total_result_dataframe(
         score_sheet_file_path=score_sheet_file_path,

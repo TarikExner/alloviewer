@@ -13,6 +13,20 @@ logger = logging.getLogger(__name__)
 
 
 def _minimum_free_disk_bytes() -> int:
+    """
+    Read DISK_CLEANUP_MIN_FREE_GB and convert the nonnegative GiB value to bytes.
+
+    Returns
+    -------
+    int
+        DISK_CLEANUP_MIN_FREE_GB and convert the nonnegative GiB value to bytes.
+
+    Raises
+    ------
+    ValueError
+        DISK_CLEANUP_MIN_FREE_GB must be a number. DISK_CLEANUP_MIN_FREE_GB must be greater
+        than or equal to zero.
+    """
     raw_value = os.getenv("DISK_CLEANUP_MIN_FREE_GB", "2").strip()
 
     try:
@@ -35,6 +49,13 @@ def cleanup_runtime_data_task() -> dict[str, int]:
     """
     Scheduled cleanup for old runtime files.
 
+    Returns
+    -------
+    dict[str, int]
+        Computed value of ``result``.
+
+    Notes
+    -----
     Deletes complete job directories that have been inactive for more than
     24 hours. This task runs on the maintenance queue.
     """
@@ -55,6 +76,13 @@ def cleanup_low_disk_space_task() -> dict[str, int | bool]:
     Keep at least the configured amount of free space on the filesystem that
     contains DATA_DIR.
 
+    Returns
+    -------
+    dict[str, int | bool]
+        Computed value of ``result``.
+
+    Notes
+    -----
     The default threshold is 2 GiB. When free space drops below the threshold,
     the oldest non-running jobs are removed until the threshold is met or no
     safe deletion candidates remain.

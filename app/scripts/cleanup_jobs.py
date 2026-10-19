@@ -21,6 +21,19 @@ ACTIVE_JOB_STATUSES = {"queued", "running"}
 
 
 def _format_gibibytes(value: int) -> str:
+    """
+    Format a byte count as GiB with two decimal places.
+
+    Parameters
+    ----------
+    value : int
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    str
+        A byte count as GiB with two decimal places.
+    """
     return f"{value / GIBIBYTE:.2f} GiB"
 
 
@@ -28,6 +41,18 @@ def _read_job_metadata(job_dir: Path) -> dict[str, Any] | None:
     """
     Read ``job.json`` from a job directory.
 
+    Parameters
+    ----------
+    job_dir : Path
+        Directory containing one job and its job.json metadata.
+
+    Returns
+    -------
+    dict[str, Any] | None
+        ``job.json`` from a job directory.
+
+    Notes
+    -----
     Invalid or missing metadata is reported and handled as an orphaned job
     directory by the cleanup routine.
     """
@@ -73,6 +98,21 @@ def _job_last_updated(
     """
     Determine the last relevant activity timestamp.
 
+    Parameters
+    ----------
+    job_dir : Path
+        Directory containing one job and its job.json metadata.
+    metadata : dict[str, Any] | None
+        Metadata mapping read from the source file or job record.
+
+    Returns
+    -------
+    float | None
+        Depending on the input and branch, returns ``float(updated_at)``,
+        ``job_dir.stat().st_mtime``, ``None``.
+
+    Notes
+    -----
     ``job.json.updated_at`` is preferred. Directory modification time is used
     only for orphaned or malformed job directories.
     """
@@ -112,6 +152,20 @@ def _remove_job_directory(
 ) -> bool:
     """
     Delete Redis state and the complete job directory.
+
+    Parameters
+    ----------
+    job_dir : Path
+        Directory containing one job and its job.json metadata.
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    dry_run : bool
+        If True, report candidates without deleting files or Redis state.
+
+    Returns
+    -------
+    bool
+        Boolean result of the stated condition check.
     """
     if not job_dir.exists():
         return False
@@ -168,20 +222,27 @@ def cleanup_runtime_data(
     Delete complete job directories that have been inactive beyond the
     configured threshold.
 
-    All job-owned uploads, intermediate files, logs, results, thumbnails,
-    segmented images, caches, and reports are removed together.
-
     Parameters
     ----------
-    jobs_older_than_hours
+    jobs_older_than_hours : float
         Delete jobs whose ``updated_at`` value is older than this threshold.
-    dry_run
+    dry_run : bool
         Report matching jobs without deleting files or Redis state.
 
     Returns
     -------
     dict
         Cleanup counters.
+
+    Raises
+    ------
+    ValueError
+        jobs_older_than_hours must be greater than or equal to zero.
+
+    Notes
+    -----
+    All job-owned uploads, intermediate files, logs, results, thumbnails,
+    segmented images, caches, and reports are removed together.
     """
     if jobs_older_than_hours < 0:
         raise ValueError(
@@ -343,16 +404,11 @@ def cleanup_jobs_until_minimum_free_space(
     Remove the oldest non-running job directories until the filesystem that
     contains ``DATA_DIR`` has at least ``minimum_free_bytes`` available.
 
-    Jobs with status ``queued`` or ``running`` are never removed. Completed,
-    failed, draft, orphaned, and malformed jobs are considered in oldest-first
-    order. Job age is based on ``job.json.updated_at`` with directory mtime as
-    a fallback.
-
     Parameters
     ----------
-    minimum_free_bytes
+    minimum_free_bytes : int
         Required free space on the filesystem that contains ``DATA_DIR``.
-    dry_run
+    dry_run : bool
         Report the deletion order without removing files or Redis state.
 
     Returns
@@ -360,6 +416,18 @@ def cleanup_jobs_until_minimum_free_space(
     dict
         Disk-space and cleanup counters. All byte values are integers so the
         result can be serialized by Celery without conversion.
+
+    Raises
+    ------
+    ValueError
+        minimum_free_bytes must be greater than or equal to zero.
+
+    Notes
+    -----
+    Jobs with status ``queued`` or ``running`` are never removed. Completed,
+    failed, draft, orphaned, and malformed jobs are considered in oldest-first
+    order. Job age is based on ``job.json.updated_at`` with directory mtime as
+    a fallback.
     """
     if minimum_free_bytes < 0:
         raise ValueError(
@@ -562,6 +630,9 @@ def cleanup_jobs_until_minimum_free_space(
 
 
 def main() -> None:
+    """
+    Parse cleanup command-line options and run stale-job cleanup.
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Delete stale AlloViewer job directories and their Redis state."

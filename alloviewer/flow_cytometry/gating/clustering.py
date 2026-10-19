@@ -19,9 +19,32 @@ from ..panel import Panel
 
 @dataclass
 class ClusterPrediction:
-    """Cluster prediction result mapped back to full event length.
+    """
+    Cluster prediction result mapped back to full event length.
 
     Parameters
+    ----------
+    idx_used : numpy.ndarray
+        Event indices used for prediction.
+    y : numpy.ndarray
+        Predicted cluster labels for ``idx_used``.
+    strength : numpy.ndarray
+        Prediction strengths or probabilities.
+    outlier_score : numpy.ndarray
+        Outlier scores for predicted events.
+    is_out : numpy.ndarray
+        Boolean mask over predicted events marking outliers.
+    is_debris : numpy.ndarray
+        Boolean mask over predicted events marking debris clusters.
+    mask_all_in_lymph : numpy.ndarray
+        Full-length mask for non-outlier, non-debris events inside the
+        lymphocyte gate.
+    mask_by_marker : dict
+        Full-length marker masks keyed by marker name.
+    mask_lymph_union : numpy.ndarray
+        Full-length union mask across marker-assigned lymphocyte events.
+
+    Attributes
     ----------
     idx_used : numpy.ndarray
         Event indices used for prediction.
@@ -67,7 +90,8 @@ def fit_clustering(
     clusterer: BaseClusterer,
     rng: np.random.Generator,
 ) -> Tuple[MADScaler, BaseClusterer, float, np.ndarray, np.ndarray, np.ndarray]:
-    """Fit the global clustering model.
+    """
+    Fit the global clustering model.
 
     Parameters
     ----------
@@ -146,7 +170,8 @@ def compute_outlier_threshold(
     prediction_cfg: PredictionConfig,
     clusterer: BaseClusterer,
 ) -> float:
-    """Compute the outlier threshold for prediction.
+    """
+    Compute the outlier threshold for prediction.
 
     Parameters
     ----------
@@ -177,7 +202,8 @@ def compute_outlier_threshold(
 
 
 def _log1p_nonneg(x: np.ndarray) -> np.ndarray:
-    """Apply ``log1p`` to non-negative float32 values.
+    """
+    Apply ``log1p`` to non-negative float32 values.
 
     Parameters
     ----------
@@ -202,7 +228,8 @@ def build_feature_blocks(
     mask_in: np.ndarray,
     marker_cofactors: Dict[str, float],
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Build clustering feature blocks for one file.
+    """
+    Build clustering feature blocks for one file.
 
     Parameters
     ----------
@@ -293,7 +320,8 @@ def build_training_pool(
     marker_cofactors: Dict[str, float],
     rng: np.random.Generator,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Build pooled clustering training data from file records.
+    """
+    Build pooled clustering training data from file records.
 
     Parameters
     ----------
@@ -419,7 +447,8 @@ def predict_in_mask(
     marker_names: List[str],
     n_events_total: int,
 ) -> ClusterPrediction:
-    """Predict clusters for selected events and build full-length masks.
+    """
+    Predict clusters for selected events and build full-length masks.
 
     Parameters
     ----------
@@ -543,7 +572,8 @@ def predict_file_in_mask(
     cluster_to_type: Dict[int, str],
     marker_names: List[str],
 ) -> ClusterPrediction:
-    """Predict clusters for selected events in one FCS file.
+    """
+    Predict clusters for selected events in one FCS file.
 
     Parameters
     ----------

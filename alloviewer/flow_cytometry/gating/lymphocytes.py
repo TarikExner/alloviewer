@@ -24,7 +24,8 @@ def gate_lymphocytes(
     marker_thresholds: Dict[str, float],
     marker_cofactors: Dict[str, float],
 ) -> LymphResult:
-    """Gate lymphocytes using FSC/SSC with marker-informed back-gating.
+    """
+    Gate lymphocytes using FSC/SSC with marker-informed back-gating.
 
     Parameters
     ----------

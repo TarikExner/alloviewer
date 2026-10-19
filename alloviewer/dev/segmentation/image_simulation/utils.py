@@ -17,7 +17,20 @@ from .types import RNG
 import numbers
 
 def to_jsonable(x):
-    """Convert common numeric / numpy types to plain Python so JSON dump works."""
+    """
+    Convert common numeric / numpy types to plain Python so JSON dump works.
+
+    Parameters
+    ----------
+    x : object
+        Value or serialized metadata to convert into JSON-compatible Python data.
+
+    Returns
+    -------
+    object
+        JSON-compatible scalars and containers. Small arrays become lists; large arrays
+        become shape/dtype summaries, and unsupported objects become strings.
+    """
     # simple numbers
     if isinstance(x, (int, float, bool, str)) or x is None:
         return x
@@ -50,6 +63,19 @@ def capture_params(func, locals_dict):
     """
     Return a dict of just the function's declared parameters
     with their current values, made JSON-safe.
+
+    Parameters
+    ----------
+    func : callable
+        Callable whose signature determines which local values are captured.
+    locals_dict : dict
+        Mapping of local names to values filtered against the callable's signature.
+
+    Returns
+    -------
+    object
+        A dict of just the function's declared parameters with their current values, made
+        JSON-safe.
     """
     sig = inspect.signature(func)
     out = {}
@@ -59,6 +85,19 @@ def capture_params(func, locals_dict):
     return out
 
 def is_pair(x) -> bool:
+    """
+    Test whether a value is a two-element numeric tuple or list.
+
+    Parameters
+    ----------
+    x : object
+        Value to test for a numeric two-element tuple or list.
+
+    Returns
+    -------
+    bool
+        True when a value is a two-element numeric tuple or list; False otherwise.
+    """
     return isinstance(x, (tuple, list)) and len(x) == 2 and all(isinstance(v, numbers.Number) for v in x)
 
 def sample_number(
@@ -67,6 +106,24 @@ def sample_number(
         Tuple[int, int]],
         integer: bool = False
 ) -> Union[float, int]:
+    """
+    Return a scalar or sample a number from a pair of bounds.
+
+    Parameters
+    ----------
+    rng : RNG
+        NumPy random-number generator used for sampling.
+    spec : Union[float, int, Tuple[float, float], Tuple[int, int]]
+        Fixed scalar or pair of sampling bounds.
+    integer : bool
+        Whether to sample integer values with inclusive integer bounds. Default is
+        ``False``.
+
+    Returns
+    -------
+    Union[float, int]
+        A scalar or sample a number from a pair of bounds.
+    """
     if is_pair(spec):
         lo, hi = spec  # inclusive-exclusive for floats; inclusive-inclusive for ints below
         if integer:
@@ -82,6 +139,18 @@ def sample_bool(rng: RNG, spec: Union[bool, float, Tuple[float, float]]) -> bool
       - bool: returned directly
       - float p in [0,1]: Bernoulli(p)
       - (p_lo, p_hi): sample p ~ U[p_lo, p_hi], then Bernoulli(p)
+
+    Parameters
+    ----------
+    rng : RNG
+        NumPy random-number generator used for sampling.
+    spec : Union[bool, float, Tuple[float, float]]
+        Fixed scalar or pair of sampling bounds.
+
+    Returns
+    -------
+    bool
+        Boolean result of the stated condition check.
     """
     if isinstance(spec, bool):
         return spec
@@ -95,9 +164,41 @@ def sample_bool(rng: RNG, spec: Union[bool, float, Tuple[float, float]]) -> bool
     return bool(rng.random() < p)
 
 def round_to_multiple(x: float, m: int) -> int:
+    """
+    Round to the nearest multiple while returning at least one multiple.
+
+    Parameters
+    ----------
+    x : float
+        Scalar value to format or convert using the helper's stated rules.
+    m : int
+        Positive multiple to which the input is rounded.
+
+    Returns
+    -------
+    int
+        Computed value of ``int(max(m, round(x / m) * m))``.
+    """
     return int(max(m, round(x / m) * m))
 
 def choose_ratio(rng: RNG, ratios: Sequence[Tuple[int, int]], portrait_prob: float) -> float:
+    """
+    Sample a width-to-height ratio and optionally invert it for portrait orientation.
+
+    Parameters
+    ----------
+    rng : RNG
+        NumPy random-number generator used for sampling.
+    ratios : Sequence[Tuple[int, int]]
+        Candidate (width, height) aspect-ratio pairs.
+    portrait_prob : float
+        Probability of inverting a sampled aspect ratio.
+
+    Returns
+    -------
+    float
+        Computed value of ``r``.
+    """
     num, den = ratios[int(rng.integers(0, len(ratios)))]
     r = num / den  # width / height
     if portrait_prob > 0 and rng.random() < portrait_prob:
@@ -109,6 +210,19 @@ def apply_s_curve(img: np.ndarray, strength: float) -> np.ndarray:
     strength in about [-0.25, 0.40]
     positive => stronger midtone contrast
     negative => flatter midtones
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input image array.
+    strength : float
+        Interpolation strength between source and target quantile curves.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``img``, ``np.clip(y, 0.0,
+        1.0).astype(np.float32)``.
     """
     if abs(strength) < 1e-8:
         return img
@@ -132,6 +246,22 @@ def apply_s_curve(img: np.ndarray, strength: float) -> np.ndarray:
 
 
 def lift_shadows(img: np.ndarray, amount: float) -> np.ndarray:
+    """
+    Increase dark intensities with a quadratic shadow weight and clip to [0, 1].
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input image array.
+    amount : float
+        Strength of the tone adjustment; nonpositive values return the input.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``img``, ``np.clip(out, 0.0,
+        1.0).astype(np.float32)``.
+    """
     if amount <= 0:
         return img
 
@@ -144,6 +274,22 @@ def lift_shadows(img: np.ndarray, amount: float) -> np.ndarray:
     return np.clip(out, 0.0, 1.0).astype(np.float32)
 
 def compress_highlights(img: np.ndarray, amount: float) -> np.ndarray:
+    """
+    Apply the configured highlight transform above 0.72 and clip intensities to [0, 1].
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input image array.
+    amount : float
+        Strength of the tone adjustment; nonpositive values return the input.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``img``, ``np.clip(out, 0.0,
+        1.0).astype(np.float32)``.
+    """
     if amount <= 0:
         return img
     thr = np.float32(0.72)
@@ -178,11 +324,17 @@ def apply_channel_median_match(
     quantile_band_cache : dict
         Cache from build_target_quantile_band_cache(...)
     strength : float
-        Global median-match strength in [0,1]
+        Global median-match strength in [0,1] Default is ``0.5``.
     per_channel_strength : np.ndarray or None
         Optional shape (3,) multiplier for R/G/B.
         Example for microscope: np.array([0.3, 0.3, 1.0], dtype=np.float32)
-        to hit blue harder than red/green.
+        to hit blue harder than red/green. Default is ``None``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``img``, ``np.clip(out, 0.0,
+        1.0).astype(np.float32)``.
     """
     if target_device not in quantile_band_cache["devices"]:
         return img
@@ -217,6 +369,19 @@ def apply_global_blur(
 ) -> np.ndarray:
     """
     Apply clean global Gaussian blur on float RGB data.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input image array.
+    sigma : float
+        Standard deviation of the spatial Gaussian kernel, in pixels.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``img``, ``np.clip(img, 0.0,
+        1.0).astype(np.float32)``.
     """
     if sigma <= 0:
         return img
@@ -240,6 +405,23 @@ def apply_photon_noise(
     """
     Apply signal-dependent Poisson shot noise.
 
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input image array.
+    rng : RNG
+        NumPy random-number generator used for sampling.
+    photon_level : float
+        Photon-count scale used to apply Poisson shot noise.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``img``, ``np.clip(img, 0.0,
+        1.0).astype(np.float32)``.
+
+    Notes
+    -----
     photon_level acts like the approximate maximum photon count at img == 1.
     Higher values mean less visible photon noise.
     """
@@ -261,6 +443,21 @@ def apply_read_noise(
 ) -> np.ndarray:
     """
     Apply additive Gaussian read noise on float RGB data.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input image array.
+    rng : RNG
+        NumPy random-number generator used for sampling.
+    read_noise : float
+        Standard deviation of additive Gaussian sensor noise.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``img``, ``np.clip(img, 0.0,
+        1.0).astype(np.float32)``.
     """
     if read_noise <= 0:
         return img
@@ -283,6 +480,20 @@ def sample_channel_values(
 ) -> np.ndarray:
     """
     Sample one value per channel from ((r_lo, r_hi), (g_lo, g_hi), (b_lo, b_hi)).
+
+    Parameters
+    ----------
+    rng : RNG
+        NumPy random-number generator used for sampling.
+    ranges : object
+        Per-channel numeric intervals from which channel parameters are sampled.
+    dtype : numpy.dtype
+        Requested array or tensor data type. Default is ``np.float32``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``np.asarray(vals, dtype=dtype)``.
     """
     vals = [
         float(rng.uniform(float(lo), float(hi)))
@@ -295,8 +506,31 @@ def interpolate_cell_diameter_bounds(
     short_side: float,
     anchors: Sequence[tuple[float, float, float]],
 ) -> tuple[float, float]:
-    """Interpolate realistic core-diameter limits from image-size anchors.
+    """
+    Interpolate realistic core-diameter limits from image-size anchors.
 
+    Parameters
+    ----------
+    short_side : float
+        Length of the shorter image dimension, in pixels.
+    anchors : Sequence[tuple[float, float, float]]
+        Calibration rows of (short image side, minimum diameter, maximum diameter), in
+        pixels.
+
+    Returns
+    -------
+    tuple[float, float]
+        Tuple containing ``lower``, ``upper``, in that order.
+
+    Raises
+    ------
+    ValueError
+        anchors must contain at least one (short_side, min_diameter, max_diameter) row
+        anchor short-side values must be positive diameter bounds must be positive each
+        minimum diameter must be <= its maximum
+
+    Notes
+    -----
     Each anchor is ``(image_short_side_px, min_core_diameter_px,
     max_core_diameter_px)``. Values outside the measured image-size interval
     are clamped to the nearest anchor.
@@ -354,8 +588,45 @@ def sample_calibrated_cell_diameters(
     min_sigma_px: float = 0.25,
     large_cell_frac: float = 0.0,
 ) -> tuple[np.ndarray, float, tuple[float, float], np.ndarray]:
-    """Sample one realistic diameter distribution for a simulated image.
+    """
+    Sample one realistic diameter distribution for a simulated image.
 
+    Parameters
+    ----------
+    rng : np.random.Generator
+        NumPy random-number generator used for sampling.
+    n_cells : int
+        Number of true cell instances requested for the simulated image.
+    short_side : float
+        Length of the shorter image dimension, in pixels.
+    anchors : Sequence[tuple[float, float, float]]
+        Calibration rows of (short image side, minimum diameter, maximum diameter), in
+        pixels.
+    center_margin_frac : float
+        Fraction of the diameter interval excluded near each bound when choosing its center.
+        Default is ``0.2``.
+    cell_sigma_frac : float
+        Diameter standard deviation as a fraction of the calibrated interval width. Default
+        is ``0.18``.
+    min_sigma_px : float
+        Minimum diameter-sampling standard deviation, in pixels. Default is ``0.25``.
+    large_cell_frac : float
+        Fraction of cells assigned to the larger-cell component, clipped to [0, 1]. Default
+        is ``0.0``.
+
+    Returns
+    -------
+    tuple[numpy.ndarray, float, tuple[float, float], numpy.ndarray]
+        Tuple containing ``diameters``, ``image_center``, ``(lower, upper)``, ``is_large``,
+        in that order.
+
+    Raises
+    ------
+    ValueError
+        n_cells must be non-negative
+
+    Notes
+    -----
     A typical diameter is sampled once per image. Individual cells are then
     sampled around that value and clipped to image-size-dependent limits.
     Cells selected by ``large_cell_frac`` are sampled from the upper part of
@@ -408,8 +679,27 @@ def assign_cluster_ids(
     clustered_fraction: float,
     cluster_size_range: tuple[int, int],
 ) -> np.ndarray:
-    """Assign a subset of cells to compact clusters in O(n_cells) time.
+    """
+    Assign a subset of cells to compact clusters in O(n_cells) time.
 
+    Parameters
+    ----------
+    rng : np.random.Generator
+        NumPy random-number generator used for sampling.
+    n_cells : int
+        Number of true cell instances requested for the simulated image.
+    clustered_fraction : float
+        Fraction of cells selected for cluster membership.
+    cluster_size_range : tuple[int, int]
+        Inclusive lower and upper bounds on cells per cluster.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``cluster_ids``.
+
+    Notes
+    -----
     ``-1`` marks an isolated cell. Non-negative values are cluster IDs.
     """
     n_cells = int(n_cells)
@@ -480,8 +770,84 @@ def place_clustered_centers(
     np.ndarray,
     np.ndarray,
 ]:
-    """Place isolated cells plus explicit lengthy and packed clusters.
+    """
+    Place isolated cells plus explicit lengthy and packed clusters.
 
+    Parameters
+    ----------
+    rng : np.random.Generator
+        NumPy random-number generator used for sampling.
+    cluster_ids : numpy.ndarray
+        Integer cluster assignments aligned with cell indices.
+    r_px : numpy.ndarray
+        Placement radii of individual cells, in pixels.
+    H : int
+        Image height in pixels.
+    W : int
+        Image width in pixels.
+    cy : float
+        Vertical center coordinate, in pixels.
+    cx : float
+        Horizontal center coordinate, in pixels.
+    R : float
+        Well radius in pixels.
+    wall_margin_px : float
+        Margin between a cell's placement radius and the well wall, in pixels.
+    rim_band : float
+        Width of the outer annulus as a fraction of well radius.
+    rim_min_sep_px : float
+        Additional minimum center spacing used for cells near the well rim, in pixels.
+    sample_radius : Callable[[], float]
+        Callable that samples a radial cell-center position.
+    sample_theta : Callable[[float], float]
+        Callable that samples an angle for a given radial position.
+    contact_factor_range : tuple[float, float]
+        Range of separation factors relative to summed radii for cluster neighbors. Default
+        is ``(0.9, 1.05)``.
+    core_min_sep_factor : float
+        Minimum separation factor relative to summed core radii. Default is ``0.84``.
+    chain_probability : float
+        Probability of extending a cluster from its latest member. Default is ``0.55``.
+    angle_jitter : float
+        Angular variation used to extend a cell cluster, in radians. Default is ``0.8``.
+    packed_probability : float
+        Base probability of compact cluster placement. Default is ``0.55``.
+    packed_size_bias_range : tuple[int, int]
+        Cluster-size interval controlling the compact-placement preference. Default is ``(3,
+        15)``.
+    packed_contact_factor_range : tuple[float, float]
+        Range of radius-based center separations for compact clusters. Default is ``(0.88,
+        1.02)``.
+    packed_candidate_count : int
+        Number of trial candidate positions scored during compact placement. Default is
+        ``8``.
+    packed_contact_bonus : float
+        Score weight favoring contacts with already placed cluster members. Default is
+        ``1.5``.
+    packed_region_join_probability : float
+        Probability of placing a new compact cluster beside an existing compact region.
+        Default is ``0.3``.
+    packed_region_contact_factor_range : tuple[float, float]
+        Separation-factor interval used to join an existing compact region. Default is
+        ``(0.95, 1.12)``.
+    seed_tries : int
+        Maximum trial positions for a new cluster seed. Default is ``120``.
+    member_tries : int
+        Maximum trial positions for an additional cluster member. Default is ``32``.
+
+    Returns
+    -------
+    tuple[numpy.ndarray, numpy.ndarray, list[tuple[int, int]], numpy.ndarray, numpy.ndarray]
+        Tuple containing ``centers``, ``cluster_ids``, ``cluster_edges``, ``cluster_modes``,
+        ``cluster_region_ids``, in that order.
+
+    Raises
+    ------
+    ValueError
+        r_px and cluster_ids must have the same length
+
+    Notes
+    -----
     Mode codes returned in ``cluster_modes``:
       - ``-1``: isolated or placement fallback
       - ``0``: lengthy cluster
@@ -549,6 +915,23 @@ def place_clustered_centers(
     next_region_id = 0
 
     def valid_center(y: float, x: float, index: int) -> bool:
+        """
+        Check image boundaries and the cell-radius-adjusted well boundary.
+
+        Parameters
+        ----------
+        y : float
+            Vertical row coordinate in pixels.
+        x : float
+            Horizontal column coordinate in pixels.
+        index : int
+            Zero-based position of the item to read or process.
+
+        Returns
+        -------
+        bool
+            Boolean result of the stated condition check.
+        """
         radius = float(r_px[index])
         if not (
             radius + 1.0 <= y < H - radius - 1.0
@@ -560,6 +943,19 @@ def place_clustered_centers(
         return np.hypot(y - cy, x - cx) <= max_center_radius
 
     def independent_center(index: int) -> np.ndarray:
+        """
+        Sample a standalone cell center subject to well and spacing constraints.
+
+        Parameters
+        ----------
+        index : int
+            Zero-based position of the item to read or process.
+
+        Returns
+        -------
+        numpy.ndarray
+            Computed value of ``np.array([y, x], dtype=np.float32)``.
+        """
         for _ in range(seed_tries):
             radial_position = float(sample_radius())
             angle = float(sample_theta(radial_position))
@@ -603,6 +999,26 @@ def place_clustered_centers(
         index: int,
         other_indices: np.ndarray,
     ) -> tuple[bool, np.ndarray]:
+        """
+        Check minimum distances to selected existing centers and return those distances.
+
+        Parameters
+        ----------
+        y : float
+            Vertical row coordinate in pixels.
+        x : float
+            Horizontal column coordinate in pixels.
+        index : int
+            Zero-based position of the item to read or process.
+        other_indices : numpy.ndarray
+            Indices of existing cells used in the separation check.
+
+        Returns
+        -------
+        tuple[bool, numpy.ndarray]
+            Depending on the input and branch, returns ``(True, np.empty(0,
+            dtype=np.float32))``, ``(bool(np.all(distances >= minimum)), distances)``.
+        """
         if other_indices.size == 0:
             return True, np.empty(0, dtype=np.float32)
 
@@ -622,6 +1038,19 @@ def place_clustered_centers(
         return bool(np.all(distances >= minimum)), distances
 
     def packed_mode_probability(cluster_size: int) -> float:
+        """
+        Increase the packed-cluster probability with the proposed cluster size.
+
+        Parameters
+        ----------
+        cluster_size : int
+            Number of cells proposed for a cluster.
+
+        Returns
+        -------
+        float
+            Computed value of ``float(packed_probability * (0.25 + 0.75 * size_fraction))``.
+        """
         size_fraction = float(
             np.clip(
                 (float(cluster_size) - bias_lo) / float(bias_hi - bias_lo),
@@ -634,6 +1063,20 @@ def place_clustered_centers(
         return float(packed_probability * (0.25 + 0.75 * size_fraction))
 
     def seed_next_to_packed_region(index: int) -> tuple[np.ndarray | None, int]:
+        """
+        Search for a valid cluster seed next to an existing packed region.
+
+        Parameters
+        ----------
+        index : int
+            Zero-based position of the item to read or process.
+
+        Returns
+        -------
+        tuple[numpy.ndarray | None, int]
+            Depending on the input and branch, returns ``(None, -1)``, ``(best_position,
+            region_id)``.
+        """
         if not packed_regions:
             return None, -1
 
@@ -865,6 +1308,7 @@ def make_wormy_dirt_patch(
     Parameters
     ----------
     rng : np.random.Generator
+        NumPy random-number generator used for sampling.
     base_size : int
         Main size control for the debris object.
     dirt_sigma : tuple[float, float]
@@ -872,12 +1316,14 @@ def make_wormy_dirt_patch(
     dirt_alpha : tuple[float, float]
         Opacity range.
     base_orange : np.ndarray shape (3,)
+        RGB color vector for orange simulated structures.
     base_green : np.ndarray shape (3,)
+        RGB color vector for green simulated structures.
 
     Returns
     -------
-    alpha_map : np.ndarray, float32, shape (H, W)
-    color : np.ndarray, float32, shape (3,)
+    alpha_map : numpy.ndarray, float32, shape (H, W)
+    color : numpy.ndarray, float32, shape (3,)
     """
     base_size = int(max(1, base_size))
 

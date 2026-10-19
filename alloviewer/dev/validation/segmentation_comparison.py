@@ -26,6 +26,23 @@ def denormalize_image(
     """
     Reverse (img - mean) / std normalization.
 
+    Parameters
+    ----------
+    img : ArrayLike
+        Input image array.
+
+    Returns
+    -------
+    ArrayLike
+        Computed value of ``x``.
+
+    Raises
+    ------
+    ValueError
+        Expected img with 3 or 4 dims, got shape {x.shape}
+
+    Notes
+    -----
     img:  torch.Tensor or np.ndarray, shape [C,H,W] or [T,C,H,W]
     mean: scalar or sequence of length C
     std:  scalar or sequence of length C
@@ -74,6 +91,21 @@ def instances_to_binary_uint8(mask: ArrayLike) -> np.ndarray:
     """
     Take an instance label map (0 = background, >0 = instance ID)
     and convert it to a binary mask {0,1} with dtype uint8.
+
+    Parameters
+    ----------
+    mask : ArrayLike
+        Spatial mask selecting the pixels used by this operation.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``m_bin``.
+
+    Raises
+    ------
+    ValueError
+        Expected 2D mask after squeeze, got shape {m.shape}
     """
     m = to_numpy(mask)
 
@@ -90,16 +122,53 @@ def instances_to_binary_uint8(mask: ArrayLike) -> np.ndarray:
     return m_bin
 
 def to_numpy(x: ArrayLike) -> np.ndarray:
+    """
+    Detach a PyTorch tensor to CPU when needed and return a NumPy array.
+
+    Parameters
+    ----------
+    x : ArrayLike
+        Input array or tensor to convert, resize, normalize, or smooth as described above.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``np.asarray(x)``.
+    """
     if isinstance(x, torch.Tensor):
         x = x.detach().cpu().numpy()
     return np.asarray(x)
 
 def format_img_number(n: int) -> str:
-    """Convert image index to zero-padded 5-digit string."""
+    """
+    Convert image index to zero-padded 5-digit string.
+
+    Parameters
+    ----------
+    n : int
+        Image index formatted with a prefix and zero padding.
+
+    Returns
+    -------
+    str
+        Computed value of ``f'{n:05d}'``.
+    """
     return f"{n:05d}"
 
 def format_tile_number(n: int) -> str:
-    """Convert tile index to zero-padded 2-digit string."""
+    """
+    Convert tile index to zero-padded 2-digit string.
+
+    Parameters
+    ----------
+    n : int
+        Tile index formatted with a prefix and zero padding.
+
+    Returns
+    -------
+    str
+        Computed value of ``f'{n:02d}'``.
+    """
     return f"{n:02d}"
 
 def save_tile_triplet_as_jpg(
@@ -113,6 +182,28 @@ def save_tile_triplet_as_jpg(
     """
     Save original tile + ImageJ GT mask + U-Net mask as .jpg files.
 
+    Parameters
+    ----------
+    out_dir : str
+        Directory in which generated outputs are stored.
+    img_no : int
+        Zero-based image index used to select or name the exported record.
+    tile_no : int
+        Zero-based tile index used to select or name the exported tile.
+    img : ArrayLike
+        Input image array.
+    imgj_mask : ArrayLike
+        Instance or foreground mask produced by the ImageJ method.
+    unet_mask : ArrayLike
+        Instance or foreground mask produced by the UNet method.
+
+    Raises
+    ------
+    ValueError
+        Unexpected image shape after denorm: {img_np.shape}
+
+    Notes
+    -----
     Files written:
         {img_no}_{tile_no}.jpg
         {img_no}_{tile_no}_imageJ.jpg
@@ -181,6 +272,28 @@ def export_images(
     Run the UNet on every sample in a tiled H5 (sim or external),
     using meta["tiles"] to know how many tiles to keep.
 
+    Parameters
+    ----------
+    out_dir : str
+        Directory in which generated outputs are stored.
+    segmenter : SegmenterUNet
+        Callable UNet instance segmenter used to process the image.
+    gt_segmenter : SegmenterUNet
+        Segmenter used to construct the reference segmentation for export.
+    cfg : TrainingValidationConfig
+        Configuration object controlling this component.
+    indices : Optional[Sequence[int]]
+        Optional subset of dataset record indices. Default is ``None``.
+    stop : Optional[int]
+        Optional stop indicator checked between validation items. Default is ``None``.
+
+    Raises
+    ------
+    RuntimeError
+        segmentation_method='inst_seg' but segmenter did not return instance_labels
+
+    Notes
+    -----
     For each tile we compute the same metrics you already use.
 
     segmentation_method:
@@ -272,6 +385,19 @@ def export_segmentation_comparison(
         - dataset_mode    "external_images" or "tiles"
         - seg_method      in {"conventional", "inst_seg"}
 
+    Parameters
+    ----------
+    out_dir : str
+        Directory in which generated outputs are stored.
+    model_dir : str
+        Directory containing model checkpoint files.
+    h5_dir : str
+        Directory containing the input HDF5 datasets.
+    stop : Optional[int]
+        Optional stop indicator checked between validation items. Default is ``None``.
+
+    Notes
+    -----
     Writes a CSV for this combo and returns the DataFrame.
     """
 

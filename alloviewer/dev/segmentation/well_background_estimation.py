@@ -51,8 +51,24 @@ def show_rectangle(
         Rectangle width in pixels.
     height : int
         Rectangle height in pixels.
+    ax : matplotlib.axes.Axes
+        Matplotlib axis receiving the plot or formatting changes. Default is ``None``.
+    color : str
+        Color used to render the corresponding graphical element. Default is ``'red'``.
+    linewidth : float
+        Line width used to render the curve or outline. Default is ``2.0``.
     clip_to_image : bool
-        If True, clamp the rectangle so it stays inside the image.
+        If True, clamp the rectangle so it stays inside the image. Default is ``True``.
+
+    Returns
+    -------
+    object
+        Computed value of ``ax``.
+
+    Raises
+    ------
+    ValueError
+        Unsupported image shape: {arr.shape} width and height must be > 0
     """
     arr = np.asarray(img)
 
@@ -122,6 +138,47 @@ def extract_background_tiles(
     save_path: str | Path | None = None,
     verbose: bool = False,
 ) -> np.ndarray:
+    """
+    Crop an image region into channel-first background tiles with optional rotation and saving.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input image array.
+    x : int
+        Horizontal column coordinate in pixels.
+    y : int
+        Vertical row coordinate in pixels.
+    width : int
+        Width of the selected image region, in pixels.
+    height : int
+        Height of the selected image region, in pixels.
+    tile_size : int
+        Square tile side length in pixels. Default is ``512``.
+    step : int
+        Stride between adjacent tile origins, in pixels. Default is ``128``.
+    interpolation : int
+        OpenCV interpolation flag used for resizing. Default is ``cv2.INTER_CUBIC``.
+    random_rotate_90 : bool
+        Whether to randomly rotate each output tile by a multiple of 90 degrees. Default is
+        ``True``.
+    rng : np.random.Generator | None
+        NumPy random-number generator used for sampling. Default is ``None``.
+    save_path : str | Path | None
+        Optional path at which to save the extracted tile array. Default is ``None``.
+    verbose : bool
+        Whether to emit progress information. Default is ``False``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``out``.
+
+    Raises
+    ------
+    ValueError
+        Unsupported image shape: {arr.shape} width and height must be > 0
+    """
     arr = np.asarray(img)
 
     # Normalize to CHW
@@ -154,6 +211,19 @@ def extract_background_tiles(
     _, h, w = roi.shape
 
     def resize_tile(tile: np.ndarray) -> np.ndarray:
+        """
+        Resize each channel to the configured square tile size.
+
+        Parameters
+        ----------
+        tile : numpy.ndarray
+            Channel-first background tile to resize.
+
+        Returns
+        -------
+        numpy.ndarray
+            Computed value of ``out``.
+        """
         out = np.empty((C, tile_size, tile_size), dtype=arr.dtype)
         for c in range(C):
             out[c] = cv2.resize(
@@ -164,6 +234,19 @@ def extract_background_tiles(
         return out
 
     def axis_positions(dim: int) -> list[int]:
+        """
+        Choose starting offsets for the sliding background-tile window.
+
+        Parameters
+        ----------
+        dim : int
+            Length of the spatial axis along which tile positions are generated.
+
+        Returns
+        -------
+        list[int]
+            Starting offsets for the sliding background-tile window.
+        """
         extra = dim - tile_size
         if extra < step:
             return [0]
@@ -211,6 +294,22 @@ def extract_background_tiles(
 
 
 def collect_image_paths(root_dirs, suffixes=(".tif", ".tiff", ".png", ".jpg", ".jpeg")):
+    """
+    Collect and sort paths with supported image suffixes below the given roots.
+
+    Parameters
+    ----------
+    root_dirs : sequence of path-like
+        Root folders recursively searched for images.
+    suffixes : tuple
+        Image filename suffixes included in the search. Default is ``('.tif', '.tiff',
+        '.png', '.jpg', '.jpeg')``.
+
+    Returns
+    -------
+    object
+        And sort paths with supported image suffixes below the given roots.
+    """
     paths = []
     for root in root_dirs:
         root = Path(root)
@@ -220,6 +319,19 @@ def collect_image_paths(root_dirs, suffixes=(".tif", ".tiff", ".png", ".jpg", ".
     return sorted(paths)
 
 def make_output_name(img_path: str | Path) -> str:
+    """
+    Build a NumPy output filename from the source folder and image stem.
+
+    Parameters
+    ----------
+    img_path : str | Path
+        Source image path.
+
+    Returns
+    -------
+    str
+        A NumPy output filename from the source folder and image stem.
+    """
     p = Path(img_path)
     folder = p.parent.name
     stem = p.stem
@@ -243,6 +355,27 @@ def review_and_save_one_image(
     - show rectangle
     - type new coords if needed
     - accept/save, skip, or quit
+
+    Parameters
+    ----------
+    img_path : str or os.PathLike
+        Source image path.
+    data_dir : str or os.PathLike
+        Root directory containing the source image or FCS dataset. Default is ``None``.
+    out_dir : str
+        Directory in which generated outputs are stored. Default is ``'./test_images'``.
+    x : int
+        Horizontal column coordinate in pixels. Default is ``0``.
+    y : int
+        Vertical row coordinate in pixels. Default is ``0``.
+    width : int
+        Width of the selected image region, in pixels. Default is ``520``.
+    height : int
+        Height of the selected image region, in pixels. Default is ``1620``.
+    tile_size : int
+        Square tile side length in pixels. Default is ``512``.
+    step : int
+        Stride between adjacent tile origins, in pixels. Default is ``20``.
 
     Returns
     -------
@@ -332,6 +465,40 @@ def review_dataset_and_save(
     """
     Loop through images for manual review.
 
+    Parameters
+    ----------
+    image_paths : sequence of path-like
+        Paths to the images included in the operation.
+    data_dir : str or os.PathLike
+        Root directory containing the source image or FCS dataset. Default is ``None``.
+    out_dir : str
+        Directory in which generated outputs are stored. Default is ``'background_tiles'``.
+    x : int
+        Horizontal column coordinate in pixels. Default is ``0``.
+    y : int
+        Vertical row coordinate in pixels. Default is ``0``.
+    width : int
+        Width of the selected image region, in pixels. Default is ``520``.
+    height : int
+        Height of the selected image region, in pixels. Default is ``1620``.
+    tile_size : int
+        Square tile side length in pixels. Default is ``512``.
+    step : int
+        Stride between adjacent tile origins, in pixels. Default is ``128``.
+    reuse_last_rectangle : bool
+        Whether the previous image's rectangle is reused as the next selection. Default is
+        ``True``.
+    skip_existing : bool
+        Whether to skip inputs that already have the required output files. Default is
+        ``True``.
+
+    Returns
+    -------
+    object
+        Computed value of ``results``.
+
+    Notes
+    -----
     Images whose output file already exists are skipped automatically.
     They still count toward the displayed progress counter.
     """
@@ -408,6 +575,17 @@ def collect_ext_image_files(
     """
     Collect all image files from subfolders in ext_root, excluding any subfolder
     whose name also exists in one of the exclude_roots.
+
+    Parameters
+    ----------
+    ext_root : str
+        Root of the external-image collection. Default is ``'./ext_images'``.
+    exclude_roots : tuple
+        Directory roots omitted from recursive image collection. Default is
+        ``('./human_annotations', './experiment_readout_images')``.
+    suffixes : tuple
+        Image filename suffixes included in the search. Default is ``('.tif', '.tiff',
+        '.png', '.jpg', '.jpeg')``.
 
     Returns
     -------

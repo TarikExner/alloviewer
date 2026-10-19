@@ -26,6 +26,25 @@ def validate_unet_segmentation(
     """
     Tile-level validation for saved training/validation H5 datasets.
 
+    Parameters
+    ----------
+    segmenter : SegmenterUNet
+        Callable UNet instance segmenter used to process the image.
+    cfg : TrainingValidationConfig
+        Configuration object controlling this component.
+    indices : Optional[Sequence[int]]
+        Optional subset of dataset record indices. Default is ``None``.
+    segmentation_method : str
+        Segmentation-method selector used to choose the configured implementation. Default
+        is ``'inst_seg'``.
+
+    Returns
+    -------
+    tuple
+        Per-tile validation dataframe and aggregate summary dictionary, in that order.
+
+    Notes
+    -----
     Ground-truth policy
     -------------------
     - Stored /inst labels are the source of truth for pixel-level instance metrics.
@@ -56,6 +75,38 @@ def run_single_training_validation(
     """
     Run one training-validation combination.
 
+    Parameters
+    ----------
+    out_dir : str
+        Directory in which generated outputs are stored.
+    model_dir : str
+        Directory containing model checkpoint files.
+    h5_dir : str
+        Directory containing the input HDF5 datasets.
+    unet_mode : str
+        UNet model size selected by the pipeline.
+    dataset_mode : str
+        Dataset sampling mode used to select the corresponding training or validation data.
+    seg_method : str
+        Segmentation-method selector used to choose the configured implementation. Default
+        is ``'inst_seg'``.
+    force : bool
+        Whether to recompute results even when the expected output already exists. Default
+        is ``False``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Depending on the input and branch, returns ``pd.read_csv(out_csv, index_col=None)``,
+        ``df``.
+
+    Raises
+    ------
+    ValueError
+        Unknown dataset_mode: {dataset_mode} Unknown seg_method: {seg_method}
+
+    Notes
+    -----
     Output:
         training_val_<unet_mode>_<dataset_mode>_<seg_method>.csv
     """
@@ -114,6 +165,23 @@ def run_training_validation(
     """
     Sequential fallback.
 
+    Parameters
+    ----------
+    out_dir : str
+        Directory in which generated outputs are stored.
+    model_dir : str
+        Directory containing model checkpoint files.
+    h5_dir : str
+        Directory containing the input HDF5 datasets.
+    seg_method : str
+        Segmentation-method selector used to choose the configured implementation. Default
+        is ``'inst_seg'``.
+    force : bool
+        Whether to recompute results even when the expected output already exists. Default
+        is ``False``.
+
+    Notes
+    -----
     For cluster use, prefer run_single_training_validation through a SLURM array.
     """
     results = []

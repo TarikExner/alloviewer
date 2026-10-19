@@ -57,6 +57,25 @@ router = APIRouter(
 def _require_fcxm_job(
     job_id: str,
 ) -> dict[str, Any]:
+    """
+    Require an existing FCXM job and map lookup errors to HTTP errors.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    dict[str, Any]
+        Computed value of ``require_job_type(job_id, {'fcxm'})``.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 404 for the corresponding request validation, job-state, or processing error.
+        HTTP 409 for the corresponding request validation, job-state, or processing error.
+    """
     try:
         return require_job_type(
             job_id,
@@ -77,6 +96,20 @@ def _require_fcxm_job(
 def _norm_path(
     value: str | Path,
 ) -> str:
+    """
+    Resolve a path and normalize its case and separators for comparison.
+
+    Parameters
+    ----------
+    value : str | Path
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    str
+        Computed value of
+        ``os.path.normcase(os.path.normpath(str(Path(value).resolve())))``.
+    """
     return os.path.normcase(
         os.path.normpath(
             str(Path(value).resolve())
@@ -87,6 +120,21 @@ def _norm_path(
 def _safe_decode(
     value: Any,
 ) -> str:
+    """
+    Decode metadata bytes or strip a string representation.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``''``,
+        ``value.decode(encoding).strip()``, ``value.decode(errors='ignore').strip()``,
+        ``str(value).strip()``.
+    """
     if value is None:
         return ""
 
@@ -113,6 +161,19 @@ def _safe_decode(
 def _normalize_meta_key(
     key: Any,
 ) -> str:
+    """
+    Normalize metadata key case, whitespace, underscores, and hyphens.
+
+    Parameters
+    ----------
+    key : Any
+        Mapping key or attribute name selected by the helper.
+
+    Returns
+    -------
+    str
+        Computed value of ``str(key).strip().lower().replace('_', ' ').replace('-', ' ')``.
+    """
     return (
         str(key)
         .strip()
@@ -126,6 +187,21 @@ def _extract_tube_name_from_meta(
     metadata: dict[Any, Any],
     fallback: str,
 ) -> str:
+    """
+    Select the first nonempty tube or sample name from known FCS keys.
+
+    Parameters
+    ----------
+    metadata : dict[Any, Any]
+        Metadata mapping read from the source file or job record.
+    fallback : str
+        Value returned when no usable metadata value is found.
+
+    Returns
+    -------
+    str
+        The first nonempty tube or sample name from known FCS keys.
+    """
     if not metadata:
         return fallback
 
@@ -168,6 +244,19 @@ def _extract_tube_name_from_meta(
 def _read_fcs_metadata(
     path: Path,
 ) -> dict[Any, Any]:
+    """
+    Read the TEXT metadata mapping from an FCS file using FlowIO.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+
+    Returns
+    -------
+    dict[Any, Any]
+        The TEXT metadata mapping from an FCS file using FlowIO.
+    """
     from flowio import FlowData
 
     flow_data = FlowData(
@@ -189,6 +278,27 @@ def _resolve_fcs_upload_path(
     job_id: str,
     filename: str,
 ) -> Path:
+    """
+    Resolve an existing .fcs file within the job's FCS upload folder.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    filename : str
+        Name or path of the file selected by this operation.
+
+    Returns
+    -------
+    Path
+        Computed value of ``resolved``.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 400 for the corresponding request validation, job-state, or processing error.
+        HTTP 415 for the corresponding request validation, job-state, or processing error.
+    """
     paths = get_job_paths(job_id)
 
     try:
@@ -239,6 +349,19 @@ def _resolve_fcs_upload_path(
 def _collect_request_filenames(
     request_dict: dict[str, Any],
 ) -> list[str]:
+    """
+    Collect nonempty sample file paths in request order.
+
+    Parameters
+    ----------
+    request_dict : dict[str, Any]
+        FCXM request mapping with panel rows and sample file paths.
+
+    Returns
+    -------
+    list[str]
+        Nonempty sample file paths in request order.
+    """
     filenames: list[str] = []
 
     for sample in request_dict.get(
@@ -262,6 +385,26 @@ def _validate_request_files(
     job_id: str,
     request_dict: dict[str, Any],
 ) -> list[str]:
+    """
+    Require a nonempty FCS file list and validate each uploaded path.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    request_dict : dict[str, Any]
+        FCXM request mapping with panel rows and sample file paths.
+
+    Returns
+    -------
+    list[str]
+        Computed value of ``filenames``.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 400 for the corresponding request validation, job-state, or processing error.
+    """
     filenames = _collect_request_filenames(
         request_dict
     )
@@ -289,6 +432,26 @@ def _find_plot_cache_key(
     cache: dict[Any, Any],
     resolved_path: Path,
 ) -> str:
+    """
+    Match a cache key by normalized absolute path or unique basename.
+
+    Parameters
+    ----------
+    cache : dict[Any, Any]
+        Mapping of cached per-file FCXM plotting data.
+    resolved_path : Path
+        Resolved path of the selected FCS file.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``key``, ``basename_matches[0]``.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 404 for the corresponding request validation, job-state, or processing error.
+    """
     expected = _norm_path(
         resolved_path
     )
@@ -334,6 +497,14 @@ def _find_plot_cache_key(
 def _clear_previous_outputs(
     job_id: str,
 ) -> None:
+    """
+    Delete prior result, plot-cache, PDF, and Redis state for an FCXM run.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    """
     paths = get_job_paths(
         job_id,
         create=True,
@@ -360,6 +531,21 @@ async def fcxm_fcs_display_names(
     job_id: str,
     req: FcsDisplayNamesRequest,
 ):
+    """
+    Build display names from filenames or FCS tube metadata.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    req : FcsDisplayNamesRequest
+        Validated request model containing the fields for this endpoint.
+
+    Returns
+    -------
+    FcsDisplayNamesResponse
+        Mapping of requested paths to display names.
+    """
     _require_fcxm_job(job_id)
 
     names: dict[str, str] = {}
@@ -416,6 +602,31 @@ async def fcxm_run(
     job_id: str,
     req: FCXMRunRequest,
 ):
+    """
+    Validate and persist an FCXM request, then enqueue its worker task.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    req : FCXMRunRequest
+        Validated request model containing the fields for this endpoint.
+
+    Returns
+    -------
+    FCXMRunStartResponse
+        Identifier of the queued job.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 409 for the corresponding request validation, job-state, or processing error.
+        HTTP 503 for the corresponding request validation, job-state, or processing error.
+
+    Notes
+    -----
+    Queued, running, and completed jobs cannot be submitted again. Earlier outputs are cleared before queuing. Queue failure is recorded in job state and reported as HTTP 503.
+    """
     job = _require_fcxm_job(
         job_id
     )
@@ -548,6 +759,24 @@ async def fcxm_run(
 async def fcxm_run_progress(
     job_id: str,
 ):
+    """
+    Return current FCXM progress, result, and failure details.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    dict
+        Progress, result, and error fields for the job.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 404 for the corresponding request validation, job-state, or processing error.
+    """
     _require_fcxm_job(job_id)
 
     progress = get_fcxm_progress(
@@ -619,6 +848,28 @@ async def fcxm_results(
     job_id: str,
     req: FCXMResultsRequest,
 ):
+    """
+    Build gate plots and metrics from the completed job's plot cache.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    req : FCXMResultsRequest
+        Validated request model containing the fields for this endpoint.
+
+    Returns
+    -------
+    FCXMResultsResponse
+        Gate plots and metrics for the selected file.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 404 for the corresponding request validation, job-state, or processing error.
+        HTTP 409 for the corresponding request validation, job-state, or processing error.
+        HTTP 500 for the corresponding request validation, job-state, or processing error.
+    """
     _require_fcxm_job(job_id)
 
     progress = get_fcxm_progress(
@@ -693,6 +944,30 @@ async def fcxm_summary_pdf(
     positivity_metric: str | None = None,
     positivity_threshold: float | None = None,
 ):
+    """
+    Generate and return an FCXM summary PDF for a completed job.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    positivity_metric : str | None
+        Metric used to label an FCXM result as positive. Default is ``None``.
+    positivity_threshold : float | None
+        Positive-call cutoff in the units of the selected assay metric. Default is ``None``.
+
+    Returns
+    -------
+    Response
+        PDF bytes with an attachment filename.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 404 for the corresponding request validation, job-state, or processing error.
+        HTTP 409 for the corresponding request validation, job-state, or processing error.
+        HTTP 500 for the corresponding request validation, job-state, or processing error.
+    """
     _require_fcxm_job(job_id)
 
     progress = get_fcxm_progress(

@@ -9,19 +9,23 @@ from ..structs import ParsedPlateLayout, dc_to_dict, parsed_plate_from_dict
 
 
 class LayoutRepo:
-    """File-based repository for parsed plate layouts.
-
-    Layouts are stored as JSON files under ``root``. Each layout is saved by
-    ``upload_id`` and indexed by SHA-256 checksum through a small link file.
+    """
+    File-based repository for parsed plate layouts.
 
     Parameters
     ----------
     root : str
         Directory used to store layout JSON files and SHA link files.
+
+    Notes
+    -----
+    Layouts are stored as JSON files under ``root``. Each layout is saved by
+    ``upload_id`` and indexed by SHA-256 checksum through a small link file.
     """
 
     def __init__(self, root: str):
-        """Initialize the repository directory.
+        """
+        Initialize the repository directory.
 
         Parameters
         ----------
@@ -32,7 +36,8 @@ class LayoutRepo:
         os.makedirs(self.root, exist_ok=True)
 
     def _path_for_id(self, upload_id: str) -> str:
-        """Return the JSON path for an upload ID.
+        """
+        Return the JSON path for an upload ID.
 
         Parameters
         ----------
@@ -47,7 +52,8 @@ class LayoutRepo:
         return os.path.join(self.root, f"{upload_id}.json")
 
     def _path_for_sha(self, sha256: str) -> str:
-        """Return the link-file path for a SHA-256 checksum.
+        """
+        Return the link-file path for a SHA-256 checksum.
 
         Parameters
         ----------
@@ -62,7 +68,8 @@ class LayoutRepo:
         return os.path.join(self.root, f"sha_{sha256}.link")
 
     def save_layout(self, layout: ParsedPlateLayout) -> str:
-        """Save a parsed plate layout.
+        """
+        Save a parsed plate layout.
 
         Parameters
         ----------
@@ -92,7 +99,8 @@ class LayoutRepo:
         return layout.upload_id
 
     def get_by_id(self, upload_id: str) -> Optional[ParsedPlateLayout]:
-        """Load a parsed plate layout by upload ID.
+        """
+        Load a parsed plate layout by upload ID.
 
         Parameters
         ----------
@@ -116,7 +124,8 @@ class LayoutRepo:
         return parsed_plate_from_dict(data)
 
     def find_by_sha(self, sha256: str) -> Optional[ParsedPlateLayout]:
-        """Load a parsed plate layout by SHA-256 checksum.
+        """
+        Load a parsed plate layout by SHA-256 checksum.
 
         Parameters
         ----------

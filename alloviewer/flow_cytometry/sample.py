@@ -7,7 +7,8 @@ from .fcs_file import FCSFile
 
 
 def resolve_under_data_dir(rel_or_abs: str, data_dir: str) -> str:
-    """Resolve an uploaded FCS path under a data directory.
+    """
+    Resolve an uploaded FCS path under a data directory.
 
     Parameters
     ----------
@@ -56,7 +57,8 @@ def resolve_under_data_dir(rel_or_abs: str, data_dir: str) -> str:
 
 
 class Sample:
-    """Sample containing one or more FCS files.
+    """
+    Sample containing one or more FCS files.
 
     Parameters
     ----------
@@ -69,6 +71,11 @@ class Sample:
     fcs_kwargs : dict or None, optional
         Keyword arguments passed to :class:`FCSFile`.
 
+    Raises
+    ------
+    ValueError
+        If ``file_paths`` is empty.
+
     Attributes
     ----------
     name : str
@@ -79,11 +86,6 @@ class Sample:
         Stored FCS file paths.
     files : list of FCSFile
         Loaded FCS file objects.
-
-    Raises
-    ------
-    ValueError
-        If ``file_paths`` is empty.
     """
 
     def __init__(
@@ -93,6 +95,25 @@ class Sample:
         file_paths: List[str],
         fcs_kwargs: Optional[Dict] = None,
     ) -> None:
+        """
+        Store sample metadata and load every supplied FCS file.
+
+        Parameters
+        ----------
+        name : str
+            Sample name.
+        role : str
+            Sample role: NC for negative control, PC for positive control, or SAMPLE.
+        file_paths : list of str
+            Paths to FCS files belonging to the sample.
+        fcs_kwargs : dict or None, optional
+            Keyword arguments passed to :class:`FCSFile`. Default is ``None``.
+
+        Raises
+        ------
+        ValueError
+            file_paths must have at least one entry.
+        """
         if fcs_kwargs is None:
             fcs_kwargs = {}
 
@@ -106,7 +127,8 @@ class Sample:
         self.files = [FCSFile(p, **fcs_kwargs) for p in self.file_paths]
 
     def __repr__(self) -> str:
-        """Return a compact sample summary.
+        """
+        Return a compact sample summary.
 
         Returns
         -------
@@ -121,7 +143,8 @@ class Sample:
 
 
 class Dataset:
-    """Collection of samples.
+    """
+    Collection of samples.
 
     Parameters
     ----------
@@ -135,10 +158,19 @@ class Dataset:
     """
 
     def __init__(self, samples: List[Sample]) -> None:
+        """
+        Store the supplied sample collection.
+
+        Parameters
+        ----------
+        samples : list of Sample
+            Samples included in the dataset.
+        """
         self.samples = samples
 
     def get(self, role: str) -> List[Sample]:
-        """Return samples with a given role.
+        """
+        Return samples with a given role.
 
         Parameters
         ----------
@@ -153,7 +185,8 @@ class Dataset:
         return [s for s in self.samples if s.role == role]
 
     def get_one(self, role: str) -> Sample:
-        """Return exactly one sample with a given role.
+        """
+        Return exactly one sample with a given role.
 
         Parameters
         ----------
@@ -180,7 +213,8 @@ class Dataset:
         return xs[0]
 
     def __repr__(self) -> str:
-        """Return a compact dataset summary.
+        """
+        Return a compact dataset summary.
 
         Returns
         -------

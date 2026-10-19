@@ -11,7 +11,29 @@ def scale_to_10bit(
     mode: str = "clip01",           # 'clip01' | 'minmax' | 'percentile'
     percentiles: Tuple[float, float] = (1.0, 99.0),
 ) -> np.ndarray:
-    """Scale float image to uint16 using 10-bit range (0..1023)."""
+    """
+    Scale float image to uint16 using 10-bit range (0..1023).
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input image array.
+    mode : str
+        Intensity scaling rule: clip01, minmax, or percentile. Default is ``'clip01'``.
+    percentiles : Tuple[float, float]
+        Percentiles to include as image-distribution features. Default is ``(1.0, 99.0)``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``np.rint(x *
+        1023.0).astype(np.uint16)``, ``out``.
+
+    Raises
+    ------
+    ValueError
+        Unknown mode: {mode}
+    """
     x = np.nan_to_num(img, copy=True)
     C = x.shape[0]
     out = np.empty_like(x, dtype=np.uint16)
@@ -44,6 +66,20 @@ def imwrite_tiff_cv2(path: str, arr: np.ndarray) -> None:
     """
     Write a uint16 TIFF with OpenCV.
 
+    Parameters
+    ----------
+    path : str
+        Filesystem path of the file or directory processed by this helper.
+    arr : numpy.ndarray
+        Image or label array with spatial dimensions first and optional trailing channels.
+
+    Raises
+    ------
+    IOError
+        cv2.imwrite failed for: {path}
+
+    Notes
+    -----
     arr may be:
       - (H, W) uint16
       - (H, W, 3) uint16
@@ -61,6 +97,27 @@ def imwrite_tiff_tifffile(    path: str,
     """
     Write a uint16 TIFF with compression disabled and metadata for ImageJ/FIJI.
 
+    Parameters
+    ----------
+    path : str
+        Filesystem path of the file or directory processed by this helper.
+    arr : numpy.ndarray
+        Image or label array with spatial dimensions first and optional trailing channels.
+    channel_names : Optional[Sequence[str]]
+        Names corresponding to the stored image or target channels. Default is ``None``.
+    force_rgb : bool
+        Whether grayscale and other supported inputs are converted to three color channels.
+        Default is ``True``.
+
+    Raises
+    ------
+    TypeError
+        arr must be uint16
+    ValueError
+        Unsupported shape: {arr.shape} (dtype={arr.dtype})
+
+    Notes
+    -----
     Accepts:
       - (H, W) uint16                -> grayscale
       - (H, W, 3) uint16             -> RGB (channel-last)
@@ -136,10 +193,25 @@ def imwrite_tiff_tifffile(    path: str,
 def setup_stop_flag():
     """
     Install SIGINT/SIGTERM handlers and return a shared stop dict.
+
+    Returns
+    -------
+    object
+        Computed value of ``stop``.
     """
     stop = {"flag": False}
 
     def _handle_signal(signum, frame):
+        """
+        Set the shared stop flag when a handled signal arrives.
+
+        Parameters
+        ----------
+        signum : int
+            Accepted by the interface but not read by this implementation.
+        frame : types.FrameType or None
+            Accepted by the interface but not read by this implementation.
+        """
         stop["flag"] = True
 
     signal.signal(signal.SIGINT, _handle_signal)
@@ -149,6 +221,18 @@ def setup_stop_flag():
 def jsonify(obj: Any) -> Any:
     """
     Make nested structures JSON-serializable (handle numpy scalars/arrays).
+
+    Parameters
+    ----------
+    obj : Any
+        Object to convert into JSON-compatible values.
+
+    Returns
+    -------
+    Any
+        Depending on the input and branch, returns ``obj.item()``, ``obj.tolist()``,
+        ``{str(k): jsonify(v) for k, v in obj.items()}``, ``[jsonify(v) for v in obj]``,
+        ``obj``.
     """
     if isinstance(obj, (np.generic,)):
         return obj.item()
@@ -164,6 +248,11 @@ def jsonify(obj: Any) -> Any:
 def flush_safe_file(f: h5py.File):
     """
     Flush HDF5 file and underlying file descriptor (best effort).
+
+    Parameters
+    ----------
+    f : h5py.File
+        Open HDF5 file handle used for dataset creation, validation, or flushing.
     """
     f.flush()
     try:
@@ -194,6 +283,43 @@ def init_or_validate_varT_in_file(
     check_attrs: Dict[str, Any],
 ):
     """
+    Create or validate HDF5 datasets with a resizable tile dimension.
+
+    Parameters
+    ----------
+    f : h5py.File
+        Open HDF5 file handle used for dataset creation, validation, or flushing.
+    new_file : bool
+        Whether the HDF5 output is being initialized as a new file.
+    length : int
+        Number of image records allocated in the HDF5 datasets.
+    T0 : int
+        Initial allocated number of tiles per image record.
+    C_img : int
+        Number of stored image channels.
+    C_tgt : int
+        Number of stored target channels.
+    H : int
+        Image height in pixels.
+    W : int
+        Image width in pixels.
+    compression : Optional[str]
+        HDF5 compression filter name, or None to disable compression.
+    chunk_N : int
+        Number of image records per HDF5 storage chunk.
+    extra_attrs : Dict[str, Any]
+        Additional HDF5 attributes written when the file is initialized.
+    check_attrs : Dict[str, Any]
+        Expected HDF5 attributes checked before resuming an existing file.
+
+    Returns
+    -------
+    tuple
+        Tuple containing ``d_imgs``, ``d_tgts``, ``d_inst``, ``d_meta``, ``written``, in
+        that order.
+
+    Notes
+    -----
     Shared HDF5 init/validation for variable-T datasets:
 
       imgs: [N, T, C_img, S, S]

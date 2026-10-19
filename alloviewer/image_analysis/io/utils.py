@@ -28,7 +28,8 @@ CHANNEL_SEPARATORS: tuple[str, ...] = ("_", "-", ".", " ")
 
 @dataclass
 class LoadReport:
-    """Metadata collected while loading and scaling an image.
+    """
+    Metadata collected while loading and scaling an image.
 
     Parameters
     ----------
@@ -52,6 +53,29 @@ class LoadReport:
         Whether the data appears left-shifted in uint16 storage.
     warnings : list of str, optional
         Non-fatal loading or scaling warnings.
+
+    Attributes
+    ----------
+    path : str
+        Source path or placeholder for in-memory sources.
+    shape : tuple of int
+        Image shape after the current processing step.
+    dtype : str
+        Image dtype after the current processing step.
+    mode : str or None, optional
+        Optional image mode, if provided by a backend. Default is ``None``.
+    pages : int or None, optional
+        Number of pages in the image file, when known. Default is ``None``.
+    used_backend : str, optional
+        Backend used for loading. The default is ``"opencv"``.
+    bit_depth : int or None, optional
+        Inferred bit depth. Default is ``None``.
+    white_level : int or None, optional
+        Maximum expected white value for the inferred bit depth. Default is ``None``.
+    shifted : bool or None, optional
+        Whether the data appears left-shifted in uint16 storage. Default is ``None``.
+    warnings : list of str, optional
+        Non-fatal loading or scaling warnings. Default is ``field(default_factory=list)``.
     """
 
     path: str
@@ -68,7 +92,8 @@ class LoadReport:
 
 @dataclass
 class ChannelCombineReport:
-    """Metadata collected while combining monochrome channels into RGB.
+    """
+    Metadata collected while combining monochrome channels into RGB.
 
     Parameters
     ----------
@@ -90,6 +115,27 @@ class ChannelCombineReport:
         Whether all non-zero uint16 channels appear left-shifted.
     warnings : list of str, optional
         Non-fatal channel-combination warnings.
+
+    Attributes
+    ----------
+    group_key : str
+        Name of the matched image group.
+    output_path : str
+        Suggested or written output path.
+    input_paths : dict
+        Mapping from channel name to source path or source name.
+    shape : tuple of int
+        Shape of the combined RGB image.
+    dtype : str
+        Dtype of the combined RGB image.
+    bit_depth : int or None
+        Inferred shared bit depth for the input channels.
+    white_level : int or None
+        Shared white level for the inferred bit depth.
+    shifted : bool or None
+        Whether all non-zero uint16 channels appear left-shifted.
+    warnings : list of str, optional
+        Non-fatal channel-combination warnings. Default is ``field(default_factory=list)``.
     """
 
     group_key: str
@@ -107,7 +153,8 @@ def resolve_to_data_root(
     p: Union[str, Path],
     base_dir: Optional[Path] = None,
 ) -> Path:
-    """Resolve a path against a base directory or the configured data root.
+    """
+    Resolve a path against a base directory or the configured data root.
 
     Parameters
     ----------
@@ -115,7 +162,7 @@ def resolve_to_data_root(
         Input path. Backslashes are normalized before resolution.
     base_dir : pathlib.Path or None, optional
         Base directory used for relative paths. If omitted, ``DATA_ROOT`` is
-        used.
+        used. Default is ``None``.
 
     Returns
     -------
@@ -138,7 +185,8 @@ def resolve_to_data_root(
 
 
 def ensure_rgb_anydepth(arr: np.ndarray, report: LoadReport) -> np.ndarray:
-    """Ensure that an image has RGB layout while keeping its dtype unchanged.
+    """
+    Ensure that an image has RGB layout while keeping its dtype unchanged.
 
     Parameters
     ----------
@@ -190,7 +238,8 @@ def ensure_rgb_anydepth(arr: np.ndarray, report: LoadReport) -> np.ndarray:
 
 
 def as_single_channel_raw(arr: np.ndarray, name: Union[str, Path]) -> np.ndarray:
-    """Return one raw monochrome channel from loaded image data.
+    """
+    Return one raw monochrome channel from loaded image data.
 
     Parameters
     ----------
@@ -241,7 +290,8 @@ def detect_bitdepth_u16(
     use_percentile: bool = True,
     sample_stride: int = 16,
 ) -> Tuple[int, int, bool]:
-    """Infer nominal bit depth for a uint16 image.
+    """
+    Infer nominal bit depth for a uint16 image.
 
     Parameters
     ----------
@@ -252,7 +302,7 @@ def detect_bitdepth_u16(
         ``True``. The default is ``99.9``.
     use_percentile : bool, optional
         If ``True``, estimate bit depth from a percentile of the full array.
-        If ``False``, use a strided sample and maximum-value checks.
+        If ``False``, use a strided sample and maximum-value checks. Default is ``True``.
     sample_stride : int, optional
         Stride used when ``use_percentile`` is ``False``. The default is ``16``.
 
@@ -324,7 +374,8 @@ def detect_bitdepth_u16(
 def infer_group_bit_depth(
     channels: Dict[str, np.ndarray],
 ) -> Tuple[Optional[int], Optional[int], Optional[bool], list[str]]:
-    """Infer a shared bit depth for RGB channel arrays.
+    """
+    Infer a shared bit depth for RGB channel arrays.
 
     Parameters
     ----------
@@ -416,7 +467,8 @@ def infer_group_bit_depth(
 
 
 def common_output_dtype(channels: Dict[str, np.ndarray]) -> np.dtype:
-    """Choose an output dtype for combined channel data.
+    """
+    Choose an output dtype for combined channel data.
 
     Parameters
     ----------
@@ -447,7 +499,8 @@ def common_output_dtype(channels: Dict[str, np.ndarray]) -> np.dtype:
 def detect_channel_from_name(
     filename: str,
 ) -> Tuple[Optional[str], Optional[str], list[str]]:
-    """Detect a standalone RGB channel token from a filename.
+    """
+    Detect a standalone RGB channel token from a filename.
 
     Parameters
     ----------

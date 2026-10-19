@@ -32,6 +32,20 @@ ALLOWED_EFFECTIVE_CALLS = {
 
 
 def _finite_or_nan(value: Any) -> float:
+    """
+    Convert a finite numeric value to float, otherwise return NaN.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    float
+        Depending on the input and branch, returns ``float('nan')``, ``number if
+        np.isfinite(number) else float('nan')``.
+    """
     if value is None or value == "":
         return float("nan")
 
@@ -44,6 +58,19 @@ def _finite_or_nan(value: Any) -> float:
 
 
 def _corrected_fraction(well: Mapping[str, Any]) -> float:
+    """
+    Read the corrected positive percentage using either supported field name.
+
+    Parameters
+    ----------
+    well : Mapping[str, Any]
+        Mapping of measurements and call information for one well.
+
+    Returns
+    -------
+    float
+        The corrected positive percentage using either supported field name.
+    """
     value = well.get("frac_pos_corrected")
 
     if value is None:
@@ -53,10 +80,36 @@ def _corrected_fraction(well: Mapping[str, Any]) -> float:
 
 
 def _raw_fraction(well: Mapping[str, Any]) -> float:
+    """
+    Read the raw positive percentage, returning NaN for missing or invalid values.
+
+    Parameters
+    ----------
+    well : Mapping[str, Any]
+        Mapping of measurements and call information for one well.
+
+    Returns
+    -------
+    float
+        The raw positive percentage, returning NaN for missing or invalid values.
+    """
     return _finite_or_nan(well.get("frac_pos"))
 
 
 def _well_column(well_id: str) -> int | None:
+    """
+    Parse a trailing well column number, returning None when absent.
+
+    Parameters
+    ----------
+    well_id : str
+        Plate well identifier, such as ``A1``.
+
+    Returns
+    -------
+    int | None
+        Computed value of ``int(digits) if digits else None``.
+    """
     digits = ""
 
     for character in reversed(str(well_id)):
@@ -68,6 +121,19 @@ def _well_column(well_id: str) -> int | None:
 
 
 def _normalize_column_modes(value: Any) -> dict[int, str]:
+    """
+    Retain valid cell labels for crossmatch columns 1 through 10.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    dict[int, str]
+        Valid cell labels for crossmatch columns 1 through 10.
+    """
     if not isinstance(value, Mapping):
         return {}
 
@@ -88,6 +154,19 @@ def _normalize_column_modes(value: Any) -> dict[int, str]:
 
 
 def _load_pra_threshold(job_id: str) -> float:
+    """
+    Read the job's PRA threshold, falling back to the summary configuration.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    float
+        The job's PRA threshold, falling back to the summary configuration.
+    """
     request_path = get_job_paths(job_id).request
 
     if not request_path.exists():
@@ -107,6 +186,19 @@ def _load_pra_threshold(job_id: str) -> float:
 
 
 def _sample_well_ids(wells: Mapping[str, Any]) -> list[str]:
+    """
+    Collect IDs whose result entry has the sample role.
+
+    Parameters
+    ----------
+    wells : Mapping[str, Any]
+        Mapping from well IDs to per-well data or assay roles, as required by the model.
+
+    Returns
+    -------
+    list[str]
+        IDs whose result entry has the sample role.
+    """
     return [
         str(well_id)
         for well_id, well in wells.items()
@@ -116,6 +208,19 @@ def _sample_well_ids(wells: Mapping[str, Any]) -> list[str]:
 
 
 def _manual_override_wells(result: Mapping[str, Any]) -> set[str]:
+    """
+    Collect uppercase well IDs with valid manual positive or negative calls.
+
+    Parameters
+    ----------
+    result : Mapping[str, Any]
+        Analysis result containing per-well values and assay summaries.
+
+    Returns
+    -------
+    set[str]
+        Uppercase well IDs with valid manual positive or negative calls.
+    """
     overrides = result.get("manual_overrides")
 
     if not isinstance(overrides, Mapping):
@@ -130,6 +235,19 @@ def _manual_override_wells(result: Mapping[str, Any]) -> set[str]:
 
 
 def _effective_calls(wells: Mapping[str, Any]) -> dict[str, str]:
+    """
+    Collect valid effective well calls keyed by uppercase well IDs.
+
+    Parameters
+    ----------
+    wells : Mapping[str, Any]
+        Mapping from well IDs to per-well data or assay roles, as required by the model.
+
+    Returns
+    -------
+    dict[str, str]
+        Valid effective well calls keyed by uppercase well IDs.
+    """
     calls: dict[str, str] = {}
 
     for well_id, well in wells.items():
@@ -149,6 +267,21 @@ def _synchronize_well_calls(
     result: dict[str, Any],
     pra_threshold: float,
 ) -> None:
+    """
+    Update automated calls, borderline flags, and effective calls in place.
+
+    Parameters
+    ----------
+    result : dict[str, Any]
+        Analysis result containing per-well values and assay summaries.
+    pra_threshold : float
+        Positive-call cutoff for corrected PRA well values, in percent.
+
+    Raises
+    ------
+    ValueError
+        The analysis result does not contain well results.
+    """
     assay_type = str(result.get("assay_type") or "pra").lower()
     wells = result.get("wells")
 
@@ -212,6 +345,25 @@ def _recalculate_pra(
     result: dict[str, Any],
     pra_threshold: float,
 ) -> None:
+    """
+    Recompute PRA summaries and allele scores after manual well calls.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    result : dict[str, Any]
+        Analysis result containing per-well values and assay summaries.
+    pra_threshold : float
+        Positive-call cutoff for corrected PRA well values, in percent.
+
+    Raises
+    ------
+    FileNotFoundError
+        The parsed PRA plate-layout file is missing; override recalculation cannot continue.
+    ValueError
+        The persisted PRA plate layout is invalid.
+    """
     wells = result["wells"]
     sample_ids = _sample_well_ids(wells)
     corrected = [_corrected_fraction(wells[well_id]) for well_id in sample_ids]
@@ -264,6 +416,14 @@ def _recalculate_pra(
 
 
 def _recalculate_crossmatch(result: dict[str, Any]) -> None:
+    """
+    Recompute crossmatch summaries from effective well calls in place.
+
+    Parameters
+    ----------
+    result : dict[str, Any]
+        Analysis result containing per-well values and assay summaries.
+    """
     wells = result["wells"]
     sample_ids = _sample_well_ids(wells)
     raw = [_raw_fraction(wells[well_id]) for well_id in sample_ids]
@@ -341,6 +501,26 @@ def recalculate_after_manual_overrides(
     job_id: str,
     result: dict[str, Any],
 ) -> dict[str, Any]:
+    """
+    Copy a result, synchronize its well calls, and recalculate the assay summary.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    result : dict[str, Any]
+        Analysis result containing per-well values and assay summaries.
+
+    Returns
+    -------
+    dict[str, Any]
+        Computed value of ``updated``.
+
+    Raises
+    ------
+    ValueError
+        Unsupported image-analysis assay type: {assay_type}
+    """
     updated = deepcopy(result)
     pra_threshold = _load_pra_threshold(job_id)
     _synchronize_well_calls(
@@ -377,6 +557,35 @@ def apply_well_classification_override(
     well_id: str,
     call: str | None,
 ) -> dict[str, Any]:
+    """
+    Copy a result, apply or remove a manual call, and recompute its summary.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    result : dict[str, Any]
+        Analysis result containing per-well values and assay summaries.
+    well_id : str
+        Plate well identifier, such as ``A1``.
+    call : str | None
+        Manual call, ``positive`` or ``negative``; None clears an existing override.
+
+    Returns
+    -------
+    dict[str, Any]
+        Computed value of ``recalculate_after_manual_overrides(job_id=job_id,
+        result=updated)``.
+
+    Raises
+    ------
+    ValueError
+        Unsupported manual well call: {call} The analysis result does not contain well
+        results. Well result is invalid: {actual_well_id} This well has no calibrated
+        fraction positive and cannot be manually classified.
+    KeyError
+        Well not found in analysis result: {well_id}
+    """
     if call is not None and call not in ALLOWED_MANUAL_CALLS:
         raise ValueError(f"Unsupported manual well call: {call}")
 

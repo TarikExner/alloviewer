@@ -27,12 +27,32 @@ def _emit_progress(
 ) -> None:
     """
     Send one normalized progress event to the application layer.
+
+    Parameters
+    ----------
+    progress_cb : ProgressCallback | None
+        Callback receiving progress-event dictionaries; None disables progress events.
+    event : ProgressEvent
+        Progress event emitted by the analysis pipeline.
     """
     if progress_cb is not None:
         progress_cb(event)
 
 
 def _count_files(req_dict: dict[str, Any]) -> int:
+    """
+    Count file paths across all submitted sample groups.
+
+    Parameters
+    ----------
+    req_dict : dict[str, Any]
+        FCXM request mapping with panel rows and samples with resolved file paths.
+
+    Returns
+    -------
+    int
+        File paths across all submitted sample groups.
+    """
     return sum(
         len(sample.get("file_paths", []) or [])
         for sample in req_dict.get("samples", [])
@@ -42,6 +62,19 @@ def _count_files(req_dict: dict[str, Any]) -> int:
 def _event_file_name(
     event: ProgressEvent,
 ) -> str | None:
+    """
+    Read a file name from the supported progress-event keys.
+
+    Parameters
+    ----------
+    event : ProgressEvent
+        Progress event emitted by the analysis pipeline.
+
+    Returns
+    -------
+    str | None
+        A file name from the supported progress-event keys.
+    """
     value = (
         event.get("file_name")
         or event.get("file_path")
@@ -55,6 +88,20 @@ def _event_file_name(
 
 
 def _stage_message(stage: str) -> str:
+    """
+    Map a pipeline stage to its progress message, with a readable fallback.
+
+    Parameters
+    ----------
+    stage : str
+        Current pipeline stage, or None.
+
+    Returns
+    -------
+    str
+        Computed value of ``messages.get(stage, stage.replace('_', ' ').capitalize() +
+        '.')``.
+    """
     messages = {
         "starting": "Starting flow cytometry analysis.",
         "build_dataset": "Building dataset.",
@@ -85,6 +132,20 @@ def _make_progress_callback(
     """
     Build a callback used by the FCXM analysis components.
 
+    Parameters
+    ----------
+    total_files : int
+        Number of input files before expansion into progress work units.
+    progress_cb : ProgressCallback | None
+        Callback receiving progress-event dictionaries; None disables progress events.
+
+    Returns
+    -------
+    ProgressCallback
+        A callback used by the FCXM analysis components.
+
+    Notes
+    -----
     Progress is represented as file-level work units.
 
     Counted stages
@@ -123,6 +184,14 @@ def _make_progress_callback(
     done_filenames: list[str] = []
 
     def progress(event: ProgressEvent) -> None:
+        """
+        Update file-stage work counts and emit normalized FCXM progress.
+
+        Parameters
+        ----------
+        event : ProgressEvent
+            Progress event emitted by the analysis pipeline.
+        """
         nonlocal done_work
         nonlocal done_filenames
 
@@ -163,6 +232,19 @@ def _make_progress_callback(
 def _build_dataset(
     req_dict: dict[str, Any],
 ) -> Dataset:
+    """
+    Construct Sample objects and load their FCS files from the request.
+
+    Parameters
+    ----------
+    req_dict : dict[str, Any]
+        FCXM request mapping with panel rows and samples with resolved file paths.
+
+    Returns
+    -------
+    Dataset
+        Sample objects and load their FCS files from the request.
+    """
     samples: list[Sample] = []
 
     for sample_dict in req_dict["samples"]:
@@ -187,11 +269,11 @@ def run_fcxm_pipeline(
 
     Parameters
     ----------
-    req_dict
+    req_dict : dict[str, Any]
         Dictionary created from ``FCXMRunRequest.model_dump()``. It contains
         panel rows and samples with resolved file paths.
-    progress_cb
-        Optional callback receiving normalized progress dictionaries.
+    progress_cb : ProgressCallback | None
+        Optional callback receiving normalized progress dictionaries. Default is ``None``.
 
     Returns
     -------
@@ -289,6 +371,19 @@ def run_fcxm_analysis(
 ) -> dict[str, Any]:
     """
     Public FCXM analysis entry point.
+
+    Parameters
+    ----------
+    req_dict : dict[str, Any]
+        FCXM request mapping with panel rows and samples with resolved file paths.
+    progress_cb : ProgressCallback | None
+        Callback receiving progress-event dictionaries; None disables progress events.
+        Default is ``None``.
+
+    Returns
+    -------
+    dict[str, Any]
+        Computed value of ``run_fcxm_pipeline(req_dict=req_dict, progress_cb=progress_cb)``.
     """
     return run_fcxm_pipeline(
         req_dict=req_dict,

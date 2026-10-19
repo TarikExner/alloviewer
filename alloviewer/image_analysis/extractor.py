@@ -3,15 +3,19 @@ from typing import List, Dict, Any
 
 
 class RGBExtractor:
-    """Extract mean RGB intensities for labeled instances.
+    """
+    Extract mean RGB intensities for labeled instances.
 
+    Notes
+    -----
     The extractor computes per-instance mean red, green, and blue channel
     values from an RGB image and a matching integer instance map. Label ``0`` is
     treated as background and ignored.
     """
 
     def __call__(self, img: np.ndarray, inst: np.ndarray) -> List[Dict[str, Any]]:
-        """Compute mean RGB values per instance.
+        """
+        Compute mean RGB values per instance.
 
         Parameters
         ----------

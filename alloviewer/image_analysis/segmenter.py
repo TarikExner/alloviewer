@@ -33,56 +33,63 @@ Segmenter = TypeVar("Segmenter", bound="SegmenterUNet")
 
 @dataclass
 class InstanceSegmenterConfig:
-    """Configuration for watershed-based instance segmentation.
+    """
+    Configuration for watershed-based instance segmentation.
 
     Attributes
     ----------
     cell_mask_low_thr : float
-        Low threshold used for hysteresis on the cell probability map.
+        Low threshold used for hysteresis on the cell probability map. Default is ``0.1``.
     cell_mask_high_thr : float
-        High threshold used for hysteresis on the cell probability map.
+        High threshold used for hysteresis on the cell probability map. Default is ``0.6``.
     mask_close_radius : int
-        Radius of the disk used for binary closing of the cell mask.
+        Radius of the disk used for binary closing of the cell mask. Default is ``2``.
     min_hole_area : int
-        Minimum hole area retained in the binary cell mask.
+        Minimum hole area retained in the binary cell mask. Default is ``10``.
     min_object_area : int
-        Minimum object area retained in the binary cell mask.
+        Minimum object area retained in the binary cell mask. Default is ``10``.
     distance_smooth_sigma : float
-        Gaussian smoothing sigma applied to the distance transform.
+        Gaussian smoothing sigma applied to the distance transform. Default is ``1.0``.
     distance_weight : float
-        Weight of the distance-transform term in the watershed elevation.
+        Weight of the distance-transform term in the watershed elevation. Default is
+        ``1.0``.
     use_boundary : bool
-        Whether to add the boundary probability term to the elevation.
+        Whether to add the boundary probability term to the elevation. Default is ``True``.
     smooth_boundary_sigma : float
-        Gaussian smoothing sigma applied to the boundary probability map.
+        Gaussian smoothing sigma applied to the boundary probability map. Default is
+        ``1.0``.
     gamma_boundary : float
-        Weight of the boundary term in the watershed elevation.
+        Weight of the boundary term in the watershed elevation. Default is ``1.0``.
     use_edge_term : bool
-        Whether to add a cell-probability gradient term to the elevation.
+        Whether to add a cell-probability gradient term to the elevation. Default is
+        ``True``.
     edge_sigma : float
-        Sigma used for the cell-probability gradient magnitude.
+        Sigma used for the cell-probability gradient magnitude. Default is ``1.0``.
     edge_weight : float
-        Weight of the edge term in the watershed elevation.
+        Weight of the edge term in the watershed elevation. Default is ``1.0``.
     use_energy : bool
-        Whether to subtract the energy probability term from the elevation.
+        Whether to subtract the energy probability term from the elevation. Default is
+        ``True``.
     energy_weight : float
-        Weight of the energy term in the watershed elevation.
+        Weight of the energy term in the watershed elevation. Default is ``0.5``.
     energy_smooth_sigma : float
-        Gaussian smoothing sigma applied to the energy probability map.
+        Gaussian smoothing sigma applied to the energy probability map. Default is ``1.0``.
     use_centers : bool
-        Whether to use center probabilities for watershed seeds.
+        Whether to use center probabilities for watershed seeds. Default is ``True``.
     center_seed_method : str
-        Seed creation method. Supported values are ``"nms"`` and ``"thr"``.
+        Seed creation method. Supported values are ``"nms"`` and ``"thr"``. Default is
+        ``'nms'``.
     center_min_distance : int
-        Minimum distance between NMS center seeds.
+        Minimum distance between NMS center seeds. Default is ``1``.
     center_thr : float
-        Absolute center probability threshold.
+        Absolute center probability threshold. Default is ``0.7``.
     compactness : float
-        Compactness parameter passed to watershed.
+        Compactness parameter passed to watershed. Default is ``0.0``.
     watershed_line : bool
-        Whether watershed should draw 0-valued seam pixels between regions.
+        Whether watershed should draw 0-valued seam pixels between regions. Default is
+        ``False``.
     min_instance_area : int
-        Minimum area retained for final instances.
+        Minimum area retained for final instances. Default is ``3``.
     """
 
     cell_mask_low_thr: float = 0.10
@@ -118,7 +125,8 @@ class InstanceSegmenterConfig:
     min_instance_area: int = 3
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize the configuration.
+        """
+        Serialize the configuration.
 
         Returns
         -------
@@ -132,12 +140,13 @@ class InstanceSegmenterConfig:
         cls,
         d: Optional[Dict[str, Any]] = None,
     ) -> "InstanceSegmenterConfig":
-        """Create an instance segmentation configuration from a dictionary.
+        """
+        Create an instance segmentation configuration from a dictionary.
 
         Parameters
         ----------
         d : dict or None, optional
-            Input dictionary. Unknown keys are ignored.
+            Input dictionary. Unknown keys are ignored. Default is ``None``.
 
         Returns
         -------
@@ -152,41 +161,46 @@ class InstanceSegmenterConfig:
 
 @dataclass
 class SegmenterConfig:
-    """Configuration for UNet segmentation.
+    """
+    Configuration for UNet segmentation.
 
     Attributes
     ----------
     unet_mode : str
         UNet size. Supported values are ``"small"``, ``"medium"``, and
-        ``"large"``.
+        ``"large"``. Default is ``'small'``.
     model_dir : str
-        Directory containing model checkpoints.
+        Directory containing model checkpoints. Default is ``'./models'``.
     model_file : str or None
-        Checkpoint filename. If ``None``, ``best_{unet_mode}.pth`` is used.
+        Checkpoint filename. If ``None``, ``best_{unet_mode}.pth`` is used. Default is
+        ``None``.
     device : str
-        Requested torch device.
+        Requested torch device. Default is ``'cuda'``.
     use_amp : bool
-        Whether to use automatic mixed precision on CUDA.
+        Whether to use automatic mixed precision on CUDA. Default is ``True``.
     return_logits : bool
-        Whether to include raw logits in the output.
+        Whether to include raw logits in the output. Default is ``False``.
     compute_instances : bool
-        Whether to compute instance labels from predicted probability maps.
+        Whether to compute instance labels from predicted probability maps. Default is
+        ``True``.
     thr_cell : float
-        Threshold for the binary cell mask.
+        Threshold for the binary cell mask. Default is ``0.1``.
     thr_bound : float
-        Threshold for the binary boundary mask.
+        Threshold for the binary boundary mask. Default is ``0.1``.
     input_is_tiles : bool
-        Whether input passed to ``__call__`` is already a tile batch.
+        Whether input passed to ``__call__`` is already a tile batch. Default is ``False``.
     instance_cfg : dict
-        Configuration passed to :class:`InstanceSegmenter`.
+        Configuration passed to :class:`InstanceSegmenter`. Default is
+        ``field(default_factory=dict)``.
     normalize : bool
-        Whether to normalize input tensors with UNet training statistics.
+        Whether to normalize input tensors with UNet training statistics. Default is
+        ``True``.
     tile_size : int
-        Tile size used by :class:`SegmenterUNetInference`.
+        Tile size used by :class:`SegmenterUNetInference`. Default is ``512``.
     tile_overlap : int
-        Overlap between neighboring tiles.
+        Overlap between neighboring tiles. Default is ``64``.
     tile_pad_value : float
-        Value used to pad tiles at image borders.
+        Value used to pad tiles at image borders. Default is ``0.0``.
     """
 
     unet_mode: str = "small"
@@ -211,7 +225,8 @@ class SegmenterConfig:
     tile_pad_value: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize the configuration.
+        """
+        Serialize the configuration.
 
         Returns
         -------
@@ -228,14 +243,15 @@ class SegmenterConfig:
 
     @classmethod
     def from_dict(cls, d: Optional[Dict[str, Any]] = None) -> "SegmenterConfig":
-        """Create a segmenter configuration from a dictionary.
+        """
+        Create a segmenter configuration from a dictionary.
 
         Parameters
         ----------
         d : dict or None, optional
             Input dictionary. Unknown top-level keys are ignored. Nested
             ``instance_cfg`` values may be dictionaries or
-            :class:`InstanceSegmenterConfig` objects.
+            :class:`InstanceSegmenterConfig` objects. Default is ``None``.
 
         Returns
         -------
@@ -259,10 +275,8 @@ class SegmenterConfig:
 
 
 class SegmenterUNet:
-    """Run UNet segmentation on a single image or a batch of tiles.
-
-    The model predicts four probability maps: cell, boundary, center, and
-    energy. Instance labels are optionally computed from these maps.
+    """
+    Run UNet segmentation on a single image or a batch of tiles.
 
     Parameters
     ----------
@@ -271,12 +285,28 @@ class SegmenterUNet:
 
     Notes
     -----
+    The model predicts four probability maps: cell, boundary, center, and
+    energy. Instance labels are optionally computed from these maps.
+
     For a single image, accepted inputs include ``(H, W, 3)``, ``(3, H, W)``,
     ``(1, 3, H, W)``, and ``(H, W)``. For tile batches, accepted inputs are
     ``(T, 3, H, W)`` and ``(T, H, W, 3)``.
     """
 
     def __init__(self, cfg: SegmenterConfig):
+        """
+        Build the UNet, load its checkpoint, select the device, and enter evaluation mode.
+
+        Parameters
+        ----------
+        cfg : SegmenterConfig
+            Segmenter configuration.
+
+        Raises
+        ------
+        FileNotFoundError
+            Checkpoint not found: {self.ckpt_path}
+        """
         self.cfg = cfg
 
         builder = build_unet_by_mode(
@@ -321,7 +351,8 @@ class SegmenterUNet:
         )
 
     def _to_chw_numpy(self, img: np.ndarray) -> np.ndarray:
-        """Convert an image to ``(3, H, W)`` float32 in ``[0, 1]``.
+        """
+        Convert an image to ``(3, H, W)`` float32 in ``[0, 1]``.
 
         Parameters
         ----------
@@ -336,7 +367,8 @@ class SegmenterUNet:
         return to_chw_numpy(img)
 
     def _to_tensor(self, img: np.ndarray) -> torch.Tensor:
-        """Convert a single image to a normalized torch tensor.
+        """
+        Convert a single image to a normalized torch tensor.
 
         Parameters
         ----------
@@ -357,7 +389,8 @@ class SegmenterUNet:
         return t
 
     def _to_tensor_tiles(self, tiles: np.ndarray) -> torch.Tensor:
-        """Convert image tiles to a torch tensor.
+        """
+        Convert image tiles to a torch tensor.
 
         Parameters
         ----------
@@ -377,7 +410,8 @@ class SegmenterUNet:
 
     @torch.inference_mode()
     def predict_tiles(self, tiles: torch.Tensor) -> torch.Tensor:
-        """Predict probability maps for a tile tensor.
+        """
+        Predict probability maps for a tile tensor.
 
         Parameters
         ----------
@@ -406,7 +440,8 @@ class SegmenterUNet:
 
     @torch.inference_mode()
     def __call__(self, img: np.ndarray) -> Dict[str, Any]:
-        """Run segmentation on a single image or a tile batch.
+        """
+        Run segmentation on a single image or a tile batch.
 
         Parameters
         ----------
@@ -463,7 +498,8 @@ class SegmenterUNet:
         return out
 
     def _predict_tile_batch(self, img: np.ndarray) -> Dict[str, Any]:
-        """Run segmentation on an input batch of tiles.
+        """
+        Run segmentation on an input batch of tiles.
 
         Parameters
         ----------
@@ -540,7 +576,8 @@ class SegmenterUNet:
 
     @classmethod
     def from_config(cls: Type[Segmenter], cfg_dict: Dict[str, Any]) -> Segmenter:
-        """Create a segmenter from a configuration dictionary.
+        """
+        Create a segmenter from a configuration dictionary.
 
         Parameters
         ----------
@@ -557,19 +594,30 @@ class SegmenterUNet:
 
 
 class SegmenterUNetInference(SegmenterUNet):
-    """Run full-image UNet inference with internal tiling.
-
-    This class splits a full image into tiles, predicts probability maps for
-    all tiles, averages overlapping regions, and computes instance labels on
-    the stitched probability maps.
+    """
+    Run full-image UNet inference with internal tiling.
 
     Parameters
     ----------
     cfg : SegmenterConfig
         Segmenter configuration. ``compute_instances`` is forced to ``True``.
+
+    Notes
+    -----
+    This class splits a full image into tiles, predicts probability maps for
+    all tiles, averages overlapping regions, and computes instance labels on
+    the stitched probability maps.
     """
 
     def __init__(self, cfg: SegmenterConfig):
+        """
+        Build the inference segmenter and store normalization and input-size settings.
+
+        Parameters
+        ----------
+        cfg : SegmenterConfig
+            Segmenter configuration. ``compute_instances`` is forced to ``True``.
+        """
         cfg = copy.deepcopy(cfg)
         cfg.compute_instances = True
         cfg.input_is_tiles = False
@@ -586,7 +634,8 @@ class SegmenterUNetInference(SegmenterUNet):
             )
 
     def _iter_sliding_windows(self, height: int, width: int):
-        """Yield sliding-window coordinates.
+        """
+        Yield sliding-window coordinates.
 
         Parameters
         ----------
@@ -611,7 +660,8 @@ class SegmenterUNetInference(SegmenterUNet):
         self,
         image_chw: np.ndarray,
     ) -> Tuple[np.ndarray, Tuple[int, int]]:
-        """Split a CHW image into fixed-size tiles.
+        """
+        Split a CHW image into fixed-size tiles.
 
         Parameters
         ----------
@@ -637,7 +687,8 @@ class SegmenterUNetInference(SegmenterUNet):
         tiles: np.ndarray,
         orig_hw: Tuple[int, int],
     ) -> np.ndarray:
-        """Reconstruct full-size probability maps from tiled predictions.
+        """
+        Reconstruct full-size probability maps from tiled predictions.
 
         Parameters
         ----------
@@ -660,7 +711,8 @@ class SegmenterUNetInference(SegmenterUNet):
 
     @torch.no_grad()
     def __call__(self, img: np.ndarray) -> Dict[str, Any]:
-        """Run full-image inference.
+        """
+        Run full-image inference.
 
         Parameters
         ----------
@@ -724,19 +776,30 @@ class SegmenterUNetInference(SegmenterUNet):
 
 
 class InstanceSegmenter:
-    """Convert UNet probability maps into instance labels.
-
-    The instance segmentation uses a hysteresis cell mask, center-based
-    watershed seeds, and an elevation image built from distance, boundary,
-    edge, and energy terms.
+    """
+    Convert UNet probability maps into instance labels.
 
     Parameters
     ----------
     cfg : InstanceSegmenterConfig
         Instance segmentation configuration.
+
+    Notes
+    -----
+    The instance segmentation uses a hysteresis cell mask, center-based
+    watershed seeds, and an elevation image built from distance, boundary,
+    edge, and energy terms.
     """
 
     def __init__(self, cfg: InstanceSegmenterConfig):
+        """
+        Build the semantic and watershed stages from the instance-segmentation settings.
+
+        Parameters
+        ----------
+        cfg : InstanceSegmenterConfig
+            Instance segmentation configuration.
+        """
         self.cfg = cfg
 
         radius = int(self.cfg.mask_close_radius)
@@ -747,7 +810,8 @@ class InstanceSegmenter:
         seg_out: Dict[str, Any],
         update_cell_mask: bool = True,
     ) -> Dict[str, Any]:
-        """Compute instance labels from segmentation probabilities.
+        """
+        Compute instance labels from segmentation probabilities.
 
         Parameters
         ----------
@@ -860,7 +924,8 @@ class InstanceSegmenter:
 
     @classmethod
     def from_config(cls, cfg_dict: Dict[str, Any]) -> "InstanceSegmenter":
-        """Create an instance segmenter from a configuration dictionary.
+        """
+        Create an instance segmenter from a configuration dictionary.
 
         Parameters
         ----------

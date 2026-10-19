@@ -21,6 +21,17 @@ def _generate_main_figure(
     Build a 6x3 grid (18 tiles). First 17 tiles show histograms of cols_to_plot
     with hue=dataset_col using stacked counts. The last tile shows the legend only.
     Saves PDF/PNG if figure_output_dir is given, and also returns (fig, axes).
+
+    Parameters
+    ----------
+    figure_output_dir : str
+        Directory in which the figure files are written. Default is ``''``.
+    figure_name : str
+        Base name used for the output figure files. Default is ``''``.
+    data : pandas.DataFrame
+        Input data consumed by this analysis or plotting operation.
+    cols_to_plot : list[str]
+        Dataframe columns included in the plot.
     """
 
     fig = plt.figure(
@@ -37,6 +48,19 @@ def _generate_main_figure(
     axes = []
 
     def _process_title(title: str):
+        """
+        Replace parameter underscores with spaces and expand H and W labels.
+
+        Parameters
+        ----------
+        title : str
+            Text displayed as the plot or panel title.
+
+        Returns
+        -------
+        object
+            Computed value of ``title``.
+        """
         title = title.replace("_", " ")
         if title == "H":
             title = "image height"
@@ -46,6 +70,29 @@ def _generate_main_figure(
 
 
     def _make_hue_legend(ax, levels, palette, alpha=0.45, title=None, fontsize=9):
+        """
+        Create a patch legend for the supplied categorical color levels.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        levels : object
+            Levels or categories used by the plotting routine.
+        palette : object
+            Color palette used to distinguish plotted groups.
+        alpha : float
+            Opacity used to render the plotted observations. Default is ``0.45``.
+        title : object
+            Text displayed as the plot or panel title. Default is ``None``.
+        fontsize : int
+            Text font size in points. Default is ``9``.
+
+        Returns
+        -------
+        object
+            A patch legend for the supplied categorical color levels.
+        """
         handles = [
             Patch(facecolor=palette[i], edgecolor="none", alpha=alpha, label=str(lv))
             for i, lv in enumerate(levels)
@@ -136,6 +183,20 @@ def figure_S2_generation(
     figure_output_dir: str,
     **kwargs
 ):
+    """
+    Prepare the data and generate Figure S2 showing distributions of simulated dataset parameters.
+
+    Parameters
+    ----------
+    h5_path : str
+        Path to the simulated-image HDF5 dataset.
+    validation_results_dir : str
+        Directory containing cached validation tables and analysis results.
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    **kwargs : dict
+        Accepted by the interface but not read by this implementation.
+    """
     crop_well_stats = get_dataset_statistics(
         h5_path = os.path.join(h5_path, "crop_well_resize_train.h5"),
         output_dir = validation_results_dir 

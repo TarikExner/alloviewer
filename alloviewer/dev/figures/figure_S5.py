@@ -60,6 +60,25 @@ PROB_HEAD_DISPLAY_MAP = {
 
 
 def _prepare_training_plot_data(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize dataset and UNet display labels for training-validation plots.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        Input data consumed by this analysis or plotting operation.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Computed value of ``data``.
+
+    Raises
+    ------
+    ValueError
+        Expected column 'dataset_mode' in training validation data. Expected column
+        'unet_mode' in training validation data.
+    """
     data = data.copy().reset_index(drop=True)
 
     if "dataset_mode" not in data.columns:
@@ -103,6 +122,24 @@ def _prepare_training_plot_data(data: pd.DataFrame) -> pd.DataFrame:
 
 
 def _get_prob_for_display(prob: Any) -> np.ndarray:
+    """
+    Return a two-dimensional probability map or the first plane of a three-dimensional map.
+
+    Parameters
+    ----------
+    prob : Any
+        Probability map selected for display.
+
+    Returns
+    -------
+    numpy.ndarray
+        A two-dimensional probability map or the first plane of a three-dimensional map.
+
+    Raises
+    ------
+    ValueError
+        Expected 2D or 3D probability map, got shape {prob.shape}.
+    """
     prob = np.asarray(prob)
 
     if prob.ndim == 2:
@@ -115,6 +152,19 @@ def _get_prob_for_display(prob: Any) -> np.ndarray:
 
 
 def _format_unet_key(unet_mode: str) -> str:
+    """
+    Use med as the cache key for the medium UNet size.
+
+    Parameters
+    ----------
+    unet_mode : str
+        UNet model size selected by the pipeline.
+
+    Returns
+    -------
+    str
+        Depending on the input and branch, returns ``'med'``, ``unet_mode``.
+    """
     if unet_mode == "medium":
         return "med"
     return unet_mode
@@ -129,6 +179,25 @@ def _plot_metric_boxplot(
     *,
     use_violin: bool = False,
 ) -> None:
+    """
+    Draw a validation metric by dataset and UNet size as a box or violin plot.
+
+    Parameters
+    ----------
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    data : pandas.DataFrame
+        Input data consumed by this analysis or plotting operation.
+    metric : str
+        Metric name or alias; None means no metric selected.
+    title : str
+        Text displayed as the plot or panel title.
+    ylabel : str
+        Vertical-axis label.
+    use_violin : bool
+        Whether to display a violin distribution instead of the alternative summary plot.
+        Default is ``False``.
+    """
     plot_params = {
         "data": data,
         "x": "dataset_display",
@@ -174,6 +243,24 @@ def _generate_main_figure(
     figure_output_dir: str = "",
     figure_name: str = "",
 ) -> None:
+    """
+    Assemble and save the figure showing UNet size comparisons and probability-head examples.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        Input data consumed by this analysis or plotting operation.
+    res : dict
+        Prepared validation results used to construct the figure.
+    figure_output_dir : str
+        Directory in which the figure files are written. Default is ``''``.
+    figure_name : str
+        Base name used for the output figure files. Default is ``''``.
+
+    Notes
+    -----
+    Creates Matplotlib subplots and writes the figure outputs selected in this module. Figure input data is supplied by the enclosing preparation workflow.
+    """
     data = _prepare_training_plot_data(data)
 
     def generate_subfigure_a(
@@ -182,6 +269,24 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel A of Figure S5 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -202,6 +307,24 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel B of Figure S5 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -223,6 +346,24 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel C of Figure S5 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -243,6 +384,24 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel D of Figure S5 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -263,6 +422,31 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel E of Figure S5 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Raises
+        ------
+        KeyError
+            Missing key '{res_key}' in UNet comparison result. Available keys:
+            {list(res.keys())} Missing probability head '{head}' in res['{res_key}']. Available
+            keys: {list(res[res_key].keys())}
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -370,6 +554,22 @@ def figure_S5_generation(
     validation_results_dir: str,
     **kwargs,
 ) -> None:
+    """
+    Prepare the data and generate Figure S5 showing UNet size comparisons and probability-head examples.
+
+    Parameters
+    ----------
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    model_output_dir : str
+        Directory containing trained model checkpoints and training outputs.
+    ext_images_dir : str
+        Root directory containing external microscopy image sets.
+    validation_results_dir : str
+        Directory containing cached validation tables and analysis results.
+    **kwargs : dict
+        Additional options read by this helper: ``redo_analysis``.
+    """
     unet_base_config = copy.deepcopy(UNET_CONFIG)
     segmenter_class = SegmenterUNet
 

@@ -3,7 +3,8 @@ from typing import List, Dict, Any
 
 
 def _rg_array(wells: List[List[Dict[str, Any]]]) -> np.ndarray:
-    """Return ROI-level red/green ratios from nested well data.
+    """
+    Return ROI-level red/green ratios from nested well data.
 
     Parameters
     ----------
@@ -30,7 +31,8 @@ def _rg_array(wells: List[List[Dict[str, Any]]]) -> np.ndarray:
 
 
 def _safe_std(x: np.ndarray, floor: float = 1e-6) -> float:
-    """Return a standard deviation with a lower bound.
+    """
+    Return a standard deviation with a lower bound.
 
     Parameters
     ----------
@@ -49,7 +51,8 @@ def _safe_std(x: np.ndarray, floor: float = 1e-6) -> float:
     return max(s, floor)
 
 def _xy_array(wells: List[List[Dict[str, Any]]]) -> np.ndarray:
-    """Return ROI-level red and green channel means as a 2D array.
+    """
+    Return ROI-level red and green channel means as a 2D array.
 
     Parameters
     ----------
@@ -71,8 +74,11 @@ def _xy_array(wells: List[List[Dict[str, Any]]]) -> np.ndarray:
 
 
 class PCNCMedianCalibrator:
-    """Calibrate an R/G threshold from PC and NC median ratios.
+    """
+    Calibrate an R/G threshold from PC and NC median ratios.
 
+    Notes
+    -----
     The threshold is the midpoint between the median R/G ratio of positive
     control ROIs and the median R/G ratio of negative control ROIs.
     """
@@ -82,7 +88,8 @@ class PCNCMedianCalibrator:
         pc_wells: List[List[Dict[str, Any]]],
         nc_wells: List[List[Dict[str, Any]]],
     ) -> Dict[str, Any]:
-        """Fit the median-based R/G calibration.
+        """
+        Fit the median-based R/G calibration.
 
         Parameters
         ----------
@@ -119,8 +126,11 @@ class PCNCMedianCalibrator:
 
 
 class PCNCMeanCalibrator:
-    """Calibrate an R/G threshold from PC and NC mean ratios.
+    """
+    Calibrate an R/G threshold from PC and NC mean ratios.
 
+    Notes
+    -----
     The threshold is the midpoint between the mean R/G ratio of positive
     control ROIs and the mean R/G ratio of negative control ROIs.
     """
@@ -130,7 +140,8 @@ class PCNCMeanCalibrator:
         pc_wells: List[List[Dict[str, Any]]],
         nc_wells: List[List[Dict[str, Any]]],
     ) -> Dict[str, Any]:
-        """Fit the mean-based R/G calibration.
+        """
+        Fit the mean-based R/G calibration.
 
         Parameters
         ----------
@@ -169,8 +180,11 @@ class PCNCMeanCalibrator:
 
 
 class PCNCGaussianRGCalibrator:
-    """Fit one-dimensional Gaussian R/G models for PC and NC ROIs.
+    """
+    Fit one-dimensional Gaussian R/G models for PC and NC ROIs.
 
+    Notes
+    -----
     This calibrator estimates the mean and standard deviation of the R/G ratio
     separately for positive and negative control ROIs.
     """
@@ -180,7 +194,8 @@ class PCNCGaussianRGCalibrator:
         pc_wells: List[List[Dict[str, Any]]],
         nc_wells: List[List[Dict[str, Any]]],
     ) -> Dict[str, Any]:
-        """Fit Gaussian R/G parameters for positive and negative controls.
+        """
+        Fit Gaussian R/G parameters for positive and negative controls.
 
         Parameters
         ----------
@@ -228,8 +243,11 @@ class PCNCGaussianRGCalibrator:
 
 
 class PCNCGaussian2DCalibrator:
-    """Fit two-dimensional Gaussian models for PC and NC ROIs.
+    """
+    Fit two-dimensional Gaussian models for PC and NC ROIs.
 
+    Notes
+    -----
     This calibrator models each ROI by its red- and green-channel mean
     intensities. It estimates one mean vector and one covariance matrix for
     positive controls and one pair for negative controls.
@@ -241,7 +259,8 @@ class PCNCGaussian2DCalibrator:
         nc_wells: List[List[Dict[str, Any]]],
         eps: float = 1e-6,
     ) -> Dict[str, Any]:
-        """Fit 2D Gaussian parameters for positive and negative controls.
+        """
+        Fit 2D Gaussian parameters for positive and negative controls.
 
         Parameters
         ----------

@@ -41,6 +41,8 @@ class H5CellsDataset(Dataset):
     """
     Generic HDF5-backed dataset for cells/tiles.
 
+    Notes
+    -----
     Supports:
       - Tiled layout (created from ExternalCellsTilesDataset or similar):
           /imgs: float32 [N, T_max, 3, S, S]
@@ -71,6 +73,23 @@ class H5CellsDataset(Dataset):
     """
 
     def __init__(self, h5_path: str, indices: Optional[Sequence[int]] = None):
+        """
+        Inspect HDF5 image shapes and validate an optional subset of record indices.
+
+        Parameters
+        ----------
+        h5_path : str
+            Path to the simulated-image HDF5 dataset.
+        indices : Optional[Sequence[int]]
+            Optional subset of dataset record indices. Default is ``None``.
+
+        Raises
+        ------
+        RuntimeError
+            HDF5 file must contain datasets 'inst' and 'meta'.
+        ValueError
+            indices must be 1D indices out of range
+        """
         super().__init__()
         self.h5_path = str(h5_path)
         self._h5: Optional[h5py.File] = None
@@ -102,10 +121,20 @@ class H5CellsDataset(Dataset):
             self.idx = idx
 
     def __len__(self) -> int:
+        """
+        Return the number of selected HDF5 records.
+
+        Returns
+        -------
+        int
+            The number of selected HDF5 records.
+        """
         return int(self.idx.shape[0])
 
     def _ensure_open(self):
-        """Open HDF5 file (per worker) on first access."""
+        """
+        Open HDF5 file (per worker) on first access.
+        """
         if self._h5 is None:
             self._h5 = h5py.File(self.h5_path, "r", libver="latest", swmr=True)
             self._imgs = self._h5["imgs"]
@@ -115,6 +144,20 @@ class H5CellsDataset(Dataset):
 
     def _normalize_imgs(self, imgs: torch.Tensor) -> torch.Tensor:
         """
+        Normalize image tiles using the configured channel means and standard deviations.
+
+        Parameters
+        ----------
+        imgs : torch.Tensor
+            Images included in the current grid or batch.
+
+        Returns
+        -------
+        torch.Tensor
+            Normalized tiles with the same shape as the input.
+
+        Notes
+        -----
         imgs: [T, 3, S, S], float32, values in [0,1]
         returns: normalized imgs with per-channel (x - mean) / std
         """
@@ -123,6 +166,19 @@ class H5CellsDataset(Dataset):
         return (imgs - mean) / std
 
     def __getitem__(self, i: int):
+        """
+        Read image tiles, targets, instance labels, and decoded metadata for one record.
+
+        Parameters
+        ----------
+        i : int
+            Zero-based index of the HDF5 record to read.
+
+        Returns
+        -------
+        tuple
+            Tuple containing ``imgs_t``, ``tgts_t``, ``extras``, in that order.
+        """
         self._ensure_open()
         k = int(self.idx[i])
 
@@ -161,6 +217,9 @@ class H5CellsDataset(Dataset):
         return imgs_t, tgts_t, extras
 
     def close(self):
+        """
+        Close the lazy HDF5 handle and clear cached dataset references.
+        """
         if self._h5 is not None:
             try:
                 self._h5.close()
@@ -170,24 +229,57 @@ class H5CellsDataset(Dataset):
             self._imgs = self._tgts = self._inst = self._meta = None
 
     def __del__(self):
+        """
+        Close the HDF5 handle when the dataset object is destroyed.
+        """
         self.close()
 
 class TiledH5Dataset(H5CellsDataset):
     """
     Backwards-compatible alias for tiled H5 datasets.
 
+    Notes
+    -----
     Same behaviour as H5CellsDataset, but keeps the old name.
     """
     def __init__(self, h5_path: str, indices: Optional[Sequence[int]] = None):
+        """
+        Initialize the shared HDF5 reader for a tiled dataset.
+
+        Parameters
+        ----------
+        h5_path : str
+            Path to the simulated-image HDF5 dataset.
+        indices : Optional[Sequence[int]]
+            Optional subset of dataset record indices. Default is ``None``.
+        """
         super().__init__(h5_path=h5_path, indices=indices)
 
 class DiskSimCellsDataset(H5CellsDataset):
     """
     Backwards-compatible alias for single-tile H5 datasets.
 
+    Notes
+    -----
     Optionally checks that T_max == 1.
     """
     def __init__(self, h5_path: str, indices: Optional[Sequence[int]] = None):
+        """
+        Initialize the HDF5 reader and require exactly one tile per record.
+
+        Parameters
+        ----------
+        h5_path : str
+            Path to the simulated-image HDF5 dataset.
+        indices : Optional[Sequence[int]]
+            Optional subset of dataset record indices. Default is ``None``.
+
+        Raises
+        ------
+        ValueError
+            DiskSimCellsDataset expects T_max == 1, got {self.T_max}. Use H5CellsDataset or
+            TiledH5Dataset instead.
+        """
         super().__init__(h5_path=h5_path, indices=indices)
         # optional sanity: enforce single tile layout if you want
         if self.T_max != 1:
@@ -217,6 +309,56 @@ def create_sim_cells_dataset_h5(
     """
     Pre-allocate a single HDF5 and append EXACT tensors from SimCellsDataset.__getitem__:
 
+    Parameters
+    ----------
+    out_path : str
+        Path where the generated output file is written.
+    length : int
+        Total number of simulated image records requested for the HDF5 dataset.
+    mode : str
+        Image preparation mode passed to SimCellsDataset: padding/resizing, well cropping,
+        tiling, or supported full-resolution output. Default is ``'crop_well_resize'``.
+    n_tiles : Optional[int]
+        Number of tiles per sample; -1 requests full coverage where supported. Default is
+        ``1``.
+    tile_overlap : int
+        Overlap between adjacent tiles, in pixels. Default is ``64``.
+    target : int
+        Side length of the output square image tiles, in pixels. Default is ``512``.
+    rng_seed : int
+        Seed used to initialize random sampling. Default is ``187``.
+    gen_batch_size : int
+        Number of simulated samples generated in each batch. Default is ``16``.
+    num_workers_gen : int
+        Number of worker processes used for sample generation. Default is ``16``.
+    compression : Optional[str]
+        HDF5 compression filter name, or None to disable compression. Default is ``'lzf'``.
+    flush_every : int
+        Number of written records between explicit buffer flushes. Default is ``8``.
+    resume : bool
+        Whether to continue an existing output dataset from its stored progress. Default is
+        ``True``.
+    camera_cfg : object
+        Configuration controlling simulated image dimensions. Default is ``None``.
+    scene_cfg : object
+        Configuration controlling the simulated well and cell scene. Default is ``None``.
+    camera_style_cfg : object
+        Configuration selecting the camera-style distribution. Default is ``None``.
+    camera_style_registry : object
+        Mapping of camera-style names to their rendering parameters. Default is ``None``.
+
+    Returns
+    -------
+    object
+        Computed value of ``out_path``.
+
+    Raises
+    ------
+    RuntimeError
+        Empty dataset (length=0).
+
+    Notes
+    -----
       /imgs: float32 [N, T, 3, S, S]
       /tgts: float32 [N, T, C, S, S]
       /inst: int32   [N, T, S, S]
@@ -309,6 +451,19 @@ def create_sim_cells_dataset_h5(
         last_flush = 0
 
         def _ensure_tile_dim(n_tiles_needed: int):
+            """
+            Grow the HDF5 tile dimension when a batch requires more tile slots.
+
+            Parameters
+            ----------
+            n_tiles_needed : int
+                Minimum tile-axis capacity required for the next write.
+
+            Returns
+            -------
+            object
+                Depending on the input and branch, returns ``cur_T``, ``new_T``.
+            """
             cur_T = int(f.attrs.get("T", 1))
             if n_tiles_needed <= cur_T:
                 return cur_T
@@ -320,6 +475,25 @@ def create_sim_cells_dataset_h5(
             return new_T
 
         def _write_slice(imgs, tgts, inst, metas):
+            """
+            Write the next simulated batch into HDF5 and advance progress and record counters.
+
+            Parameters
+            ----------
+            imgs : torch.Tensor or numpy.ndarray
+                Images included in the current grid or batch.
+            tgts : torch.Tensor or numpy.ndarray
+                Target arrays aligned with the corresponding image tiles.
+            inst : numpy.ndarray
+                Integer instance-label image with background label zero.
+            metas : object
+                Per-image metadata records corresponding to the tensor batch.
+
+            Returns
+            -------
+            int or object
+                Depending on the input and branch, returns ``0``, ``take``.
+            """
             nonlocal written, last_flush
             # imgs: [B, T, 3, S, S]
             B, T, _, _, _ = imgs.shape
@@ -407,6 +581,42 @@ def create_external_cells_h5_tiles(
     Export external images (with *_mask.tif + *_data.csv) into an HDF5 that
     mirrors create_sim_cells_dataset_h5:
 
+    Parameters
+    ----------
+    root_dir : str
+        Root directory containing source images and matching annotations.
+    out_path : str
+        Path where the generated output file is written.
+    target : int
+        Side length of the output square image tiles, in pixels. Default is ``512``.
+    tile_overlap : int
+        Overlap between adjacent tiles, in pixels. Default is ``64``.
+    heal_radius : int
+        Radius used to fill narrow gaps before regrowing instance labels. Default is ``1``.
+    num_workers : int
+        Number of DataLoader worker processes. Default is ``4``.
+    compression : Optional[str]
+        HDF5 compression filter name, or None to disable compression. Default is ``'lzf'``.
+    flush_every : int
+        Number of written records between explicit buffer flushes. Default is ``8``.
+    resume : bool
+        Whether to continue an existing output dataset from its stored progress. Default is
+        ``True``.
+    transforms : callable or None
+        Optional joint image/target transformation callable. Default is ``None``.
+
+    Returns
+    -------
+    object
+        Computed value of ``out_path``.
+
+    Raises
+    ------
+    RuntimeError
+        Empty dataset (no external pairs found).
+
+    Notes
+    -----
         /imgs: float32 [N, T, 3, S, S]
         /tgts: float32 [N, T, 4, S, S]
         /inst: int32   [N, T, S, S]
@@ -481,6 +691,19 @@ def create_external_cells_h5_tiles(
         )
 
         def _ensure_tile_dim(n_tiles_needed: int):
+            """
+            Grow image, target, and instance datasets to fit additional tile slots.
+
+            Parameters
+            ----------
+            n_tiles_needed : int
+                Minimum tile-axis capacity required for the next write.
+
+            Returns
+            -------
+            object
+                Depending on the input and branch, returns ``cur_T``, ``new_T``.
+            """
             cur_T = int(f.attrs.get("T", 1))
             if n_tiles_needed <= cur_T:
                 return cur_T
@@ -493,6 +716,22 @@ def create_external_cells_h5_tiles(
 
         def _write_one(index: int, imgs_t: torch.Tensor, tgts_t: torch.Tensor, inst_t: torch.Tensor, meta_one: dict):
             # imgs_t: [T,3,S,S], tgts_t: [T,4,S,S], inst_t: [T,S,S]
+            """
+            Write one tiled image record, zero unused slots, and serialize its metadata.
+
+            Parameters
+            ----------
+            index : int
+                Zero-based position of the item to read or process.
+            imgs_t : torch.Tensor
+                Image tensor batch produced by the dataset loader.
+            tgts_t : torch.Tensor
+                Target tensor batch produced by the dataset loader.
+            inst_t : torch.Tensor
+                Integer instance-label tensor corresponding to the image tiles.
+            meta_one : dict
+                Metadata mapping for the image record being written.
+            """
             T = int(imgs_t.shape[0])
             _ensure_tile_dim(T)
 
@@ -580,6 +819,36 @@ def export_h5_to_tiff(
     Open the HDF5 once (context manager) and export up to n_images
     from /imgs as 10-bit data (0..1023) stored in uint16 TIFFs via OpenCV.
 
+    Parameters
+    ----------
+    h5_path : str
+        Path to the simulated-image HDF5 dataset.
+    out_dir : str
+        Directory in which generated outputs are stored.
+    n_images : Optional[int]
+        Number of image records requested or retained. Default is ``None``.
+    indices : Optional[Sequence[int]]
+        Optional subset of dataset record indices. Default is ``None``.
+    scale_mode : str
+        Intensity-scaling method used while reading source image tiles. Default is
+        ``'clip01'``.
+    scale_percentiles : Tuple[float, float]
+        Lower and upper percentiles used for intensity scaling. Default is ``(1.0, 99.0)``.
+    overwrite : bool
+        If True, permit replacement of existing output as implemented by this operation.
+        Default is ``False``.
+
+    Raises
+    ------
+    KeyError
+        Missing dataset '{key}' in HDF5.
+    ValueError
+        indices out of range
+    FileExistsError
+        File exists: {out_path}. Set overwrite=True to replace.
+
+    Notes
+    -----
     Channel handling:
       - C == 3  -> one 3-channel TIFF (H,W,3)
       - C == 1  -> one single-channel TIFF (H,W)
@@ -674,6 +943,48 @@ def create_tiled_from_fullres(
     Read a full-res validation HDF5 file created by create_validation_h5_fullres
     and build a tiled HDF5 file where each full image is split into fixed tiles.
 
+    Parameters
+    ----------
+    in_path : str
+        Path of the source file read by this operation.
+    out_path : str
+        Path where the generated output file is written.
+    target : int
+        Side length of the output square image tiles, in pixels. Default is ``512``.
+    tile_overlap : int
+        Overlap between adjacent tiles, in pixels. Default is ``64``.
+    boundary_ring_width : int
+        Width of the inner boundary target ring, in pixels. Default is ``1``.
+    boundary_soft_band : int
+        Width of the softened boundary target band, in pixels. Default is ``2``.
+    boundary_sigma : float
+        Gaussian standard deviation used for boundary targets. Default is ``1.0``.
+    center_sigma : float
+        Gaussian standard deviation used for center heatmaps. Default is ``1.0``.
+    compression : Optional[str]
+        HDF5 compression filter name, or None to disable compression. Default is ``'lzf'``.
+    compression_level : Optional[int]
+        Compression level passed to the selected HDF5 filter. Default is ``None``.
+    flush_every : int
+        Number of written records between explicit buffer flushes. Default is ``16``.
+    resume : bool
+        Accepted by the interface but not read by this implementation. Default is ``True``.
+    progress_desc : str
+        Text displayed beside the processing progress bar. Default is ``'export tiled h5'``.
+
+    Returns
+    -------
+    Tuple[int, int, int]
+        A full-res validation HDF5 file created by create_validation_h5_fullres and build a
+        tiled HDF5 file where each full image is split into fixed tiles.
+
+    Raises
+    ------
+    FileNotFoundError
+        Input H5 not found: {in_path}
+
+    Notes
+    -----
     Input file layout (full-res):
       /imgs: float32 [N, 1, 3, H_in, W_in]
       /tgts: float32 [N, 1, 4, H_in, W_in]   (ignored, we recompute per tile)
@@ -720,6 +1031,16 @@ def create_tiled_from_fullres(
     stop = {"flag": False}
 
     def _handle_signal(signum, frame):
+        """
+        Request a clean stop by setting the shared stop flag.
+
+        Parameters
+        ----------
+        signum : int
+            Accepted by the interface but not read by this implementation.
+        frame : types.FrameType or None
+            Accepted by the interface but not read by this implementation.
+        """
         stop["flag"] = True
 
     signal.signal(signal.SIGINT, _handle_signal)
@@ -844,6 +1165,9 @@ def create_tiled_from_fullres(
 
         # --- helpers for flushing ---
         def _flush_safe():
+            """
+            Flush HDF5 buffers and attempt to synchronize the underlying file descriptor.
+            """
             f_out.flush()
             try:
                 f_out.id.flush()
@@ -1051,6 +1375,39 @@ def create_background_dataset_h5(
     Export background-only tiles from .npy files into an HDF5 file
     with ONE tile per sample, i.e. T_max == 1.
 
+    Parameters
+    ----------
+    root_dir : str
+        Root directory containing source images and matching annotations.
+    out_path : str
+        Path where the generated output file is written.
+    target : int
+        Side length of the output square image tiles, in pixels. Default is ``512``.
+    compression : Optional[str]
+        HDF5 compression filter name, or None to disable compression. Default is ``None``.
+    flush_every : int
+        Number of written records between explicit buffer flushes. Default is ``5000``.
+    write_batch_size : int
+        Number of records buffered before writing a batch to disk. Default is ``256``.
+    glob_pattern : str
+        Filename pattern used to select input files. Default is ``'**/*.npy'``.
+
+    Returns
+    -------
+    object
+        Computed value of ``out_path``.
+
+    Raises
+    ------
+    RuntimeError
+        No .npy files found under: {root_dir} No tiles found in npy files
+    ValueError
+        Existing H5 length={int(f.attrs['length'])}, but current data has
+        total_tiles={total_tiles} Expected T=1, found T={int(f.attrs['T'])} target mismatch
+        with existing H5
+
+    Notes
+    -----
     Input
     -----
     Each .npy file contains either:
@@ -1064,8 +1421,6 @@ def create_background_dataset_h5(
       /inst: int32   [N_total_tiles, 1, target, target]      all zeros
       /meta: vlen JSON [N_total_tiles]
 
-    Notes
-    -----
     - writes in batches, not tile-by-tile
     - uses full-tile chunks to match access pattern
     - avoids frequent flushes
@@ -1079,6 +1434,27 @@ def create_background_dataset_h5(
     stop = setup_stop_flag()
 
     def _load_tiles(path: str) -> np.ndarray:
+        """
+        Load finite RGB background tiles with the required dimensions and clip them to [0, 1].
+
+        Parameters
+        ----------
+        path : str
+            Filesystem path of the file or directory processed by this helper.
+
+        Returns
+        -------
+        numpy.ndarray
+            Finite RGB background tiles with the required dimensions and clip them to [0, 1].
+
+        Raises
+        ------
+        ValueError
+            {path}: expected [3,H,W] or [T,3,H,W], got {arr.shape} {path}: expected shape
+            [T,3,H,W], got {arr.shape} {path}: expected 3D or 4D array, got {arr.shape} {path}:
+            expected 3 channels, got {C} {path}: expected spatial size ({target},{target}), got
+            ({H},{W}) {path}: contains non-finite values
+        """
         arr = np.load(path, allow_pickle=False)
 
         if arr.ndim == 3:
@@ -1108,6 +1484,25 @@ def create_background_dataset_h5(
         return np.clip(arr, 0.0, 1.0)
 
     def _count_tiles(path: str) -> int:
+        """
+        Count RGB tiles in a NumPy file while checking its channel layout.
+
+        Parameters
+        ----------
+        path : str
+            Filesystem path of the file or directory processed by this helper.
+
+        Returns
+        -------
+        int
+            RGB tiles in a NumPy file while checking its channel layout.
+
+        Raises
+        ------
+        ValueError
+            {path}: expected [3,H,W] or [T,3,H,W], got {arr.shape} {path}: expected shape
+            [T,3,H,W], got {arr.shape} {path}: expected 3D or 4D array, got {arr.shape}
+        """
         arr = np.load(path, mmap_mode="r", allow_pickle=False)
         if arr.ndim == 3:
             if arr.shape[0] != 3:
@@ -1121,6 +1516,21 @@ def create_background_dataset_h5(
             raise ValueError(f"{path}: expected 3D or 4D array, got {arr.shape}")
 
     def _make_meta(path: str, tile_index_in_file: int) -> Dict[str, Any]:
+        """
+        Build source-path and tile-index metadata for one background tile.
+
+        Parameters
+        ----------
+        path : str
+            Filesystem path of the file or directory processed by this helper.
+        tile_index_in_file : int
+            Zero-based index of the tile within its source file.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Result mapping with keys ``full``, ``tiles``, ``sim_kwargs``.
+        """
         full_meta = {
             "src_path": os.path.abspath(path),
             "kind": "background_tile",
@@ -1239,6 +1649,9 @@ def create_background_dataset_h5(
         buf_meta = []
 
         def _flush_buffers():
+            """
+            Write buffered background tiles and update HDF5 progress metadata.
+            """
             nonlocal out_idx, since_flush, buf_imgs, buf_meta
             if len(buf_imgs) == 0:
                 return

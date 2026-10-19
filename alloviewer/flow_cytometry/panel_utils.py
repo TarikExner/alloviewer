@@ -12,7 +12,8 @@ ChannelRole = Literal["IgG Marker", "Population Marker", "Scatter", "Time"]
 
 
 class PanelRow(BaseModel):
-    """Single channel row used for panel setup.
+    """
+    Single channel row used for panel setup.
 
     Parameters
     ----------
@@ -24,6 +25,17 @@ class PanelRow(BaseModel):
         Antibody or marker name, usually derived from the PnS value.
     population : str, optional
         User-facing population label linked to the marker.
+
+    Attributes
+    ----------
+    channel : str
+        FCS channel name, usually the PnN value.
+    role : ChannelRole
+        Functional role assigned to the channel.
+    antibody : str, optional
+        Antibody or marker name, usually derived from the PnS value. Default is ``''``.
+    population : str, optional
+        User-facing population label linked to the marker. Default is ``''``.
     """
 
     channel: str
@@ -53,14 +65,15 @@ _MARKER_TO_POP: List[Tuple[re.Pattern, str]] = [
 
 
 def guess_role(pnn: str, pns: Optional[str] = None) -> ChannelRole:
-    """Infer a channel role from FCS channel labels.
+    """
+    Infer a channel role from FCS channel labels.
 
     Parameters
     ----------
     pnn : str
         FCS PnN channel name.
     pns : str or None, optional
-        FCS PnS channel description.
+        FCS PnS channel description. Default is ``None``.
 
     Returns
     -------
@@ -90,7 +103,8 @@ def guess_population_name(
     pns: Optional[str],
     role: ChannelRole,
 ) -> str:
-    """Infer a population label for a channel.
+    """
+    Infer a population label for a channel.
 
     Parameters
     ----------
@@ -124,7 +138,8 @@ def guess_population_name(
 
 
 def is_time_channel(pnn: str) -> bool:
-    """Return whether a PnN label is a time channel.
+    """
+    Return whether a PnN label is a time channel.
 
     Parameters
     ----------
@@ -141,7 +156,8 @@ def is_time_channel(pnn: str) -> bool:
 
 
 def _file_key(path: str) -> Tuple[str, int, int]:
-    """Build a cache key for an FCS file.
+    """
+    Build a cache key for an FCS file.
 
     Parameters
     ----------
@@ -159,7 +175,8 @@ def _file_key(path: str) -> Tuple[str, int, int]:
 
 
 def _sanitize_pns(pns: Optional[str]) -> str:
-    """Normalize a PnS value.
+    """
+    Normalize a PnS value.
 
     Parameters
     ----------
@@ -180,7 +197,8 @@ def _sanitize_pns(pns: Optional[str]) -> str:
 def _extract_panel_rows_from_fcs(
     abs_path: str,
 ) -> Tuple[Tuple[Tuple[str, str], ...], List[PanelRow]]:
-    """Extract panel setup rows from FCS text metadata.
+    """
+    Extract panel setup rows from FCS text metadata.
 
     Parameters
     ----------
@@ -235,7 +253,8 @@ def _extract_panel_rows_from_fcs(
 def get_panel_rows_cached(
     path: str,
 ) -> Tuple[Tuple[Tuple[str, str], ...], List[PanelRow]]:
-    """Return cached panel rows for an FCS file.
+    """
+    Return cached panel rows for an FCS file.
 
     Parameters
     ----------
@@ -266,7 +285,8 @@ def get_panel_rows_cached(
 
 
 def _get(r: Any, key: str, default: str = "") -> str:
-    """Read a string field from a dictionary or object.
+    """
+    Read a string field from a dictionary or object.
 
     Parameters
     ----------
@@ -289,7 +309,8 @@ def _get(r: Any, key: str, default: str = "") -> str:
 
 
 def build_panel_from_rows(panel_rows: List[Any]) -> Tuple["Panel", Dict[str, str]]:
-    """Build a panel and marker-to-population map from panel rows.
+    """
+    Build a panel and marker-to-population map from panel rows.
 
     Parameters
     ----------
@@ -335,7 +356,8 @@ def build_panel_from_rows(panel_rows: List[Any]) -> Tuple["Panel", Dict[str, str
     igg_channel = igg_rows[0]["channel"]
 
     def pick(name: str) -> Optional[str]:
-        """Return a channel matching a preferred scatter name.
+        """
+        Return a channel matching a preferred scatter name.
 
         Parameters
         ----------

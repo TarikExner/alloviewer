@@ -11,9 +11,29 @@ from ..fcs_file import FCSFile
 
 @dataclass(frozen=True)
 class IgGControlStats:
-    """IgG control statistics for one gate.
+    """
+    IgG control statistics for one gate.
 
     Parameters
+    ----------
+    gate : str
+        Gate label.
+    nc_n_events : int
+        Number of negative-control events used for cutoff estimation.
+    pc_n_events : int
+        Number of positive-control events used for cutoff estimation.
+    nc_median_raw : float
+        Median raw IgG value in the negative control.
+    nc_median_t : float
+        Median transformed IgG value in the negative control.
+    pc_median_raw : float or None
+        Median raw IgG value in the positive control, when available.
+    pc_median_t : float or None
+        Median transformed IgG value in the positive control, when available.
+    cutoff_t : float
+        IgG positivity cutoff in transformed space.
+
+    Attributes
     ----------
     gate : str
         Gate label.
@@ -44,7 +64,8 @@ class IgGControlStats:
 
 
 def _smooth_counts(y: np.ndarray, w: int) -> np.ndarray:
-    """Smooth histogram counts with a centered moving average.
+    """
+    Smooth histogram counts with a centered moving average.
 
     Parameters
     ----------
@@ -73,7 +94,8 @@ def _smooth_counts(y: np.ndarray, w: int) -> np.ndarray:
 
 
 def _safe_median(x: np.ndarray) -> float:
-    """Return the median of finite values.
+    """
+    Return the median of finite values.
 
     Parameters
     ----------
@@ -95,7 +117,8 @@ def _safe_median(x: np.ndarray) -> float:
 
 
 def _safe_ratio(num: float, den: float) -> float:
-    """Return a finite ratio.
+    """
+    Return a finite ratio.
 
     Parameters
     ----------
@@ -120,7 +143,8 @@ def _safe_ratio(num: float, den: float) -> float:
 
 
 def _safe_fi(sample: float, neg: float, pos: Optional[float]) -> float:
-    """Compute a fluorescence index.
+    """
+    Compute a fluorescence index.
 
     Parameters
     ----------
@@ -157,7 +181,8 @@ def igg_cutoff_from_hist(
     nc_vals: np.ndarray,
     pc_vals: Optional[np.ndarray] = None,
 ) -> float:
-    """Estimate an IgG positivity cutoff from histograms.
+    """
+    Estimate an IgG positivity cutoff from histograms.
 
     Parameters
     ----------
@@ -168,7 +193,7 @@ def igg_cutoff_from_hist(
     nc_vals : numpy.ndarray
         Negative-control IgG values in transformed space.
     pc_vals : numpy.ndarray or None, optional
-        Positive-control IgG values in transformed space.
+        Positive-control IgG values in transformed space. Default is ``None``.
 
     Returns
     -------
@@ -206,7 +231,8 @@ def igg_cutoff_from_hist(
             pc = pc0
 
     def _robust_range(x: np.ndarray) -> Tuple[float, float]:
-        """Return a padded robust plotting range.
+        """
+        Return a padded robust plotting range.
 
         Parameters
         ----------
@@ -244,7 +270,8 @@ def igg_cutoff_from_hist(
     need = int(max(1, igg_cfg.tail_consecutive_bins))
 
     def _tail_cutoff_from_nc() -> float:
-        """Estimate cutoff from the negative-control right tail.
+        """
+        Estimate cutoff from the negative-control right tail.
 
         Returns
         -------
@@ -294,7 +321,8 @@ def get_igg_values_from_mask(
     mask: np.ndarray,
     igg_channel: str,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Return raw and transformed IgG values for masked events.
+    """
+    Return raw and transformed IgG values for masked events.
 
     Parameters
     ----------
@@ -360,7 +388,8 @@ def pool_igg_values_from_mask(
     mask: np.ndarray,
     igg_channel: str,
 ) -> np.ndarray:
-    """Return transformed IgG values for masked events.
+    """
+    Return transformed IgG values for masked events.
 
     Parameters
     ----------
@@ -401,7 +430,8 @@ def build_igg_control_stats(
     pc_raw: Optional[np.ndarray] = None,
     pc_t: Optional[np.ndarray] = None,
 ) -> IgGControlStats:
-    """Build IgG control statistics for one gate.
+    """
+    Build IgG control statistics for one gate.
 
     Parameters
     ----------
@@ -416,9 +446,9 @@ def build_igg_control_stats(
     nc_t : numpy.ndarray
         Negative-control transformed IgG values.
     pc_raw : numpy.ndarray or None, optional
-        Positive-control raw IgG values.
+        Positive-control raw IgG values. Default is ``None``.
     pc_t : numpy.ndarray or None, optional
-        Positive-control transformed IgG values.
+        Positive-control transformed IgG values. Default is ``None``.
 
     Returns
     -------
@@ -464,7 +494,8 @@ def compute_igg_readouts(
     t_vals: np.ndarray,
     control: IgGControlStats,
 ) -> Dict[str, float]:
-    """Compute IgG readout metrics for one sample or file.
+    """
+    Compute IgG readout metrics for one sample or file.
 
     Parameters
     ----------

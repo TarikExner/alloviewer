@@ -35,6 +35,19 @@ router = APIRouter(
 
 
 def _duplicate_key(value: str) -> str:
+    """
+    Normalize Unicode with NFKC and case-fold a path for duplicate checks.
+
+    Parameters
+    ----------
+    value : str
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    str
+        Computed value of ``unicodedata.normalize('NFKC', value).casefold()``.
+    """
     return unicodedata.normalize(
         "NFKC",
         value,
@@ -51,6 +64,39 @@ async def upload_job_files(
     files: list[UploadFile] = File(...),
     relative_paths: list[str] = Form(...),
 ):
+    """
+    Validate and save uploaded image or FCS files inside a job directory.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    upload_kind : Literal['images', 'fcs']
+        Upload category selecting the image or FCS destination folder.
+    files : list[UploadFile]
+        Uploaded file objects, read as binary streams. Default is ``File(...)``.
+    relative_paths : list[str]
+        Submitted relative paths, one per uploaded file and in the same order. Default is
+        ``Form(...)``.
+
+    Returns
+    -------
+    dict
+        Saved-file records in submitted order, under the saved key.
+
+    Raises
+    ------
+    HTTPException
+        HTTP 400 for the corresponding request validation, job-state, or processing error.
+        HTTP 404 for the corresponding request validation, job-state, or processing error.
+        HTTP 409 for the corresponding request validation, job-state, or processing error.
+        HTTP 415 for the corresponding request validation, job-state, or processing error.
+        HTTP 413 for the corresponding request validation, job-state, or processing error.
+
+    Notes
+    -----
+    Files and relative paths are paired in request order. Duplicate relative paths, duplicate image basenames, unsupported extensions, paths outside the target folder, and oversized files are rejected. Data is streamed to temporary files before replacement; temporary files are removed on failure.
+    """
     if len(files) != len(relative_paths):
         raise HTTPException(
             status_code=400,

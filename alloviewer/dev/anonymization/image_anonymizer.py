@@ -80,11 +80,34 @@ FILE_MAPPING_FIELDS = (
 
 
 class ImageAnonymizationError(RuntimeError):
+    """
+    Signal a failed image rewrite, mapping, or integrity check.
+    """
     pass
 
 
 @dataclass(frozen=True)
 class ImageResult:
+    """
+    Record an image rewrite, its formats, conversion, and file digests.
+
+    Attributes
+    ----------
+    source : Path
+        Source file path read by this operation.
+    output : Path
+        Destination path of the rewritten or converted file.
+    source_format : str
+        Image encoding detected in the source file.
+    output_format : str
+        Image encoding selected for the output file.
+    conversion : str
+        Description of the source-to-output image format conversion.
+    source_sha256 : str
+        SHA-256 hex digest of the original file.
+    output_sha256 : str
+        SHA-256 hex digest of the rewritten file.
+    """
     source: Path
     output: Path
     source_format: str
@@ -96,6 +119,31 @@ class ImageResult:
 
 @dataclass
 class AnonymizationReport:
+    """
+    Collect anonymous images, private mappings, and ancillary-file results.
+
+    Attributes
+    ----------
+    input_root : Path
+        Root folder containing the input dataset.
+    output_root : Path
+        Root folder for the processed output dataset.
+    mapping_root : Path
+        Private folder containing original-to-anonymous mappings.
+    folder_mapping_csv : Path
+        Path to the CSV mapping original to anonymous folder labels.
+    file_mapping_csv : Path
+        Path to the CSV mapping original to anonymous image names.
+    images : list[ImageResult]
+        Records describing processed images and their source-to-output mappings. Default is
+        ``field(default_factory=list)``.
+    skipped_non_images : list[Path]
+        Non-image source files omitted from processing. Default is
+        ``field(default_factory=list)``.
+    copied_non_images : list[Path]
+        Non-image source files copied without image conversion. Default is
+        ``field(default_factory=list)``.
+    """
     input_root: Path
     output_root: Path
     mapping_root: Path
@@ -107,16 +155,50 @@ class AnonymizationReport:
 
     @property
     def image_count(self) -> int:
+        """
+        Return the number of processed images.
+
+        Returns
+        -------
+        int
+            The number of processed images.
+        """
         return len(self.images)
 
     @property
     def folder_count(self) -> int:
+        """
+        Count folder mappings in the private CSV file.
+
+        Returns
+        -------
+        int
+            Folder mappings in the private CSV file.
+        """
         with self.folder_mapping_csv.open("r", encoding="utf-8", newline="") as handle:
             return sum(1 for _ in csv.DictReader(handle))
 
 
 @dataclass(frozen=True)
 class _TiffPageSpec:
+    """
+    Store decoded TIFF pixels and image-structure tags needed for rewriting.
+
+    Attributes
+    ----------
+    data : numpy.ndarray
+        Input data consumed by this analysis or plotting operation.
+    photometric : object | None
+        TIFF photometric interpretation passed to the image writer.
+    planarconfig : object | None
+        TIFF planar layout describing contiguous or separate color channels.
+    extrasamples : tuple[object, ...] | None
+        TIFF descriptors for extra image channels such as alpha.
+    colormap : numpy.ndarray | None
+        Optional TIFF palette table for indexed-color images.
+    bits_per_sample : tuple[int, ...]
+        Bit depth associated with each stored image sample.
+    """
     data: np.ndarray
     photometric: object | None
     planarconfig: object | None
@@ -126,17 +208,38 @@ class _TiffPageSpec:
 
 
 class _ProgressReporter:
+    """
+    Emit optional progress messages with elapsed time.
+    """
     def __init__(
         self,
         *,
         enabled: bool,
         callback: Callable[[str], None] | None,
     ) -> None:
+        """
+        Set the progress callback and start the elapsed-time clock.
+
+        Parameters
+        ----------
+        enabled : bool
+            Whether progress messages are emitted.
+        callback : Callable[[str], None] | None
+            Callable receiving progress text; None uses the default output handler.
+        """
         self.enabled = enabled
         self.callback = callback or (lambda message: print(message, flush=True))
         self.started = time.perf_counter()
 
     def log(self, message: str) -> None:
+        """
+        Emit a timed image-anonymization message when enabled.
+
+        Parameters
+        ----------
+        message : str
+            Human-readable status or error message.
+        """
         if not self.enabled:
             return
         elapsed = time.perf_counter() - self.started
@@ -144,6 +247,19 @@ class _ProgressReporter:
 
 
 def _format_bytes(size: int) -> str:
+    """
+    Format a byte count using binary size units.
+
+    Parameters
+    ----------
+    size : int
+        Number of bytes to express in human-readable units.
+
+    Returns
+    -------
+    str
+        A byte count using binary size units.
+    """
     value = float(size)
     for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
         if value < 1024.0 or unit == "TiB":
@@ -153,10 +269,33 @@ def _format_bytes(size: int) -> str:
 
 
 def _utc_now() -> str:
+    """
+    Return the current UTC timestamp without fractional seconds.
+
+    Returns
+    -------
+    str
+        The current UTC timestamp without fractional seconds.
+    """
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def _sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    """
+    Compute a file's SHA-256 digest by reading it in chunks.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+    chunk_size : int
+        Number of bytes read per hashing step. Default is ``1024 * 1024``.
+
+    Returns
+    -------
+    str
+        A file's SHA-256 digest by reading it in chunks.
+    """
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         while chunk := handle.read(chunk_size):
@@ -165,6 +304,21 @@ def _sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:
+    """
+    Test whether a path is beneath the supplied parent path.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+    parent : Path
+        Parent path against which containment is checked.
+
+    Returns
+    -------
+    bool
+        True when a path is beneath the supplied parent path; False otherwise.
+    """
     try:
         path.relative_to(parent)
         return True
@@ -173,6 +327,26 @@ def _is_relative_to(path: Path, parent: Path) -> bool:
 
 
 def _validate_roots(input_root: Path, output_root: Path, mapping_root: Path) -> None:
+    """
+    Require separate input, shareable-output, and private-mapping locations.
+
+    Parameters
+    ----------
+    input_root : Path
+        Root folder containing the input dataset.
+    output_root : Path
+        Root folder for the processed output dataset.
+    mapping_root : Path
+        Private folder containing original-to-anonymous mappings.
+
+    Raises
+    ------
+    ValueError
+        Input folder does not exist or is not a directory: {input_root} Input and output
+        folders must be different. The output folder must not be inside the input folder.
+        The private mapping folder must not be inside the input folder. The private mapping
+        folder must not be inside the shareable output folder.
+    """
     if not input_root.is_dir():
         raise ValueError(f"Input folder does not exist or is not a directory: {input_root}")
 
@@ -192,6 +366,27 @@ def _validate_roots(input_root: Path, output_root: Path, mapping_root: Path) -> 
 
 
 def _load_csv_by_key(path: Path, key: str) -> dict[str, dict[str, str]]:
+    """
+    Read unique nonempty keyed mapping rows, or return an empty mapping if absent.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+    key : str
+        Mapping key or attribute name selected by the helper.
+
+    Returns
+    -------
+    dict[str, dict[str, str]]
+        Unique nonempty keyed mapping rows, or return an empty mapping if absent.
+
+    Raises
+    ------
+    ImageAnonymizationError
+        Mapping file '{path}' contains a row without '{key}'. Mapping file '{path}' contains
+        duplicate key '{value}'.
+    """
     if not path.exists():
         return {}
 
@@ -214,6 +409,18 @@ def _load_csv_by_key(path: Path, key: str) -> dict[str, dict[str, str]]:
 
 
 def _write_csv_atomic(path: Path, fields: Iterable[str], rows: Iterable[dict[str, str]]) -> None:
+    """
+    Write mapping rows to a temporary CSV and replace the destination.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+    fields : Iterable[str]
+        Ordered CSV field names written in the header.
+    rows : Iterable[dict[str, str]]
+        Rows included in the generated table or file.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
     try:
@@ -227,6 +434,21 @@ def _write_csv_atomic(path: Path, fields: Iterable[str], rows: Iterable[dict[str
 
 
 def _new_identifier(prefix: str, used: set[str]) -> str:
+    """
+    Generate a unique random identifier and add it to the used set.
+
+    Parameters
+    ----------
+    prefix : str
+        Prefix prepended to a generated identifier.
+    used : set[str]
+        Set of identifiers already assigned; updated with the new identifier.
+
+    Returns
+    -------
+    str
+        A unique random identifier and add it to the used set.
+    """
     while True:
         candidate = f"{prefix}_{secrets.token_hex(6).upper()}"
         if candidate not in used:
@@ -238,7 +460,21 @@ def _build_image_order_indices(
     input_root: Path,
     files: Iterable[Path],
 ) -> dict[str, int]:
-    """Map every image to its one-based natural-sort position within its folder."""
+    """
+    Map every image to its one-based natural-sort position within its folder.
+
+    Parameters
+    ----------
+    input_root : Path
+        Root folder containing the input dataset.
+    files : Iterable[Path]
+        Uploaded file objects, read as binary streams.
+
+    Returns
+    -------
+    dict[str, int]
+        Computed value of ``order_indices``.
+    """
     images_by_parent: dict[str, list[Path]] = {}
 
     for path in files:
@@ -262,6 +498,19 @@ def _build_image_order_indices(
 
 
 def _assert_no_symlinks(input_root: Path) -> None:
+    """
+    Reject symbolic links in the input tree.
+
+    Parameters
+    ----------
+    input_root : Path
+        Root folder containing the input dataset.
+
+    Raises
+    ------
+    ImageAnonymizationError
+        Symbolic links are not accepted in anonymization input: {path}
+    """
     for path in input_root.rglob("*"):
         if path.is_symlink():
             raise ImageAnonymizationError(
@@ -270,6 +519,22 @@ def _assert_no_symlinks(input_root: Path) -> None:
 
 
 def _normalise_bits_per_sample(value: object, samples: int) -> tuple[int, ...]:
+    """
+    Normalize TIFF sample bit depths into an integer tuple.
+
+    Parameters
+    ----------
+    value : object
+        Input value to validate, convert, or format as specified by this helper.
+    samples : int
+        Number of samples or channels per pixel.
+
+    Returns
+    -------
+    tuple[int, ...]
+        Depending on the input and branch, returns ``tuple((int(item) for item in value))``,
+        ``tuple()``, ``tuple([int(value)] * max(1, samples))``.
+    """
     if isinstance(value, tuple):
         return tuple(int(item) for item in value)
     if isinstance(value, list):
@@ -280,6 +545,30 @@ def _normalise_bits_per_sample(value: object, samples: int) -> tuple[int, ...]:
 
 
 def _read_tiff_pages(path: Path) -> tuple[list[_TiffPageSpec], bool]:
+    """
+    Decode TIFF pages and reject unsupported orientation or packed-bit cases.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+
+    Returns
+    -------
+    tuple[list[_TiffPageSpec], bool]
+        Tuple containing ``specs``, ``is_bigtiff``, in that order.
+
+    Raises
+    ------
+    ImageAnonymizationError
+        TIFF '{path}' page {page_index} uses Orientation={orientation}. Refusing to remove
+        the orientation tag without an explicit pixel transform. TIFF '{path}' page
+        {page_index} uses compression that requires the optional 'imagecodecs' package.
+        Install it with: pip install imagecodecs TIFF '{path}' page {page_index} stores
+        {bits or 'unknown'} bits per sample but decodes to {data.dtype}. Packed or unusual
+        TIFF bit depths are intentionally rejected to prevent silent conversion. TIFF
+        contains no image pages: {path}
+    """
     specs: list[_TiffPageSpec] = []
     with tifffile.TiffFile(path) as tif:
         is_bigtiff = bool(tif.is_bigtiff)
@@ -337,6 +626,27 @@ def _read_tiff_pages(path: Path) -> tuple[list[_TiffPageSpec], bool]:
 
 
 def _write_clean_tiff(source: Path, output: Path) -> None:
+    """
+    Rewrite TIFF pages without sensitive tags and verify their pixel data.
+
+    Parameters
+    ----------
+    source : Path
+        Source file path read by this operation.
+    output : Path
+        Destination path of the rewritten or converted file.
+
+    Raises
+    ------
+    ImageAnonymizationError
+        BigTIFF status changed while rewriting '{source}'. TIFF page count changed while
+        rewriting '{source}'. TIFF page shape changed for '{source}', page {page_index}.
+        TIFF dtype changed for '{source}', page {page_index}: {before.data.dtype} ->
+        {after.data.dtype}. TIFF bit depth changed for '{source}', page {page_index}:
+        {before.bits_per_sample} -> {after.bits_per_sample}. TIFF pixel values changed for
+        '{source}', page {page_index}. Sensitive TIFF tags remain in '{output}', page
+        {page_index}: {retained}
+    """
     source_pages, is_bigtiff = _read_tiff_pages(source)
     output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -394,6 +704,19 @@ def _write_clean_tiff(source: Path, output: Path) -> None:
 
 
 def _jpeg_exif_orientation(path: Path) -> int:
+    """
+    Read JPEG EXIF orientation, defaulting to one if unavailable.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+
+    Returns
+    -------
+    int
+        JPEG EXIF orientation, defaulting to one if unavailable.
+    """
     with Image.open(path) as image:
         try:
             return int(image.getexif().get(274, 1) or 1)
@@ -402,6 +725,28 @@ def _jpeg_exif_orientation(path: Path) -> int:
 
 
 def _strip_jpeg_segments(data: bytes) -> tuple[bytes, tuple[int, ...]]:
+    """
+    Remove selected JPEG metadata segments while retaining the encoded image stream.
+
+    Parameters
+    ----------
+    data : bytes
+        Input data consumed by this analysis or plotting operation.
+
+    Returns
+    -------
+    tuple[bytes, tuple[int, ...]]
+        Tuple containing ``bytes(output)``, ``tuple(stripped)``, in that order.
+
+    Raises
+    ------
+    ImageAnonymizationError
+        Input is not a valid JPEG stream. Malformed JPEG marker stream at byte offset
+        {index}. JPEG ends inside a marker prefix. JPEG ends before a segment length field.
+        JPEG contains an invalid segment length. JPEG segment extends beyond the end of the
+        file. JPEG ends inside entropy-coded data. JPEG does not contain an End-of-Image
+        marker.
+    """
     if len(data) < 4 or data[:2] != b"\xFF\xD8":
         raise ImageAnonymizationError("Input is not a valid JPEG stream.")
 
@@ -486,6 +831,24 @@ def _strip_jpeg_segments(data: bytes) -> tuple[bytes, tuple[int, ...]]:
 
 
 def _jpeg_metadata_markers(path: Path) -> tuple[int, ...]:
+    """
+    Read JPEG markers to check which metadata segments remain.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+
+    Returns
+    -------
+    tuple[int, ...]
+        JPEG markers to check which metadata segments remain.
+
+    Raises
+    ------
+    ImageAnonymizationError
+        Not a JPEG file: {path} Malformed JPEG marker stream in '{path}'.
+    """
     data = path.read_bytes()
     if data[:2] != b"\xFF\xD8":
         raise ImageAnonymizationError(f"Not a JPEG file: {path}")
@@ -533,6 +896,21 @@ def _jpeg_metadata_markers(path: Path) -> tuple[int, ...]:
 
 
 def _decoded_array(path: Path, *, apply_orientation: bool) -> tuple[np.ndarray, str]:
+    """
+    Decode an image into an array and mode, optionally applying EXIF orientation.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+    apply_orientation : bool
+        Whether to apply EXIF orientation before converting the image to an array.
+
+    Returns
+    -------
+    tuple[numpy.ndarray, str]
+        Tuple containing ``np.array(converted)``, ``converted.mode``, in that order.
+    """
     with Image.open(path) as image:
         image.load()
         converted = ImageOps.exif_transpose(image) if apply_orientation else image
@@ -541,6 +919,23 @@ def _decoded_array(path: Path, *, apply_orientation: bool) -> tuple[np.ndarray, 
 
 
 def _write_lossless_clean_jpeg(source: Path, output: Path) -> None:
+    """
+    Strip JPEG metadata and verify unchanged decoded pixels and image mode.
+
+    Parameters
+    ----------
+    source : Path
+        Source file path read by this operation.
+    output : Path
+        Destination path of the rewritten or converted file.
+
+    Raises
+    ------
+    ImageAnonymizationError
+        JPEG metadata markers remain in '{output}': {marker_names} JPEG image mode changed
+        for '{source}': {before_mode} -> {after_mode}. JPEG decoded structure changed for
+        '{source}'. JPEG decoded pixels changed while stripping metadata from '{source}'.
+    """
     before_array, before_mode = _decoded_array(source, apply_orientation=False)
     cleaned, _ = _strip_jpeg_segments(source.read_bytes())
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -568,6 +963,14 @@ def _write_lossless_clean_jpeg(source: Path, output: Path) -> None:
 
 
 def _register_heif_support() -> None:
+    """
+    Register the optional pillow-heif image reader or raise a clear dependency error.
+
+    Raises
+    ------
+    ImageAnonymizationError
+        HEIC/HEIF input requires 'pillow-heif'. Install it with: pip install pillow-heif
+    """
     try:
         import pillow_heif
     except ImportError as exc:
@@ -578,6 +981,19 @@ def _register_heif_support() -> None:
 
 
 def _load_oriented_pillow_image(source: Path) -> tuple[Image.Image, np.ndarray, str]:
+    """
+    Load an image, apply EXIF orientation, and return a detached copy and array.
+
+    Parameters
+    ----------
+    source : Path
+        Source file path read by this operation.
+
+    Returns
+    -------
+    tuple[Image.Image, numpy.ndarray, str]
+        Tuple containing ``clean``, ``np.array(clean)``, ``clean.mode``, in that order.
+    """
     if source.suffix.casefold() in {".heic", ".heif"}:
         _register_heif_support()
 
@@ -590,6 +1006,23 @@ def _load_oriented_pillow_image(source: Path) -> tuple[Image.Image, np.ndarray, 
 
 
 def _write_clean_png(source: Path, output: Path) -> None:
+    """
+    Write an oriented metadata-stripped PNG and verify pixel and mode preservation.
+
+    Parameters
+    ----------
+    source : Path
+        Source file path read by this operation.
+    output : Path
+        Destination path of the rewritten or converted file.
+
+    Raises
+    ------
+    ImageAnonymizationError
+        PNG metadata remains in '{output}': {sorted(metadata_keys)} PNG image mode changed
+        for '{source}': {expected_mode} -> {actual_mode}. PNG decoded structure changed for
+        '{source}'. PNG pixel values changed for '{source}'.
+    """
     image, expected_array, expected_mode = _load_oriented_pillow_image(source)
     output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -657,6 +1090,19 @@ def _write_clean_png(source: Path, output: Path) -> None:
 
 
 def _source_format(path: Path) -> str:
+    """
+    Map a file suffix to its image format label.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+
+    Returns
+    -------
+    str
+        Image-format name corresponding to the source filename suffix.
+    """
     suffix = path.suffix.casefold()
     return {
         ".tif": "TIFF",
@@ -672,6 +1118,24 @@ def _source_format(path: Path) -> str:
 
 
 def _output_policy(source: Path) -> tuple[str, str, str]:
+    """
+    Select the output suffix, format, and conversion based on source type and orientation.
+
+    Parameters
+    ----------
+    source : Path
+        Source file path read by this operation.
+
+    Returns
+    -------
+    tuple[str, str, str]
+        The output suffix, format, and conversion based on source type and orientation.
+
+    Raises
+    ------
+    ImageAnonymizationError
+        Unsupported image format: {source}
+    """
     suffix = source.suffix.casefold()
     if suffix in {".tif", ".tiff"}:
         return ".tif", "TIFF", "metadata-free TIFF rewrite"
@@ -692,6 +1156,22 @@ def _output_policy(source: Path) -> tuple[str, str, str]:
 
 
 def _process_image(source: Path, output: Path) -> tuple[str, str, str]:
+    """
+    Rewrite an image using the selected TIFF, JPEG, or PNG policy.
+
+    Parameters
+    ----------
+    source : Path
+        Source file path read by this operation.
+    output : Path
+        Destination path of the rewritten or converted file.
+
+    Returns
+    -------
+    tuple[str, str, str]
+        Tuple containing ``source_format``, ``output_format``, ``conversion``, in that
+        order.
+    """
     source_format = _source_format(source)
     _, output_format, conversion = _output_policy(source)
 
@@ -718,8 +1198,60 @@ def anonymize_image_tree(
     progress_every: int = 1,
     progress_callback: Callable[[str], None] | None = None,
 ) -> AnonymizationReport:
-    """Anonymize an image directory tree while preserving image measurements.
+    """
+    Anonymize an image directory tree while preserving image measurements.
 
+    Parameters
+    ----------
+    input_folder : str | os.PathLike[str]
+        Root folder containing the source files to process. Default is ``'./ext_images'``.
+    output_folder : str | os.PathLike[str]
+        Root folder where processed files are written. Default is ``'../final/ext_images'``.
+    mapping_folder : str | os.PathLike[str] | None
+        Folder containing or receiving persistent anonymous-name mapping files. Default is
+        ``None``.
+    overwrite : bool
+        If True, permit replacement of existing output as implemented by this operation.
+        Default is ``False``.
+    copy_non_images : bool
+        Whether to copy non-image files encountered in the source tree. Default is
+        ``False``.
+    reuse_existing_mappings : bool
+        Whether to retain previously assigned anonymous names from mapping CSV files.
+        Default is ``True``.
+    reject_symlinks : bool
+        Whether symbolic links in the source tree cause processing to fail. Default is
+        ``True``.
+    verbose : bool
+        Whether to emit progress information. Default is ``True``.
+    progress_every : int
+        Number of processed files between progress messages. Default is ``1``.
+    progress_callback : Callable[[str], None] | None
+        Optional callable receiving progress information during processing; the function's
+        call sites define the event payload. Default is ``None``.
+
+    Returns
+    -------
+    AnonymizationReport
+        Computed value of ``report``.
+
+    Raises
+    ------
+    ValueError
+        progress_every must be at least 1.
+    FileExistsError
+        Output folder already exists: {output_root}. Pass overwrite=True to replace it.
+    ImageAnonymizationError
+        Existing folder mapping has an inconsistent parent for '{relative_key}'. Source file
+        changed since its mapping was created: {source} Existing file mappings do not use
+        the required order-preserving filenames. Remove '{file_mapping_csv}' and rerun the
+        anonymization. Expected '{expected_anonymous_relative.as_posix()}' for
+        '{relative_key}', found '{anonymous_relative.as_posix()}'. Existing order_index is
+        inconsistent for '{relative_key}'. Internal output-policy mismatch while processing
+        '{source}'.
+
+    Notes
+    -----
     Every directory is replaced with a random identifier. Image filenames use
     order-preserving identifiers such as IMG_0001.tif so natural filename sorting
     retains the original acquisition order. The
@@ -1015,6 +1547,14 @@ def anonymize_image_tree(
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """
+    Build the command-line parser for image-tree anonymization.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        The command-line parser for image-tree anonymization.
+    """
     parser = argparse.ArgumentParser(
         description="Anonymize an external image dataset and create private CSV mappings."
     )
@@ -1051,6 +1591,68 @@ def anonymize_ordered_image_folders(
     """
     Anonymize an ordered list of image folders.
 
+    Parameters
+    ----------
+    folders : Iterable[str | os.PathLike[str]]
+        Folders containing source images.
+    input_root : str | os.PathLike[str]
+        Root folder containing the input dataset. Default is ``'./ext_images'``.
+    output_folder : str | os.PathLike[str]
+        Root folder where processed files are written. Default is
+        ``'../final/show_images'``.
+    mapping_folder : str | os.PathLike[str] | None
+        Folder containing or receiving persistent anonymous-name mapping files. Default is
+        ``None``.
+    overwrite : bool
+        If True, permit replacement of existing output as implemented by this operation.
+        Default is ``True``.
+    reuse_existing_mappings : bool
+        Whether to retain previously assigned anonymous names from mapping CSV files.
+        Default is ``True``.
+    reject_symlinks : bool
+        Whether symbolic links in the source tree cause processing to fail. Default is
+        ``True``.
+    verbose : bool
+        Whether to emit progress information. Default is ``True``.
+    progress_callback : Callable[[str], None] | None
+        Optional callable receiving progress information during processing; the function's
+        call sites define the event payload. Default is ``None``.
+    code_path_prefix : str
+        Prefix prepended to image paths written into generated mappings. Default is
+        ``'./show_images'``.
+    preserve_metadata_folder_markers : tuple[str, ...]
+        Whether recognized metadata folder markers retain their names. Default is
+        ``('iphone', 'googlepixel')``.
+    ignored_directory_names : tuple[str, ...]
+        Directory basenames excluded while walking the source tree. Default is
+        ``('.ipynb_checkpoints',)``.
+
+    Returns
+    -------
+    list[str]
+        Computed value of ``replacement_paths``.
+
+    Raises
+    ------
+    ValueError
+        At least one source folder must be supplied. Source folder is outside input_root:
+        {source_folder} Expected top-level folders directly below '{source_root}', but
+        received '{relative_folder.as_posix()}'. Source folder supplied more than once:
+        {relative_key}
+    FileNotFoundError
+        Source folder does not exist: {source_folder}
+    ImageAnonymizationError
+        Source folder is a symbolic link: {source_folder} Existing mapping is not a
+        top-level folder mapping for '{relative_key}': {anonymous_relative.as_posix()} No
+        supported images found in '{source_folder}'. TIFF anonymization produced an
+        unexpected output format for '{source_image}': {output_format} A non-TIFF image was
+        found outside an iPhone or GooglePixel folder: '{source_image}'. Byte-for-byte copy
+        verification failed for '{source_image}'.
+    FileExistsError
+        Output folder already exists: {final_folder}
+
+    Notes
+    -----
     Folder names are replaced with RUN_* identifiers while image filenames
     remain unchanged.
 
@@ -1432,6 +2034,9 @@ def anonymize_ordered_image_folders(
     }
 
     def restore_mapping_files() -> None:
+        """
+        Restore mapping-file contents after a failed ordered export.
+        """
         for (
             path,
             original_content,
@@ -1458,6 +2063,9 @@ def anonymize_ordered_image_folders(
             )
 
     def rollback_published_folders() -> None:
+        """
+        Remove published output folders and restore their saved backups.
+        """
         for target in reversed(
             published_targets
         ):
@@ -1481,6 +2089,19 @@ def anonymize_ordered_image_folders(
     def source_format_from_suffix(
         suffix: str,
     ) -> str:
+        """
+        Map a source suffix to an image format label.
+
+        Parameters
+        ----------
+        suffix : str
+            File suffix appended to an image stem or used to select an image format.
+
+        Returns
+        -------
+        str
+            Image-format name corresponding to the supplied suffix.
+        """
         return {
             ".jpg": "JPEG",
             ".jpeg": "JPEG",
@@ -1894,6 +2515,9 @@ def anonymize_ordered_image_folders(
         raise
 
 def main() -> None:
+    """
+    Parse arguments, anonymize the image tree, and print counts and mapping paths.
+    """
     args = _build_parser().parse_args()
     report = anonymize_image_tree(
         args.input_folder,

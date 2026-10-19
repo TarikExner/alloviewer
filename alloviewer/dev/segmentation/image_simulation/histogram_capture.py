@@ -108,6 +108,19 @@ PAIRED_REFERENCE_SAMPLING = "paired_per_image"
 
 
 def _find_device_label(file_path: str | Path) -> str:
+    """
+    Infer a device group from recognized image-path fragments.
+
+    Parameters
+    ----------
+    file_path : str | Path
+        Path of the source file to inspect.
+
+    Returns
+    -------
+    str
+        A device group from recognized image-path fragments.
+    """
     text = str(file_path).lower()
 
     if "mono_rgb" in text or "mono_real" in text:
@@ -127,6 +140,29 @@ def _collect_image_paths(
     exts: Sequence[str] = (".png", ".jpg", ".jpeg", ".tif", ".tiff"),
     recursive: bool = True,
 ) -> list[Path]:
+    """
+    Collect unique sorted image paths from the requested folders.
+
+    Parameters
+    ----------
+    folders : Optional[Sequence[str | Path]]
+        Folders containing source images. Default is ``None``.
+    exts : Sequence[str]
+        Image filename extensions included in collection. Default is ``('.png', '.jpg',
+        '.jpeg', '.tif', '.tiff')``.
+    recursive : bool
+        Whether to include images in nested folders. Default is ``True``.
+
+    Returns
+    -------
+    list[Path]
+        Unique sorted image paths from the requested folders.
+
+    Raises
+    ------
+    RuntimeError
+        No image files were found.
+    """
     if folders is None:
         folders = EXT_IMAGES_FOLDERS
 
@@ -155,6 +191,27 @@ def _as_hwc_rgb_float01(
     img: np.ndarray,
     preserve_copy: bool = False,
 ) -> Tuple[np.ndarray, bool]:
+    """
+    Convert CHW or HWC RGB input to channel-last values clipped to [0, 1].
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input image array.
+    preserve_copy : bool
+        Whether to copy the converted image before returning it. Default is ``False``.
+
+    Returns
+    -------
+    Tuple[numpy.ndarray, bool]
+        Tuple containing ``np.clip(arr, 0.0, 1.0)``, ``input_chw``, in that order.
+
+    Raises
+    ------
+    ValueError
+        Expected a 3D image, got shape {arr.shape}. Expected CHW or HWC RGB image, got shape
+        {img.shape}.
+    """
     arr = np.asarray(img, dtype=np.float32)
     input_chw = False
 
@@ -182,6 +239,21 @@ def _annotation_paths_for_image(
     """
     Return annotation paths using the reviewer's output layout.
 
+    Parameters
+    ----------
+    image_path : str | Path
+        Image path relative to the job root.
+    annotation_dir : str | Path
+        Directory containing image or cell annotation files. Default is
+        ``DEFAULT_ANNOTATION_DIR``.
+
+    Returns
+    -------
+    Dict[str, Path]
+        Result mapping with keys ``regions``, ``well_mask``, ``metadata``, ``preview``.
+
+    Notes
+    -----
     Example
     -------
     Source:
@@ -206,6 +278,22 @@ def _annotation_is_complete(
     image_path: str | Path,
     annotation_dir: str | Path = DEFAULT_ANNOTATION_DIR,
 ) -> bool:
+    """
+    Check that region labels, well mask, and annotation metadata all exist.
+
+    Parameters
+    ----------
+    image_path : str | Path
+        Image path relative to the job root.
+    annotation_dir : str | Path
+        Directory containing image or cell annotation files. Default is
+        ``DEFAULT_ANNOTATION_DIR``.
+
+    Returns
+    -------
+    bool
+        Boolean result of the stated condition check.
+    """
     paths = _annotation_paths_for_image(image_path, annotation_dir)
 
     return (
@@ -216,6 +304,19 @@ def _annotation_is_complete(
 
 
 def _load_json(path: Path) -> Dict[str, Any]:
+    """
+    Read a UTF-8 JSON file, returning an empty mapping on failure.
+
+    Parameters
+    ----------
+    path : Path
+        Filesystem path of the file or directory processed by this helper.
+
+    Returns
+    -------
+    Dict[str, Any]
+        A UTF-8 JSON file, returning an empty mapping on failure.
+    """
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
@@ -226,6 +327,21 @@ def _annotation_inventory(
     image_paths: Sequence[Path],
     annotation_dir: str | Path,
 ) -> Dict[str, Any]:
+    """
+    Summarize complete annotation sets and their newest modification time.
+
+    Parameters
+    ----------
+    image_paths : Sequence[Path]
+        Paths to the images included in the operation.
+    annotation_dir : str | Path
+        Directory containing image or cell annotation files.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``n_complete``, ``complete_images``, ``latest_mtime``.
+    """
     complete = []
     latest_mtime = 0.0
 
@@ -259,7 +375,24 @@ def _resolve_device_value(
     device: str,
     default: Any,
 ) -> Any:
-    """Compatibility helper retained from the automatic-mask cache."""
+    """
+    Compatibility helper retained from the automatic-mask cache.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+    device : str
+        Device-group name used to select a device-specific setting.
+    default : Any
+        Fallback value used when the setting is absent or cannot be parsed.
+
+    Returns
+    -------
+    Any
+        Depending on the input and branch, returns ``default``, ``value.get(device,
+        value.get('default', default))``, ``value``.
+    """
     if value is None:
         return default
 
@@ -284,6 +417,43 @@ def make_foreground_background_masks(
     """
     Legacy automatic mask helper.
 
+    Parameters
+    ----------
+    img_hwc : numpy.ndarray
+        RGB image with shape (height, width, 3).
+    foreground_quantile : float
+        Quantile used to propose foreground pixels from the image signal. Default is
+        ``0.92``.
+    background_quantile : float
+        Quantile used to select background pixels from the image signal. Default is ``0.8``.
+    min_region_pixels : int
+        Minimum pixels needed to retain a region in the reference statistics. Default is
+        ``2048``.
+    signal_mode : str
+        Rule used to reduce RGB intensities to a scalar signal for region selection. Default
+        is ``'max'``.
+    morph_open : bool
+        Whether morphological opening is applied to the proposed mask. Default is ``False``.
+    morph_kernel_size : int
+        Spatial size of the morphological structuring element. Default is ``3``.
+
+    Returns
+    -------
+    Dict[str, numpy.ndarray]
+        Depending on the input and branch, returns ``{'all': empty, 'foreground': empty,
+        'background': empty}``, ``{'all': all_mask, 'foreground': foreground, 'background':
+        background}``.
+
+    Raises
+    ------
+    ValueError
+        Expected HWC RGB image, got {image.shape}. foreground_quantile must be in [0, 1].
+        background_quantile must be in [0, 1]. background_quantile must be smaller than
+        foreground_quantile. signal_mode must be one of: 'max', 'luma', 'green',
+        'red_green_max'.
+
+    Notes
+    -----
     The reviewed annotation cache does not call this function, but it remains
     available for notebooks and older code that import it directly.
     """
@@ -407,6 +577,30 @@ def _load_reviewed_regions(
     """
     Load one reviewed mask pair and derive the analysis regions.
 
+    Parameters
+    ----------
+    image_path : Path
+        Image path relative to the job root.
+    annotation_dir : str | Path
+        Directory containing image or cell annotation files.
+    default_ring_inner_radius : int
+        Fallback inner radius for the local-background ring, in pixels. Default is ``2``.
+    default_ring_outer_radius : int
+        Fallback outer radius for the local-background ring, in pixels. Default is ``6``.
+
+    Returns
+    -------
+    Tuple[Dict[str, numpy.ndarray], Dict[str, Any]]
+        Tuple containing ``masks``, ``info``, in that order.
+
+    Raises
+    ------
+    ValueError
+        Expected a 2D region mask for {image_path}, got {labels.shape}. Well-mask shape
+        {well_mask.shape} does not match region-mask shape {labels.shape} for {image_path}.
+
+    Notes
+    -----
     Main labels
     -----------
     0: ignore
@@ -518,6 +712,31 @@ def _sample_pixels_from_masked_region(
     sample_pixels: Optional[int],
     rng: np.random.Generator,
 ) -> Optional[np.ndarray]:
+    """
+    Select RGB pixels from a region and optionally subsample them.
+
+    Parameters
+    ----------
+    img_hwc : numpy.ndarray
+        RGB image with shape (height, width, 3).
+    mask_hw : Optional[numpy.ndarray]
+        Optional boolean region mask with shape (height, width).
+    sample_pixels : Optional[int]
+        Maximum number of pixels sampled per image for feature estimation.
+    rng : np.random.Generator
+        NumPy random-number generator used for sampling.
+
+    Returns
+    -------
+    Optional[numpy.ndarray]
+        RGB pixels from a region and optionally subsample them.
+
+    Raises
+    ------
+    ValueError
+        Expected HWC RGB image, got {img.shape}. Mask shape {mask.shape} does not match
+        image shape {img.shape[:2]}.
+    """
     img = np.clip(
         np.asarray(img_hwc, dtype=np.float32),
         0.0,
@@ -563,6 +782,21 @@ def _compute_pixels_quantiles(
     pixels: np.ndarray,
     q_probs: np.ndarray,
 ) -> np.ndarray:
+    """
+    Compute monotone per-channel quantiles from RGB pixel rows.
+
+    Parameters
+    ----------
+    pixels : numpy.ndarray
+        RGB pixel rows used to compute channel statistics.
+    q_probs : numpy.ndarray
+        Quantile probabilities in [0, 1], in ascending order.
+
+    Returns
+    -------
+    numpy.ndarray
+        Monotone per-channel quantiles from RGB pixel rows.
+    """
     channel_quantiles = []
 
     for channel in range(3):
@@ -588,6 +822,27 @@ def _build_region_payload_from_records(
     q_band_hi: float,
     store_q_images: bool,
 ) -> Optional[Dict[str, Any]]:
+    """
+    Pool per-image region quantiles into median and lower/upper reference bands.
+
+    Parameters
+    ----------
+    records : Sequence[Dict[str, Any]]
+        Per-image records containing region quantiles and source metadata.
+    region : str
+        Region name within the reviewed annotation or reference cache.
+    q_band_lo : float
+        Lower quantile across reference images for the intensity band.
+    q_band_hi : float
+        Upper quantile across reference images for the intensity band.
+    store_q_images : bool
+        Whether to retain individual reference-image quantile curves.
+
+    Returns
+    -------
+    Optional[Dict[str, Any]]
+        Depending on the input and branch, returns ``None``, ``payload``.
+    """
     quantiles = []
     image_ids = []
 
@@ -648,6 +903,23 @@ def _region_minimum_pixels(
     min_region_pixels: int,
     min_local_background_pixels: int,
 ) -> int:
+    """
+    Select the minimum pixel count required for a region type.
+
+    Parameters
+    ----------
+    region : str
+        Region name within the reviewed annotation or reference cache.
+    min_region_pixels : int
+        Minimum pixels needed to retain a region in the reference statistics.
+    min_local_background_pixels : int
+        Minimum pixels needed for the local-background reference.
+
+    Returns
+    -------
+    int
+        The minimum pixel count required for a region type.
+    """
     if region == "local_background":
         return int(min_local_background_pixels)
 
@@ -683,6 +955,66 @@ def build_annotated_quantile_cache(
     """
     Build a paired per-image quantile cache from reviewed annotations.
 
+    Parameters
+    ----------
+    folders : Optional[Sequence[str | Path]]
+        Folders containing source images. Default is ``None``.
+    annotation_dir : str | Path
+        Directory containing image or cell annotation files. Default is
+        ``DEFAULT_ANNOTATION_DIR``.
+    exts : Sequence[str]
+        Image filename extensions included in collection. Default is ``('.png', '.jpg',
+        '.jpeg', '.tif', '.tiff')``.
+    devices : Sequence[str]
+        Device-group names included in the reference statistics. Default is ``('iphone',
+        'googlepixel', 'microscope', 'monochrome_generic', 'monochrome_real')``.
+    recursive : bool
+        Whether to include images in nested folders. Default is ``True``.
+    sample_pixels_per_region : Optional[int]
+        Maximum sampled pixels per annotated image region. Default is ``100000``.
+    n_quantiles : int
+        Number of evenly spaced quantile probabilities used for the reference curves.
+        Default is ``1024``.
+    q_band_lo : float
+        Lower quantile across reference images for the intensity band. Default is ``0.025``.
+    q_band_hi : float
+        Upper quantile across reference images for the intensity band. Default is ``0.975``.
+    rng_seed : int
+        Seed used to initialize random sampling. Default is ``0``.
+    cache_path : Optional[str | Path]
+        Path to the persisted intermediate-data cache. Default is
+        ``STYLE_QUANTILE_CACHE_PATH``.
+    force_recompute : bool
+        If True, regenerate data even when the cache exists. Default is ``False``.
+    min_region_pixels : int
+        Minimum pixels needed to retain a region in the reference statistics. Default is
+        ``2048``.
+    min_local_background_pixels : int
+        Minimum pixels needed for the local-background reference. Default is ``512``.
+    require_foreground_background : bool
+        Whether both foreground and background references must be present. Default is
+        ``True``.
+    store_q_images : bool
+        Whether to retain individual reference-image quantile curves. Default is ``True``.
+    default_ring_inner_radius : int
+        Fallback inner radius for the local-background ring, in pixels. Default is ``2``.
+    default_ring_outer_radius : int
+        Fallback outer radius for the local-background ring, in pixels. Default is ``6``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        A paired per-image quantile cache from reviewed annotations.
+
+    Raises
+    ------
+    FileNotFoundError
+        Annotation directory does not exist: {annotation_dir}
+    ValueError
+        n_quantiles must be at least 2. Require 0 <= q_band_lo < q_band_hi <= 1.
+
+    Notes
+    -----
     Each real image contributes one record containing all available RGB region
     curves. During augmentation, one complete record is sampled, so foreground,
     background, and all three channels always come from the same real image.
@@ -989,6 +1321,19 @@ def build_annotated_quantile_cache(
 
 
 def _is_paired_annotation_cache(cache: Any) -> bool:
+    """
+    Check the version and required fields of a paired annotation cache.
+
+    Parameters
+    ----------
+    cache : Any
+        Mapping of cached per-file FCXM plotting data.
+
+    Returns
+    -------
+    bool
+        Boolean result of the stated condition check.
+    """
     return (
         isinstance(cache, dict)
         and int(cache.get("version", 0)) >= PAIRED_CACHE_VERSION
@@ -1008,6 +1353,27 @@ def _cache_needs_rebuild(
     annotation_dir: str | Path,
     rebuild_if_annotations_newer: bool,
 ) -> bool:
+    """
+    Check cache schema, annotation inventory, and optional modification-time freshness.
+
+    Parameters
+    ----------
+    cache : Dict[str, Any]
+        Mapping of cached per-file FCXM plotting data.
+    cache_path : Path
+        Path to the persisted intermediate-data cache.
+    image_paths : Sequence[Path]
+        Paths to the images included in the operation.
+    annotation_dir : str | Path
+        Directory containing image or cell annotation files.
+    rebuild_if_annotations_newer : bool
+        Whether newer annotation files invalidate the existing cache.
+
+    Returns
+    -------
+    bool
+        Boolean result of the stated condition check.
+    """
     if not _is_paired_annotation_cache(cache):
         return True
 
@@ -1065,6 +1431,54 @@ def load_or_build_quantile_band_cache(
     """
     Load or build the manually reviewed, paired per-image quantile cache.
 
+    Parameters
+    ----------
+    folders : Optional[Sequence[str | Path]]
+        Folders containing source images. Default is ``None``.
+    annotation_dir : str | Path
+        Directory containing image or cell annotation files. Default is
+        ``DEFAULT_ANNOTATION_DIR``.
+    cache_path : str | Path
+        Path to the persisted intermediate-data cache. Default is
+        ``STYLE_QUANTILE_CACHE_PATH``.
+    force_recompute : bool
+        If True, regenerate data even when the cache exists. Default is ``False``.
+    rebuild_if_annotations_newer : bool
+        Whether newer annotation files invalidate the existing cache. Default is ``False``.
+    sample_pixels_per_image : Optional[int]
+        Maximum pixels sampled from each image for reference statistics. Default is
+        ``100000``.
+    n_quantiles : int
+        Number of evenly spaced quantile probabilities used for the reference curves.
+        Default is ``1024``.
+    q_band_lo : float
+        Lower quantile across reference images for the intensity band. Default is ``0.025``.
+    q_band_hi : float
+        Upper quantile across reference images for the intensity band. Default is ``0.975``.
+    min_region_pixels : int
+        Minimum pixels needed to retain a region in the reference statistics. Default is
+        ``2048``.
+    min_local_background_pixels : int
+        Minimum pixels needed for the local-background reference. Default is ``512``.
+    require_foreground_background : bool
+        Whether both foreground and background references must be present. Default is
+        ``True``.
+    store_q_images : bool
+        Whether to retain individual reference-image quantile curves. Default is ``True``.
+    default_ring_inner_radius : int
+        Fallback inner radius for the local-background ring, in pixels. Default is ``2``.
+    default_ring_outer_radius : int
+        Fallback outer radius for the local-background ring, in pixels. Default is ``6``.
+    **legacy_kwargs : Any
+        Accepted by the interface but not read by this implementation.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Or build the manually reviewed, paired per-image quantile cache.
+
+    Notes
+    -----
     Existing version-2 population caches are rejected and rebuilt. The cache is
     also rebuilt when new or changed annotation files are newer than the cache.
 
@@ -1131,6 +1545,21 @@ def load_or_build_quantile_cache(
     *args: Any,
     **kwargs: Any,
 ) -> Dict[str, Any]:
+    """
+    Forward arguments to the quantile-band cache loader and builder.
+
+    Parameters
+    ----------
+    *args : Any
+        Additional positional arguments forwarded to ``load_or_build_quantile_band_cache``.
+    **kwargs : Any
+        Additional keyword arguments forwarded to ``load_or_build_quantile_band_cache``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Computed value of ``load_or_build_quantile_band_cache(*args, **kwargs)``.
+    """
     return load_or_build_quantile_band_cache(*args, **kwargs)
 
 
@@ -1143,6 +1572,24 @@ def build_target_quantile_band_cache(
     """
     Compatibility wrapper for the old public builder name.
 
+    Parameters
+    ----------
+    folders : Optional[Sequence[str | Path]]
+        Folders containing source images. Default is ``None``.
+    annotation_dir : str | Path
+        Directory containing image or cell annotation files. Default is
+        ``DEFAULT_ANNOTATION_DIR``.
+    **kwargs : Any
+        Additional keyword arguments forwarded to ``build_annotated_quantile_cache``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Computed value of ``build_annotated_quantile_cache(folders=folders,
+        annotation_dir=annotation_dir, **kwargs)``.
+
+    Notes
+    -----
     Old automatic-mask-only arguments are accepted and ignored because the new
     cache is built from reviewed masks.
     """
@@ -1174,6 +1621,29 @@ def _compute_image_channel_quantiles(
     q_probs: np.ndarray,
     mask: Optional[np.ndarray] = None,
 ) -> np.ndarray:
+    """
+    Compute monotone channel quantiles over the image or a nonempty mask.
+
+    Parameters
+    ----------
+    channel : numpy.ndarray
+        Two-dimensional intensity array for one color channel.
+    q_probs : numpy.ndarray
+        Quantile probabilities in [0, 1], in ascending order.
+    mask : Optional[numpy.ndarray]
+        Spatial mask selecting the pixels used by this operation. Default is ``None``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Monotone channel quantiles over the image or a nonempty mask.
+
+    Raises
+    ------
+    ValueError
+        Mask shape {mask.shape} does not match channel shape {channel.shape}. Cannot
+        calculate quantiles from an empty mask.
+    """
     channel = np.clip(
         np.asarray(channel, dtype=np.float32),
         0.0,
@@ -1208,6 +1678,21 @@ def _strictly_increasing_knots(
     values: np.ndarray,
     eps: float = 1e-6,
 ) -> np.ndarray:
+    """
+    Replace repeated or decreasing interpolation knots with epsilon-separated values.
+
+    Parameters
+    ----------
+    values : numpy.ndarray
+        Numeric values used to compute the requested statistic or transformation.
+    eps : float
+        Small positive floor preventing division by zero. Default is ``1e-06``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``knots``.
+    """
     knots = np.asarray(values, dtype=np.float32).copy()
     knots = np.maximum.accumulate(knots)
 
@@ -1223,6 +1708,23 @@ def _minimal_band_projection(
     target_low: np.ndarray,
     target_high: np.ndarray,
 ) -> np.ndarray:
+    """
+    Clip source quantiles to reference bounds and enforce monotonicity.
+
+    Parameters
+    ----------
+    source_quantiles : numpy.ndarray
+        Monotone intensity quantiles computed from the source image.
+    target_low : numpy.ndarray
+        Lower reference-band intensity at each quantile.
+    target_high : numpy.ndarray
+        Upper reference-band intensity at each quantile.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``np.maximum.accumulate(projected)``.
+    """
     projected = np.clip(
         source_quantiles,
         target_low,
@@ -1237,6 +1739,30 @@ def _get_region_ref(
     region: str,
     fallback_to_all: bool = False,
 ) -> Dict[str, Any]:
+    """
+    Read a device's region reference, optionally falling back to all pixels.
+
+    Parameters
+    ----------
+    device_ref : Dict[str, Any]
+        Cached region statistics and reference records for one device group.
+    region : str
+        Region name within the reviewed annotation or reference cache.
+    fallback_to_all : bool
+        Whether to use the all-pixels reference when the selected region is absent. Default
+        is ``False``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        A device's region reference, optionally falling back to all pixels.
+
+    Raises
+    ------
+    KeyError
+        Device reference is missing 'regions'. Region '{region}' is missing. Available
+        regions: {tuple(regions.keys())}
+    """
     regions = device_ref.get("regions")
 
     if not isinstance(regions, dict):
@@ -1259,6 +1785,30 @@ def _sample_paired_reference_record(
     required_regions: Sequence[str],
     rng: np.random.Generator,
 ) -> Dict[str, Any]:
+    """
+    Sample one real-image record containing every required region.
+
+    Parameters
+    ----------
+    device_ref : Dict[str, Any]
+        Cached region statistics and reference records for one device group.
+    required_regions : Sequence[str]
+        Region names that must all be present in a sampled reference record.
+    rng : np.random.Generator
+        NumPy random-number generator used for sampling.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Computed value of ``candidates[index]``.
+
+    Raises
+    ------
+    ValueError
+        This cache has no paired per-image records. Rebuild it from the reviewed
+        annotations. No real reference image contains all required regions:
+        {tuple(required_regions)}.
+    """
     records = device_ref.get("images")
 
     if not isinstance(records, list) or not records:
@@ -1290,6 +1840,28 @@ def _record_region_quantiles(
     record: Dict[str, Any],
     region: str,
 ) -> np.ndarray:
+    """
+    Read and validate a record's three-channel region-quantile array.
+
+    Parameters
+    ----------
+    record : Dict[str, Any]
+        Per-image reference record containing region quantile arrays.
+    region : str
+        Region name within the reviewed annotation or reference cache.
+
+    Returns
+    -------
+    numpy.ndarray
+        And validate a record's three-channel region-quantile array.
+
+    Raises
+    ------
+    KeyError
+        Reference image '{record.get('id')}' is missing region '{region}'.
+    ValueError
+        Invalid quantile shape for region '{region}': {quantiles.shape}.
+    """
     try:
         quantiles = record["regions"][region]["q"]
     except KeyError as error:
@@ -1313,6 +1885,26 @@ def _make_soft_cell_weight(
     cell_mask: np.ndarray,
     sigma: float = 1.5,
 ) -> np.ndarray:
+    """
+    Convert a cell mask into a clipped and optionally blurred blending weight.
+
+    Parameters
+    ----------
+    cell_mask : numpy.ndarray
+        Spatial mask identifying cell foreground.
+    sigma : float
+        Standard deviation of the spatial Gaussian kernel, in pixels. Default is ``1.5``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``np.clip(mask, 0.0, 1.0).astype(np.float32)``.
+
+    Raises
+    ------
+    ValueError
+        Expected a 2D cell mask, got {cell_mask.shape}.
+    """
     mask = np.asarray(cell_mask, dtype=np.float32)
 
     if mask.ndim == 3:
@@ -1348,6 +1940,23 @@ def _apply_quantile_map_1d(
     source_quantiles: np.ndarray,
     destination_quantiles: np.ndarray,
 ) -> np.ndarray:
+    """
+    Interpolate a monotone quantile mapping and clip intensities to [0, 1].
+
+    Parameters
+    ----------
+    values : numpy.ndarray
+        Numeric values used to compute the requested statistic or transformation.
+    source_quantiles : numpy.ndarray
+        Monotone intensity quantiles computed from the source image.
+    destination_quantiles : numpy.ndarray
+        Target intensities at the source quantile probabilities.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``np.clip(mapped, 0.0, 1.0)``.
+    """
     source_knots = _strictly_increasing_knots(
         source_quantiles
     )
@@ -1378,6 +1987,40 @@ def _adjust_image_to_region_reference(
     source_mask: Optional[np.ndarray] = None,
     sampled_quantiles: Optional[np.ndarray] = None,
 ) -> np.ndarray:
+    """
+    Match each image channel to a region quantile reference at the chosen strength.
+
+    Parameters
+    ----------
+    arr_hwc : numpy.ndarray
+        RGB image with shape (height, width, 3).
+    q_probs : numpy.ndarray
+        Quantile probabilities in [0, 1], in ascending order.
+    region_ref : Dict[str, Any]
+        Quantile statistics for the selected reference region.
+    strength : float
+        Interpolation strength between source and target quantile curves.
+    match_mode : str
+        Method selecting the reference band, central curve, or sampled real-image curve.
+    source_mask : Optional[numpy.ndarray]
+        Optional region mask used to measure source channel quantiles. Default is ``None``.
+    sampled_quantiles : Optional[numpy.ndarray]
+        Optional per-channel quantile curve from one sampled reference image. Default is
+        ``None``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``np.clip(output, 0.0, 1.0).astype(np.float32)``.
+
+    Raises
+    ------
+    ValueError
+        A sampled per-image quantile curve is required for match_mode='{match_mode}'.
+        sampled_quantiles must have shape [3, n_quantiles], got {sampled_quantiles.shape}.
+        match_mode must be one of: 'project_to_band', 'sample_real_curve',
+        'sample_real_image', 'paired_real_image', 'center'.
+    """
     output = arr_hwc.copy()
 
     sample_modes = {
@@ -1465,6 +2108,57 @@ def apply_device_quantile_band_match(
     """
     Move an RGB image toward one real device reference.
 
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input image array.
+    target_device : str
+        Device-group name selecting the reference intensity distribution.
+    quantile_band_cache : Dict[str, Any]
+        Optional reference cache containing device-specific image quantile curves and bands.
+    strength : float
+        Interpolation strength between source and target quantile curves. Default is
+        ``1.0``.
+    preserve_input_layout : bool
+        Whether to restore the input's CHW or HWC channel layout in the result. Default is
+        ``True``.
+    rng : Optional[np.random.Generator]
+        NumPy random-number generator used for sampling. Default is ``None``.
+    cell_mask : Optional[numpy.ndarray]
+        Spatial mask identifying cell foreground. Default is ``None``.
+    region_mode : str
+        Region selection strategy used for intensity-distribution matching. Default is
+        ``'all'``.
+    match_mode : str
+        Method selecting the reference band, central curve, or sampled real-image curve.
+        Default is ``'project_to_band'``.
+    mask_blur_sigma : float
+        Gaussian width for smoothing the region blending mask, in pixels. Default is
+        ``1.5``.
+    fallback_to_all : bool
+        Whether to use the all-pixels reference when the selected region is absent. Default
+        is ``False``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``np.clip(np.asarray(img,
+        dtype=np.float32).copy(), 0.0, 1.0)``, ``output.astype(np.float32)``,
+        ``np.clip(output, 0.0, 1.0).astype(np.float32)``.
+
+    Raises
+    ------
+    KeyError
+        quantile_band_cache is missing 'devices'. quantile_band_cache is missing 'q_probs'.
+        Target device '{target_device}' is not in the cache.
+    ValueError
+        cell_mask is required for region_mode='foreground_background'. Expected a 2D cell
+        mask, got {cell_mask.shape}. cell_mask shape {hard_fg.shape} does not match image
+        shape {arr.shape[:2]}. cell_mask contains no foreground pixels. cell_mask contains
+        no background pixels. region_mode must be one of: 'all', 'foreground_background'.
+
+    Notes
+    -----
     For sample-based modes, one complete real-image record is sampled once per
     call. Its foreground, background, and all RGB channels remain paired.
 
@@ -1760,7 +2454,19 @@ def apply_device_quantile_band_match(
 def cache_uses_paired_image_sampling(
     quantile_band_cache: Optional[Dict[str, Any]],
 ) -> bool:
-    """Return True for the new reviewed per-image cache."""
+    """
+    Return True for the new reviewed per-image cache.
+
+    Parameters
+    ----------
+    quantile_band_cache : Optional[Dict[str, Any]]
+        Optional reference cache containing device-specific image quantile curves and bands.
+
+    Returns
+    -------
+    bool
+        True for the new reviewed per-image cache.
+    """
     return bool(
         quantile_band_cache
         and quantile_band_cache.get("reference_sampling")

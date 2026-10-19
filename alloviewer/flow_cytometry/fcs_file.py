@@ -21,11 +21,8 @@ from .matrix import Matrix
 
 
 class FCSFile:
-    """Intermediate representation of an FCS sample file.
-
-    The class loads an FCS file from disk, parses metadata and channel
-    information, processes raw events, extracts or creates a compensation
-    matrix, and stores compensated events.
+    """
+    Intermediate representation of an FCS sample file.
 
     Parameters
     ----------
@@ -63,6 +60,12 @@ class FCSFile:
         Compensation matrix.
     compensation_status : str
         Current compensation status.
+
+    Notes
+    -----
+    The class loads an FCS file from disk, parses metadata and channel
+    information, processes raw events, extracts or creates a compensation
+    matrix, and stores compensated events.
     """
 
     def __init__(
@@ -71,6 +74,21 @@ class FCSFile:
         subsample: Optional[int] = None,
         truncate_max_range: bool = True,
     ) -> None:
+        """
+        Load FCS events and metadata, prepare channels, and initialize compensation state.
+
+        Parameters
+        ----------
+        file_dir : str
+            Path to the FCS file.
+        subsample : int or None, optional
+            Number of events to randomly sample. If ``None``, all events are kept.
+            If the requested number is larger than the available event count, all
+            events are kept. Default is ``None``.
+        truncate_max_range : bool, optional
+            Whether to clip event values that exceed the channel range defined in
+            the FCS metadata. The default is ``True``.
+        """
         self.original_filename = os.path.basename(file_dir)
 
         raw_data = self._load_fcs_file_from_disk(
@@ -97,7 +115,8 @@ class FCSFile:
         self.compensation_status = "compensated"
 
     def __repr__(self) -> str:
-        """Return a compact string representation of the FCS file.
+        """
+        Return a compact string representation of the FCS file.
 
         Returns
         -------
@@ -117,7 +136,8 @@ class FCSFile:
         )
 
     def get_events(self, source: Literal["raw", "comp"]) -> np.ndarray:
-        """Return events from the requested data source.
+        """
+        Return events from the requested data source.
 
         Parameters
         ----------
@@ -149,7 +169,8 @@ class FCSFile:
             )
 
     def _get_original_events(self) -> np.ndarray:
-        """Return uncompensated events.
+        """
+        Return uncompensated events.
 
         Returns
         -------
@@ -167,7 +188,8 @@ class FCSFile:
         return self.original_events
 
     def _get_compensated_events(self) -> np.ndarray:
-        """Return compensated events.
+        """
+        Return compensated events.
 
         Returns
         -------
@@ -185,7 +207,8 @@ class FCSFile:
         return self.compensated_events
 
     def get_channel_index(self, channel_label: str) -> int:
-        """Return the zero-based column index for a channel label.
+        """
+        Return the zero-based column index for a channel label.
 
         Parameters
         ----------
@@ -215,7 +238,8 @@ class FCSFile:
         source: Literal["raw", "comp"],
         colnames: Literal["pnn", "pns"] = "pnn",
     ) -> pd.DataFrame:
-        """Return events as a pandas DataFrame.
+        """
+        Return events as a pandas DataFrame.
 
         Parameters
         ----------
@@ -236,7 +260,8 @@ class FCSFile:
         )
 
     def _parse_compensation_matrix_from_fcs(self) -> Matrix:
-        """Parse or create a compensation matrix.
+        """
+        Parse or create a compensation matrix.
 
         Returns
         -------
@@ -290,7 +315,8 @@ class FCSFile:
         )
 
     def _parse_event_count(self, fcs_data: FlowData) -> int:
-        """Return the event count stored in the FCS file.
+        """
+        Return the event count stored in the FCS file.
 
         Parameters
         ----------
@@ -305,7 +331,8 @@ class FCSFile:
         return fcs_data.event_count
 
     def _subsample_events(self, events: np.ndarray, size: int) -> np.ndarray:
-        """Randomly subsample events.
+        """
+        Randomly subsample events.
 
         Parameters
         ----------
@@ -341,7 +368,8 @@ class FCSFile:
         subsample: Optional[int],
         truncate_max_range: bool,
     ) -> np.ndarray:
-        """Parse, optionally subsample, and process raw events.
+        """
+        Parse, optionally subsample, and process raw events.
 
         Parameters
         ----------
@@ -377,7 +405,8 @@ class FCSFile:
         tmp_orig_events: np.ndarray,
         truncate_max_range: bool,
     ) -> np.ndarray:
-        """Apply raw event cleanup and metadata-based corrections.
+        """
+        Apply raw event cleanup and metadata-based corrections.
 
         Parameters
         ----------
@@ -408,7 +437,8 @@ class FCSFile:
         return tmp_orig_events
 
     def _adjust_range(self, arr: np.ndarray) -> np.ndarray:
-        """Clip event values to their FCS channel ranges.
+        """
+        Clip event values to their FCS channel ranges.
 
         Parameters
         ----------
@@ -443,7 +473,8 @@ class FCSFile:
         return arr
 
     def _remove_nans_from_events(self, arr: np.ndarray) -> np.ndarray:
-        """Remove rows containing NaN or infinite values.
+        """
+        Remove rows containing NaN or infinite values.
 
         Parameters
         ----------
@@ -476,7 +507,8 @@ class FCSFile:
         return arr
 
     def _adjust_channel_gain(self, events: np.ndarray) -> np.ndarray:
-        """Divide event values by channel gain.
+        """
+        Divide event values by channel gain.
 
         Parameters
         ----------
@@ -495,7 +527,8 @@ class FCSFile:
         return np.divide(events, channel_gains)
 
     def _adjust_decades(self, events: np.ndarray) -> np.ndarray:
-        """Apply logarithmic decade scaling from FCS channel metadata.
+        """
+        Apply logarithmic decade scaling from FCS channel metadata.
 
         Parameters
         ----------
@@ -520,7 +553,8 @@ class FCSFile:
         return events
 
     def _adjust_time_channel(self, events: np.ndarray) -> np.ndarray:
-        """Apply the FCS time-step multiplier to the time channel.
+        """
+        Apply the FCS time-step multiplier to the time channel.
 
         Parameters
         ----------
@@ -539,7 +573,8 @@ class FCSFile:
         return events
 
     def _find_time_channel(self) -> tuple[int, float]:
-        """Return the time channel index and time step.
+        """
+        Return the time channel index and time step.
 
         Returns
         -------
@@ -569,7 +604,8 @@ class FCSFile:
         return time_index, time_step
 
     def _time_channel_exists(self) -> bool:
-        """Return whether a time channel is present.
+        """
+        Return whether a time channel is present.
 
         Returns
         -------
@@ -582,7 +618,8 @@ class FCSFile:
         )
 
     def _parse_original_events(self, fcs_data: FlowData) -> np.ndarray:
-        """Parse original events from a FlowData object.
+        """
+        Parse original events from a FlowData object.
 
         Parameters
         ----------
@@ -604,7 +641,8 @@ class FCSFile:
         self,
         input_string: str,
     ) -> str:
-        """Replace disallowed label characters with underscores.
+        """
+        Replace disallowed label characters with underscores.
 
         Parameters
         ----------
@@ -623,7 +661,8 @@ class FCSFile:
         return input_string
 
     def _parse_channel_information(self, fcs_data: FlowData) -> pd.DataFrame:
-        """Parse channel metadata into a DataFrame.
+        """
+        Parse channel metadata into a DataFrame.
 
         Parameters
         ----------
@@ -680,7 +719,8 @@ class FCSFile:
         channels: dict,
         channel_number: str,
     ) -> str:
-        """Parse the PnN channel label.
+        """
+        Parse the PnN channel label.
 
         Parameters
         ----------
@@ -701,7 +741,8 @@ class FCSFile:
         channels: dict,
         channel_number: str,
     ) -> str:
-        """Parse the PnS channel label.
+        """
+        Parse the PnS channel label.
 
         Parameters
         ----------
@@ -726,7 +767,8 @@ class FCSFile:
         self,
         channel_number: str,
     ) -> Union[int, float]:
-        """Parse the PnR channel range.
+        """
+        Parse the PnR channel range.
 
         Parameters
         ----------
@@ -756,7 +798,8 @@ class FCSFile:
         self,
         channel_number: str,
     ) -> tuple[float, float]:
-        """Parse the PnE linear/logarithmic scaling metadata.
+        """
+        Parse the PnE linear/logarithmic scaling metadata.
 
         Parameters
         ----------
@@ -786,7 +829,8 @@ class FCSFile:
         self,
         channel_number: str,
     ) -> float:
-        """Parse the PnG channel gain.
+        """
+        Parse the PnG channel gain.
 
         Parameters
         ----------
@@ -807,7 +851,8 @@ class FCSFile:
             return 1.0
 
     def _parse_fcs_metadata(self, fcs_data: FlowData) -> dict:
-        """Return FCS text metadata.
+        """
+        Return FCS text metadata.
 
         Parameters
         ----------
@@ -822,7 +867,8 @@ class FCSFile:
         return fcs_data.text
 
     def _parse_fcs_version(self, fcs_data: FlowData) -> Optional[str]:
-        """Return the FCS version from the file header.
+        """
+        Return the FCS version from the file header.
 
         Parameters
         ----------
@@ -844,7 +890,8 @@ class FCSFile:
         file_dir: str,
         ignore_offset_error: bool,
     ) -> FlowData:
-        """Load an FCS file from disk.
+        """
+        Load an FCS file from disk.
 
         Parameters
         ----------

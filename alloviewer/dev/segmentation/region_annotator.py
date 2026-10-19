@@ -32,7 +32,27 @@ def collect_annotation_paths(
     root_dirs: Sequence[str | Path],
     suffixes: Sequence[str] = (".tif", ".tiff", ".png", ".jpg", ".jpeg"),
 ) -> list[Path]:
-    """Collect image files below the requested reference-image folders."""
+    """
+    Collect image files below the requested reference-image folders.
+
+    Parameters
+    ----------
+    root_dirs : Sequence[str | Path]
+        Root folders recursively searched for images.
+    suffixes : Sequence[str]
+        Image filename suffixes included in the search. Default is ``('.tif', '.tiff',
+        '.png', '.jpg', '.jpeg')``.
+
+    Returns
+    -------
+    list[Path]
+        Image files below the requested reference-image folders.
+
+    Raises
+    ------
+    RuntimeError
+        No annotation images were found.
+    """
     suffixes = tuple(s.lower() for s in suffixes)
     paths: list[Path] = []
 
@@ -53,7 +73,19 @@ def collect_annotation_paths(
 
 
 def infer_device_label(path: str | Path) -> str:
-    """Infer the camera/device group from a file path."""
+    """
+    Infer the camera/device group from a file path.
+
+    Parameters
+    ----------
+    path : str | Path
+        Filesystem path of the file or directory processed by this helper.
+
+    Returns
+    -------
+    str
+        The camera/device group from a file path.
+    """
     text = str(path).lower()
 
     if "mono_rgb" in text or "mono_real" in text:
@@ -66,12 +98,44 @@ def infer_device_label(path: str | Path) -> str:
 
 
 def make_annotation_stem(path: str | Path) -> str:
-    """Create a stable output name from parent-folder and file stem."""
+    """
+    Create a stable output name from parent-folder and file stem.
+
+    Parameters
+    ----------
+    path : str | Path
+        Filesystem path of the file or directory processed by this helper.
+
+    Returns
+    -------
+    str
+        A stable output name from parent-folder and file stem.
+    """
     path = Path(path)
     return f"{path.parent.name}_{path.stem}"
 
 
 def _signal_from_rgb(image: np.ndarray, mode: str) -> np.ndarray:
+    """
+    Reduce RGB channels to the selected scalar signal for region proposals.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+    mode : str
+        RGB reduction rule: max, luma, green, or red_green_max.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``np.asarray(signal, dtype=np.float32)``.
+
+    Raises
+    ------
+    ValueError
+        signal_mode must be one of: 'max', 'luma', 'green', 'red_green_max'
+    """
     image = np.asarray(image, dtype=np.float32)
 
     if mode == "max":
@@ -97,7 +161,19 @@ def _signal_from_rgb(image: np.ndarray, mode: str) -> np.ndarray:
 
 
 def _validated_local_block_size(value: int) -> int:
-    """Return an odd local-threshold block size of at least 3."""
+    """
+    Return an odd local-threshold block size of at least 3.
+
+    Parameters
+    ----------
+    value : int
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    int
+        An odd local-threshold block size of at least 3.
+    """
     block_size = max(3, int(value))
     if block_size % 2 == 0:
         block_size += 1
@@ -125,6 +201,57 @@ def propose_region_mask(
     """
     Create an editable three-class proposal.
 
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+    signal_mode : str
+        Rule used to reduce RGB intensities to a scalar signal for region selection. Default
+        is ``'red_green_max'``.
+    polarity : str
+        Whether bright or dark signal values are treated as foreground. Default is
+        ``'bright'``.
+    background_sigma : float
+        Gaussian width used to estimate the smooth background signal, in pixels. Default is
+        ``20.0``.
+    threshold_mode : str
+        Thresholding strategy used to propose foreground regions. Default is ``'otsu'``.
+    foreground_quantile : float
+        Quantile used to propose foreground pixels from the image signal. Default is
+        ``0.92``.
+    local_block_size : int
+        Neighborhood size used for the local threshold estimate. Default is ``51``.
+    local_offset : float
+        Offset subtracted from the local threshold. Default is ``0.0``.
+    use_extreme_rescue : bool
+        Whether extreme-intensity pixels are added to the foreground proposal. Default is
+        ``True``.
+    extreme_quantile : float
+        Quantile used to select extreme pixels for foreground rescue. Default is ``0.985``.
+    min_object_size : int
+        Minimum connected-component area retained, in pixels. Default is ``20``.
+    max_object_size : int
+        Optional maximum connected-component area retained, in pixels. Default is ``0``.
+    close_radius : int
+        Radius of morphological closing used to connect foreground pixels. Default is ``1``.
+    fill_holes : bool
+        Whether enclosed background holes are filled. Default is ``True``.
+    max_hole_area : int
+        Maximum enclosed-hole area filled, in pixels. Default is ``500``.
+
+    Returns
+    -------
+    numpy.ndarray
+        An editable three-class proposal.
+
+    Raises
+    ------
+    ValueError
+        Expected HWC RGB image, got {image.shape} polarity must be 'bright', 'dark', or
+        'both' threshold_mode must be one of: 'otsu', 'quantile', 'local'
+
+    Notes
+    -----
     Labels
     ------
     0: ignore
@@ -144,8 +271,6 @@ def propose_region_mask(
         background-corrected signal. ``local_block_size`` must be larger than
         the objects of interest. Even values are increased by one.
 
-    Notes
-    -----
     ``use_extreme_rescue`` adds very bright pixels for bright-cell mode, very
     dark pixels for dark-cell mode, or both tails for two-sided mode. This can
     recover cell centers that disappear after background subtraction.
@@ -290,6 +415,23 @@ def derive_local_background(
     """
     Derive a local-background ring from reviewed labels.
 
+    Parameters
+    ----------
+    labels : numpy.ndarray
+        Integer region annotation image with the module-defined foreground and background
+        labels.
+    inner_radius : int
+        Inner dilation radius of the local-background ring, in pixels. Default is ``3``.
+    outer_radius : int
+        Outer dilation radius of the local-background ring, in pixels. Default is ``15``.
+
+    Returns
+    -------
+    numpy.ndarray
+        A local-background ring from reviewed labels.
+
+    Notes
+    -----
     Only pixels explicitly marked as background are retained.
     """
     labels = np.asarray(labels, dtype=np.uint8)
@@ -309,7 +451,21 @@ def _resize_for_display(
     image: np.ndarray,
     max_side: int,
 ) -> tuple[np.ndarray, float, float]:
-    """Return a display copy and original/display coordinate scale factors."""
+    """
+    Return a display copy and original/display coordinate scale factors.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+    max_side : int
+        Maximum spatial dimension used for the displayed or reduced image.
+
+    Returns
+    -------
+    tuple[numpy.ndarray, float, float]
+        Tuple containing ``shown``, ``sy``, ``sx``, in that order.
+    """
     height, width = image.shape[:2]
     scale = min(1.0, float(max_side) / float(max(height, width)))
 
@@ -328,7 +484,22 @@ def _resize_for_display(
 
 
 def _labels_to_rgba(labels: np.ndarray, opacity: float) -> np.ndarray:
-    """Convert labels to an RGBA overlay."""
+    """
+    Convert labels to an RGBA overlay.
+
+    Parameters
+    ----------
+    labels : numpy.ndarray
+        Integer region annotation image with the module-defined foreground and background
+        labels.
+    opacity : float
+        Alpha value used to blend the annotation overlay with the image.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``rgba``.
+    """
     labels = np.asarray(labels, dtype=np.uint8)
     rgba = np.zeros(labels.shape + (4,), dtype=np.float32)
 
@@ -350,6 +521,8 @@ class NotebookMaskReviewer:
     """
     Interactive Jupyter reviewer for foreground/background masks.
 
+    Notes
+    -----
     Requirements
     ------------
     Run ``%matplotlib widget`` before creating the reviewer. This requires
@@ -378,6 +551,32 @@ class NotebookMaskReviewer:
         save_preview: bool = True,
         load_existing: bool = True,
     ):
+        """
+        Initialize the image list, display state, controls, and first annotation view.
+
+        Parameters
+        ----------
+        image_paths : Sequence[str | Path]
+            Paths to the images included in the operation.
+        out_dir : str | Path
+            Directory in which generated outputs are stored. Default is
+            ``'./region_annotations'``.
+        start_index : int
+            Index of the first image shown in the reviewer. Default is ``0``.
+        max_display_side : int
+            Maximum image side length used for the notebook display. Default is ``1200``.
+        canvas_width_px : int
+            Requested notebook canvas width in pixels. Default is ``1000``.
+        save_preview : bool
+            Whether to save an overlay preview with the annotation. Default is ``True``.
+        load_existing : bool
+            Whether to load saved annotations for the selected image. Default is ``True``.
+
+        Raises
+        ------
+        ValueError
+            image_paths is empty
+        """
         if not image_paths:
             raise ValueError("image_paths is empty")
 
@@ -415,10 +614,28 @@ class NotebookMaskReviewer:
         folders: Sequence[str | Path],
         **kwargs,
     ) -> "NotebookMaskReviewer":
+        """
+        Collect image paths from folders and construct the notebook reviewer.
+
+        Parameters
+        ----------
+        folders : Sequence[str | Path]
+            Folders containing source images.
+        **kwargs : dict
+            Additional keyword arguments forwarded to ``cls``.
+
+        Returns
+        -------
+        NotebookMaskReviewer
+            Image paths from folders and construct the notebook reviewer.
+        """
         paths = collect_annotation_paths(folders)
         return cls(paths, **kwargs)
 
     def _build_widgets(self) -> None:
+        """
+        Create annotation controls and register their callbacks.
+        """
         self.signal_mode = widgets.Dropdown(
             options=["red_green_max", "max", "green", "luma"],
             value="red_green_max",
@@ -644,6 +861,9 @@ class NotebookMaskReviewer:
         )
 
     def _build_figure(self) -> None:
+        """
+        Create the image canvas and placeholder image and overlay artists.
+        """
         dpi = 100
     
         with plt.ioff():
@@ -693,6 +913,9 @@ class NotebookMaskReviewer:
             canvas.footer_visible = True
 
     def _connect_events(self) -> None:
+        """
+        Register mouse press, motion, and release callbacks on the canvas.
+        """
         self.fig.canvas.mpl_connect("button_press_event", self._on_press)
         self.fig.canvas.mpl_connect("motion_notify_event", self._on_motion)
         self.fig.canvas.mpl_connect("button_release_event", self._on_release)
@@ -701,6 +924,14 @@ class NotebookMaskReviewer:
         # ipympl's Canvas is already an ipywidget. Putting it inside an Output
         # widget can leave a blank canvas in some Notebook 7/JupyterLab setups.
         # Attach it directly to the widget tree instead.
+        """
+        Display the notebook controls and canvas and return the reviewer.
+
+        Returns
+        -------
+        NotebookMaskReviewer
+            This instance, after the updates described above.
+        """
         self.app = widgets.VBox(
             [self.controls, self.fig.canvas],
             layout=widgets.Layout(width="100%"),
@@ -715,9 +946,26 @@ class NotebookMaskReviewer:
 
     @property
     def current_path(self) -> Path:
+        """
+        Return the path of the selected image.
+
+        Returns
+        -------
+        Path
+            The path of the selected image.
+        """
         return self.image_paths[self.index]
 
     def _paths_for_current(self) -> tuple[Path, Path, Path]:
+        """
+        Build output paths for the current image and create its annotation folder.
+
+        Returns
+        -------
+        tuple[Path, Path, Path]
+            Tuple containing ``folder / f'{stem}_regions.npy'``, ``folder /
+            f'{stem}_regions.json'``, ``folder / f'{stem}_preview.png'``, in that order.
+        """
         stem = make_annotation_stem(self.current_path)
         device = infer_device_label(self.current_path)
         folder = self.out_dir / device
@@ -730,6 +978,15 @@ class NotebookMaskReviewer:
         )
 
     def _load_current(self) -> None:
+        """
+        Load the selected image and its saved or proposed annotation mask.
+
+        Raises
+        ------
+        ValueError
+            Expected HWC RGB image, got {image.shape} Saved mask shape {labels.shape} does not
+            match image shape {image.shape[:2]} for {path}
+        """
         path = self.current_path
         image, report = load_image(
             path.name,
@@ -769,6 +1026,9 @@ class NotebookMaskReviewer:
         self._set_status(loaded_text)
 
     def _refresh_display(self) -> None:
+        """
+        Update the image, annotation overlay, canvas size, and title.
+        """
         if self.image is None or self.labels is None or self.display_image is None:
             return
 
@@ -842,14 +1102,23 @@ class NotebookMaskReviewer:
         self.fig.canvas.draw()
 
     def force_refresh(self) -> None:
-        """Force the current image and overlay to be sent to the browser canvas."""
+        """
+        Force the current image and overlay to be sent to the browser canvas.
+        """
         self._refresh_display()
         self.fig.canvas.draw()
         if hasattr(self.fig.canvas, "flush_events"):
             self.fig.canvas.flush_events()
 
     def diagnostics(self) -> dict:
-        """Return basic state used to diagnose a blank canvas."""
+        """
+        Return basic state used to diagnose a blank canvas.
+
+        Returns
+        -------
+        dict
+            Basic state used to diagnose a blank canvas.
+        """
         import matplotlib
 
         result = {
@@ -878,6 +1147,14 @@ class NotebookMaskReviewer:
         return result
 
     def _set_status(self, text: str) -> None:
+        """
+        Show a status message and current annotation-label counts.
+
+        Parameters
+        ----------
+        text : str
+            Text content to inspect, normalize, or render.
+        """
         if self.labels is None:
             counts = ""
         else:
@@ -891,7 +1168,9 @@ class NotebookMaskReviewer:
         self.status.value = f"{text}{counts}"
 
     def _update_proposal_control_state(self) -> None:
-        """Enable only controls relevant to the selected proposal mode."""
+        """
+        Enable only controls relevant to the selected proposal mode.
+        """
         mode = self.threshold_mode.value
 
         self.foreground_quantile.disabled = mode != "quantile"
@@ -902,15 +1181,50 @@ class NotebookMaskReviewer:
         self.max_hole_area.disabled = not self.fill_holes.value
 
     def _on_threshold_mode_change(self, _change) -> None:
+        """
+        Refresh the enabled proposal controls after a threshold-mode change.
+
+        Parameters
+        ----------
+        _change : dict
+            Accepted by the interface but not read by this implementation.
+        """
         self._update_proposal_control_state()
 
     def _on_extreme_rescue_change(self, _change) -> None:
+        """
+        Refresh proposal controls after changing extreme-pixel rescue.
+
+        Parameters
+        ----------
+        _change : dict
+            Accepted by the interface but not read by this implementation.
+        """
         self._update_proposal_control_state()
 
     def _on_fill_holes_change(self, _change) -> None:
+        """
+        Refresh proposal controls after changing hole filling.
+
+        Parameters
+        ----------
+        _change : dict
+            Accepted by the interface but not read by this implementation.
+        """
         self._update_proposal_control_state()
 
     def _proposal_settings(self) -> dict:
+        """
+        Collect the current automatic region-proposal settings from the widgets.
+
+        Returns
+        -------
+        dict
+            Result mapping with keys ``signal_mode``, ``polarity``, ``background_sigma``,
+            ``threshold_mode``, ``foreground_quantile``, ``local_block_size``, ``local_offset``,
+            ``use_extreme_rescue``, ``extreme_quantile``, ``min_object_size``,
+            ``max_object_size``, ``close_radius``, ``fill_holes``, ``max_hole_area``.
+        """
         return {
             "signal_mode": self.signal_mode.value,
             "polarity": self.polarity.value,
@@ -929,6 +1243,14 @@ class NotebookMaskReviewer:
         }
 
     def _on_propose(self, _button) -> None:
+        """
+        Replace the current labels with a new automatic proposal.
+
+        Parameters
+        ----------
+        _button : ipywidgets.Button
+            Accepted by the interface but not read by this implementation.
+        """
         if self.image is None:
             return
         self.labels = propose_region_mask(
@@ -939,6 +1261,14 @@ class NotebookMaskReviewer:
         self._set_status("Rebuilt automatic proposal.")
 
     def _on_reset_background(self, _button) -> None:
+        """
+        Label the entire current image as background.
+
+        Parameters
+        ----------
+        _button : ipywidgets.Button
+            Accepted by the interface but not read by this implementation.
+        """
         if self.image is None:
             return
         self.labels = np.full(
@@ -950,9 +1280,33 @@ class NotebookMaskReviewer:
         self._set_status("Set the full image to background.")
 
     def _on_opacity_change(self, _change) -> None:
+        """
+        Redraw the annotation overlay after an opacity change.
+
+        Parameters
+        ----------
+        _change : dict
+            Accepted by the interface but not read by this implementation.
+        """
         self._refresh_display()
 
     def _display_to_original(self, x: float, y: float) -> tuple[int, int]:
+        """
+        Map display coordinates to clipped original-image coordinates.
+
+        Parameters
+        ----------
+        x : float
+            Horizontal column coordinate in pixels.
+        y : float
+            Vertical row coordinate in pixels.
+
+        Returns
+        -------
+        tuple[int, int]
+            Depending on the input and branch, returns ``(0, 0)``, ``(int(np.clip(xx, 0, width -
+            1)), int(np.clip(yy, 0, height - 1)))``.
+        """
         if self.image is None:
             return 0, 0
 
@@ -969,6 +1323,16 @@ class NotebookMaskReviewer:
         start: tuple[int, int],
         end: tuple[int, int],
     ) -> None:
+        """
+        Paint a brush stroke into the current annotation mask.
+
+        Parameters
+        ----------
+        start : tuple[int, int]
+            Start coordinate of the brush stroke in original-image pixels.
+        end : tuple[int, int]
+            End coordinate of the brush stroke in original-image pixels.
+        """
         if self.labels is None:
             return
 
@@ -993,6 +1357,14 @@ class NotebookMaskReviewer:
         )
 
     def _on_press(self, event) -> None:
+        """
+        Start painting when the mouse press is inside the image axes.
+
+        Parameters
+        ----------
+        event : matplotlib.backend_bases.MouseEvent
+            Matplotlib mouse event with axes and image-space pointer coordinates.
+        """
         if event.inaxes != self.ax or event.xdata is None or event.ydata is None:
             return
         self._painting = True
@@ -1002,6 +1374,14 @@ class NotebookMaskReviewer:
         self._refresh_display()
 
     def _on_motion(self, event) -> None:
+        """
+        Extend the active brush stroke and refresh the display.
+
+        Parameters
+        ----------
+        event : matplotlib.backend_bases.MouseEvent
+            Matplotlib mouse event with axes and image-space pointer coordinates.
+        """
         if (
             not self._painting
             or self._last_point is None
@@ -1017,12 +1397,33 @@ class NotebookMaskReviewer:
         self._refresh_display()
 
     def _on_release(self, _event) -> None:
+        """
+        End the active brush stroke and update the status text.
+
+        Parameters
+        ----------
+        _event : matplotlib.backend_bases.MouseEvent
+            Accepted by the interface but not read by this implementation.
+        """
         if self._painting:
             self._painting = False
             self._last_point = None
             self._set_status("Mask edited.")
 
     def save_current(self) -> tuple[Path, Path]:
+        """
+        Write the current annotation arrays, metadata, and optional preview image.
+
+        Returns
+        -------
+        tuple of Path
+            Saved region-mask path and metadata JSON path.
+
+        Raises
+        ------
+        RuntimeError
+            No image is loaded.
+        """
         if self.image is None or self.labels is None:
             raise RuntimeError("No image is loaded.")
 
@@ -1089,13 +1490,32 @@ class NotebookMaskReviewer:
         return mask_path, metadata_path
 
     def _on_save(self, _button) -> None:
+        """
+        Save the current annotation in response to a button click.
+
+        Parameters
+        ----------
+        _button : ipywidgets.Button
+            Accepted by the interface but not read by this implementation.
+        """
         self.save_current()
 
     def _on_save_next(self, _button) -> None:
+        """
+        Save the current annotation and advance to the next image.
+
+        Parameters
+        ----------
+        _button : ipywidgets.Button
+            Accepted by the interface but not read by this implementation.
+        """
         self.save_current()
         self.next_image()
 
     def next_image(self) -> None:
+        """
+        Advance one image when available and load its annotation.
+        """
         if self.index < len(self.image_paths) - 1:
             self.index += 1
             self._load_current()
@@ -1103,6 +1523,9 @@ class NotebookMaskReviewer:
             self._set_status("Already at the final image.")
 
     def previous_image(self) -> None:
+        """
+        Move back one image when available and load its annotation.
+        """
         if self.index > 0:
             self.index -= 1
             self._load_current()
@@ -1110,12 +1533,41 @@ class NotebookMaskReviewer:
             self._set_status("Already at the first image.")
 
     def _on_next(self, _button) -> None:
+        """
+        Advance to the next image in response to a button click.
+
+        Parameters
+        ----------
+        _button : ipywidgets.Button
+            Accepted by the interface but not read by this implementation.
+        """
         self.next_image()
 
     def _on_previous(self, _button) -> None:
+        """
+        Load the previous image in response to a button click.
+
+        Parameters
+        ----------
+        _button : ipywidgets.Button
+            Accepted by the interface but not read by this implementation.
+        """
         self.previous_image()
 
     def _on_reload(self, _button) -> None:
+        """
+        Replace current edits with the saved annotation after validating its shape.
+
+        Parameters
+        ----------
+        _button : ipywidgets.Button
+            Accepted by the interface but not read by this implementation.
+
+        Raises
+        ------
+        ValueError
+            Saved mask shape does not match the loaded image.
+        """
         mask_path, _, _ = self._paths_for_current()
         if not mask_path.exists():
             self._set_status("No saved mask exists for this image.")
@@ -1143,6 +1595,31 @@ def review_ext_image_masks(
     """
     Create and show the notebook reviewer for EXT_IMAGES_FOLDERS.
 
+    Parameters
+    ----------
+    ext_image_folders : sequence of path-like
+        Folders containing external images to annotate.
+    out_dir : str
+        Directory in which generated outputs are stored. Default is
+        ``'./region_annotations'``.
+    start_index : int
+        Index of the first image shown in the reviewer. Default is ``0``.
+    max_display_side : int
+        Maximum image side length used for the notebook display. Default is ``1200``.
+    canvas_width_px : int
+        Requested notebook canvas width in pixels. Default is ``1000``.
+    save_preview : bool
+        Whether to save an overlay preview with the annotation. Default is ``True``.
+    load_existing : bool
+        Whether to load saved annotations for the selected image. Default is ``True``.
+
+    Returns
+    -------
+    NotebookMaskReviewer
+        And show the notebook reviewer for EXT_IMAGES_FOLDERS.
+
+    Notes
+    -----
     Run ``%matplotlib widget`` in a notebook cell before calling this function.
     """
     reviewer = NotebookMaskReviewer.from_folders(
@@ -1171,7 +1648,20 @@ PHONE_DEVICES = {"iphone", "googlepixel"}
 
 
 def _largest_component(mask: np.ndarray) -> np.ndarray:
-    """Keep only the largest connected True component."""
+    """
+    Keep only the largest connected True component.
+
+    Parameters
+    ----------
+    mask : numpy.ndarray
+        Spatial mask selecting the pixels used by this operation.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``np.zeros_like(mask, dtype=bool)``,
+        ``labelled == int(np.argmax(counts))``.
+    """
     mask = np.asarray(mask, dtype=bool)
     if not mask.any():
         return np.zeros_like(mask, dtype=bool)
@@ -1196,7 +1686,42 @@ def propose_well_mask(
     use_ellipse: bool = False,
     downsample_max_side: int = 700,
 ) -> np.ndarray:
-    """Estimate the bright physical well and reject dark surroundings."""
+    """
+    Estimate the bright physical well and reject dark surroundings.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+    signal_mode : str
+        Rule used to reduce RGB intensities to a scalar signal for region selection. Default
+        is ``'luma'``.
+    blur_sigma : float
+        Standard deviation of the smoothing kernel in pixels. Default is ``35.0``.
+    threshold_offset : float
+        Offset applied to the estimated well-mask threshold. Default is ``0.0``.
+    close_radius : int
+        Radius of morphological closing used to connect foreground pixels. Default is
+        ``20``.
+    shrink_margin : int
+        Margin removed from the proposed well region, in pixels. Default is ``8``.
+    use_ellipse : bool
+        Whether to approximate the selected well region with an ellipse. Default is
+        ``False``.
+    downsample_max_side : int
+        Maximum image side length used for reduced-resolution well estimation. Default is
+        ``700``.
+
+    Returns
+    -------
+    numpy.ndarray
+        The bright physical well and reject dark surroundings.
+
+    Raises
+    ------
+    ValueError
+        Expected HWC RGB image, got {image.shape}
+    """
     image = np.clip(np.asarray(image, dtype=np.float32), 0.0, 1.0)
     if image.ndim != 3 or image.shape[-1] != 3:
         raise ValueError(f"Expected HWC RGB image, got {image.shape}")
@@ -1300,7 +1825,26 @@ def derive_local_background(
     inner_radius: int = 2,
     outer_radius: int = 6,
 ) -> np.ndarray:
-    """Derive a near-cell ring limited to confirmed valid background."""
+    """
+    Derive a near-cell ring limited to confirmed valid background.
+
+    Parameters
+    ----------
+    labels : numpy.ndarray
+        Integer region annotation image with the module-defined foreground and background
+        labels.
+    well_mask : Optional[numpy.ndarray]
+        Boolean spatial mask selecting the well interior. Default is ``None``.
+    inner_radius : int
+        Inner dilation radius of the local-background ring, in pixels. Default is ``2``.
+    outer_radius : int
+        Outer dilation radius of the local-background ring, in pixels. Default is ``6``.
+
+    Returns
+    -------
+    numpy.ndarray
+        A near-cell ring limited to confirmed valid background.
+    """
     labels = np.asarray(labels, dtype=np.uint8)
     foreground = labels == LABEL_FOREGROUND
     background = labels == LABEL_BACKGROUND
@@ -1331,7 +1875,30 @@ def _well_ring_overlay(
     ring: Optional[np.ndarray] = None,
     ring_opacity: float = 0.55,
 ) -> np.ndarray:
-    """Create red foreground, blue ring, yellow ignore, purple outside overlay."""
+    """
+    Create red foreground, blue ring, yellow ignore, purple outside overlay.
+
+    Parameters
+    ----------
+    labels : numpy.ndarray
+        Integer region annotation image with the module-defined foreground and background
+        labels.
+    well_mask : numpy.ndarray
+        Boolean spatial mask selecting the well interior.
+    region_opacity : float
+        Opacity of the region-label overlay.
+    outside_opacity : float
+        Opacity of the overlay outside the well mask.
+    ring : Optional[numpy.ndarray]
+        Boolean mask selecting the local-background ring. Default is ``None``.
+    ring_opacity : float
+        Opacity of the local-background-ring overlay. Default is ``0.55``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Red foreground, blue ring, yellow ignore, purple outside overlay.
+    """
     labels = np.asarray(labels, dtype=np.uint8)
     inside = np.asarray(well_mask, dtype=bool)
     rgba = np.zeros(labels.shape + (4,), dtype=np.float32)
@@ -1366,7 +1933,9 @@ _BaseNotebookMaskReviewer = NotebookMaskReviewer
 
 
 class NotebookMaskReviewer(_BaseNotebookMaskReviewer):
-    """Reviewer extended with an editable well mask and live local ring."""
+    """
+    Reviewer extended with an editable well mask and live local ring.
+    """
 
     def __init__(
         self,
@@ -1380,6 +1949,29 @@ class NotebookMaskReviewer(_BaseNotebookMaskReviewer):
         load_existing: bool = True,
         auto_well_for_phones: bool = True,
     ):
+        """
+        Store the well-mask option and initialize the base notebook reviewer.
+
+        Parameters
+        ----------
+        image_paths : Sequence[str | Path]
+            Paths to the images included in the operation.
+        out_dir : str | Path
+            Directory in which generated outputs are stored. Default is
+            ``'./region_annotations'``.
+        start_index : int
+            Index of the first image shown in the reviewer. Default is ``0``.
+        max_display_side : int
+            Maximum image side length used for the notebook display. Default is ``1200``.
+        canvas_width_px : int
+            Requested notebook canvas width in pixels. Default is ``1000``.
+        save_preview : bool
+            Whether to save an overlay preview with the annotation. Default is ``True``.
+        load_existing : bool
+            Whether to load saved annotations for the selected image. Default is ``True``.
+        auto_well_for_phones : bool
+            Whether to propose a well mask automatically for phone images. Default is ``True``.
+        """
         self.auto_well_for_phones = bool(auto_well_for_phones)
         self.well_mask: Optional[np.ndarray] = None
         self.display_well_mask: Optional[np.ndarray] = None
@@ -1396,6 +1988,9 @@ class NotebookMaskReviewer(_BaseNotebookMaskReviewer):
         )
 
     def _build_widgets(self) -> None:
+        """
+        Create annotation controls and register their callbacks.
+        """
         super()._build_widgets()
 
         # Replace the old numeric brush selector with semantic edit modes.
@@ -1595,6 +2190,15 @@ class NotebookMaskReviewer(_BaseNotebookMaskReviewer):
         """
         Build output paths that mirror the immediate source folder.
 
+        Returns
+        -------
+        tuple[Path, Path, Path, Path]
+            Tuple containing ``folder / f'{image_stem}_regions.npy'``, ``folder /
+            f'{image_stem}_well_mask.npy'``, ``folder / f'{image_stem}_regions.json'``, ``folder
+            / f'{image_stem}_preview.png'``, in that order.
+
+        Notes
+        -----
         Example
         -------
         Source:
@@ -1622,6 +2226,15 @@ class NotebookMaskReviewer(_BaseNotebookMaskReviewer):
         )
 
     def _well_settings(self) -> dict:
+        """
+        Collect the current well-mask proposal settings from the widgets.
+
+        Returns
+        -------
+        dict
+            Result mapping with keys ``signal_mode``, ``blur_sigma``, ``threshold_offset``,
+            ``close_radius``, ``shrink_margin``, ``use_ellipse``.
+        """
         return {
             "signal_mode": self.well_signal_mode.value,
             "blur_sigma": float(self.well_blur_sigma.value),
@@ -1632,6 +2245,14 @@ class NotebookMaskReviewer(_BaseNotebookMaskReviewer):
         }
 
     def _ring_settings(self) -> dict:
+        """
+        Collect background-ring radii and display settings with valid radius ordering.
+
+        Returns
+        -------
+        dict
+            Result mapping with keys ``show``, ``inner_radius``, ``outer_radius``, ``opacity``.
+        """
         inner = max(0, int(self.ring_inner_radius.value))
         outer = max(inner + 1, int(self.ring_outer_radius.value))
         return {
@@ -1642,7 +2263,19 @@ class NotebookMaskReviewer(_BaseNotebookMaskReviewer):
         }
 
     def combined_labels(self) -> np.ndarray:
-        """Return 0/1/2 labels with class 3 outside the valid well."""
+        """
+        Return 0/1/2 labels with class 3 outside the valid well.
+
+        Returns
+        -------
+        numpy.ndarray
+            0/1/2 labels with class 3 outside the valid well.
+
+        Raises
+        ------
+        RuntimeError
+            No image is loaded.
+        """
         if self.labels is None or self.well_mask is None:
             raise RuntimeError("No image is loaded.")
 
@@ -1651,7 +2284,16 @@ class NotebookMaskReviewer(_BaseNotebookMaskReviewer):
         return combined
 
     def _load_current(self) -> None:
-        """Load an image while retaining every current widget setting."""
+        """
+        Load an image while retaining every current widget setting.
+
+        Raises
+        ------
+        ValueError
+            Expected HWC RGB image, got {image.shape} Saved mask shape {loaded.shape} does not
+            match image shape {image.shape[:2]} for {path} Saved well shape {well.shape} does
+            not match image shape {image.shape[:2]} for {path}
+        """
         path = self.current_path
         image, report = load_image(
             path.name,
@@ -1726,6 +2368,14 @@ class NotebookMaskReviewer(_BaseNotebookMaskReviewer):
         self._set_status(loaded_text)
 
     def _display_ring_mask(self) -> Optional[np.ndarray]:
+        """
+        Compute a local-background ring at the displayed image scale.
+
+        Returns
+        -------
+        Optional[numpy.ndarray]
+            A local-background ring at the displayed image scale.
+        """
         if (
             not self.show_ring.value
             or self.display_labels is None
@@ -1756,6 +2406,9 @@ class NotebookMaskReviewer(_BaseNotebookMaskReviewer):
         )
 
     def _refresh_display(self) -> None:
+        """
+        Update the image, annotation overlay, canvas size, and title.
+        """
         if (
             self.image is None
             or self.labels is None
@@ -1836,6 +2489,14 @@ class NotebookMaskReviewer(_BaseNotebookMaskReviewer):
         self.fig.canvas.draw()
 
     def _set_status(self, text: str) -> None:
+        """
+        Show a status message and current annotation-label counts.
+
+        Parameters
+        ----------
+        text : str
+            Text content to inspect, normalize, or render.
+        """
         if self.labels is None or self.well_mask is None:
             counts = ""
         else:
@@ -1854,9 +2515,25 @@ class NotebookMaskReviewer(_BaseNotebookMaskReviewer):
         self.status.value = f"{text}{counts}"
 
     def _on_ring_display_change(self, _change) -> None:
+        """
+        Redraw the well and background-ring overlay.
+
+        Parameters
+        ----------
+        _change : dict
+            Accepted by the interface but not read by this implementation.
+        """
         self._refresh_display()
 
     def _on_build_well(self, _button) -> None:
+        """
+        Rebuild the well mask from the current proposal settings.
+
+        Parameters
+        ----------
+        _button : ipywidgets.Button
+            Accepted by the interface but not read by this implementation.
+        """
         if self.image is None:
             return
         self.well_mask = propose_well_mask(
@@ -1867,6 +2544,14 @@ class NotebookMaskReviewer(_BaseNotebookMaskReviewer):
         self._set_status("Rebuilt well mask with current settings.")
 
     def _on_all_inside(self, _button) -> None:
+        """
+        Mark the entire image as inside the well.
+
+        Parameters
+        ----------
+        _button : ipywidgets.Button
+            Accepted by the interface but not read by this implementation.
+        """
         if self.image is None:
             return
         self.well_mask = np.ones(self.image.shape[:2], dtype=np.uint8)
@@ -1878,6 +2563,21 @@ class NotebookMaskReviewer(_BaseNotebookMaskReviewer):
         start: tuple[int, int],
         end: tuple[int, int],
     ) -> None:
+        """
+        Paint a brush stroke into the current annotation mask.
+
+        Parameters
+        ----------
+        start : tuple[int, int]
+            Start coordinate of the brush stroke in original-image pixels.
+        end : tuple[int, int]
+            End coordinate of the brush stroke in original-image pixels.
+
+        Raises
+        ------
+        ValueError
+            Unknown brush mode: {mode}
+        """
         if self.labels is None or self.well_mask is None:
             return
 
@@ -1916,6 +2616,19 @@ class NotebookMaskReviewer(_BaseNotebookMaskReviewer):
         )
 
     def save_current(self) -> tuple[Path, Path, Path]:
+        """
+        Write the current annotation arrays, metadata, and optional preview image.
+
+        Returns
+        -------
+        tuple of Path
+            Saved region-mask, well-mask, and metadata JSON paths, in that order.
+
+        Raises
+        ------
+        RuntimeError
+            No image is loaded.
+        """
         if self.image is None or self.labels is None or self.well_mask is None:
             raise RuntimeError("No image is loaded.")
 
@@ -2001,6 +2714,20 @@ class NotebookMaskReviewer(_BaseNotebookMaskReviewer):
         return regions_path, well_path, metadata_path
 
     def _on_reload(self, _button) -> None:
+        """
+        Replace current edits with the saved annotation after validating its shape.
+
+        Parameters
+        ----------
+        _button : ipywidgets.Button
+            Accepted by the interface but not read by this implementation.
+
+        Raises
+        ------
+        ValueError
+            Saved region mask shape does not match the image. Saved well mask shape does not
+            match the image.
+        """
         regions_path, well_path, _, _ = self._paths_for_current()
         if not regions_path.exists():
             self._set_status("No saved annotation exists for this image.")
@@ -2024,6 +2751,14 @@ class NotebookMaskReviewer(_BaseNotebookMaskReviewer):
         self._set_status("Reloaded saved annotation.")
 
     def diagnostics(self) -> dict:
+        """
+        Extend reviewer diagnostics with well settings, ring settings, and label counts.
+
+        Returns
+        -------
+        dict
+            Computed value of ``result``.
+        """
         result = super().diagnostics()
         result["well_settings"] = self._well_settings()
         result["ring_settings"] = self._ring_settings()
@@ -2045,6 +2780,23 @@ def annotation_output_paths(
     """
     Return the expected annotation output paths for one source image.
 
+    Parameters
+    ----------
+    image_path : str | Path
+        Image path relative to the job root.
+    out_dir : str | Path
+        Directory in which generated outputs are stored. Default is
+        ``'./region_annotations'``.
+
+    Returns
+    -------
+    tuple[Path, Path, Path, Path]
+        Tuple containing ``folder / f'{stem}_regions.npy'``, ``folder /
+        f'{stem}_well_mask.npy'``, ``folder / f'{stem}_regions.json'``, ``folder /
+        f'{stem}_preview.png'``, in that order.
+
+    Notes
+    -----
     The layout mirrors the source image's immediate parent folder.
     """
     image_path = Path(image_path)
@@ -2066,6 +2818,21 @@ def annotation_is_complete(
     """
     Return True when the required annotation files exist.
 
+    Parameters
+    ----------
+    image_path : str | Path
+        Image path relative to the job root.
+    out_dir : str | Path
+        Directory in which generated outputs are stored. Default is
+        ``'./region_annotations'``.
+
+    Returns
+    -------
+    bool
+        True when the required annotation files exist.
+
+    Notes
+    -----
     The preview is intentionally optional because it is only a visual aid.
     """
     regions_path, well_path, metadata_path, _ = annotation_output_paths(
@@ -2089,11 +2856,22 @@ def collect_unannotated_paths(
     """
     Collect source images and remove images with complete saved annotations.
 
+    Parameters
+    ----------
+    root_dirs : Sequence[str | Path]
+        Root folders recursively searched for images.
+    out_dir : str | Path
+        Directory in which generated outputs are stored. Default is
+        ``'./region_annotations'``.
+    suffixes : Sequence[str]
+        Image filename suffixes included in the search. Default is ``('.tif', '.tiff',
+        '.png', '.jpg', '.jpeg')``.
+
     Returns
     -------
-    remaining_paths:
+    remaining_paths
         Images that still need annotation.
-    skipped_count:
+    skipped_count
         Number of already completed images.
     """
     all_paths = collect_annotation_paths(
@@ -2127,9 +2905,36 @@ def review_ext_image_masks(
 
     Parameters
     ----------
-    skip_existing:
+    ext_image_folders : Sequence[str | Path]
+        Folders containing external images to annotate.
+    out_dir : str | Path
+        Directory in which generated outputs are stored. Default is
+        ``'./region_annotations'``.
+    start_index : int
+        Index of the first image shown in the reviewer. Default is ``0``.
+    max_display_side : int
+        Maximum image side length used for the notebook display. Default is ``1200``.
+    canvas_width_px : int
+        Requested notebook canvas width in pixels. Default is ``1000``.
+    save_preview : bool
+        Whether to save an overlay preview with the annotation. Default is ``True``.
+    load_existing : bool
+        Whether to load saved annotations for the selected image. Default is ``True``.
+    auto_well_for_phones : bool
+        Whether to propose a well mask automatically for phone images. Default is ``True``.
+    skip_existing : bool
         If True, images with existing region mask, well mask, and metadata
-        files are omitted before the reviewer starts.
+        files are omitted before the reviewer starts. Default is ``False``.
+
+    Returns
+    -------
+    NotebookMaskReviewer
+        The reviewer; current settings persist across image changes.
+
+    Raises
+    ------
+    RuntimeError
+        All {skipped_count} available images already have complete annotations in {out_dir}.
     """
     out_dir = Path(out_dir)
 

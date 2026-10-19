@@ -27,6 +27,27 @@ def validate_unet_on_tiled_h5(
     """
     Tile-level validation for simulated or external tiled H5 datasets.
 
+    Parameters
+    ----------
+    segmenter : SegmenterUNet
+        Callable UNet instance segmenter used to process the image.
+    cfg : TrainingValidationConfig
+        Configuration object controlling this component.
+    indices : Optional[Sequence[int]]
+        Optional subset of dataset record indices. Default is ``None``.
+    segmentation_method : str
+        Segmentation-method selector used to choose the configured implementation. Default
+        is ``'inst_seg'``.
+    stop : Optional[int]
+        Optional stop indicator checked between validation items. Default is ``None``.
+
+    Returns
+    -------
+    tuple
+        Per-tile validation dataframe and aggregate summary dictionary, in that order.
+
+    Notes
+    -----
     Ground-truth policy
     -------------------
     - Stored /inst labels are the source of truth for pixel-level instance metrics.
@@ -57,6 +78,39 @@ def run_single_ext_validation(
     """
     Run validation for one combination.
 
+    Parameters
+    ----------
+    out_dir : str
+        Directory in which generated outputs are stored.
+    model_dir : str
+        Directory containing model checkpoint files.
+    h5_dir : str
+        Directory containing the input HDF5 datasets.
+    unet_mode : str
+        UNet model size selected by the pipeline.
+    dataset_mode : str
+        Dataset sampling mode used to select the corresponding training or validation data.
+    seg_method : str
+        Segmentation-method selector used to choose the configured implementation.
+    force : bool
+        Whether to recompute results even when the expected output already exists. Default
+        is ``False``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Depending on the input and branch, returns ``pd.read_csv(out_csv, index_col=None)``,
+        ``df``.
+
+    Raises
+    ------
+    ValueError
+        Unknown dataset_mode: {dataset_mode} Unknown seg_method: {seg_method}
+    FileNotFoundError
+        H5 file not found: {h5_path}
+
+    Notes
+    -----
     dataset_mode:
         - external_images -> external_images_test.h5
         - tiles           -> tiles_test.h5
@@ -117,6 +171,20 @@ def run_test_ext_validation(
     """
     Sequential fallback.
 
+    Parameters
+    ----------
+    out_dir : str
+        Directory in which generated outputs are stored.
+    model_dir : str
+        Directory containing model checkpoint files.
+    h5_dir : str
+        Directory containing the input HDF5 datasets.
+    force : bool
+        Whether to recompute results even when the expected output already exists. Default
+        is ``False``.
+
+    Notes
+    -----
     For cluster use, prefer the SLURM array script.
     """
     results = []

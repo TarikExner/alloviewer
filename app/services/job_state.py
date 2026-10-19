@@ -21,6 +21,20 @@ TTL = redis_settings.job_state_ttl_seconds
 
 
 def _json_default(value: Any) -> Any:
+    """
+    Convert model-like objects, objects with attributes, or other values for JSON.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    Any
+        Depending on the input and branch, returns ``value.model_dump()``,
+        ``value.__dict__``, ``str(value)``.
+    """
     if hasattr(value, "model_dump"):
         return value.model_dump()
 
@@ -31,6 +45,19 @@ def _json_default(value: Any) -> Any:
 
 
 def _dumps(value: Any) -> str:
+    """
+    Encode job state as JSON using the custom value converter.
+
+    Parameters
+    ----------
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+
+    Returns
+    -------
+    str
+        Computed value of ``json.dumps(value, default=_json_default)``.
+    """
     return json.dumps(
         value,
         default=_json_default,
@@ -38,6 +65,19 @@ def _dumps(value: Any) -> str:
 
 
 def _loads(raw: str | bytes | None) -> Any:
+    """
+    Decode Redis JSON bytes or text, preserving None for a missing key.
+
+    Parameters
+    ----------
+    raw : str | bytes | None
+        Serialized JSON bytes or text read from Redis, or None for an absent key.
+
+    Returns
+    -------
+    Any
+        Depending on the input and branch, returns ``None``, ``json.loads(raw)``.
+    """
     if raw is None:
         return None
 
@@ -51,6 +91,16 @@ def _set_json(
     key: str,
     value: Any,
 ) -> None:
+    """
+    Store JSON in Redis with the configured job-state expiry.
+
+    Parameters
+    ----------
+    key : str
+        Mapping key or attribute name selected by the helper.
+    value : Any
+        Input value to validate, convert, or format as specified by this helper.
+    """
     redis_client.set(
         key,
         _dumps(value),
@@ -59,6 +109,19 @@ def _set_json(
 
 
 def _get_json(key: str) -> Any:
+    """
+    Read and decode a Redis JSON key.
+
+    Parameters
+    ----------
+    key : str
+        Mapping key or attribute name selected by the helper.
+
+    Returns
+    -------
+    Any
+        And decode a Redis JSON key.
+    """
     return _loads(redis_client.get(key))
 
 
@@ -66,6 +129,21 @@ def _merge_json(
     key: str,
     updates: dict[str, Any],
 ) -> dict[str, Any]:
+    """
+    Merge fields into a Redis JSON object using an optimistic transaction.
+
+    Parameters
+    ----------
+    key : str
+        Mapping key or attribute name selected by the helper.
+    updates : dict[str, Any]
+        Fields to merge into the existing state.
+
+    Returns
+    -------
+    dict[str, Any]
+        Computed value of ``current``.
+    """
     pipe = redis_client.pipeline()
 
     while True:
@@ -95,6 +173,14 @@ def _merge_json(
 
 
 def _touch(keys: list[str]) -> None:
+    """
+    Refresh the expiry of each supplied Redis key.
+
+    Parameters
+    ----------
+    keys : list[str]
+        Ordered candidate keys checked when reading the mapping.
+    """
     for key in keys:
         redis_client.expire(key, TTL)
 
@@ -105,6 +191,13 @@ def _persist_progress(
 ) -> None:
     """
     Mirror the latest Redis progress state into job.json.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    progress : dict[str, Any]
+        Job progress fields to persist.
     """
     error = None
 
@@ -128,6 +221,16 @@ def _progress_from_job_file(
 ) -> dict[str, Any] | None:
     """
     Recover progress from job.json when the Redis entry has expired.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    dict[str, Any] | None
+        Progress from job.json when the Redis entry has expired.
     """
     job = get_job(job_id)
 
@@ -148,6 +251,16 @@ def _progress_from_job_file(
 def _result_from_job_file(job_id: str) -> Any:
     """
     Recover the persisted result when the Redis entry has expired.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    Any
+        The persisted result when the Redis entry has expired.
     """
     path = get_job_paths(job_id).result
 
@@ -163,10 +276,36 @@ def _result_from_job_file(job_id: str) -> Any:
 
 
 def image_progress_key(job_id: str) -> str:
+    """
+    Build the Redis key for image job progress.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    str
+        The Redis key for image job progress.
+    """
     return f"image:{job_id}:progress"
 
 
 def image_result_key(job_id: str) -> str:
+    """
+    Build the Redis key for image job results.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    str
+        The Redis key for image job results.
+    """
     return f"image:{job_id}:result"
 
 
@@ -174,6 +313,16 @@ def set_image_progress(
     job_id: str,
     progress: dict[str, Any],
 ) -> None:
+    """
+    Store image progress in Redis and mirror it into job.json.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    progress : dict[str, Any]
+        Job progress fields to persist.
+    """
     complete_progress = {
         **progress,
         "last_access": time.time(),
@@ -194,6 +343,21 @@ def update_image_progress(
     job_id: str,
     **updates: Any,
 ) -> dict[str, Any]:
+    """
+    Merge image progress fields in Redis and mirror them into job.json.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    **updates : Any
+        Fields to merge into the existing state.
+
+    Returns
+    -------
+    dict[str, Any]
+        Computed value of ``progress``.
+    """
     complete_updates = {
         **updates,
         "last_access": time.time(),
@@ -215,6 +379,19 @@ def update_image_progress(
 def get_image_progress(
     job_id: str,
 ) -> dict[str, Any] | None:
+    """
+    Read image progress from Redis, falling back to job.json.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    dict[str, Any] | None
+        Image progress from Redis, falling back to job.json.
+    """
     key = image_progress_key(job_id)
     progress = _get_json(key)
 
@@ -234,6 +411,16 @@ def set_image_result(
     job_id: str,
     result: Any,
 ) -> None:
+    """
+    Store the image result in Redis and result.json.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    result : Any
+        Analysis result containing per-well values and assay summaries.
+    """
     _set_json(
         image_result_key(job_id),
         result,
@@ -246,6 +433,19 @@ def set_image_result(
 
 
 def get_image_result(job_id: str) -> Any:
+    """
+    Read the image result from Redis, falling back to result.json.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    Any
+        The image result from Redis, falling back to result.json.
+    """
     key = image_result_key(job_id)
     result = _get_json(key)
 
@@ -266,6 +466,18 @@ def append_image_done_well(
     well_id: str,
     done: int | None = None,
 ) -> None:
+    """
+    Add a completed well once and optionally update the count in job progress.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    well_id : str
+        Plate well identifier, such as ``A1``.
+    done : int | None
+        Updated completed-well count; None leaves the count unchanged. Default is ``None``.
+    """
     key = image_progress_key(job_id)
     pipe = redis_client.pipeline()
 
@@ -312,6 +524,14 @@ def append_image_done_well(
 
 
 def delete_image_job(job_id: str) -> None:
+    """
+    Delete the image progress and result keys from Redis.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    """
     redis_client.delete(
         image_progress_key(job_id),
         image_result_key(job_id),
@@ -324,10 +544,36 @@ def delete_image_job(job_id: str) -> None:
 
 
 def fcxm_progress_key(job_id: str) -> str:
+    """
+    Build the Redis key for fcxm job progress.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    str
+        The Redis key for fcxm job progress.
+    """
     return f"fcxm:{job_id}:progress"
 
 
 def fcxm_result_key(job_id: str) -> str:
+    """
+    Build the Redis key for fcxm job results.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    str
+        The Redis key for fcxm job results.
+    """
     return f"fcxm:{job_id}:result"
 
 
@@ -335,6 +581,16 @@ def set_fcxm_progress(
     job_id: str,
     progress: dict[str, Any],
 ) -> None:
+    """
+    Store fcxm progress in Redis and mirror it into job.json.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    progress : dict[str, Any]
+        Job progress fields to persist.
+    """
     complete_progress = {
         **progress,
         "last_access": time.time(),
@@ -355,6 +611,21 @@ def update_fcxm_progress(
     job_id: str,
     **updates: Any,
 ) -> dict[str, Any]:
+    """
+    Merge fcxm progress fields in Redis and mirror them into job.json.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    **updates : Any
+        Fields to merge into the existing state.
+
+    Returns
+    -------
+    dict[str, Any]
+        Computed value of ``progress``.
+    """
     complete_updates = {
         **updates,
         "last_access": time.time(),
@@ -376,6 +647,19 @@ def update_fcxm_progress(
 def get_fcxm_progress(
     job_id: str,
 ) -> dict[str, Any] | None:
+    """
+    Read fcxm progress from Redis, falling back to job.json.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    dict[str, Any] | None
+        Fcxm progress from Redis, falling back to job.json.
+    """
     key = fcxm_progress_key(job_id)
     progress = _get_json(key)
 
@@ -395,6 +679,16 @@ def set_fcxm_result(
     job_id: str,
     result: Any,
 ) -> None:
+    """
+    Store the fcxm result in Redis and result.json.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    result : Any
+        Analysis result containing per-well values and assay summaries.
+    """
     _set_json(
         fcxm_result_key(job_id),
         result,
@@ -407,6 +701,19 @@ def set_fcxm_result(
 
 
 def get_fcxm_result(job_id: str) -> Any:
+    """
+    Read the fcxm result from Redis, falling back to result.json.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Returns
+    -------
+    Any
+        The fcxm result from Redis, falling back to result.json.
+    """
     key = fcxm_result_key(job_id)
     result = _get_json(key)
 
@@ -427,6 +734,18 @@ def append_fcxm_done_filename(
     filename: str,
     done_files: int | None = None,
 ) -> None:
+    """
+    Add a completed filename once and optionally update the count in job progress.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    filename : str
+        Name or path of the file selected by this operation.
+    done_files : int | None
+        Updated completed-file count; None leaves the count unchanged. Default is ``None``.
+    """
     key = fcxm_progress_key(job_id)
     pipe = redis_client.pipeline()
 
@@ -473,6 +792,14 @@ def append_fcxm_done_filename(
 
 
 def delete_fcxm_job(job_id: str) -> None:
+    """
+    Delete the fcxm progress and result keys from Redis.
+
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+    """
     redis_client.delete(
         fcxm_progress_key(job_id),
         fcxm_result_key(job_id),
@@ -483,6 +810,13 @@ def delete_all_job_state(job_id: str) -> None:
     """
     Delete all Redis state associated with one job.
 
+    Parameters
+    ----------
+    job_id : str
+        UUID string identifying the job within the configured data directory.
+
+    Notes
+    -----
     Filesystem cleanup is handled separately by the job registry or cleanup
     service.
     """

@@ -6,28 +6,41 @@ from pandas.io.parsers.readers import TextFileReader
 
 
 class Metadata:
-    """Metadata table for sample files and roles.
-
-    The metadata file must contain at least two columns: ``"file_name"`` and
-    ``"role"``. Valid roles are ``"NC"``, ``"PC"``, and ``"SAMPLE"``.
+    """
+    Metadata table for sample files and roles.
 
     Parameters
     ----------
     file_path : str or pathlib.Path
         Path to a delimited metadata file. The delimiter is inferred
         automatically.
+
+    Notes
+    -----
+    The metadata file must contain at least two columns: ``"file_name"`` and
+    ``"role"``. Valid roles are ``"NC"``, ``"PC"``, and ``"SAMPLE"``.
     """
 
     def __init__(
         self,
         file_path: Union[str, Path],
     ) -> None:
+        """
+        Store the metadata path, load its table, and validate its contents.
+
+        Parameters
+        ----------
+        file_path : str or pathlib.Path
+            Path to a delimited metadata file. The delimiter is inferred
+            automatically.
+        """
         df = self.read_file(file_path)
         self._validate_input(df)
         self.df = df
 
     def __repr__(self) -> str:
-        """Return a compact metadata summary.
+        """
+        Return a compact metadata summary.
 
         Returns
         -------
@@ -44,7 +57,8 @@ class Metadata:
         self,
         file_path: Union[str, Path],
     ) -> pd.DataFrame:
-        """Read a metadata file into a DataFrame.
+        """
+        Read a metadata file into a DataFrame.
 
         Parameters
         ----------
@@ -60,7 +74,8 @@ class Metadata:
         return pd.read_csv(file_path, sep=delim)
 
     def _validate_input(self, df: pd.DataFrame) -> None:
-        """Validate metadata column names and role values.
+        """
+        Validate metadata column names and role values.
 
         Parameters
         ----------
@@ -77,7 +92,8 @@ class Metadata:
         return
 
     def _validate_colnames(self, df: pd.DataFrame) -> None:
-        """Validate required metadata columns.
+        """
+        Validate required metadata columns.
 
         Parameters
         ----------
@@ -100,7 +116,8 @@ class Metadata:
         return
 
     def _validate_rolenames(self, df: pd.DataFrame) -> None:
-        """Validate metadata role names.
+        """
+        Validate metadata role names.
 
         Parameters
         ----------
@@ -119,7 +136,8 @@ class Metadata:
             raise ValueError("Roles must be 'NC', 'PC' or 'SAMPLE'.")
 
     def get_df(self) -> pd.DataFrame:
-        """Return the metadata table.
+        """
+        Return the metadata table.
 
         Returns
         -------
@@ -130,7 +148,8 @@ class Metadata:
 
     @classmethod
     def from_df(cls, df: pd.DataFrame) -> "Metadata":
-        """Create metadata from an existing DataFrame.
+        """
+        Create metadata from an existing DataFrame.
 
         Parameters
         ----------
@@ -156,7 +175,8 @@ class Metadata:
         self,
         file: Union[str, Path],
     ) -> str:
-        """Infer the delimiter of a metadata file.
+        """
+        Infer the delimiter of a metadata file.
 
         Parameters
         ----------

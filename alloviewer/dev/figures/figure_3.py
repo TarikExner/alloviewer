@@ -90,7 +90,36 @@ def _add_scale_bar_to_image(
     margin_px: int = PANEL_A_SCALE_BAR_MARGIN_PX,
     thickness_px: int = PANEL_A_SCALE_BAR_THICKNESS_PX,
 ) -> np.ndarray:
-    """Return a copy of `image` with a white bottom-right scale bar."""
+    """
+    Return a copy of `image` with a white bottom-right scale bar.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+    length_um : float
+        Physical length represented by the scale bar, in micrometers. Default is
+        ``PANEL_A_SCALE_BAR_UM``.
+    pixel_size_um : float
+        Physical pixel size, in micrometers per pixel. Default is
+        ``PANEL_A_MICROSCOPY_PIXEL_SIZE_UM``.
+    margin_px : int
+        Inset margin from the image boundary, in pixels. Default is
+        ``PANEL_A_SCALE_BAR_MARGIN_PX``.
+    thickness_px : int
+        Scale-bar thickness, in pixels. Default is ``PANEL_A_SCALE_BAR_THICKNESS_PX``.
+
+    Returns
+    -------
+    numpy.ndarray
+        A copy of `image` with a white bottom-right scale bar.
+
+    Raises
+    ------
+    ValueError
+        Expected 2D or HWC image, got shape {out.shape}. Scale bar is too wide for image
+        width {w}: length_px={length_px}, margin_px={margin_px}.
+    """
     out = np.asarray(image).copy()
 
     if out.ndim not in (2, 3):
@@ -123,6 +152,20 @@ def _add_scale_bar_to_image(
 
 
 def _as_instance_cfg(cfg_inst: Any) -> Any:
+    """
+    Convert a configuration dictionary into InstanceSegmenterConfig when needed.
+
+    Parameters
+    ----------
+    cfg_inst : Any
+        Instance-segmentation configuration, as a mapping or configuration object.
+
+    Returns
+    -------
+    Any
+        Depending on the input and branch, returns ``cfg_inst``,
+        ``InstanceSegmenterConfig.from_dict(cfg_inst)``.
+    """
     if isinstance(cfg_inst, InstanceSegmenterConfig):
         return cfg_inst
 
@@ -133,6 +176,26 @@ def _as_instance_cfg(cfg_inst: Any) -> Any:
 
 
 def _as_2d_prob(x: np.ndarray, name: str) -> np.ndarray:
+    """
+    Require a float32 probability map with shape (H, W) or (1, H, W).
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        Input array or tensor to convert, resize, normalize, or smooth as described above.
+    name : str
+        Name identifying the item being processed.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``x``, ``as_contiguous_f32(x[0])``.
+
+    Raises
+    ------
+    ValueError
+        Expected {name} as [H,W], got shape {x.shape}.
+    """
     x = as_contiguous_f32(np.asarray(x))
 
     if x.ndim == 2:
@@ -145,6 +208,20 @@ def _as_2d_prob(x: np.ndarray, name: str) -> np.ndarray:
 
 
 def _make_seg_out_from_probs(probs: dict[str, np.ndarray]) -> dict[str, Any]:
+    """
+    Wrap four probability heads in the segmentation output structure.
+
+    Parameters
+    ----------
+    probs : dict[str, numpy.ndarray]
+        Predicted maps keyed by cell, boundary, center, and energy head names.
+
+    Returns
+    -------
+    dict[str, Any]
+        Result mapping with keys ``probs``, ``cell_mask``, ``boundary``,
+        ``instance_labels``, ``meta``.
+    """
     return {
         "probs": {
             "cell": _as_2d_prob(probs["cell"], "cell"),
@@ -163,6 +240,22 @@ def compute_instance_steps(
     seg_out: dict[str, Any],
     cfg_inst: Any,
 ) -> dict[str, np.ndarray]:
+    """
+    Compute intermediate masks, distance maps, markers, and final instance labels.
+
+    Parameters
+    ----------
+    seg_out : dict[str, Any]
+        Prepared segmentation output containing masks or probability maps.
+    cfg_inst : Any
+        Instance-segmentation configuration, as a mapping or configuration object.
+
+    Returns
+    -------
+    dict[str, numpy.ndarray]
+        Result mapping with keys ``p_cell``, ``p_bound``, ``p_center``, ``p_energy``,
+        ``mask``, ``dist``, ``dist_s``, ``elevation``, ``markers``, ``instances``.
+    """
     cfg_inst = _as_instance_cfg(cfg_inst)
 
     p_cell = _as_2d_prob(seg_out["probs"]["cell"], "cell")
@@ -266,6 +359,23 @@ def random_instance_colors(
     background_label: int = 0,
     seed: int = 0,
 ) -> np.ndarray:
+    """
+    Map each non-background instance label to a reproducible random RGB color.
+
+    Parameters
+    ----------
+    instances : numpy.ndarray
+        Integer instance-label image with zero background.
+    background_label : int
+        Instance label reserved for the background. Default is ``0``.
+    seed : int
+        Random seed for reproducible sampling. Default is ``0``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``out``.
+    """
     rng = np.random.default_rng(seed)
 
     instances = np.asarray(instances)
@@ -290,6 +400,29 @@ def show_panel(
     vmin: float | None = None,
     vmax: float | None = None,
 ):
+    """
+    Display an image without ticks and optionally set its panel title.
+
+    Parameters
+    ----------
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    img : numpy.ndarray
+        Input image array.
+    title : str | None
+        Text displayed as the plot or panel title. Default is ``None``.
+    cmap : str
+        Matplotlib colormap used for scalar image values. Default is ``'gray'``.
+    vmin : float | None
+        Lower display intensity bound; None lets Matplotlib choose. Default is ``None``.
+    vmax : float | None
+        Upper display intensity bound; None lets Matplotlib choose. Default is ``None``.
+
+    Returns
+    -------
+    object
+        Computed value of ``im``.
+    """
     im = ax.imshow(
         img,
         cmap=cmap,
@@ -312,6 +445,31 @@ def _crop_array(
     sx: int,
     size: int,
 ) -> np.ndarray | None:
+    """
+    Crop a two-dimensional or channel-last array, preserving None.
+
+    Parameters
+    ----------
+    a : numpy.ndarray | None
+        Image or label array to crop, or None to preserve an absent input.
+    sy : int
+        Starting vertical pixel coordinate.
+    sx : int
+        Starting horizontal pixel coordinate.
+    size : int
+        Side length of the square crop, in pixels.
+
+    Returns
+    -------
+    numpy.ndarray | None
+        Depending on the input and branch, returns ``None``, ``a[sy:sy + size, sx:sx +
+        size]``, ``a[sy:sy + size, sx:sx + size, :]``.
+
+    Raises
+    ------
+    ValueError
+        Cannot crop array with shape {a.shape}.
+    """
     if a is None:
         return None
 
@@ -327,6 +485,24 @@ def _crop_array(
 
 
 def _prepare_image_for_display(img: np.ndarray) -> np.ndarray:
+    """
+    Validate display dimensions and scale images with maxima above one.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input image array.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``img``.
+
+    Raises
+    ------
+    ValueError
+        Expected image [H,W] or [H,W,C], got shape {img.shape}.
+    """
     img = np.asarray(img, dtype=np.float32)
 
     if img.ndim == 2:
@@ -343,6 +519,19 @@ def _prepare_image_for_display(img: np.ndarray) -> np.ndarray:
 
 
 def _segmentation_white_background(image: np.ndarray) -> np.ndarray:
+    """
+    Copy an RGB segmentation display and change black background pixels to white.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+
+    Returns
+    -------
+    numpy.ndarray
+        Depending on the input and branch, returns ``image``, ``out``.
+    """
     image = np.asarray(image)
 
     if image.ndim != 3 or image.shape[-1] != 3:
@@ -365,6 +554,27 @@ def _prepare_for_image_grid(
     *,
     is_segmentation: bool,
 ) -> np.ndarray:
+    """
+    Resize and normalize an image for the comparison grid.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+    is_segmentation : bool
+        Whether the input is a label or segmentation display requiring nearest-neighbor
+        resizing.
+
+    Returns
+    -------
+    numpy.ndarray
+        Computed value of ``image``.
+
+    Raises
+    ------
+    ValueError
+        Unsupported image shape for image grid: {image.shape}
+    """
     image = prepare_image(
         image,
         is_segmentation=is_segmentation,
@@ -407,6 +617,23 @@ def _clip_inset_coords(
     inset_coords: tuple[int, int],
     inset_side_length: int,
 ) -> tuple[int, int]:
+    """
+    Clip inset coordinates to the available image extent.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+    inset_coords : tuple[int, int]
+        Pixel coordinates of the zoomed inset origin.
+    inset_side_length : int
+        Inset side length in pixels.
+
+    Returns
+    -------
+    tuple[int, int]
+        Tuple containing ``x``, ``y``, in that order.
+    """
     h, w = image.shape[:2]
     x, y = inset_coords
 
@@ -423,6 +650,22 @@ def _add_inset_overlay(
     inset_side_length: int,
     title: str | None = None,
 ) -> None:
+    """
+    Show an image with a highlighted crop and a zoomed inset.
+
+    Parameters
+    ----------
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    image : numpy.ndarray
+        Input image array; channel order and normalization follow the calling pipeline.
+    inset_coords : tuple[int, int]
+        Pixel coordinates of the zoomed inset origin.
+    inset_side_length : int
+        Inset side length in pixels.
+    title : str | None
+        Text displayed as the plot or panel title. Default is ``None``.
+    """
     ax.imshow(image)
 
     x, y = _clip_inset_coords(
@@ -498,6 +741,32 @@ def _plot_identity_scatter(
     legend: bool = False,
     legend_fontsize: int | None = None,
 ) -> None:
+    """
+    Plot paired numeric measurements with an identity line and shared axis range.
+
+    Parameters
+    ----------
+    ax : Axes
+        Matplotlib axis receiving the plot or formatting changes.
+    data : pandas.DataFrame
+        Input data consumed by this analysis or plotting operation.
+    x_col : str
+        DataFrame column plotted on the horizontal axis.
+    y_col : str
+        DataFrame column plotted on the vertical axis.
+    title : str
+        Text displayed as the plot or panel title.
+    xlabel : str
+        Horizontal-axis label.
+    ylabel : str
+        Vertical-axis label.
+    hue_col : str | None
+        Optional DataFrame column used to group point colors. Default is ``None``.
+    legend : bool
+        Whether to display a legend. Default is ``False``.
+    legend_fontsize : int | None
+        Legend font size in points. Default is ``None``.
+    """
     plot_data = data.copy()
 
     plot_data[x_col] = pd.to_numeric(plot_data[x_col], errors="coerce")
@@ -568,6 +837,31 @@ def prepare_instance_segmentation_panel_data(
     inset_start: tuple[int, int] = (210, 200),
     inset_size: int = 100,
 ) -> dict[str, Any]:
+    """
+    Run the example segmentation and prepare cropped intermediate-stage panels.
+
+    Parameters
+    ----------
+    model_output_dir : str
+        Directory containing trained model checkpoints and training outputs.
+    ext_images_dir : str
+        Root directory containing external microscopy image sets.
+    validation_results_dir : str
+        Directory containing cached validation tables and analysis results.
+    redo_analysis : bool
+        Whether to recompute analysis instead of using available cached results. Default is
+        ``False``.
+    inset_start : tuple[int, int]
+        Starting pixel coordinates of the inset. Default is ``(210, 200)``.
+    inset_size : int
+        Inset side length in pixels. Default is ``100``.
+
+    Returns
+    -------
+    dict[str, Any]
+        Result mapping with keys ``img_disp``, ``steps``, ``inst_baseline_rgb``,
+        ``inst_instance_segmenter_rgb``.
+    """
     unet_base_config = copy.deepcopy(UNET_CONFIG)
     instance_seg_config = _as_instance_cfg(INSTANCE_CONFIG)
 
@@ -652,6 +946,32 @@ def prepare_model_evaluation_panel_data(
     comparison_images: Literal["external_images", "tiles"] = "tiles",
     redo_analysis: bool = False,
 ) -> dict[str, Any]:
+    """
+    Load model-validation tables and cached comparison images.
+
+    Parameters
+    ----------
+    validation_results_dir : str
+        Directory containing cached validation tables and analysis results.
+    model_output_dir : str
+        Directory containing trained model checkpoints and training outputs.
+    model_file : str
+        Model checkpoint filename. Default is ``'best_small_tiles_S512_seed187.pth'``.
+    unet_size : Literal['small', 'medium', 'large']
+        UNet model size used for model selection or validation. Default is ``'small'``.
+    comparison_images : Literal['external_images', 'tiles']
+        Source of validation images, such as external images or simulated tiles. Default is
+        ``'tiles'``.
+    redo_analysis : bool
+        Whether to recompute analysis instead of using available cached results. Default is
+        ``False``.
+
+    Returns
+    -------
+    dict[str, Any]
+        Result mapping with keys ``unet_on_sim``, ``unet_on_human``, ``imagej_on_sim``,
+        ``image_data``.
+    """
     image_cache_path = os.path.join(
         validation_results_dir,
         "figure_3_image_cache_fullres.npz",
@@ -696,6 +1016,23 @@ def prepare_figure_3_data(
     model_output_dir: str,
     ext_images_dir: str,
 ) -> dict[str, Any]:
+    """
+    Collect instance-segmentation examples and model-evaluation data for Figure 3.
+
+    Parameters
+    ----------
+    validation_results_dir : str
+        Directory containing cached validation tables and analysis results.
+    model_output_dir : str
+        Directory containing trained model checkpoints and training outputs.
+    ext_images_dir : str
+        Root directory containing external microscopy image sets.
+
+    Returns
+    -------
+    dict[str, Any]
+        Result mapping with keys ``instance_segmentation``, ``model_evaluation``.
+    """
     return {
         "instance_segmentation": prepare_instance_segmentation_panel_data(
             model_output_dir=model_output_dir,
@@ -719,6 +1056,24 @@ def _generate_main_figure(
     figure_name: str,
     inset_coords: Optional[dict[str, tuple[int, int]]] = None,
 ) -> None:
+    """
+    Assemble and save the figure showing instance segmentation steps and cell-count comparisons.
+
+    Parameters
+    ----------
+    figure_data : dict[str, Any]
+        Prepared data mapping used to populate figure panels.
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    figure_name : str
+        Base name used for the output figure files.
+    inset_coords : Optional[dict[str, tuple[int, int]]]
+        Pixel coordinates of the zoomed inset origin. Default is ``None``.
+
+    Notes
+    -----
+    Creates Matplotlib subplots and writes the figure outputs selected in this module. Figure input data is supplied by the enclosing preparation workflow.
+    """
     if inset_coords is None:
         inset_coords = INSET_COORDS
 
@@ -741,6 +1096,24 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel A of Figure 3 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Accepted by the interface but not read by this implementation.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -774,6 +1147,24 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel B of Figure 3 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Accepted by the interface but not read by this implementation.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -806,6 +1197,24 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel C of Figure 3 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -828,6 +1237,24 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel D of Figure 3 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -869,6 +1296,24 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel E of Figure 3 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -899,6 +1344,24 @@ def _generate_main_figure(
         gs: SubplotSpec,
         subfigure_label: str,
     ) -> None:
+        """
+        Draw panel F of Figure 3 on the supplied figure and subplot grid.
+
+        Parameters
+        ----------
+        fig : Figure
+            Matplotlib figure containing the subplot grid.
+        ax : Axes
+            Matplotlib axis receiving the plot or formatting changes.
+        gs : SubplotSpec
+            Subplot specification defining the area available to this panel.
+        subfigure_label : str
+            Panel label drawn next to the subplot.
+
+        Notes
+        -----
+        Uses the panel data and display settings prepared by this module. Adds artists to the supplied Matplotlib figure.
+        """
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
 
@@ -1058,6 +1521,22 @@ def figure_3_generation(
     ext_images_dir: str,
     **kwargs
 ) -> None:
+    """
+    Prepare the data and generate Figure 3 showing instance segmentation steps and cell-count comparisons.
+
+    Parameters
+    ----------
+    validation_results_dir : str
+        Directory containing cached validation tables and analysis results.
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    model_output_dir : str
+        Directory containing trained model checkpoints and training outputs.
+    ext_images_dir : str
+        Root directory containing external microscopy image sets.
+    **kwargs : dict
+        Accepted by the interface but not read by this implementation.
+    """
     _generate_main_figure(
         figure_data=prepare_figure_3_data(
             validation_results_dir=validation_results_dir,

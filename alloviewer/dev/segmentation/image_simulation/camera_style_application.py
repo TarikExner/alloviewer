@@ -39,29 +39,29 @@ def apply_camera_style(
 
     Parameters
     ----------
-    img:
+    img : numpy.ndarray
         RGB HWC float image in [0, 1].
-
-    rng:
+    rng : RNG
         Random number generator.
-
-    style_cfg:
+    style_cfg : CameraStyleConfig
         Camera style sampler.
-
-    style_registry:
+    style_registry : Dict[str, CameraStyleParams]
         Mapping from style name to CameraStyleParams.
-
-    quantile_band_cache:
-        Optional histogram cache.
-
-    cell_mask:
+    quantile_band_cache : Optional[Dict[str, Any]]
+        Optional histogram cache. Default is ``None``.
+    cell_mask : Optional[numpy.ndarray]
         Optional simulated cell mask. If given, foreground/background histogram
-        matching can use the true simulated cells instead of guessing.
+        matching can use the true simulated cells instead of guessing. Default is ``None``.
 
     Returns
     -------
-    np.ndarray:
+    numpy.ndarray
         RGB float32 image in [0, 1].
+
+    Raises
+    ------
+    KeyError
+        Style '{style_name}' not found in style_registry
     """
     assert img.ndim == 3 and img.shape[2] == 3
 

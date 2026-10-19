@@ -20,6 +20,39 @@ def label_clusters(
     """
     Label clusters using learned per-marker thresholds in transformed space.
 
+    Parameters
+    ----------
+    debris_cfg : DebrisClusterLabelConfig
+        Scatter-quantile settings used to identify debris clusters.
+    cluster_label_cfg : ClusterLabelConfig
+        Marker threshold, score, and ambiguity settings for cluster labeling.
+    X_scatter : numpy.ndarray
+        Scatter feature matrix of shape (n_events, 2), with FSC and SSC columns aligned to
+        y_train.
+    T_markers : numpy.ndarray
+        Asinh-transformed marker matrix of shape (n_events, n_markers), aligned to y_train
+        and marker_names.
+    y_train : numpy.ndarray
+        Cluster labels aligned with the scatter and marker rows; -1 denotes noise.
+    marker_names : List[str]
+        Ordered marker names corresponding to the marker feature columns.
+    marker_thresholds : Dict[str, float]
+        Per-marker positive thresholds in transformed units.
+
+    Returns
+    -------
+    Dict[int, str]
+        Computed value of ``cluster_to_type``.
+
+    Raises
+    ------
+    ValueError
+        X_scatter must be (n,2) [FSC,SSC] for debris detection. T_markers must be
+        (n,m_count) aligned to marker_names. X_scatter, T_markers, and y_train must have
+        same n rows.
+
+    Notes
+    -----
     Rules (cluster-level):
       - Debris: low FSC/SSC medians (scatter-only).
       - Otherwise, for each marker:

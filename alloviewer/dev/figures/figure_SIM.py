@@ -108,10 +108,36 @@ _PARAM_DISPLAY_NAMES = {
 
 
 def _display_name(param_name: str) -> str:
+    """
+    Look up a readable simulation parameter label, falling back to its name.
+
+    Parameters
+    ----------
+    param_name : str
+        Name of the simulation parameter being varied.
+
+    Returns
+    -------
+    str
+        Computed value of ``_PARAM_DISPLAY_NAMES.get(param_name, param_name)``.
+    """
     return _PARAM_DISPLAY_NAMES.get(param_name, param_name)
 
 
 def _format_scalar(x: Any) -> str:
+    """
+    Format scalar parameters compactly, recognizing common multiples of pi.
+
+    Parameters
+    ----------
+    x : Any
+        Scalar value to format or convert using the helper's stated rules.
+
+    Returns
+    -------
+    str
+        Scalar parameters compactly, recognizing common multiples of pi.
+    """
     if x is None:
         return "None"
     if isinstance(x, bool):
@@ -137,6 +163,19 @@ def _format_scalar(x: Any) -> str:
 
 
 def _format_value(x: Any) -> str:
+    """
+    Format a scalar or short sequence for a simulation-panel annotation.
+
+    Parameters
+    ----------
+    x : Any
+        Scalar value to format or convert using the helper's stated rules.
+
+    Returns
+    -------
+    str
+        A scalar or short sequence for a simulation-panel annotation.
+    """
     if isinstance(x, tuple):
         if len(x) == 2 and x[0] == x[1]:
             return _format_scalar(x[0])
@@ -151,6 +190,19 @@ def _format_value(x: Any) -> str:
 
 
 def _merge_overrides(*dicts: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """
+    Merge override mappings from left to right into a new dictionary.
+
+    Parameters
+    ----------
+    *dicts : Optional[Mapping[str, Any]]
+        Mappings merged in argument order; later entries replace earlier keys.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Computed value of ``out``.
+    """
     out: Dict[str, Any] = {}
     for d in dicts:
         if d:
@@ -168,6 +220,35 @@ def _generate_param_showcase_row_seeded(
     """
     Build a parameter grid where each row has one fixed random scene.
 
+    Parameters
+    ----------
+    sim_config : Any
+        Scene-simulation configuration used to sample simulator keyword arguments.
+    camera : Optional[Any]
+        Camera-dimension configuration used to sample image height and width.
+    sweep : Mapping[str, Sequence[Any]]
+        Mapping from simulation parameters to the values shown in the sweep.
+    base_overrides : Optional[Mapping[str, Any]]
+        Shared simulation parameter overrides applied before individual sweep values.
+        Default is ``None``.
+    seed : int
+        Random seed for reproducible sampling. Default is ``0``.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result mapping with keys ``images``, ``metas``, ``targets``, ``param_names``,
+        ``value_lists``, ``base_kwargs``, ``n_rows``, ``n_cols``.
+
+    Raises
+    ------
+    ValueError
+        Each figure must contain exactly 6 parameter rows; got {n_rows}. Each parameter row
+        must contain exactly 4 values; got {n_cols}. Parameter '{p}' must contain exactly 4
+        values; got {len(vals)}.
+
+    Notes
+    -----
     This is stricter than the old generate_param_showcase() behavior:
     columns within a row share the same seed, so visual changes are mostly
     caused by the swept parameter rather than random scene changes.
@@ -247,6 +328,36 @@ def _generate_main_figure(
     dpi: int = 300,
 ) -> None:
 
+    """
+    Assemble and save the figure showing simulation parameter sweeps.
+
+    Parameters
+    ----------
+    bundle : Dict[str, Any]
+        Prepared simulation examples and metadata for the figure.
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    figure_name : str
+        Base name used for the output figure files.
+    fig_scale : float
+        Accepted by the interface but not read by this implementation. Default is ``1.0``.
+    annotate_mode : str
+        Mode used to place simulation-parameter annotations on the figure. Default is
+        ``'textbox'``.
+    cmap : object
+        Matplotlib colormap used for scalar image values. Default is ``None``.
+    dpi : int
+        Output image resolution in dots per inch. Default is ``300``.
+
+    Raises
+    ------
+    ValueError
+        Expected a 6 x 4 grid, got {n_rows} x {n_cols}.
+
+    Notes
+    -----
+    Creates Matplotlib subplots and writes the figure outputs selected in this module. Figure input data is supplied by the enclosing preparation workflow.
+    """
     images = bundle["images"]
     param_names = bundle["param_names"]
     value_lists = bundle["value_lists"]
@@ -363,6 +474,32 @@ def _run_showcase_figure(
     annotate_mode: str,
     dpi: int,
 ) -> None:
+    """
+    Generate a seeded simulation sweep and write its comparison figure.
+
+    Parameters
+    ----------
+    sim_config : SimulatorConfig
+        Scene-simulation configuration used to sample simulator keyword arguments.
+    camera : CameraDimension
+        Camera-dimension configuration used to sample image height and width.
+    sweep : Mapping[str, Sequence[Any]]
+        Mapping from simulation parameters to the values shown in the sweep.
+    base_overrides : Mapping[str, Any]
+        Shared simulation parameter overrides applied before individual sweep values.
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    figure_name : str
+        Base name used for the output figure files.
+    seed : int
+        Random seed for reproducible sampling.
+    fig_scale : float
+        Multiplier applied to the base figure dimensions.
+    annotate_mode : str
+        Mode used to place simulation-parameter annotations on the figure.
+    dpi : int
+        Output image resolution in dots per inch.
+    """
     bundle = _generate_param_showcase_row_seeded(
         sim_config=sim_config,
         camera=camera,
@@ -389,6 +526,21 @@ def figure_SIM_generation(
     """
     Generate extended-data simulator parameter figures.
 
+    Parameters
+    ----------
+    figure_output_dir : str
+        Directory in which the figure files are written.
+    **kwargs : dict
+        Additional options read by this helper: ``annotate_mode``, ``only``, ``sim_config``,
+        ``camera``, ``seed``, ``fig_scale``, ``dpi``.
+
+    Returns
+    -------
+    object
+        Extended-data simulator parameter figures.
+
+    Notes
+    -----
     Optional kwargs:
       seed: int
       fig_scale: float
