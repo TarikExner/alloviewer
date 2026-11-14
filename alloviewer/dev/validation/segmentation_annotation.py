@@ -87,7 +87,7 @@ def _valid_score(raw: str) -> int:
     return int(value)
 
 
-def _review_pra_layout() -> tuple[dict[str, str], list[str]]:
+def _review_pra_layout(center: str) -> tuple[dict[str, str], list[str]]:
     """Use the canonical PRA acquisition order with the corrected PC layout.
 
     The existing PRA_GENERIC_LAYOUT incorrectly labels B10 as a second
@@ -103,10 +103,14 @@ def _review_pra_layout() -> tuple[dict[str, str], list[str]]:
     for well, expected_role in {"A1": "negative", "B1": "negative", "A10": "positive"}.items():
         if roles.get(well) != expected_role:
             raise ValueError(f"Unexpected canonical PRA role for {well}: {roles.get(well)!r}")
-    roles["B10"] = "sample"
+    if center == "Berlin":
+        roles["B10"] = "sample"
+
     positives = {well for well, role in roles.items() if role == "positive"}
-    if positives != {"A10"}:
-        raise ValueError(f"Expected A10 as the only positive control, got {sorted(positives)}")
+    expected = {"A10"} if center == "Berlin" else {"A10", "B10"}
+
+    if positives != expected:
+        raise ValueError(f"Expected positive controls {expected}, got {positives}")
     return roles, order
 
 
@@ -140,7 +144,7 @@ def _read_center(csv_path: str | Path, center: str, expected_n: int):
     csv_path = Path(csv_path)
     if not csv_path.is_file():
         raise FileNotFoundError(csv_path)
-    roles, image_order = _review_pra_layout()
+    roles, image_order = _review_pra_layout(center)
 
     raw: dict[tuple[str, ...], dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     run_wells: dict[str, dict[str, str]] = defaultdict(dict)
@@ -165,7 +169,9 @@ def _read_center(csv_path: str | Path, center: str, expected_n: int):
             role = roles[well]
             # The original scoring sheets are known to label B10 as positive.
             # That historical labeling is deliberately corrected here.
-            if csv_role != role and not (well == "B10" and csv_role == "positive"):
+            if csv_role != role and not (
+                center == "Berlin" and well == "B10" and csv_role == "positive"
+            ):
                 raise ValueError(
                     f"{csv_path}:{lineno}: role mismatch at {well}: "
                     f"CSV={csv_role!r}, corrected PRA layout={role!r}"
