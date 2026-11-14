@@ -139,7 +139,7 @@ def _read_center(csv_path: str | Path, center: str, expected_n: int):
         except (ValueError, OverflowError):
             issues.append({**base, "reason": "invalid_score"})
             continue
-        if len(set(votes)) == 1:
+        if not {2, 4}.issubset(votes):
             continue
         counts = Counter(votes)
         winners = [score for score, n in counts.items() if n == max(counts.values())]
@@ -172,7 +172,7 @@ def find_disagreements(
     """
     all_cases, all_issues, controls = [], [], {}
     for center, csv_file, n in (
-        ("Berlin", berlin_csv, 3), ("Frankfurt", frankfurt_csv, 2)
+        ("Berlin", berlin_csv, 3), ("Frankfurt", frankfurt_csv, 3)
     ):
         cases, issues, run_controls = _read_center(csv_file, center, n)
         all_cases.extend(cases)
