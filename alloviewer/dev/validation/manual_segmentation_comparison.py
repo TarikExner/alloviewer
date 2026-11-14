@@ -1,3 +1,40 @@
+#!/usr/bin/env python3
+"""Compare Cellpose and AlloViewer UNet instances against manual circle ROIs.
+
+Install as ``alloviewer/dev/validation/manual_segmentation_comparison.py``.
+Run from the project root, for example:
+
+    python -m alloviewer.dev.validation.manual_segmentation_comparison --dry-run
+    python -m alloviewer.dev.validation.manual_segmentation_comparison --limit 3 --save-masks
+    python -m alloviewer.dev.validation.manual_segmentation_comparison
+
+Defaults:
+    tiles:       ./expert_scoring_tile_exports/score_*/*.tif
+                 (also supports ./expert_scoring_tile_exports/zips/score_*.zip)
+    circles:     ./manual_segmentations/csv/*.csv
+    result:      ./results/manual_segmentation_comparison.csv
+
+Two levels in the same CSV: one row per (tile, human annotator, method),
+plus one aggregate per (original image, human annotator, method). The latter
+pools confusion counts across only MANUALLY ANNOTATED tiles and calculates
+macro means for nonadditive metrics. Tiles overlap: an aggregate is NOT an
+independent reconstructed full-image segmentation and can count the same
+cell twice if a cell is annotated in neighboring tiles. Images are never resized.
+Manual circles are proxies for cell positions and approximate extents, NOT
+hand-traced masks. Prefer center-detection F1 for the main comparison; report
+pixel Dice/IoU and instance overlap scores as *circle agreement* only.
+
+IMPORTANT: Exhaustiveness of the manually annotated region cannot be inferred
+from a list of circles. --region full assumes every cell in the tile was
+annotated. --region bbox (default) evaluates only a bounding rectangle around
+manual circles, including a configurable margin. A bbox is not proof that
+annotation was exhaustive within the rectangle. Check this before publication.
+
+Cellpose 3 uses cyto3 by default; Cellpose 4 uses its installed default
+Cellpose-SAM model. Set --cellpose-model to explicitly choose a model, and
+record the version/model in the output. A fixed --cellpose-diameter avoids
+feeding manual annotations into inference (ground-truth leakage).
+"""
 from __future__ import annotations
 
 import argparse
@@ -341,7 +378,11 @@ def compare_instances(
         "count_error_relative": (npred - ng) / ng if ng else np.nan,
         "pixel_tp": tp_pix, "pixel_fp": fp_pix, "pixel_fn": fn_pix, "pixel_tn": tn_pix,
         "pixel_precision": pixel_p, "pixel_recall": pixel_r,
-        "pixel_dice": pixel_f1, "pixel_iou": pixel_iou,
+        "pixel_dice": pixel_f1, "pixel_jaccard": pixel_iou, "pixel_iou": pixel_iou,
+        "pixel_f1": pixel_f1, "pixel_specificity": (tn_pix / (tn_pix + fp_pix)
+                                                   if tn_pix + fp_pix else 1.0),
+        "pixel_accuracy": ((tp_pix + tn_pix) / region.sum()
+                           if region.sum() else np.nan),
         "evaluation_pixels": int(region.sum()),
         "evaluated_fraction": float(region.mean()),
     }
@@ -350,6 +391,12 @@ def compare_instances(
         tp, fp, fn = len(r), npred - len(r), ng - len(r)
         p, rec, f1 = _prf(tp, fp, fn)
         suffix = str(thr).replace(".", "p")
+        # Matched-object overlap is defined only on true-positive one-to-one
+        # pairs. The all_gt variants penalize every missed reference cell with 0.
+        matched_iou = iou[r, c]
+        matched_dice = 2.0 * matched_iou / (1.0 + matched_iou)
+        mean_iou = float(matched_iou.mean()) if len(r) else np.nan
+        mean_dice = float(matched_dice.mean()) if len(r) else np.nan
         result.update({
             f"instance_tp_iou_{suffix}": tp,
             f"instance_fp_iou_{suffix}": fp,
@@ -357,8 +404,15 @@ def compare_instances(
             f"instance_precision_iou_{suffix}": p,
             f"instance_recall_iou_{suffix}": rec,
             f"instance_f1_iou_{suffix}": f1,
-            f"matched_mean_iou_{suffix}": float(iou[r, c].mean()) if len(r) else np.nan,
-            f"pq_iou_{suffix}": float(iou[r, c].sum() / (tp + 0.5 * fp + 0.5 * fn))
+            f"matched_mean_iou_{suffix}": mean_iou,
+            f"matched_mean_dice_{suffix}": mean_dice,
+            f"mean_instance_jaccard_iou_{suffix}": mean_iou,
+            f"mean_instance_dice_iou_{suffix}": mean_dice,
+            f"mean_instance_jaccard_all_gt_iou_{suffix}":
+                float(matched_iou.sum() / ng) if ng else (1.0 if npred == 0 else 0.0),
+            f"mean_instance_dice_all_gt_iou_{suffix}":
+                float(matched_dice.sum() / ng) if ng else (1.0 if npred == 0 else 0.0),
+            f"pq_iou_{suffix}": float(matched_iou.sum() / (tp + 0.5 * fp + 0.5 * fn))
             if (tp + fp + fn) else 1.0,
         })
     # Panoptic quality = recognition quality * segmentation quality;
@@ -635,8 +689,16 @@ def aggregate_image_rows(tile_rows: list[dict[str, Any]]) -> list[dict[str, Any]
             result["pixel_precision"] = precision
             result["pixel_recall"] = recall
             result["pixel_dice"] = f1
+            result["pixel_f1"] = f1
             denom = result["pixel_tp"] + result["pixel_fp"] + result["pixel_fn"]
             result["pixel_iou"] = result["pixel_tp"] / denom if denom else 1.0
+            result["pixel_jaccard"] = result["pixel_iou"]
+            spec_den = result["pixel_tn"] + result["pixel_fp"]
+            result["pixel_specificity"] = result["pixel_tn"] / spec_den if spec_den else 1.0
+            result["pixel_accuracy"] = (
+                (result["pixel_tp"] + result["pixel_tn"]) / result["evaluation_pixels"]
+                if result["evaluation_pixels"] else math.nan
+            )
             # Coverage is the fraction of total *tile* pixels evaluated. It is
             # not the fraction of the original full-resolution image reviewed.
             tile_pixels = sum(
@@ -668,6 +730,24 @@ def aggregate_image_rows(tile_rows: list[dict[str, Any]]) -> list[dict[str, Any]
                 result[f"instance_f1_iou_{suffix}"] = score
                 result[f"matched_mean_iou_{suffix}"] = _weighted_mean(
                     ok, f"matched_mean_iou_{suffix}", f"instance_tp_iou_{suffix}"
+                )
+                result[f"matched_mean_dice_{suffix}"] = _weighted_mean(
+                    ok, f"matched_mean_dice_{suffix}", f"instance_tp_iou_{suffix}"
+                )
+                result[f"mean_instance_jaccard_iou_{suffix}"] = result[f"matched_mean_iou_{suffix}"]
+                result[f"mean_instance_dice_iou_{suffix}"] = result[f"matched_mean_dice_{suffix}"]
+                # True global mean across reference circles (unmatched = zero).
+                # Only image aggregates of annotated tiles; overlapping tiles may double count.
+                n_gt_total = result["n_manual"]
+                result[f"mean_instance_jaccard_all_gt_iou_{suffix}"] = (
+                    sum(float(r[f"mean_instance_jaccard_all_gt_iou_{suffix}"]) * int(float(r["n_manual"]))
+                        for r in ok if int(float(r["n_manual"])) > 0) / n_gt_total
+                    if n_gt_total else (1.0 if result["n_predicted"] == 0 else 0.0)
+                )
+                result[f"mean_instance_dice_all_gt_iou_{suffix}"] = (
+                    sum(float(r[f"mean_instance_dice_all_gt_iou_{suffix}"]) * int(float(r["n_manual"]))
+                        for r in ok if int(float(r["n_manual"])) > 0) / n_gt_total
+                    if n_gt_total else (1.0 if result["n_predicted"] == 0 else 0.0)
                 )
                 # PQ denominator and matched IoU sum are additive over tiles.
                 pq_denom = tp + 0.5 * fp + 0.5 * fn
@@ -701,6 +781,47 @@ def aggregate_image_rows(tile_rows: list[dict[str, Any]]) -> list[dict[str, Any]
             result["boundary_tolerance_px"] = example.get("boundary_tolerance_px", "")
         aggregates.append(result)
     return aggregates
+
+
+def supplementary_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One summary row per model and level; use image rows for inference.
+
+    Report unweighted macro mean/SD across image rows, and micro totals from
+    the explicit confusion columns. A source image may have several manual
+    annotators: those observations share an image and are not independent.
+    """
+    group_by: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for r in rows:
+        if r.get("status") == "ok":
+            group_by.setdefault((r["level"], r["method"]), []).append(r)
+    metrics = (
+        "center_f1_r6", "center_mean_error_px_r6", "instance_f1_iou_0p5",
+        "instance_precision_iou_0p5", "instance_recall_iou_0p5",
+        "mean_instance_dice_iou_0p5", "mean_instance_jaccard_iou_0p5",
+        "mean_instance_dice_all_gt_iou_0p5", "mean_instance_jaccard_all_gt_iou_0p5",
+        "pixel_dice", "pixel_jaccard", "pq_iou_0p5", "count_error_absolute",
+    )
+    confusion = (
+        "pixel_tp", "pixel_tn", "pixel_fp", "pixel_fn",
+        "instance_tp_iou_0p5", "instance_fp_iou_0p5", "instance_fn_iou_0p5",
+        "center_tp_r6", "center_fp_r6", "center_fn_r6",
+    )
+    out = []
+    for (level, method), data in sorted(group_by.items()):
+        summary: dict[str, Any] = {
+            "level": level, "method": method, "n_rows": len(data),
+            "n_source_images": len({r["source_image_key"] for r in data}),
+            "note": "image level = pooled annotated tiles, not stitched full-image masks",
+        }
+        for k in metrics:
+            values = np.array([_safe_float(r.get(k)) for r in data], dtype=float)
+            values = values[np.isfinite(values)]
+            summary[f"{k}_mean"] = float(values.mean()) if len(values) else np.nan
+            summary[f"{k}_sd"] = float(values.std(ddof=1)) if len(values) > 1 else np.nan
+        for k in confusion:
+            summary[f"{k}_total"] = sum(int(float(r.get(k, 0))) for r in data)
+        out.append(summary)
+    return out
 
 
 def _write_rows(path: Path, rows: list[dict[str, Any]], append: bool) -> None:
@@ -913,6 +1034,14 @@ def run(
     tile_rows = existing_tiles + records
     image_rows = aggregate_image_rows(tile_rows)
     _write_rows(output, tile_rows + image_rows, append=False)
+    summary_rows = supplementary_summary(tile_rows + image_rows)
+    if summary_rows:
+        summary_path = output.with_name(output.stem + "_supplementary_summary.csv")
+        with summary_path.open("w", encoding="utf-8", newline="") as handle:
+            cols = list(dict.fromkeys(k for r in summary_rows for k in r))
+            writer = csv.DictWriter(handle, fieldnames=cols)
+            writer.writeheader()
+            writer.writerows(summary_rows)
     print(f"DONE: {len(tile_rows)} tile-method rows; {len(image_rows)} "
           f"source-image-method rows -> {output}", flush=True)
     return tile_rows + image_rows
@@ -937,4 +1066,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
