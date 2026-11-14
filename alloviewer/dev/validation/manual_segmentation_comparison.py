@@ -46,7 +46,7 @@ class TileSource:
         from ...image_analysis.io.io import load_image, scale_image
 
         if self.zip_member is None:
-            source: Any = self.path
+            source: Any = self.path.expanduser().resolve(strict=True)
         else:
             with zipfile.ZipFile(self.path) as archive:
                 source = io.BytesIO(archive.read(self.zip_member))
