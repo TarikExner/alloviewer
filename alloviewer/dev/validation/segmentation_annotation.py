@@ -26,6 +26,7 @@ CELL_COLUMNS = (
 IMAGE_COLUMNS = (
     *CASE_COLUMNS, "source_path", "annotated_path", "n_positive",
     "n_negative", "n_uncertain", "n_cells", "height", "width", "dtype",
+    "export_dtype", "display_white_level",
 )
 DEFAULT_COLORS = {
     "pos": (255, 165, 0),       # orange, RGB
@@ -47,10 +48,21 @@ class AnnotationConfig:
     unet_config: dict[str, Any] | None = None
     verify_tiff: bool = True
     overwrite: bool = False
+    # review_8bit makes the microscopy signal visible in standard TIFF viewers.
+    # native preserves the original uint8/uint16 data outside the outlines.
+    render_mode: str = "review_8bit"
+    display_percentile: float = 99.7
+    display_gamma: float = 1.0
 
     def __post_init__(self) -> None:
         if self.outline_width < 1:
             raise ValueError("outline_width must be >= 1")
+        if self.render_mode not in {"review_8bit", "native"}:
+            raise ValueError("render_mode must be 'review_8bit' or 'native'")
+        if not np.isfinite(self.display_percentile) or not 0 < self.display_percentile <= 100:
+            raise ValueError("display_percentile must be within (0, 100]")
+        if not np.isfinite(self.display_gamma) or self.display_gamma <= 0:
+            raise ValueError("display_gamma must be a positive finite number")
         if not np.isfinite(self.classifier_margin) or self.classifier_margin < 0:
             raise ValueError("classifier_margin must be a finite nonnegative number")
         if set(self.colors_rgb) != {"pos", "neg", "uncertain"}:
@@ -169,6 +181,44 @@ def find_disagreements(
     case_df = pd.DataFrame(all_cases, columns=CASE_COLUMNS)
     issue_df = pd.DataFrame(all_issues, columns=ISSUE_COLUMNS)
     return case_df, issue_df, controls
+
+
+def prepare_review_image(
+    image_rgb: np.ndarray,
+    *,
+    percentile: float = 99.7,
+    gamma: float = 1.0,
+) -> tuple[np.ndarray, float]:
+    """Make an RGB uint8 view of a dark uint8/uint16 microscopy image.
+
+    Uses a SINGLE scale factor for all RGB channels, rather than separate
+    channel normalization, to avoid changing the relative red/green signals.
+    A global brightness level is estimated only from nonblack pixels so that
+    large dark fields do not force the upper percentile to zero.
+
+    This is for human display only. It does not alter raw source data,
+    segmentation, extracted ROI values, or classifier predictions.
+    ``gamma < 1`` makes dim cells easier to see.
+    """
+    if image_rgb.ndim != 3 or image_rgb.shape[2] != 3:
+        raise ValueError(f"Expected HxWx3 RGB image, got {image_rgb.shape}")
+    if image_rgb.dtype not in (np.uint8, np.uint16):
+        raise TypeError("Expected uint8/uint16 image")
+    if not np.isfinite(percentile) or not 0 < percentile <= 100:
+        raise ValueError("percentile must lie in (0, 100]")
+    if not np.isfinite(gamma) or gamma <= 0:
+        raise ValueError("gamma must be positive and finite")
+
+    brightest = image_rgb.max(axis=2)
+    nonzero = brightest[brightest > 0]
+    white = float(np.percentile(nonzero, percentile)) if nonzero.size else 1.0
+    white = max(white, 1.0)
+    normalized = np.clip(image_rgb.astype(np.float32) / white, 0.0, 1.0)
+    if gamma != 1.0:
+        np.power(normalized, gamma, out=normalized)
+    # np.rint before cast avoids integer conversion bias.
+    display = np.rint(normalized * 255.0).astype(np.uint8)
+    return display, white
 
 
 def draw_cell_outlines(
@@ -414,8 +464,16 @@ def annotate_disagreements(
         if not rois:
             raise RuntimeError(f"No cells extracted from selected image: {source}")
         classified = classifier(rois)
+        if cfg.render_mode == "review_8bit":
+            image_base, display_white = prepare_review_image(
+                rgb_raw,
+                percentile=cfg.display_percentile,
+                gamma=cfg.display_gamma,
+            )
+        else:
+            image_base, display_white = rgb_raw, None
         rendered = draw_cell_outlines(
-            rgb_raw, labels, classified,
+            image_base, labels, classified,
             outline_width=cfg.outline_width,
             colors_rgb=cfg.colors_rgb,
         )
@@ -427,7 +485,8 @@ def annotate_disagreements(
             "n_positive": label_counts["pos"], "n_negative": label_counts["neg"],
             "n_uncertain": label_counts["uncertain"], "n_cells": len(classified),
             "height": rgb_raw.shape[0], "width": rgb_raw.shape[1],
-            "dtype": str(rgb_raw.dtype),
+            "dtype": str(rgb_raw.dtype), "export_dtype": str(rendered.dtype),
+            "display_white_level": display_white,
         })
         for roi in classified:
             cell_rows.append({
@@ -446,4 +505,91 @@ def annotate_disagreements(
     _write_table(out / "disagreement_image_manifest.csv", images)
     _write_table(out / "cell_review_template.csv", cells)
     return images, cells
+
+
+def export_review_overlays_from_existing(
+    image_manifest: str | Path,
+    output_dir: str | Path,
+    *,
+    display_percentile: float = 99.7,
+    display_gamma: float = 1.0,
+    outline_colors_rgb: Mapping[str, tuple[int, int, int]] | None = None,
+    verify_tiff: bool = True,
+    overwrite: bool = False,
+) -> pd.DataFrame:
+    """Turn existing native outlined 16-bit TIFFs into viewable RGB TIFFs.
+
+    This avoids re-running segmentation, control calibration, or classification.
+    Reconstructs the outlines by finding the exact RGB drawing colors in the
+    previous native TIFF. The source TIFF is used for the display base; it is
+    never overwritten. Both image paths are obtained from the original manifest.
+
+    Works with outputs made by ``draw_cell_outlines`` using LINE_8.
+    If colors were customized in the original run, pass the same original
+    palette through ``outline_colors_rgb``.
+    """
+    manifest = Path(image_manifest).expanduser().resolve()
+    if not manifest.is_file():
+        raise FileNotFoundError(manifest)
+    rows = pd.read_csv(manifest, dtype={"Folder": str, "well": str})
+    required = {"center", "source_path", "annotated_path"}
+    if not required.issubset(rows.columns):
+        raise ValueError(f"Missing manifest columns: {sorted(required - set(rows.columns))}")
+    palette = outline_colors_rgb if outline_colors_rgb is not None else DEFAULT_COLORS
+    if set(palette) != {"pos", "neg", "uncertain"}:
+        raise ValueError("outline_colors_rgb must contain pos, neg, uncertain")
+
+    out = Path(output_dir).expanduser().resolve()
+    targets = []
+    for row in rows.itertuples(index=False):
+        center = _component(row.center, "center")
+        src, old = Path(row.source_path), Path(row.annotated_path)
+        if not src.is_file() or not old.is_file():
+            raise FileNotFoundError(f"Missing raw/annotated file: {src} / {old}")
+        dst = out / center / old.name
+        if dst.exists() and not overwrite:
+            raise FileExistsError(f"Already exists: {dst}")
+        targets.append((src, old, dst, center))
+
+    results = []
+    from ...image_analysis.io.io import load_image
+    for i, (src, old, dst, center) in enumerate(targets, 1):
+        raw, _ = load_image(src, scale=False, as_chw=False)
+        old_bgr = cv2.imread(str(old), cv2.IMREAD_UNCHANGED)
+        if old_bgr is None or old_bgr.ndim != 3 or old_bgr.shape[2] != 3:
+            raise ValueError(f"Unable to decode native outlined RGB TIFF: {old}")
+        annotated_rgb = cv2.cvtColor(old_bgr, cv2.COLOR_BGR2RGB)
+        if raw.shape != annotated_rgb.shape or raw.dtype != annotated_rgb.dtype:
+            raise ValueError(f"Old overlay does not match source TIFF: {old}")
+        if raw.dtype not in (np.uint8, np.uint16):
+            raise TypeError(f"Unsupported source type {raw.dtype} for {src}")
+
+        display, white = prepare_review_image(
+            raw, percentile=display_percentile, gamma=display_gamma
+        )
+        max_val = int(np.iinfo(raw.dtype).max)
+        changed = np.any(annotated_rgb != raw, axis=2)
+        counts = {}
+        for label, color in palette.items():
+            old_color = tuple(int(round(channel * max_val / 255.0)) for channel in color)
+            mask = np.all(annotated_rgb == old_color, axis=2) & changed
+            display[mask] = color
+            counts[label] = int(mask.sum())
+        if not any(counts.values()):
+            raise RuntimeError(
+                f"No colored outline pixels detected in {old}. "
+                "Is it an original native TIFF with the specified color palette?"
+            )
+        save_annotated_tiff(dst, display, verify=verify_tiff)
+        results.append({
+            "center": center, "source_path": str(src),
+            "old_annotated_path": str(old), "review_path": str(dst),
+            "white_level": white, "positive_outline_pixels": counts["pos"],
+            "negative_outline_pixels": counts["neg"],
+            "uncertain_outline_pixels": counts["uncertain"],
+        })
+        print(f"[{i}/{len(targets)}] {center}: {dst.name}", flush=True)
+    table = pd.DataFrame(results)
+    _write_table(out / "review_overlay_manifest.csv", table)
+    return table
 
