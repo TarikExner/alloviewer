@@ -65,8 +65,6 @@ def find_tiles(root: Path) -> dict[str, TileSource]:
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in (".tif", ".tiff"):
             continue
-        if not any(part.startswith("score_") for part in path.relative_to(root).parts[:-1]):
-            continue
         if path.name in found:
             raise ValueError(f"Duplicate tile filename: {path.name} ({found[path.name].path}, {path})")
         found[path.name] = TileSource(path.name, path)
