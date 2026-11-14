@@ -20,8 +20,14 @@ pools confusion counts across only MANUALLY ANNOTATED tiles and calculates
 macro means for nonadditive metrics. Tiles overlap: an aggregate is NOT an
 independent reconstructed full-image segmentation and can count the same
 cell twice if a cell is annotated in neighboring tiles. Images are never resized.
+One-to-one IoU F1 is scored at 0.10/0.25/0.30/0.50/0.70/0.75/0.90.
+The center-in-mask F1 requires the annotated GT center pixel to lie within
+a predicted cell instance (one match per predicted instance).
 Manual circles are proxies for cell positions and approximate extents, NOT
-hand-traced masks. Prefer center-detection F1 for the main comparison; report
+hand-traced masks. Use F1_center_4px (4-pixel tolerance) as the primary center-distance metric
+for the approximately 8-pixel hand-annotated circles; 6/8 px are sensitivity
+checks. Do not confuse this with the independent center_in_mask_f1.
+Prefer center-detection F1 for the main comparison; report
 pixel Dice/IoU and instance overlap scores as *circle agreement* only.
 
 IMPORTANT: Exhaustiveness of the manually annotated region cannot be inferred
@@ -63,7 +69,7 @@ REQUIRED_COLUMNS = {
 }
 METHODS = ("AlloViewer_UNet", "Cellpose")
 # A fairly small object can span only ~50 pixels in the human reference.
-IOU_THRESHOLDS = (0.25, 0.50, 0.75)
+IOU_THRESHOLDS = (0.10, 0.25, 0.30, 0.50, 0.70, 0.75, 0.90)
 CENTER_RADII = (4.0, 6.0, 8.0)
 
 
@@ -433,6 +439,29 @@ def compare_instances(
         result["aji_circle"] = 1.0 if ng == npred == 0 else 0.0
         result["matched_instance_mean_dice"] = np.nan
 
+    # Ground-truth-center-in-predicted-instance detection. ImageJ ROI center
+    # coordinates use pixel boundaries, so floor(cx), floor(cy) identifies the
+    # pixel containing that center. If several GT centers fall in one predicted
+    # instance, it contributes at most one TP: merges cannot inflate recall.
+    # Conversely, additional fragments without a GT center count as FP.
+    center_yx = np.floor(manual_centers).astype(np.int64)
+    center_yx[:, 0] = np.clip(center_yx[:, 0], 0, manual_labels.shape[0] - 1)
+    center_yx[:, 1] = np.clip(center_yx[:, 1], 0, manual_labels.shape[1] - 1)
+    hit_ids = predicted_labels[center_yx[:, 0], center_yx[:, 1]] if ng else np.empty(0, dtype=np.int32)
+    # Each GT center maps to at most one predicted object: the number of
+    # distinct positive IDs is the maximum-cardinality one-to-one matching.
+    hit_count = int(np.unique(hit_ids[hit_ids > 0]).size)
+    hit_fp, hit_fn = npred - hit_count, ng - hit_count
+    hit_p, hit_r, hit_f1 = _prf(hit_count, hit_fp, hit_fn)
+    result.update({
+        "center_in_mask_tp": hit_count,
+        "center_in_mask_fp": hit_fp,
+        "center_in_mask_fn": hit_fn,
+        "center_in_mask_precision": hit_p,
+        "center_in_mask_recall": hit_r,
+        "center_in_mask_f1": hit_f1,
+    })
+
     predicted_centers = _centroids(predicted_labels)
     dist = np.linalg.norm(manual_centers[:, None, :] - predicted_centers[None, :, :], axis=-1)
     for radius in CENTER_RADII:
@@ -449,6 +478,9 @@ def compare_instances(
             f"center_f1_r{suffix}": f1,
             f"center_mean_error_px_r{suffix}": float(dist[r, c].mean()) if len(r) else np.nan,
         })
+    # Primary center-distance metric for ~8-pixel manual circles.
+    # Retain center_f1_r4 for backward compatibility with existing analyses.
+    result["F1_center_4px"] = result["center_f1_r4"]
     bp, br, bf = _boundary_f1(manual_labels, predicted_labels, boundary_tolerance)
     result.update({
         "boundary_precision_tol_px": bp,
@@ -759,6 +791,16 @@ def aggregate_image_rows(tile_rows: list[dict[str, Any]]) -> list[dict[str, Any]
                     ) for r in ok
                 )
                 result[f"pq_iou_{suffix}"] = summed_iou / pq_denom if pq_denom else 1.0
+            for key in ("tp", "fp", "fn"):
+                result[f"center_in_mask_{key}"] = sum(
+                    int(float(r[f"center_in_mask_{key}"])) for r in ok
+                )
+            p, r, f = _prf(
+                result["center_in_mask_tp"], result["center_in_mask_fp"],
+                result["center_in_mask_fn"],
+            )
+            result.update(center_in_mask_precision=p, center_in_mask_recall=r,
+                          center_in_mask_f1=f)
             for radius in CENTER_RADII:
                 suffix = str(int(radius))
                 for k in ("tp", "fp", "fn"):
@@ -774,6 +816,7 @@ def aggregate_image_rows(tile_rows: list[dict[str, Any]]) -> list[dict[str, Any]
                 result[f"center_mean_error_px_r{suffix}"] = _weighted_mean(
                     ok, f"center_mean_error_px_r{suffix}", f"center_tp_r{suffix}"
                 )
+            result["F1_center_4px"] = result["center_f1_r4"]
             for col in ("aji_circle", "matched_instance_mean_dice",
                         "boundary_precision_tol_px", "boundary_recall_tol_px",
                         "boundary_f1_tol_px"):
@@ -795,7 +838,10 @@ def supplementary_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if r.get("status") == "ok":
             group_by.setdefault((r["level"], r["method"]), []).append(r)
     metrics = (
-        "center_f1_r6", "center_mean_error_px_r6", "instance_f1_iou_0p5",
+        "center_in_mask_precision", "center_in_mask_recall", "center_in_mask_f1",
+        *(f"instance_f1_iou_{str(x).replace('.', 'p')}" for x in IOU_THRESHOLDS),
+        "F1_center_4px", "center_f1_r4", "center_mean_error_px_r4",
+        "instance_f1_iou_0p5",
         "instance_precision_iou_0p5", "instance_recall_iou_0p5",
         "mean_instance_dice_iou_0p5", "mean_instance_jaccard_iou_0p5",
         "mean_instance_dice_all_gt_iou_0p5", "mean_instance_jaccard_all_gt_iou_0p5",
@@ -804,7 +850,10 @@ def supplementary_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     confusion = (
         "pixel_tp", "pixel_tn", "pixel_fp", "pixel_fn",
         "instance_tp_iou_0p5", "instance_fp_iou_0p5", "instance_fn_iou_0p5",
-        "center_tp_r6", "center_fp_r6", "center_fn_r6",
+        "center_tp_r4", "center_fp_r4", "center_fn_r4",
+        "center_in_mask_tp", "center_in_mask_fp", "center_in_mask_fn",
+        *(f"instance_{kind}_iou_{str(x).replace('.', 'p')}"
+          for x in IOU_THRESHOLDS for kind in ("tp", "fp", "fn")),
     )
     out = []
     for (level, method), data in sorted(group_by.items()):
@@ -820,6 +869,24 @@ def supplementary_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             summary[f"{k}_sd"] = float(values.std(ddof=1)) if len(values) > 1 else np.nan
         for k in confusion:
             summary[f"{k}_total"] = sum(int(float(r.get(k, 0))) for r in data)
+        # Micro F1 uses pooled cell confusion, not an average of tile scores.
+        for metric, tp_key, fp_key, fn_key in (
+            ("center_4px", "center_tp_r4", "center_fp_r4", "center_fn_r4"),
+            ("center_in_mask", "center_in_mask_tp", "center_in_mask_fp", "center_in_mask_fn"),
+            *((f"instance_iou_{str(x).replace('.', 'p')}",
+               f"instance_tp_iou_{str(x).replace('.', 'p')}",
+               f"instance_fp_iou_{str(x).replace('.', 'p')}",
+               f"instance_fn_iou_{str(x).replace('.', 'p')}")
+              for x in IOU_THRESHOLDS),
+        ):
+            precision, recall, f1 = _prf(
+                summary[f"{tp_key}_total"],
+                summary[f"{fp_key}_total"],
+                summary[f"{fn_key}_total"],
+            )
+            summary[f"{metric}_micro_precision"] = precision
+            summary[f"{metric}_micro_recall"] = recall
+            summary[f"{metric}_micro_f1"] = f1
         out.append(summary)
     return out
 

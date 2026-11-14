@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -86,13 +87,63 @@ def _valid_score(raw: str) -> int:
     return int(value)
 
 
+def _review_pra_layout() -> tuple[dict[str, str], list[str]]:
+    """Use the canonical PRA acquisition order with the corrected PC layout.
+
+    The existing PRA_GENERIC_LAYOUT incorrectly labels B10 as a second
+    positive control. In the reviewed experiments A10 is the *only* PC; B10
+    is treated as a sample. Do not mutate the global production constant.
+    """
+    from ...image_analysis.utils import PRA_GENERIC_LAYOUT, PRA_GENERIC_IMAGE_ORDER
+
+    roles = dict(PRA_GENERIC_LAYOUT.wells)
+    order = list(PRA_GENERIC_IMAGE_ORDER)
+    if len(order) != len(set(order)) or set(order) != set(roles):
+        raise ValueError("PRA_GENERIC_IMAGE_ORDER is inconsistent with PRA_GENERIC_LAYOUT")
+    for well, expected_role in {"A1": "negative", "B1": "negative", "A10": "positive"}.items():
+        if roles.get(well) != expected_role:
+            raise ValueError(f"Unexpected canonical PRA role for {well}: {roles.get(well)!r}")
+    roles["B10"] = "sample"
+    positives = {well for well, role in roles.items() if role == "positive"}
+    if positives != {"A10"}:
+        raise ValueError(f"Expected A10 as the only positive control, got {sorted(positives)}")
+    return roles, order
+
+
+def _validate_acquisition_order(
+    run_wells: Mapping[str, Mapping[str, str]], order: Sequence[str]
+) -> None:
+    """Verify the existing per-image well mapping for complete 60-image runs.
+
+    This checks, but does not rewrite, the snake-shaped acquisition order.
+    For incomplete runs it retains the explicit CSV well IDs.
+    """
+    def natural_key(name: str):
+        return tuple((0, int(part)) if part.isdigit() else (1, part.lower())
+                     for part in re.split(r"(\d+)", name))
+
+    for folder, images in run_wells.items():
+        if len(images) != len(order):
+            continue
+        observed = [images[name] for name in sorted(images, key=natural_key)]
+        if observed != list(order):
+            first = next(i for i, (a, b) in enumerate(zip(observed, order), 1) if a != b)
+            raise ValueError(
+                f"{folder}: image-to-well mapping disagrees with PRA_GENERIC_IMAGE_ORDER "
+                f"at acquisition position {first}: CSV={observed[first-1]}, "
+                f"layout={order[first-1]}"
+            )
+
+
 def _read_center(csv_path: str | Path, center: str, expected_n: int):
-    """Return disagreement cases, rejected records, and run control paths."""
+    """Return disagreement cases, rejected records, and corrected run controls."""
     csv_path = Path(csv_path)
     if not csv_path.is_file():
         raise FileNotFoundError(csv_path)
+    roles, image_order = _review_pra_layout()
 
     raw: dict[tuple[str, ...], dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    run_wells: dict[str, dict[str, str]] = defaultdict(dict)
     path_roles: dict[tuple[str, str], tuple[str, str]] = {}
     run_controls: dict[str, dict[str, set[str]]] = defaultdict(
         lambda: {"positive": set(), "negative": set()}
@@ -108,7 +159,20 @@ def _read_center(csv_path: str | Path, center: str, expected_n: int):
             folder = _component(row["Folder"], "Folder")
             well = _component(row["well"], "well")
             name = _component(row["image_name"], "image_name")
-            role = _component(row["role"], "role").lower()
+            csv_role = _component(row["role"], "role").lower()
+            if well not in roles:
+                raise ValueError(f"{csv_path}:{lineno}: unknown PRA well {well!r}")
+            role = roles[well]
+            # The original scoring sheets are known to label B10 as positive.
+            # That historical labeling is deliberately corrected here.
+            if csv_role != role and not (well == "B10" and csv_role == "positive"):
+                raise ValueError(
+                    f"{csv_path}:{lineno}: role mismatch at {well}: "
+                    f"CSV={csv_role!r}, corrected PRA layout={role!r}"
+                )
+            previous_well = run_wells[folder].setdefault(name, well)
+            if previous_well != well:
+                raise ValueError(f"{center}/{folder}/{name}: contradictory well IDs")
             if Path(name).suffix.lower() not in {".tif", ".tiff"}:
                 raise ValueError(f"{csv_path}:{lineno}: expected .tif/.tiff: {name!r}")
             key = (folder, well, name, role)
@@ -120,6 +184,8 @@ def _read_center(csv_path: str | Path, center: str, expected_n: int):
             raw[key][annotator].add(str(row["score"]).strip())
             if role in {"positive", "negative"}:
                 run_controls[folder][role].add(name)
+
+    _validate_acquisition_order(run_wells, image_order)
 
     cases: list[dict] = []
     issues: list[dict] = []
@@ -168,6 +234,8 @@ def find_disagreements(
 
     The returned ``controls`` mapping has the form
     ``controls[center][Folder]['positive'|'negative'] -> set[image_name]``.
+    Roles come from a corrected PRA layout: A10 is the only positive control;
+    A1 and B1 are negative controls; B10 is a sample, despite the old CSV role.
     A three-annotator 1:1:1 split is retained without a majority label.
     """
     all_cases, all_issues, controls = [], [], {}
@@ -339,7 +407,7 @@ def _calibrate_run(
     center: str, folder: str, control_map: Mapping[str, Any],
     roots: Mapping[str, str | Path], segmenter: Any, qc: bool,
 ) -> dict[str, Any]:
-    """Reproduce the per-run PC/NC Gaussian 2D calibration in the main pipeline."""
+    """Fit the production 2D Gaussian using A10 PC and A1/B1 NC wells."""
     from ...image_analysis.calibrators import PCNCGaussian2DCalibrator
 
     pc_wells, nc_wells = [], []

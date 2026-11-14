@@ -37,6 +37,9 @@ Example (from the project root)::
       --unet-mode small --seg-method inst_seg --device cuda \
       --cellpose-diameter 10 --limit 5 --force
 
+Instance F1 is scored at IoU 0.10/0.25/0.30/0.50/0.70/0.75/0.90.
+Ground-truth-center-pixel inclusion provides another one-to-one F1 metric.
+
 Cellpose 3 (cyto3) and Cellpose 4 (Cellpose-SAM) are supported with the same
 version-dependent settings as manual_segmentation_comparison.py.
 """
@@ -81,7 +84,7 @@ from .manual_segmentation_comparison import (
 )
 from .utils import iou_dice_overlap
 
-VALIDATION_VERSION = "simulated_fullres_CPIJ_stored_instance_gt_v2"
+VALIDATION_VERSION = "simulated_fullres_CPIJ_stored_instance_gt_v4"
 METHODS = ("UNet", "Cellpose", "imageJ")
 
 
@@ -275,7 +278,7 @@ def compare_simulated_instances(
     }
 
     # Instance quality: matching by IoU. The IoU cutoff is part of each name.
-    for cutoff in (0.25, 0.50, 0.75):
+    for cutoff in (0.10, 0.25, 0.30, 0.50, 0.70, 0.75, 0.90):
         suffix = str(cutoff).replace(".", "p")
         mg, mp, overlaps = _match_sparse_edges(
             gi, pi, pair_iou, ng, npred, pair_iou >= cutoff
@@ -330,8 +333,46 @@ def compare_simulated_instances(
     else:
         metrics["aji"] = 1.0 if ng == npred == 0 else 0.0
 
-    # Center matching at same radii as manual segmentation comparison.
+    # Independent GT-center-pixel-in-predicted-instance detection. For stored
+    # instance masks, use the nearest integer pixel to the GT centroid. Each
+    # predicted instance can match at most one GT cell, including in merges.
+    # This is intentionally different from 4/6/8-pixel centroid-distance F1.
     gt_centers = _centers(gt, ng)
+    rounded = np.rint(gt_centers).astype(np.int64)
+    rounded[:, 0] = np.clip(rounded[:, 0], 0, gt.shape[0] - 1)
+    rounded[:, 1] = np.clip(rounded[:, 1], 0, gt.shape[1] - 1)
+    # A concave / ring-shaped instance may have its centroid in background.
+    # Use the closest GT-positive pixel in that instance instead: the exact
+    # GT mask must match itself perfectly under center-in-mask scoring.
+    needs_relocation = np.flatnonzero(
+        gt[rounded[:, 0], rounded[:, 1]] != np.arange(1, ng + 1)
+    )
+    if len(needs_relocation):
+        slices = ndi.find_objects(gt)
+        for i in needs_relocation:
+            sl = slices[int(i)]
+            if sl is None:
+                raise ValueError(f"Missing ground-truth instance {int(i) + 1}")
+            y_local, x_local = np.nonzero(gt[sl] == int(i) + 1)
+            y_global, x_global = y_local + sl[0].start, x_local + sl[1].start
+            nearest = np.argmin(
+                (y_global - gt_centers[i, 0]) ** 2 +
+                (x_global - gt_centers[i, 1]) ** 2
+            )
+            rounded[i] = (y_global[nearest], x_global[nearest])
+    hit_ids = pred[rounded[:, 0], rounded[:, 1]] if ng else np.empty(0, dtype=np.int32)
+    n_hit = int(np.unique(hit_ids[hit_ids > 0]).size)
+    hit_fp, hit_fn = npred - n_hit, ng - n_hit
+    hit_p, hit_r, hit_f1 = _prf(n_hit, hit_fp, hit_fn)
+    metrics.update({
+        "center_in_mask_tp": n_hit,
+        "center_in_mask_fp": hit_fp,
+        "center_in_mask_fn": hit_fn,
+        "center_in_mask_precision": hit_p,
+        "center_in_mask_recall": hit_r,
+        "center_in_mask_f1": hit_f1,
+    })
+    # Center matching at same radii as manual segmentation comparison.
     pred_centers = _centers(pred, npred)
     if ng and npred:
         tree = cKDTree(pred_centers)
@@ -370,6 +411,8 @@ def compare_simulated_instances(
             f"center_mean_error_px_r{suffix}": mean_dist,
         })
 
+    # Primary center-distance F1: 4 pixels (~half the reference circle diameter).
+    metrics["F1_center_4px"] = metrics["center_f1_r4"]
     boundary_p, boundary_r, boundary_f1 = _boundary_f1(gt_fg, pred_fg, boundary_tolerance)
     metrics.update({
         "boundary_precision_tol_px": boundary_p,
@@ -419,6 +462,7 @@ def _cellpose_legacy_metrics(
     We deliberately DO NOT invent probabilities or a center/energy heatmap.
     The legacy center_* and energy_* metrics are left NaN by pandas, while
     the directly comparable center_f1_r{4,6,8} metrics are computed separately.
+    The primary center-distance score is F1_center_4px (alias of center_f1_r4).
     """
     n_gt = int(np.unique(inst_gt[inst_gt > 0]).size)
     n_pred = int(np.unique(inst_pred[inst_pred > 0]).size)
@@ -474,11 +518,13 @@ def _summary_for_results(
                                        "std": float(finite.std(ddof=1)) if len(finite)>1 else 0.0,
                                        "n": int(len(finite))}
         confusion = {}
-        for prefix in ("pixel", "instance_iou_0p5", "center_r6"):
+        for prefix in ("pixel", "instance_iou_0p5", "center_r4", "center_in_mask"):
             fields = (("pixel_tp", "pixel_tn", "pixel_fp", "pixel_fn") if prefix == "pixel" else
                       ("instance_tp_iou_0p5", "instance_fp_iou_0p5", "instance_fn_iou_0p5")
                       if prefix == "instance_iou_0p5" else
-                      ("center_tp_r6", "center_fp_r6", "center_fn_r6"))
+                      ("center_tp_r4", "center_fp_r4", "center_fn_r4")
+                      if prefix == "center_r4" else
+                      ("center_in_mask_tp", "center_in_mask_fp", "center_in_mask_fn"))
             confusion[prefix] = {name: int(pd.to_numeric(frame[name], errors="coerce").fillna(0).sum())
                                  for name in fields}
             tp = confusion[prefix][fields[0]]
@@ -508,7 +554,9 @@ def _summary_for_results(
             "mean_instance_dice/jaccard_iou_0p5 average only matched cells at IoU >=0.5.",
             "mean_instance_dice/jaccard_all_gt_iou_0p5 additionally assign zero to missed GT cells.",
             "Empty GT and prediction use score 1; unmatched-pair mean Dice/Jaccard are NaN.",
-            "Center matching uses geometric centroids at 4, 6 and 8 px tolerance.",
+            "F1_center_4px is the primary center-distance metric (center_f1_r4 alias).",
+            "Center matching at 6/8 px is a sensitivity check; centers-in-mask are separate.",
+            "The GT center-in-mask representative pixel is always inside its GT instance.",
             "ImageJ and UNet head-specific scores are retained from the original comparison.",
             "This is simulated-image validation, not independent real-image annotation.",
         ],
@@ -522,6 +570,10 @@ def _supplementary_table(df: pd.DataFrame) -> pd.DataFrame:
     cell/pixel confusion counts. The image rows are the independent units.
     """
     summary_columns = (
+        "F1_center_4px", "center_f1_r4", "center_mean_error_px_r4",
+        "center_in_mask_precision", "center_in_mask_recall", "center_in_mask_f1",
+        *(f"instance_f1_iou_{str(x).replace('.', 'p')}"
+          for x in (0.10, 0.25, 0.30, 0.50, 0.70, 0.75, 0.90)),
         "pixel_dice", "pixel_jaccard", "pixel_precision", "pixel_recall",
         "pixel_specificity", "instance_precision_iou_0p5",
         "instance_recall_iou_0p5", "instance_f1_iou_0p5",
@@ -534,7 +586,11 @@ def _supplementary_table(df: pd.DataFrame) -> pd.DataFrame:
     counts = (
         "pixel_tp", "pixel_tn", "pixel_fp", "pixel_fn",
         "instance_tp_iou_0p5", "instance_fp_iou_0p5", "instance_fn_iou_0p5",
-        "center_tp_r6", "center_fp_r6", "center_fn_r6",
+        "center_tp_r4", "center_fp_r4", "center_fn_r4",
+        "center_in_mask_tp", "center_in_mask_fp", "center_in_mask_fn",
+        *(f"instance_{kind}_iou_{str(x).replace('.', 'p')}"
+          for x in (0.10, 0.25, 0.30, 0.50, 0.70, 0.75, 0.90)
+          for kind in ("tp", "fp", "fn")),
     )
     rows = []
     for (level, method), group in df.groupby(["metric_level", "dataset_mode"], sort=False):
@@ -553,7 +609,13 @@ def _supplementary_table(df: pd.DataFrame) -> pd.DataFrame:
             ("pixel", "pixel_tp", "pixel_fp", "pixel_fn"),
             ("instance_iou_0p5", "instance_tp_iou_0p5",
              "instance_fp_iou_0p5", "instance_fn_iou_0p5"),
-            ("center_r6", "center_tp_r6", "center_fp_r6", "center_fn_r6"),
+            ("center_r4", "center_tp_r4", "center_fp_r4", "center_fn_r4"),
+            ("center_in_mask", "center_in_mask_tp", "center_in_mask_fp", "center_in_mask_fn"),
+            *((f"instance_iou_{str(x).replace('.', 'p')}",
+               f"instance_tp_iou_{str(x).replace('.', 'p')}",
+               f"instance_fp_iou_{str(x).replace('.', 'p')}",
+               f"instance_fn_iou_{str(x).replace('.', 'p')}")
+              for x in (0.10, 0.30, 0.70, 0.90)),
         ):
             pp, rr, ff = _prf(
                 row[f"{tp_key}_total"], row[f"{fp_key}_total"], row[f"{fn_key}_total"]
@@ -917,7 +979,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     print(f"Saved/loaded {len(df)} rows; {df['sample_idx'].nunique() if len(df) else 0} images")
     print(df[df["metric_level"] == "image"].groupby("dataset_mode")[
-        ["instance_f1_iou_0p5", "center_f1_r6", "pixel_dice",
+        ["instance_f1_iou_0p5", "F1_center_4px", "pixel_dice",
          "mean_instance_dice_iou_0p5", "mean_instance_jaccard_iou_0p5"]
     ].mean().round(4)) if "image" in set(df["metric_level"]) else None
     return 0

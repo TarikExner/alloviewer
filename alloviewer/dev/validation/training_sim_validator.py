@@ -6,9 +6,9 @@ Drop-in replacement for alloviewer/dev/validation/training_sim_validator.py.
 
 The existing training_val_<mode>_<dataset>_<method>.csv filenames and
 legacy metrics are preserved. Adds pixel TP/TN/FP/FN; one-to-one cell TP/FP/FN
-at IoU thresholds 0.25/0.5/0.75 and center radii 4/6/8 px; precision,
+at IoU thresholds 0.10/0.25/0.30/0.50/0.70/0.75/0.90 and center radii 4/6/8 px; precision,
 recall, F1; mean matched-cell Dice/Jaccard, with missed-cell-zero versions;
-localization error; and split/merge indicators. Every row evaluates one tile.
+localization error; center-in-predicted-instance F1; and split/merge indicators. Every row evaluates one tile.
 
 Ground truth is the stored H5 /inst instance-label map. It is *not* inferred
 from UNet target heads. Metadata 'n_cells' is kept separately and must not be
@@ -166,7 +166,7 @@ def validate_unet_segmentation(
                     "instances": n_pred - gt_count,
                 }
                 row: dict[str, Any] = {
-                    "validation_version": VALIDATION_VERSION_STORED_INST_GT + "+cell_level_v3",
+                    "validation_version": VALIDATION_VERSION_STORED_INST_GT + "+cell_level_v4",
                     "sample_idx": sample_idx,
                     "tile_idx": t,
                     "metric_level": "tile",
@@ -221,20 +221,22 @@ def validate_unet_segmentation(
 
     result = pd.DataFrame(rows)
     summary = validation_summary_from_dataframe(result)
-    summary["validation_version"] = VALIDATION_VERSION_STORED_INST_GT + "+cell_level_v3"
+    summary["validation_version"] = VALIDATION_VERSION_STORED_INST_GT + "+cell_level_v4"
     summary["notes"] = [
         "Metrics use simulator-stored H5 /inst reference labels.",
         "Cell-level TN is undefined; pixel_tn is background correctly predicted.",
         "IoU 0.5 matching is one-to-one; unmatched GT counts as FN, unmatched predictions as FP.",
         "mean_instance_dice_iou_0p5 conditions on matched TP; all_gt variant penalizes FN with zero.",
+        "Primary center F1 is F1_center_4px; 6/8 px are sensitivity checks.",
+        "center_in_mask_f1 uses a representative pixel contained in the stored GT instance.",
         "tile rows can overlap and are not independent biological observations.",
         "This is simulated data, not independently annotated real microscopy.",
     ]
     # The original summary helper only scans legacy prefixes. Explicitly add
     # all new cell-level outputs, with NaNs excluded from finite means.
     new_metric_prefixes = (
-        "pixel_", "instance_", "center_tp_r", "center_fp_r", "center_fn_r",
-        "center_f1_r", "center_precision_r", "center_recall_r", "center_mean_error_px_r",
+        "pixel_", "instance_", "center_in_mask_", "center_tp_r", "center_fp_r", "center_fn_r",
+        "center_f1_r", "F1_center_4px", "center_precision_r", "center_recall_r", "center_mean_error_px_r",
         "matched_", "mean_instance_", "pq_", "aji", "possible_",
     )
     summary["cell_level_metrics"] = {}
@@ -254,8 +256,12 @@ def validate_unet_segmentation(
         result.to_csv(destination, index=False)
         # Small per-configuration supplementary table, per *tile*.
         cols = (
+            "F1_center_4px", "center_f1_r4", "center_mean_error_px_r4",
+            "center_in_mask_f1", "center_in_mask_precision", "center_in_mask_recall",
+            *(f"instance_f1_iou_{str(x).replace('.', 'p')}"
+              for x in (0.10, 0.25, 0.30, 0.50, 0.70, 0.75, 0.90)),
             "instance_f1_iou_0p5", "instance_precision_iou_0p5",
-            "instance_recall_iou_0p5", "center_f1_r6", "center_mean_error_px_r6",
+            "instance_recall_iou_0p5",
             "mean_instance_dice_iou_0p5", "mean_instance_jaccard_iou_0p5",
             "mean_instance_dice_all_gt_iou_0p5", "mean_instance_jaccard_all_gt_iou_0p5",
             "pixel_dice", "pixel_jaccard", "count_error_absolute", "pq_iou_0p5",
@@ -267,8 +273,31 @@ def validate_unet_segmentation(
             supp[f"{col}_sd"] = v.std()
         for col in ("pixel_tp", "pixel_tn", "pixel_fp", "pixel_fn",
                     "instance_tp_iou_0p5", "instance_fp_iou_0p5", "instance_fn_iou_0p5",
-                    "center_tp_r6", "center_fp_r6", "center_fn_r6"):
+                    "center_tp_r4", "center_fp_r4", "center_fn_r4",
+                    "center_in_mask_tp", "center_in_mask_fp", "center_in_mask_fn",
+                    *(f"instance_{name}_iou_{str(x).replace('.', 'p')}"
+                      for x in (0.10, 0.25, 0.30, 0.50, 0.70, 0.75, 0.90)
+                      for name in ("tp", "fp", "fn"))):
             supp[f"{col}_total"] = int(pd.to_numeric(result.get(col, pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        for metric, tp_key, fp_key, fn_key in (
+            ("center_4px", "center_tp_r4", "center_fp_r4", "center_fn_r4"),
+            ("center_in_mask", "center_in_mask_tp", "center_in_mask_fp", "center_in_mask_fn"),
+            *((f"instance_iou_{str(x).replace('.', 'p')}",
+               f"instance_tp_iou_{str(x).replace('.', 'p')}",
+               f"instance_fp_iou_{str(x).replace('.', 'p')}",
+               f"instance_fn_iou_{str(x).replace('.', 'p')}")
+              for x in (0.10, 0.25, 0.30, 0.50, 0.70, 0.75, 0.90)),
+        ):
+            tp_count, fp_count, fn_count = (
+                supp[f"{k}_total"] for k in (tp_key, fp_key, fn_key)
+            )
+            denom_p, denom_r = tp_count + fp_count, tp_count + fn_count
+            denom_f = 2 * tp_count + fp_count + fn_count
+            supp[f"{metric}_micro_precision"] = (tp_count / denom_p if denom_p else
+                                                    1.0 if not denom_r else 0.0)
+            supp[f"{metric}_micro_recall"] = (tp_count / denom_r if denom_r else
+                                                 1.0 if not denom_p else 0.0)
+            supp[f"{metric}_micro_f1"] = (2 * tp_count / denom_f if denom_f else 1.0)
         pd.DataFrame([supp]).to_csv(
             destination.with_name(destination.stem + "_supplementary_summary.csv"), index=False
         )
@@ -299,7 +328,7 @@ def run_single_training_validation(
     summary_path = os.path.join(out_dir, basename + "_summary.json")
     if os.path.isfile(output) and not force:
         df = pd.read_csv(output)
-        if "instance_f1_iou_0p5" not in df.columns:
+        if not {"F1_center_4px", "center_in_mask_f1", "instance_f1_iou_0p9"}.issubset(df.columns):
             raise RuntimeError(
                 f"Old output lacks new instance metrics: {output}. Pass force=True to recompute."
             )
