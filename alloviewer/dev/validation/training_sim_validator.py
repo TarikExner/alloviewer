@@ -4,6 +4,13 @@ from __future__ import annotations
 
 Drop-in replacement for alloviewer/dev/validation/training_sim_validator.py.
 
+Tile-by-tile metrics remain in the legacy training_val_*.csv. A separate
+training_val_*_image.csv contains whole-image binary Dice/Jaccard and all
+image-level instance metrics. Image scope is explicit: original full resolution
+for completely covered tiled scenes, otherwise whole resized model input for
+pad/crop modes. Randomly sampled incomplete tile grids are NOT scored as whole
+images (skipped with a reason).
+
 The existing training_val_<mode>_<dataset>_<method>.csv filenames and
 legacy metrics are preserved. Adds pixel TP/TN/FP/FN; one-to-one cell TP/FP/FN
 at IoU thresholds 0.10/0.25/0.30/0.50/0.70/0.75/0.90 and center radii 4/6/8 px; precision,
@@ -68,6 +75,174 @@ from .utils import (
 # Shared measurement definitions for *all simulated comparisons*. Importing
 # this function does not load Cellpose or construct any neural network.
 from .simulated_segmentation_comparison import compare_simulated_instances
+from .imageJ_comparison import (
+    _segment_full_probs,
+    stitch_float_tiles_mean,
+    stitch_instance_tiles,
+)
+
+
+
+def _image_level_mask_metrics(
+    *,
+    dataset_mode: str,
+    sample_idx: int,
+    meta: dict,
+    stored: np.ndarray,
+    pred: dict,
+    cfg: TrainingValidationConfig,
+    segmenter: SegmenterUNet,
+    segmentation_method: str,
+) -> dict[str, Any]:
+    """One Dice/Jaccard measurement per simulated scene.
+
+    * ``tiles``: reconstruct an original-resolution scene only if tile
+      positions cover the complete, independently known HxW extent.
+      Average overlapping UNet probability maps and run the configured
+      instance post-processor once on that full-resolution result.
+    * ``pad_resize`` / ``crop_well_resize``: measure the entire *processed*
+      512x512 input, not the original-resolution microscope field.
+
+    A partial/random set of source tiles is not a whole image: report an
+    explicit skip status rather than silently treating missing pixels as TN.
+    """
+    row: dict[str, Any] = {
+        "sample_idx": int(sample_idx),
+        "metric_level": "image",
+        "level": "image",
+        "tile_idx": -1,
+        "method": "AlloViewer_UNet",
+        "dataset_mode": dataset_mode,
+        "segmentation_method": segmentation_method,
+        "unet_mode": segmenter.cfg.unet_mode,
+        "image_scope": "",
+        "image_dice_status": "",
+        "source_height": np.nan,
+        "source_width": np.nan,
+        "evaluated_height": np.nan,
+        "evaluated_width": np.nan,
+        "coverage_fraction": np.nan,
+        "whole_image_dice": np.nan,
+        "whole_image_jaccard": np.nan,
+    }
+    tiles_meta = meta.get("tiles") or []
+    if len(tiles_meta) != len(stored):
+        raise ValueError(
+            f"Sample {sample_idx}: {len(tiles_meta)} tile metadata entries "
+            f"for {len(stored)} stored instance tiles"
+        )
+
+    def _single_processed_input() -> dict[str, Any]:
+        if len(stored) != 1:
+            raise ValueError(
+                f"Sample {sample_idx}: {dataset_mode} should have one processed tile, "
+                f"got {len(stored)}"
+            )
+        gt = np.asarray(stored[0], dtype=np.int32)
+        if segmentation_method == "inst_seg":
+            prediction = np.asarray(pred["instance_labels"][0], dtype=np.int32)
+        else:
+            prediction = sk_label(
+                np.asarray(pred["probs"]["cell"][0]) >= float(cfg.cell_thr),
+                connectivity=1,
+            ).astype(np.int32)
+        row.update({
+            "image_scope": "whole_processed_input_not_original_resolution",
+            "evaluated_height": int(gt.shape[0]),
+            "evaluated_width": int(gt.shape[1]),
+            "coverage_fraction": 1.0,
+            "image_dice_status": "ok_processed_image",
+        })
+        return compare_simulated_instances(
+            gt, prediction, boundary_tolerance=cfg.boundary_tol
+        )
+
+    if (dataset_mode not in ("tiles", "tiling") or
+            (len(tiles_meta) == 1 and
+             tiles_meta[0].get("mode") in ("pad_resize", "crop_well_resize"))):
+        values = _single_processed_input()
+        row.update(values)
+    else:
+        full_meta = meta.get("full") or {}
+        params = full_meta.get("params") if isinstance(full_meta, dict) else None
+        if not isinstance(params, dict):
+            params = {}
+
+        # H/W are recorded with the simulator parameters; never infer original
+        # size from the extent of a random subset of tiles.
+        size = next(
+            (
+                (source[hkey], source[wkey])
+                for source, hkey, wkey in (
+                    (full_meta, "H_in", "W_in"),
+                    (full_meta, "H", "W"),
+                    (params, "H", "W"),
+                )
+                if isinstance(source, dict)
+                and hkey in source and wkey in source
+            ),
+            None,
+        )
+        if size is None:
+            row.update({
+                "image_scope": "original_resolution_unverified",
+                "image_dice_status": "skipped_missing_original_dimensions",
+            })
+            return row
+        height, width = int(size[0]), int(size[1])
+        if height <= 0 or width <= 0:
+            raise ValueError(f"Invalid original size for sample {sample_idx}: {size}")
+        row.update({
+            "image_scope": "original_full_resolution",
+            "source_height": height,
+            "source_width": width,
+            "evaluated_height": height,
+            "evaluated_width": width,
+        })
+        covered = np.zeros((height, width), dtype=np.bool_)
+        for tile_index, tm in enumerate(tiles_meta):
+            if "tile_xy" not in tm or "tile_hw" not in tm:
+                row["image_dice_status"] = "skipped_missing_tile_coordinates"
+                return row
+            y0, x0 = (int(v) for v in tm["tile_xy"])
+            th, tw = (int(v) for v in tm["tile_hw"])
+            if not (0 <= y0 < height and 0 <= x0 < width and
+                    th > 0 and tw > 0 and
+                    y0 + th <= height and x0 + tw <= width):
+                row["image_dice_status"] = "skipped_invalid_or_transformed_tile_coordinates"
+                return row
+            if th > stored[tile_index].shape[0] or tw > stored[tile_index].shape[1]:
+                row["image_dice_status"] = "skipped_tile_shape_mismatch"
+                return row
+            covered[y0:y0 + th, x0:x0 + tw] = True
+        row["coverage_fraction"] = float(covered.mean())
+        if not covered.all():
+            row["image_dice_status"] = "skipped_incomplete_tile_coverage"
+            return row
+
+        gt = stitch_instance_tiles(stored, tiles_meta, (height, width))
+        channels = ("cell", "bound", "center", "energy")
+        probs_tiles = np.stack(
+            [np.asarray(pred["probs"][c], dtype=np.float32) for c in channels],
+            axis=1,
+        )
+        probs_full = stitch_float_tiles_mean(probs_tiles, tiles_meta, (height, width))
+        predicted = _segment_full_probs(
+            segmenter.inst_seg if segmentation_method == "inst_seg" else None,
+            *probs_full,
+            cell_thr=cfg.cell_thr,
+            update_cell_mask=True,
+        )
+        row["image_dice_status"] = "ok_original_full_resolution"
+        row.update(compare_simulated_instances(
+            gt, predicted, boundary_tolerance=cfg.boundary_tol
+        ))
+
+    # Use explicit names for whole-image binary mask agreement. These are NOT
+    # the mean of the individual tile Dice/Jaccard scores.
+    row["whole_image_dice"] = row["pixel_dice"]
+    row["whole_image_jaccard"] = row["pixel_jaccard"]
+    return row
 
 
 def validate_unet_segmentation(
@@ -95,6 +270,7 @@ def validate_unet_segmentation(
         collate_fn=collate_no_meta,
     )
     rows: list[dict[str, Any]] = []
+    image_rows: list[dict[str, Any]] = []
     dataset_mode = get_dataset_mode(cfg.h5_path)
     try:
         for loop_idx, batch in enumerate(tqdm(loader, desc=f"UNet {segmentation_method}", unit="image")):
@@ -216,14 +392,45 @@ def validate_unet_segmentation(
                 # scores with *different names*: center_f1_r6, center_tp_r6.
                 row.update(instance_metrics)
                 rows.append(row)
+
+            # One independent image observation per simulated sample. This
+            # occurs only after the tile loop and does not alter tile rows.
+            image_rows.append(_image_level_mask_metrics(
+                dataset_mode=dataset_mode,
+                sample_idx=sample_idx,
+                meta=meta,
+                stored=stored,
+                pred=pred,
+                cfg=cfg,
+                segmenter=segmenter,
+                segmentation_method=segmentation_method,
+            ))
     finally:
         dataset.close()
 
     result = pd.DataFrame(rows)
+    image_result = pd.DataFrame(image_rows)
     summary = validation_summary_from_dataframe(result)
+    summary["whole_image_dice"] = {
+        "scope": "original_full_resolution for tiled inputs; processed_input for resize modes",
+        "output": (str(Path(cfg.out_csv).with_name(
+            Path(cfg.out_csv).stem + "_image.csv")) if cfg.out_csv else None),
+        "n_original_full_resolution": int((
+            image_result.get("image_dice_status", pd.Series(dtype=str))
+            == "ok_original_full_resolution").sum()),
+        "n_processed_input": int((
+            image_result.get("image_dice_status", pd.Series(dtype=str))
+            == "ok_processed_image").sum()),
+        "n_skipped": int((
+            ~image_result.get("image_dice_status", pd.Series(dtype=str))
+            .isin(("ok_original_full_resolution", "ok_processed_image"))).sum()),
+    }
     summary["validation_version"] = VALIDATION_VERSION_STORED_INST_GT + "+cell_level_v4"
     summary["notes"] = [
         "Metrics use simulator-stored H5 /inst reference labels.",
+        "Image-level Dice/Jaccard saved separately in *_image.csv; old tile CSV unchanged.",
+        "Incomplete original-image tiling is not scored as full-image Dice.",
+        "pad_resize and crop_well_resize image Dice is over the transformed model input.",
         "Cell-level TN is undefined; pixel_tn is background correctly predicted.",
         "IoU 0.5 matching is one-to-one; unmatched GT counts as FN, unmatched predictions as FP.",
         "mean_instance_dice_iou_0p5 conditions on matched TP; all_gt variant penalizes FN with zero.",
@@ -254,6 +461,11 @@ def validate_unet_segmentation(
         destination = Path(cfg.out_csv)
         destination.parent.mkdir(parents=True, exist_ok=True)
         result.to_csv(destination, index=False)
+        # The old training_val_*.csv remains exclusively tile-based. A new
+        # companion file holds image-level measurements and explicit scope.
+        image_result.to_csv(
+            destination.with_name(destination.stem + "_image.csv"), index=False
+        )
         # Small per-configuration supplementary table, per *tile*.
         cols = (
             "F1_center_4px", "center_f1_r4", "center_mean_error_px_r4",
@@ -301,6 +513,26 @@ def validate_unet_segmentation(
         pd.DataFrame([supp]).to_csv(
             destination.with_name(destination.stem + "_supplementary_summary.csv"), index=False
         )
+        image_summaries = []
+        for scope, group in image_result.groupby("image_scope", dropna=False):
+            ok = group[group["image_dice_status"].str.startswith("ok_")]
+            image_summaries.append({
+                "image_scope": scope,
+                "n_samples": len(group),
+                "n_evaluated": len(ok),
+                "whole_image_dice_mean": ok["whole_image_dice"].mean(),
+                "whole_image_dice_sd": ok["whole_image_dice"].std(),
+                "whole_image_jaccard_mean": ok["whole_image_jaccard"].mean(),
+                "whole_image_jaccard_sd": ok["whole_image_jaccard"].std(),
+                "image_status_counts": json.dumps(
+                    group["image_dice_status"].value_counts().to_dict()
+                ),
+            })
+        pd.DataFrame(image_summaries).to_csv(
+            destination.with_name(
+                destination.stem + "_image_supplementary_summary.csv"
+            ), index=False,
+        )
     if cfg.out_summary_json:
         p = Path(cfg.out_summary_json)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -327,6 +559,12 @@ def run_single_training_validation(
     output = os.path.join(out_dir, basename + ".csv")
     summary_path = os.path.join(out_dir, basename + "_summary.json")
     if os.path.isfile(output) and not force:
+        image_output = os.path.join(out_dir, basename + "_image.csv")
+        if not os.path.isfile(image_output):
+            raise RuntimeError(
+                f"Existing tile output has no image Dice companion: {image_output}. "
+                "Pass force=True to recompute both files."
+            )
         df = pd.read_csv(output)
         if not {"F1_center_4px", "center_in_mask_f1", "instance_f1_iou_0p9"}.issubset(df.columns):
             raise RuntimeError(
@@ -375,3 +613,4 @@ def run_training_validation(
         pd.concat(frames, ignore_index=True).to_csv(
             os.path.join(out_dir, f"training_val_combined_{seg_method}.csv"), index=False
         )
+
