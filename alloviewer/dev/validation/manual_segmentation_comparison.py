@@ -12,14 +12,16 @@ Defaults:
     tiles:       ./expert_scoring_tile_exports/score_*/*.tif
                  (also supports ./expert_scoring_tile_exports/zips/score_*.zip)
     circles:     ./manual_segmentations/csv/*.csv
-    result:      ./results/manual_segmentation_comparison.csv
+    result:      ./results/manual_segmentation_comparison_v2.csv
 
 Two levels in the same CSV: one row per (tile, human annotator, method),
 plus one aggregate per (original image, human annotator, method). The latter
-pools confusion counts across only MANUALLY ANNOTATED tiles and calculates
-macro means for nonadditive metrics. Tiles overlap: an aggregate is NOT an
+pools confusion counts across MANUALLY ANNOTATED tiles, and separately reconstructs
+unique pixels in the annotated image region when the tile manifest is available. Tiles overlap: an aggregate is NOT an
 independent reconstructed full-image segmentation and can count the same
-cell twice if a cell is annotated in neighboring tiles. Images are never resized.
+cell twice if a cell is annotated in neighboring tiles. Images are never resized. Annotated-region Dice equals binary pixel F1.
+A true whole-image score is only valid if the evaluated region covers the entire
+original image and the annotations there are exhaustive.
 One-to-one IoU F1 is scored at 0.10/0.25/0.30/0.50/0.70/0.75/0.90.
 The center-in-mask F1 requires the annotated GT center pixel to lie within
 a predicted cell instance (one match per predicted instance).
@@ -52,7 +54,7 @@ import re
 import sys
 import warnings
 import zipfile
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
@@ -584,13 +586,36 @@ METRIC_FIELDS = tuple(compare_instances(
     np.array([[1]], dtype=np.int32), np.array([[1]], dtype=np.int32),
     np.array([[0.5, 0.5]]),
 ).keys())
-OUTPUT_FIELDS = (*BASE_FIELDS, *MANUAL_FIELDS, *METRIC_FIELDS)
+IMAGE_STITCH_FIELDS = (
+    "image_stitch_status", "annotated_image_dice", "annotated_image_jaccard",
+    "annotated_image_pixel_f1", "annotated_image_pixel_tp", "annotated_image_pixel_tn",
+    "annotated_image_pixel_fp", "annotated_image_pixel_fn",
+    "annotated_image_evaluated_pixels", "annotated_image_coverage_fraction",
+    "annotated_image_overlap_pixels", "annotated_image_gt_overlap_conflicts",
+    "annotated_image_pred_overlap_conflicts",
+    "whole_image_dice", "whole_image_jaccard", "whole_image_pixel_f1",
+    "image_pixel_scope",
+    "pooled_annotated_image_center_f1_4px",
+    "pooled_annotated_image_instance_f1_iou_0p5",
+)
+OUTPUT_FIELDS = (*BASE_FIELDS, *MANUAL_FIELDS, *METRIC_FIELDS, *IMAGE_STITCH_FIELDS)
 
 
-def _read_tile_manifest(root: Path) -> tuple[dict[str, dict[str, str]], dict[str, int]]:
+
+def _read_tile_manifest(root: Path, manifest_path: Path | None = None) -> tuple[dict[str, dict[str, str]], dict[str, int]]:
     """Read exporter metadata from CSV or manifests.zip, if present."""
-    csv_path = root / "manifests" / "tile_manifest.csv"
-    zip_path = root / "zips" / "manifests.zip"
+    # Some exports move all TIFFs into an `images/` folder. Look next to it
+    # for the original manifest, which is required for overlap-safe image Dice.
+    if manifest_path is not None:
+        csv_path = Path(manifest_path)
+        zip_path = root / "zips" / "manifests.zip"
+    else:
+        candidates = [root / "manifests" / "tile_manifest.csv"]
+        if root.name == "images":
+            candidates.append(root.parent / "manifests" / "tile_manifest.csv")
+        csv_path = next((q for q in candidates if q.is_file()), candidates[0])
+        zip_root = root.parent if root.name == "images" else root
+        zip_path = zip_root / "zips" / "manifests.zip"
     if csv_path.is_file():
         with csv_path.open(encoding="utf-8-sig", newline="") as handle:
             rows = list(csv.DictReader(handle))
@@ -611,7 +636,9 @@ def _read_tile_manifest(root: Path) -> tuple[dict[str, dict[str, str]], dict[str
     tile_info: dict[str, dict[str, str]] = {}
     total_by_image: Counter[str] = Counter()
     for row in rows:
-        name = Path(row["output_relative_path"]).name
+        name = Path(row.get("output_relative_path") or row.get("output_name") or "").name
+        if not name:
+            raise ValueError("Tile manifest has no output_relative_path/output_name")
         if name in tile_info:
             raise ValueError(f"Duplicate filename in tile manifest: {name}")
         site = row["site"].strip()
@@ -669,7 +696,155 @@ def _weighted_mean(rows: list[dict[str, Any]], key: str,
     return float(np.average(values, weights=weights)) if values else math.nan
 
 
-def aggregate_image_rows(tile_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _pack_mask(mask: np.ndarray) -> np.ndarray:
+    return np.packbits(np.asarray(mask, dtype=bool).ravel())
+
+
+def _unpack_mask(packed: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    return np.unpackbits(packed, count=shape[0] * shape[1]).reshape(shape).astype(bool)
+
+
+def _store_stitch_tile(
+    storage: dict[tuple[str, str, str], list[dict[str, Any]]],
+    source_key: str, annotator: str, method: str,
+    metadata: Mapping[str, Any], gt: np.ndarray,
+    predicted: np.ndarray, region: np.ndarray,
+) -> None:
+    """Compress binary masks for one tile; no duplicate overlap pixels are counted."""
+    try:
+        h, w = gt.shape
+        sh = int(metadata["source_height"])
+        sw = int(metadata["source_width"])
+        x = int(metadata["x0"])
+        y = int(metadata["y0"])
+        fallback = str(metadata.get("fallback_pad_resize", "False")).lower()
+        if fallback in {"true", "1", "yes"}:
+            raise ValueError("source tile was padded/resized")
+        if min(sh, sw) <= 0 or min(x, y) < 0 or y + h > sh or x + w > sw:
+            raise ValueError("invalid source size/tile coordinates")
+        payload = {
+            "status": "ok", "src_shape": (sh, sw), "tile_shape": (h, w),
+            "x": x, "y": y,
+            "gt": _pack_mask(gt > 0),
+            "pred": _pack_mask(predicted > 0),
+            "region": _pack_mask(region),
+        }
+    except (ValueError, KeyError, TypeError) as exc:
+        payload = {"status": f"skipped_invalid_tile_metadata: {exc}"}
+    storage.setdefault((source_key, annotator, method), []).append(payload)
+
+
+def stitch_annotated_image_pixels(
+    tiles: list[dict[str, Any]], *, annotations_exhaustive: bool = False,
+) -> dict[str, Any]:
+    """Pixel agreement over the UNION of annotated image regions.
+
+    GT circles are unioned in areas shared by tiles. Predictions use the
+    first tile (input tile order) for shared evaluated pixels; disagreement
+    between predictions in those areas is reported. No unannotated image
+    background is added to the confusion counts.
+    """
+    result: dict[str, Any] = {field: np.nan for field in IMAGE_STITCH_FIELDS}
+    if not tiles:
+        result["image_stitch_status"] = "skipped_no_tile_masks"
+        result["image_pixel_scope"] = "not_evaluated"
+        return result
+    for tile in tiles:
+        if tile.get("status") != "ok":
+            result["image_stitch_status"] = tile.get("status") or "skipped_invalid_tile"
+            result["image_pixel_scope"] = "not_evaluated"
+            return result
+    shape = tiles[0]["src_shape"]
+    if any(tile["src_shape"] != shape for tile in tiles):
+        result["image_stitch_status"] = "skipped_source_dimensions_inconsistent"
+        result["image_pixel_scope"] = "not_evaluated"
+        return result
+    h, w = shape
+    evaluated = np.zeros(shape, bool)
+    ground_truth = np.zeros(shape, bool)
+    predicted = np.zeros(shape, bool)
+    overlap = gt_conflicts = pred_conflicts = 0
+    for tile in sorted(tiles, key=lambda t: (t["y"], t["x"])):
+        th, tw = tile["tile_shape"]
+        y, x = tile["y"], tile["x"]
+        region = _unpack_mask(tile["region"], (th, tw))
+        gt = _unpack_mask(tile["gt"], (th, tw))
+        pred = _unpack_mask(tile["pred"], (th, tw))
+        view = np.s_[y:y+th, x:x+tw]
+        already = evaluated[view]
+        old_gt = ground_truth[view]
+        old_pred = predicted[view]
+        shared = region & already
+        overlap += int(shared.sum())
+        gt_conflicts += int((shared & (old_gt != gt)).sum())
+        pred_conflicts += int((shared & (old_pred != pred)).sum())
+        # A manually marked cell may be visible in two overlapping tiles.
+        # GT is the union of circle masks, not a sum of tile-level counts.
+        old_gt |= gt & region
+        new = region & ~already
+        old_pred[new] = pred[new]
+        already |= region
+    tp = int((evaluated & ground_truth & predicted).sum())
+    tn = int((evaluated & ~ground_truth & ~predicted).sum())
+    fp = int((evaluated & ~ground_truth & predicted).sum())
+    fn = int((evaluated & ground_truth & ~predicted).sum())
+    dice = 2 * tp / (2 * tp + fp + fn) if (2 * tp + fp + fn) else 1.0
+    iou = tp / (tp + fp + fn) if tp + fp + fn else 1.0
+    is_complete = bool(evaluated.all())
+    result.update({
+        "image_stitch_status": "ok_complete_pixel_coverage" if is_complete
+        else "ok_partial_annotated_region",
+        "image_pixel_scope": (
+            "entire_original_image_exhaustively_annotated" if is_complete and annotations_exhaustive
+            else "entire_original_image_geometry_exhaustiveness_unverified" if is_complete
+            else "original_image_annotated_pixels_only"
+        ),
+        "annotated_image_dice": dice,
+        "annotated_image_jaccard": iou,
+        "annotated_image_pixel_f1": dice,  # Binary pixel F1 == binary Dice.
+        "annotated_image_pixel_tp": tp,
+        "annotated_image_pixel_tn": tn,
+        "annotated_image_pixel_fp": fp,
+        "annotated_image_pixel_fn": fn,
+        "annotated_image_evaluated_pixels": int(evaluated.sum()),
+        "annotated_image_coverage_fraction": float(evaluated.mean()),
+        "annotated_image_overlap_pixels": overlap,
+        "annotated_image_gt_overlap_conflicts": gt_conflicts,
+        "annotated_image_pred_overlap_conflicts": pred_conflicts,
+        "whole_image_dice": dice if is_complete and annotations_exhaustive else np.nan,
+        "whole_image_jaccard": iou if is_complete and annotations_exhaustive else np.nan,
+        "whole_image_pixel_f1": dice if is_complete and annotations_exhaustive else np.nan,
+    })
+    return result
+
+
+def assign_source_image_shards(
+    groups: list[tuple[Path, str, str, list[dict[str, str]]]],
+    tile_metadata: Mapping[str, dict[str, str]],
+    totals: Mapping[str, int],
+    num_shards: int,
+) -> dict[str, int]:
+    """Greedy deterministic group-count balance; all tiles of an image stay together."""
+    if num_shards < 1:
+        raise ValueError("num_shards must be >= 1")
+    counts = Counter(
+        _tile_identity(name, tile_metadata.get(name, {}), totals)["source_image_key"]
+        for _, name, _, _ in groups
+    )
+    assignments: dict[str, int] = {}
+    loads = [0] * num_shards
+    for source_key, n in sorted(counts.items(), key=lambda it: (-it[1], it[0])):
+        shard = min(range(num_shards), key=lambda i: (loads[i], i))
+        assignments[source_key] = shard
+        loads[shard] += n
+    return assignments
+
+
+def aggregate_image_rows(
+    tile_rows: list[dict[str, Any]],
+    stitch_payloads: Mapping[tuple[str, str, str], list[dict[str, Any]]] | None = None,
+    *, annotations_exhaustive: bool = False,
+) -> list[dict[str, Any]]:
     """Aggregate annotated tiles by original image, method and human annotator.
 
     Sum additive pixel/object confusion counts, then recompute micro-averaged
@@ -690,7 +865,7 @@ def aggregate_image_rows(tile_rows: list[dict[str, Any]]) -> list[dict[str, Any]
         "pixel_tp", "pixel_fp", "pixel_fn", "pixel_tn", "evaluation_pixels",
         "possible_splits", "possible_merges",
     )
-    for key, group in sorted(grouped.items()):
+    for group_key, group in sorted(grouped.items()):
         example = group[0]
         ok = [r for r in group if r.get("status") == "ok"]
         unique_tiles = {r["image_name"] for r in group}
@@ -822,6 +997,16 @@ def aggregate_image_rows(tile_rows: list[dict[str, Any]]) -> list[dict[str, Any]
                         "boundary_f1_tol_px"):
                 result[col] = _weighted_mean(ok, col)
             result["boundary_tolerance_px"] = example.get("boundary_tolerance_px", "")
+        if stitch_payloads is not None:
+            result.update(stitch_annotated_image_pixels(
+                stitch_payloads.get(group_key, []), annotations_exhaustive=annotations_exhaustive
+            ))
+        else:
+            result.update(stitch_annotated_image_pixels([]))
+        result["pooled_annotated_image_center_f1_4px"] = result.get("F1_center_4px", np.nan)
+        result["pooled_annotated_image_instance_f1_iou_0p5"] = result.get(
+            "instance_f1_iou_0p5", np.nan
+        )
         aggregates.append(result)
     return aggregates
 
@@ -846,6 +1031,8 @@ def supplementary_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "mean_instance_dice_iou_0p5", "mean_instance_jaccard_iou_0p5",
         "mean_instance_dice_all_gt_iou_0p5", "mean_instance_jaccard_all_gt_iou_0p5",
         "pixel_dice", "pixel_jaccard", "pq_iou_0p5", "count_error_absolute",
+        "annotated_image_dice", "annotated_image_jaccard", "annotated_image_pixel_f1",
+        "whole_image_dice", "whole_image_pixel_f1",
     )
     confusion = (
         "pixel_tp", "pixel_tn", "pixel_fp", "pixel_fn",
@@ -860,7 +1047,9 @@ def supplementary_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         summary: dict[str, Any] = {
             "level": level, "method": method, "n_rows": len(data),
             "n_source_images": len({r["source_image_key"] for r in data}),
-            "note": "image level = pooled annotated tiles, not stitched full-image masks",
+            "note": ("Cell F1 pools tile counts; annotated_image_dice/F1 counts each "
+                     "evaluated source-image pixel once; no whole-image GT outside "
+                     "the reviewed area"),
         }
         for k in metrics:
             values = np.array([_safe_float(r.get(k)) for r in data], dtype=float)
@@ -914,7 +1103,7 @@ def make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--tiles", type=Path, default=Path("./expert_scoring_tile_exports"))
     p.add_argument("--annotations", type=Path, default=Path("./manual_segmentations/csv"))
-    p.add_argument("--output", type=Path, default=Path("./results/manual_segmentation_comparison.csv"))
+    p.add_argument("--output", type=Path, default=Path("./results/manual_segmentation_comparison_v2.csv"))
     p.add_argument("--region", choices=("bbox", "full"), default="bbox")
     p.add_argument("--bbox-margin", type=int, default=12)
     p.add_argument("--unet-mode", default="small", choices=("small", "medium", "large"))
@@ -934,6 +1123,14 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--save-masks", action="store_true", help="Export npz instance masks for audit")
     p.add_argument("--resume", action="store_true", help="Append to CSV, skipping completed image/annotator groups")
     p.add_argument("--fail-fast", action="store_true", help="Raise immediately instead of logging errors")
+    p.add_argument("--tile-manifest", type=Path, default=None,
+                   help="Optional explicit tile_manifest.csv (needed for overlap-corrected image metrics)")
+    p.add_argument("--num-shards", type=int, default=1)
+    p.add_argument("--shard-index", type=int, default=0)
+    p.add_argument("--annotations-exhaustive", action="store_true",
+                   help="Only use when EVERY source-image cell has been marked and all pixels evaluated")
+    p.add_argument("--merge-shards", type=str, default=None,
+                   help="Glob of completed shard CSVs; combine without running inference")
     return p
 
 
@@ -941,7 +1138,7 @@ def run(
     *,
     tiles: Path = Path("./expert_scoring_tile_exports"),
     annotations: Path = Path("./manual_segmentations/csv"),
-    output: Path = Path("./results/manual_segmentation_comparison.csv"),
+    output: Path = Path("./results/manual_segmentation_comparison_v2.csv"),
     region_mode: str = "bbox",
     bbox_margin: int = 12,
     unet_mode: str = "small",
@@ -962,6 +1159,10 @@ def run(
     unet_engine: Any | None = None,
     cellpose_engine: Any | None = None,
     cellpose_major: int | None = None,
+    tile_manifest: Path | None = None,
+    num_shards: int = 1,
+    shard_index: int = 0,
+    annotations_exhaustive: bool = False,
 ) -> list[dict[str, Any]]:
     """Run comparison. Optional injected engines permit testing without checkpoints."""
     tiles, annotations, output = Path(tiles), Path(annotations), Path(output)
@@ -969,9 +1170,19 @@ def run(
         raise ValueError("Invalid diameter, bbox margin, or boundary tolerance")
     if limit is not None and limit < 1:
         raise ValueError("--limit must be >=1")
+    if num_shards < 1 or not 0 <= shard_index < num_shards:
+        raise ValueError("Require 0 <= shard_index < num_shards")
     all_groups = list_annotation_groups(annotations)
     sources = find_tiles(tiles)
-    tile_metadata, total_by_image = _read_tile_manifest(tiles)
+    tile_metadata, total_by_image = _read_tile_manifest(tiles, tile_manifest)
+    if num_shards > 1:
+        assignments = assign_source_image_shards(
+            all_groups, tile_metadata, total_by_image, num_shards
+        )
+        all_groups = [g for g in all_groups if assignments[
+            _tile_identity(g[1], tile_metadata.get(g[1], {}), total_by_image)[
+                "source_image_key"]] == shard_index]
+        print(f"Shard {shard_index + 1}/{num_shards}: {len(all_groups)} annotation groups")
     missing = [(p, n, a) for p, n, a, _ in all_groups if n not in sources]
     print(f"Annotation groups: {len(all_groups)}; exported tiles: {len(sources)}; missing tile matches: {len(missing)}")
     for p, name, annotator in missing[:15]:
@@ -1004,10 +1215,19 @@ def run(
         print(f"After --resume filtering: {len(all_groups)} remaining groups")
     if not all_groups:
         if existing_tiles:
-            _write_rows(output, [*existing_tiles, *aggregate_image_rows(existing_tiles)], append=False)
+            stitch_payloads: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+            restore_saved_mask_payloads(existing_tiles, output, tile_metadata, stitch_payloads)
+            image_rows = aggregate_image_rows(
+                existing_tiles, stitch_payloads, annotations_exhaustive=annotations_exhaustive
+            )
+            _write_rows(output, [*existing_tiles, *image_rows], append=False)
             print(f"Already complete. Wrote tile and image rows to {output}")
         else:
-            print("Nothing to process")
+            print("Nothing to process on this shard")
+            # Emit a header-only file so shard merging can check completeness.
+            output.parent.mkdir(parents=True, exist_ok=True)
+            with output.open("w", newline="", encoding="utf-8") as handle:
+                csv.writer(handle).writerow(OUTPUT_FIELDS)
         return []
     # Resume rewrites the existing tile-only part first. Old image aggregates
     # are never used as an input to new aggregates.
@@ -1025,6 +1245,7 @@ def run(
         cp_major = cellpose_major if cellpose_major is not None else 4
         cp_version, cp_label = "injected_test_model", "injected_test_model"
     records: list[dict[str, Any]] = []
+    stitch_payloads: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     first_batch = not (resume and bool(existing_tiles))
     # Process different human annotators on the same image without rerunning models.
     cache: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
@@ -1077,6 +1298,10 @@ def run(
                 outrows.append({
                     **base, "method": method, **manual_stats, **metrics,
                 })
+                _store_stitch_tile(
+                    stitch_payloads, identity["source_image_key"], annotator,
+                    method, tile_metadata.get(name, {}), gt, pred, coverage,
+                )
             if save_masks:
                 mask_dir = output.parent / "manual_segmentation_masks"
                 mask_dir.mkdir(parents=True, exist_ok=True)
@@ -1099,7 +1324,11 @@ def run(
     # Write both levels to the requested single results CSV. No full-image
     # pixels are reread; aggregates are computed from annotated tile rows.
     tile_rows = existing_tiles + records
-    image_rows = aggregate_image_rows(tile_rows)
+    if existing_tiles:
+        restore_saved_mask_payloads(existing_tiles, output, tile_metadata, stitch_payloads)
+    image_rows = aggregate_image_rows(
+        tile_rows, stitch_payloads, annotations_exhaustive=annotations_exhaustive
+    )
     _write_rows(output, tile_rows + image_rows, append=False)
     summary_rows = supplementary_summary(tile_rows + image_rows)
     if summary_rows:
@@ -1114,8 +1343,75 @@ def run(
     return tile_rows + image_rows
 
 
+def restore_saved_mask_payloads(
+    existing_tiles: list[dict[str, Any]], output: Path,
+    tile_metadata: Mapping[str, dict[str, str]],
+    stitch_payloads: dict[tuple[str, str, str], list[dict[str, Any]]],
+) -> None:
+    """Restore unique image/annotator masks for image-level scoring on resume."""
+    restored = set()
+    for old in existing_tiles:
+        identity_key = (old["image_name"], old["human_annotator"])
+        if identity_key in restored:
+            continue
+        restored.add(identity_key)
+        safe_name = Path(old["image_name"]).stem
+        a = "".join(c if c.isalnum() or c in "_-" else "_"
+                    for c in old["human_annotator"])
+        mask_path = (output.parent / "manual_segmentation_masks" /
+                     f"{safe_name}__{a}.npz")
+        if not mask_path.is_file():
+            continue
+        with np.load(mask_path) as saved:
+            for method, field in (("AlloViewer_UNet", "unet"), ("Cellpose", "cellpose")):
+                _store_stitch_tile(
+                    stitch_payloads, old["source_image_key"], old["human_annotator"],
+                    method, tile_metadata.get(old["image_name"], {}),
+                    saved["manual"], saved[field], saved["evaluation_region"],
+                )
+
+
+def merge_shard_results(pattern: str, output: Path) -> Path:
+    """Combine successful, non-overlapping shard outputs and recalculate summary."""
+    import glob
+    paths = [Path(x) for x in sorted(glob.glob(pattern))
+             if not x.endswith("_supplementary_summary.csv")]
+    if not paths:
+        raise FileNotFoundError(f"No shard CSV files match: {pattern}")
+    if output.exists():
+        raise FileExistsError(f"Will not overwrite existing result: {output}")
+    rows = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    for path in paths:
+        with path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            if list(reader.fieldnames or ()) != list(OUTPUT_FIELDS):
+                raise ValueError(f"Shard has wrong CSV schema: {path}")
+            for row in reader:
+                key = (row["level"], row["source_image_key"], row["image_name"],
+                       row["human_annotator"], row["method"])
+                if key in seen:
+                    raise ValueError(f"Same result in multiple shards: {key}")
+                seen.add(key)
+                rows.append(row)
+    _write_rows(output, rows, append=False)
+    supplements = supplementary_summary(rows)
+    if supplements:
+        summary_path = output.with_name(output.stem + "_supplementary_summary.csv")
+        with summary_path.open("w", newline="", encoding="utf-8") as handle:
+            columns = list(dict.fromkeys(k for r in supplements for k in r))
+            writer = csv.DictWriter(handle, fieldnames=columns)
+            writer.writeheader()
+            writer.writerows(supplements)
+    print(f"Merged {len(paths)} shards, {len(rows)} rows -> {output}")
+    return output
+
+
 def main(argv: list[str] | None = None) -> int:
     a = make_parser().parse_args(argv)
+    if a.merge_shards:
+        merge_shard_results(a.merge_shards, a.output)
+        return 0
     run(
         tiles=a.tiles, annotations=a.annotations, output=a.output,
         region_mode=a.region, bbox_margin=a.bbox_margin,
@@ -1126,7 +1422,9 @@ def main(argv: list[str] | None = None) -> int:
         cellpose_cellprob_threshold=a.cellpose_cellprob_threshold,
         boundary_tolerance=a.boundary_tolerance, limit=a.limit,
         dry_run=a.dry_run, save_masks=a.save_masks, resume=a.resume,
-        fail_fast=a.fail_fast,
+        fail_fast=a.fail_fast, tile_manifest=a.tile_manifest,
+        num_shards=a.num_shards, shard_index=a.shard_index,
+        annotations_exhaustive=a.annotations_exhaustive,
     )
     return 0
 
