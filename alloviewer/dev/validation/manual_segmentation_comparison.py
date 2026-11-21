@@ -1320,23 +1320,23 @@ def run(
                     raise ValueError(f"Prediction dimensions differ from image {raw.shape}")
                 cache.clear()
                 cache[name] = (raw, unet_labels, cp_labels)
-                raw, unet_labels, cp_labels = cache[name]
+            raw, unet_labels, cp_labels = cache[name]
 
-                # Remove identical circles and circles completely outside the tile.
-                n_before = len(rows)
-                rows = _sanitize_manual_annotations(
-                    pd.DataFrame(rows), raw.shape[:2]
-                ).to_dict("records")
+            # Remove identical circles and circles completely outside the tile.
+            n_before = len(rows)
+            rows = _sanitize_manual_annotations(
+                pd.DataFrame(rows), raw.shape[:2]
+            ).to_dict("records")
 
-                if len(rows) != n_before:
-                    print(
-                        f"Sanitized {name} / {annotator}: "
-                        f"removed {n_before - len(rows)} annotations",
-                        flush=True,
-                    )
+            if len(rows) != n_before:
+                print(
+                    f"Sanitized {name} / {annotator}: "
+                    f"removed {n_before - len(rows)} annotations",
+                    flush=True,
+                )
 
-                gt, centers, manual_stats = manual_circle_instances(rows, raw.shape[:2])
-                coverage = evaluation_region(gt, mode=region_mode, margin=bbox_margin)
+            gt, centers, manual_stats = manual_circle_instances(rows, raw.shape[:2])
+            coverage = evaluation_region(gt, mode=region_mode, margin=bbox_margin)
             for method, pred in zip(METHODS, (unet_labels, cp_labels)):
                 metrics = compare_instances(
                     gt, pred, centers, region=coverage, boundary_tolerance=boundary_tolerance
