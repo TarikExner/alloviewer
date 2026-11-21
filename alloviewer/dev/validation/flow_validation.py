@@ -78,7 +78,31 @@ PANEL_FFM = Panel(
     markers={"CD3 PerCP-A": "PerCP-A", "CD19 APC-Cy7-A": "APC-Cy7-A"},
 )
 
-PANEL = PANEL_ULM
+
+def _gt_gate_column(ground_truth_df: pd.DataFrame, canonical: str, dataset: str) -> str:
+    """Resolve a manual gate, accounting for Frankfurt's absent singlet gate."""
+    if dataset == "Frankfurt":
+        # The Frankfurt manual hierarchy does not include /singlets/.
+        no_singlets = canonical.replace("/singlets", "")
+        if no_singlets in ground_truth_df.columns:
+            return no_singlets
+
+    # Keep the original Ulm paths and allow a Frankfurt file with the old naming.
+    if canonical in ground_truth_df.columns:
+        return canonical
+
+    if dataset == "Frankfurt" and "/lymphocytes" in canonical:
+        # Accept another root/parent path only when the leaf gate is unambiguous.
+        suffix = canonical[canonical.index("/lymphocytes"):]
+        matches = [c for c in ground_truth_df.columns if c.endswith(suffix)]
+        if len(matches) == 1:
+            return matches[0]
+
+    candidates = [c for c in ground_truth_df.columns if c.startswith("root/")]
+    raise KeyError(
+        f"No unique manual gate found for {dataset}: {canonical!r}. "
+        f"Available gate columns: {candidates}"
+    )
 
 
 @contextmanager
@@ -284,6 +308,8 @@ def _compute_qc_and_lymphocyte_metrics(
     config: GatingConfig,
     algorithm: str,
     algorithm_params: dict[str, Any],
+    dataset: str = "Ulm",
+    panel: Optional[Panel] = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
@@ -291,9 +317,18 @@ def _compute_qc_and_lymphocyte_metrics(
     dict[str, Any],
     dict[str, Any],
 ]:
+    panel = panel if panel is not None else PANEL_ULM
+    skip_singlets = dataset == "Frankfurt"
     ground_truth_df = _read_csv(data_dir, experiment)
     ds = _create_dataset(data_dir, experiment)
-    qc_gater = QCGater(panel=PANEL, config=config.qc)
+    qc_gater = QCGater(panel=panel, config=config.qc)
+
+    gt_edge = _gt_gate_column(ground_truth_df, EDGE_GATE_CSV, dataset)
+    gt_lymph = _gt_gate_column(ground_truth_df, LYMPHOCYTES_GATE_CSV, dataset)
+    gt_sing = (
+        _gt_gate_column(ground_truth_df, SINGLET_GATE_CSV, dataset)
+        if not skip_singlets else None
+    )
 
     file_records: list[dict[str, Any]] = []
     metric_rows: list[dict[str, Any]] = []
@@ -303,27 +338,36 @@ def _compute_qc_and_lymphocyte_metrics(
         for sample in ds.samples:
             for fcs in sample.files:
                 qc = qc_gater.compute_qc(fcs)
+                if not skip_singlets and qc.mask_sing is None:
+                    raise ValueError(f"Singlet gate missing in Ulm file {sample.name}")
+
+                # Frankfurt has no singlet gate; QCGater skips it when
+                # panel.fsc_h is absent and supplies the remaining QC mask.
+                mask_qc = qc.mask_qc if qc.mask_qc is not None else qc.mask_edge
                 file_records.append(
                     {
                         "sample": sample,
                         "fcs": fcs,
                         "events": qc.events,
-                        "mask_qc": qc.mask_qc,
+                        "mask_qc": np.asarray(mask_qc, dtype=bool),
                         "mask_edge": np.asarray(qc.mask_edge, dtype=bool),
-                        "mask_sing": np.asarray(qc.mask_sing, dtype=bool),
+                        "mask_sing": (
+                            None if skip_singlets
+                            else np.asarray(qc.mask_sing, dtype=bool)
+                        ),
                         "notes": qc.notes,
                     }
                 )
     stage_times["qc_runtime_s"] = payload["runtime_s"]
 
-    marker_names = list(PANEL.markers.keys())
+    marker_names = list(panel.markers.keys())
     with _stage_timer() as payload:
         cal = calibrate_markers(
             transform_cfg=config.transform,
             cofactor_cfg=config.marker_cofactor,
             threshold_cfg=config.marker_threshold,
             random_state=config.random_state,
-            panel=PANEL,
+            panel=panel,
             file_records=file_records,
             marker_names=marker_names,
         )
@@ -349,29 +393,30 @@ def _compute_qc_and_lymphocyte_metrics(
                     algorithm_params=algorithm_params,
                     file_name=file_name,
                     gate_name="edge_exclusion",
-                    gate_column=EDGE_GATE_CSV,
+                    gate_column=gt_edge,
                     gt_df=gt_df,
                     comp_vector=rec["mask_edge"],
                 )
             )
-            metric_rows.append(
-                _build_metric_row(
-                    experiment=experiment,
-                    algorithm=algorithm,
-                    algorithm_params=algorithm_params,
-                    file_name=file_name,
-                    gate_name="singlets",
-                    gate_column=SINGLET_GATE_CSV,
-                    gt_df=gt_df,
-                    comp_vector=rec["mask_sing"],
+            if not skip_singlets:
+                metric_rows.append(
+                    _build_metric_row(
+                        experiment=experiment,
+                        algorithm=algorithm,
+                        algorithm_params=algorithm_params,
+                        file_name=file_name,
+                        gate_name="singlets",
+                        gate_column=gt_sing,
+                        gt_df=gt_df,
+                        comp_vector=rec["mask_sing"],
+                    )
                 )
-            )
 
             lymph_res = gate_lymphocytes(
                 lymph_cfg=config.lymphocyte,
                 transform_cfg=config.transform,
                 random_state=config.random_state,
-                panel=PANEL,
+                panel=panel,
                 fcs=rec["fcs"],
                 events=rec["events"],
                 mask_qc=rec["mask_qc"],
@@ -387,7 +432,7 @@ def _compute_qc_and_lymphocyte_metrics(
                     algorithm_params=algorithm_params,
                     file_name=file_name,
                     gate_name="lymphocytes",
-                    gate_column=LYMPHOCYTES_GATE_CSV,
+                    gate_column=gt_lymph,
                     gt_df=gt_df,
                     comp_vector=rec["mask_lymph"],
                 )
@@ -407,12 +452,18 @@ def _compute_cluster_metrics(
     algorithm_params: dict[str, Any],
     marker_cofactors: dict[str, Any],
     marker_thresholds: dict[str, Any],
+    dataset: str = "Ulm",
+    panel: Optional[Panel] = None,
 ) -> tuple[list[dict[str, Any]], dict[str, float], dict[str, Any]]:
+    panel = panel if panel is not None else PANEL_ULM
+    gt_t_cells = _gt_gate_column(ground_truth_df, CD3_GATE_CSV, dataset)
+    gt_b_cells = _gt_gate_column(ground_truth_df, CD19_GATE_CSV, dataset)
+
     metric_rows: list[dict[str, Any]] = []
     stage_times: dict[str, float] = {}
     stage_info: dict[str, Any] = {}
 
-    marker_names = list(PANEL.markers.keys())
+    marker_names = list(panel.markers.keys())
     rng = np.random.default_rng(int(config.random_state))
     clusterer = default_clusterer_factory(config.clusterer)
 
@@ -429,7 +480,7 @@ def _compute_cluster_metrics(
             feature_scaling_cfg=config.feature_scaling,
             cluster_sampling_cfg=config.cluster_sampling,
             prediction_cfg=config.prediction,
-            panel=PANEL,
+            panel=panel,
             file_records=file_records,
             marker_cofactors=marker_cofactors,
             clusterer=clusterer,
@@ -468,7 +519,7 @@ def _compute_cluster_metrics(
             pred = predict_file_in_mask(
                 transform_cfg=config.transform,
                 prediction_cfg=config.prediction,
-                panel=PANEL,
+                panel=panel,
                 fcs=rec["fcs"],
                 events=rec["events"],
                 mask_in=mask_lymph,
@@ -487,7 +538,7 @@ def _compute_cluster_metrics(
                     algorithm_params=algorithm_params,
                     file_name=file_name,
                     gate_name="t_cells",
-                    gate_column=CD3_GATE_CSV,
+                    gate_column=gt_t_cells,
                     gt_df=gt_df,
                     comp_vector=np.asarray(pred.mask_by_marker["CD3 PerCP-A"], dtype=bool),
                 )
@@ -499,7 +550,7 @@ def _compute_cluster_metrics(
                     algorithm_params=algorithm_params,
                     file_name=file_name,
                     gate_name="b_cells",
-                    gate_column=CD19_GATE_CSV,
+                    gate_column=gt_b_cells,
                     gt_df=gt_df,
                     comp_vector=np.asarray(pred.mask_by_marker["CD19 APC-Cy7-A"], dtype=bool),
                 )
@@ -517,10 +568,7 @@ def run_single_flow_validation(
     algorithm_params: dict[str, Any],
     dataset: str = "Ulm",
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    
-    global PANEL
-    PANEL = PANEL_FFM if dataset == "Frankfurt" else PANEL_ULM
-
+    panel = PANEL_FFM if dataset == "Frankfurt" else PANEL_ULM
     monitor = MemoryMonitor()
     overall_t0 = time.perf_counter()
 
@@ -538,6 +586,8 @@ def run_single_flow_validation(
         config=config,
         algorithm=algorithm,
         algorithm_params=algorithm_params,
+        dataset=dataset,
+        panel=panel,
     )
 
     cluster_metric_rows, cluster_stage_times, cluster_stage_info = _compute_cluster_metrics(
@@ -549,6 +599,8 @@ def run_single_flow_validation(
         algorithm_params=algorithm_params,
         marker_cofactors=marker_cofactors,
         marker_thresholds=marker_thresholds,
+        dataset=dataset,
+        panel=panel,
     )
 
     metrics_df = pd.DataFrame(qc_metric_rows + cluster_metric_rows)
