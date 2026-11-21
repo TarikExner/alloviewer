@@ -63,13 +63,22 @@ FRANKFURT_EXPERIMENTS: list[str] = [
     f"exp_{i}" for i in range(1, 53) if i not in {17, 18}
 ]
 
-PANEL = Panel(
+PANEL_ULM = Panel(
     fsc_a="FSC-A",
     fsc_h="FSC-H",
     ssc_a="SSC-A",
     igg="FITC-A",
     markers={"CD3 PerCP-A": "PerCP-A", "CD19 APC-Cy7-A": "APC-Cy7-A"},
 )
+
+PANEL_FFM = Panel(
+    fsc_a="FSC-A",
+    ssc_a="SSC-A",
+    igg="FITC-A",
+    markers={"CD3 PerCP-A": "PerCP-A", "CD19 APC-Cy7-A": "APC-Cy7-A"},
+)
+
+PANEL = PANEL_ULM
 
 
 @contextmanager
@@ -508,6 +517,10 @@ def run_single_flow_validation(
     algorithm_params: dict[str, Any],
     dataset: str = "Ulm",
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
+    
+    global PANEL
+    PANEL = PANEL_FFM if dataset == "Frankfurt" else PANEL_ULM
+
     monitor = MemoryMonitor()
     overall_t0 = time.perf_counter()
 
