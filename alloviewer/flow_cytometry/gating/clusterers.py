@@ -439,7 +439,110 @@ class HDBSCANClusterer:
             cluster_selection_method=self.cfg.cluster_selection_method,
         )
 
+
     def fit(self, X: np.ndarray) -> "HDBSCANClusterer":
+        """Fit HDBSCAN with bounded adaptive cluster-size adjustment.
+
+        The initial fit uses the configured parameters. If its noise
+        fraction exceeds max_noise, smaller cluster sizes are tested.
+        The fitted model with the lowest noise fraction is retained.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            Two-dimensional feature matrix.
+
+        Returns
+        -------
+        HDBSCANClusterer
+            Fitted clusterer.
+
+        Raises
+        ------
+        ValueError
+            If the input shape or configuration is invalid.
+        """
+        X = np.asarray(X)
+
+        if X.ndim != 2:
+            raise ValueError(f"X must be 2D, got shape={X.shape}")
+
+        if X.shape[0] < 2:
+            raise ValueError("HDBSCAN requires at least two observations.")
+
+        if not 0 <= self.max_noise <= 1:
+            raise ValueError("max_noise must be between 0 and 1.")
+
+        # Reset parameters for repeated calls to fit()
+        current_size = int(self.cfg.min_cluster_size)
+
+        if not 2 <= current_size <= X.shape[0]:
+            raise ValueError("Invalid min_cluster_size for training data.")
+
+        self.modify_model(min_cluster_size=current_size)
+        self.model.fit(X)
+
+        # Retain the best valid fitted model
+        best_model = self.model
+        best_size = current_size
+        best_noise = float(np.mean(self.labels_ == -1))
+
+        self.fit_history_ = [{
+            "min_cluster_size": current_size,
+            "frac_noise": best_noise,
+        }]
+
+        # Maximum number of additional fits
+        max_refits = max(0, int(getattr(self.cfg, "max_refits", 4)))
+
+        for _ in range(max_refits):
+            if best_noise <= self.max_noise or current_size <= 2:
+                break
+
+            # Smaller clusters may reduce the noise fraction
+            next_size = max(2, int(current_size / 1.5))
+
+            if next_size == current_size:
+                next_size = current_size - 1
+
+            current_size = next_size
+
+            self.modify_model(min_cluster_size=current_size)
+            self.model.fit(X)
+
+            frac_noise = float(np.mean(self.labels_ == -1))
+
+            self.fit_history_.append({
+                "min_cluster_size": current_size,
+                "frac_noise": frac_noise,
+            })
+
+            # Keep the candidate with the lowest noise fraction
+            if frac_noise < best_noise:
+                best_model = self.model
+                best_size = current_size
+                best_noise = frac_noise
+
+        # Restore the best fitted model
+        self.model = best_model
+        self.min_cluster_size = best_size
+
+        # Store diagnostics without changing the noise threshold
+        self.frac_noise_ = best_noise
+        self.noise_target_met_ = best_noise <= self.max_noise
+
+        if not self.noise_target_met_:
+            print(
+                f"HDBSCAN: noise target {self.max_noise:.2%} "
+                f"not reached; best result {best_noise:.2%} "
+                f"(min_cluster_size={best_size}).",
+                flush=True,
+            )
+
+        return self
+
+
+    def fit_old(self, X: np.ndarray) -> "HDBSCANClusterer":
         """Fit HDBSCAN on a feature matrix.
 
         Parameters

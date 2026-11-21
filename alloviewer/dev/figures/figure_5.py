@@ -169,6 +169,12 @@ def _prepare_panel_c_data(
             "Panel C data is empty after selecting the best algorithm setting."
         )
 
+    # Frankfurt has no FSC-H and therefore no singlet gate.
+    # Exclude any stale singlet rows from earlier result files.
+    plot_df = plot_df.loc[
+        ~((plot_df["dataset"] == "Frankfurt") & (plot_df["gate"] == "singlets"))
+    ].copy()
+
     plot_df["gate_display"] = (
         plot_df["gate"]
         .map(gate_display_map)
@@ -209,6 +215,8 @@ def _prepare_panel_b_data(
         config=config,
         algorithm=algorithm,
         algorithm_params={"resolution_parameter": resolution_parameter},
+        dataset="Ulm",
+        panel=PANEL,
     )
 
     marker_names = list(PANEL.markers.keys())
@@ -691,13 +699,12 @@ def _generate_subfigure_c(
     ax.axis("off")
     utils.figure_label(ax, subfigure_label, x=0)
 
-    gate_order = [
-        "Edge exclusion",
-        "Singlets",
-        "Lymphocytes",
-        "T cells",
-        "B cells",
-    ]
+    # Only Ulm has singlet gating. Frankfurt follows edge exclusion
+    # directly with lymphocyte gating (no FSC-H channel).
+    gate_orders = {
+        "Ulm": ["Edge exclusion", "Singlets", "Lymphocytes", "T cells", "B cells"],
+        "Frankfurt": ["Edge exclusion", "Lymphocytes", "T cells", "B cells"],
+    }
 
     # Retain the selected pipeline and original box/strip plot styling.
     # Split only this performance panel by validation center.
@@ -706,7 +713,11 @@ def _generate_subfigure_c(
     left_ax = None
 
     for i, (dataset, title) in enumerate(centers):
-        center_df = plot_df.loc[plot_df["dataset"] == dataset].copy()
+        gate_order = gate_orders[dataset]
+        center_df = plot_df.loc[
+            (plot_df["dataset"] == dataset)
+            & plot_df["gate_display"].isin(gate_order)
+        ].copy()
         if center_df.empty:
             raise ValueError(
                 f"Panel C cannot show {title}: no validation data for dataset '{dataset}'."
@@ -748,6 +759,15 @@ def _generate_subfigure_c(
         )
         sub_ax.set_ylim(0.2, 1.02)
         sub_ax.set_title(title, fontsize=cfg.TITLE_SIZE)
+        # Explain the missing singlet stage without implying a score of zero.
+        if dataset == "Frankfurt":
+            sub_ax.text(
+                0.99, 0.03, "Singlet gating not performed",
+                transform=sub_ax.transAxes,
+                ha="right", va="bottom",
+                fontsize=max(cfg.AXIS_LABEL_SIZE - 1, 6),
+                color="0.4",
+            )
         sub_ax.tick_params(
             axis="both",
             which="major",
