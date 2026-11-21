@@ -52,6 +52,17 @@ EXPERIMENTS = Literal[
     "val_exp_16", "val_exp_17",
 ]
 
+# The original Ulm cohort is retained unchanged.
+ULM_EXPERIMENTS: list[str] = [
+    "exp1", "exp2", "exp3", "exp4",
+    *[f"val_exp_{i}" for i in range(1, 18)],
+]
+
+# Frankfurt has exp_1 through exp_52, except exp_17 and exp_18.
+FRANKFURT_EXPERIMENTS: list[str] = [
+    f"exp_{i}" for i in range(1, 53) if i not in {17, 18}
+]
+
 PANEL = Panel(
     fsc_a="FSC-A",
     fsc_h="FSC-H",
@@ -120,25 +131,25 @@ class MemoryMonitor:
         return out
 
 
-def _read_csv(data_dir: str, experiment: EXPERIMENTS) -> pd.DataFrame:
+def _read_csv(data_dir: str, experiment: str) -> pd.DataFrame:
     return pd.read_csv(os.path.join(data_dir, f"{experiment}_expr_data.csv"))
 
 
-def _read_fcs(data_dir: str, experiment: EXPERIMENTS, fcs_file: str) -> FCSFile:
+def _read_fcs(data_dir: str, experiment: str, fcs_file: str) -> FCSFile:
     return FCSFile(os.path.join(data_dir, experiment, fcs_file))
 
 
-def _create_fcs_file_list(data_dir: str, experiment: EXPERIMENTS) -> list[str]:
+def _create_fcs_file_list(data_dir: str, experiment: str) -> list[str]:
     file_list = os.listdir(os.path.join(data_dir, experiment))
     return sorted([file for file in file_list if file.endswith(".fcs")])
 
 
-def _create_fcs_file_list_full_path(data_dir: str, experiment: EXPERIMENTS) -> list[str]:
+def _create_fcs_file_list_full_path(data_dir: str, experiment: str) -> list[str]:
     fcs_files = _create_fcs_file_list(data_dir, experiment)
     return [os.path.join(data_dir, experiment, file) for file in fcs_files]
 
 
-def _create_dataset(data_dir: str, experiment: EXPERIMENTS) -> Dataset:
+def _create_dataset(data_dir: str, experiment: str) -> Dataset:
     role_map = pd.read_csv(os.path.join(data_dir, "role_map.csv"))
 
     fcs_files = _create_fcs_file_list(data_dir, experiment)
@@ -491,10 +502,11 @@ def _compute_cluster_metrics(
 
 def run_single_flow_validation(
     data_dir: str,
-    experiment: EXPERIMENTS,
+    experiment: str,
     config: GatingConfig,
     algorithm: str,
     algorithm_params: dict[str, Any],
+    dataset: str = "Ulm",
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     monitor = MemoryMonitor()
     overall_t0 = time.perf_counter()
@@ -527,8 +539,10 @@ def run_single_flow_validation(
     )
 
     metrics_df = pd.DataFrame(qc_metric_rows + cluster_metric_rows)
+    metrics_df.insert(0, "dataset", dataset)
 
     run_info: dict[str, Any] = {
+        "dataset": dataset,
         "experiment": experiment,
         "algorithm": algorithm,
         "algorithm_params_json": json.dumps(algorithm_params, sort_keys=True),
@@ -550,16 +564,42 @@ def run_flow_validation(
     data_dir: str,
     output_dir: Optional[str] = None,
     base_config: Optional[GatingConfig] = None,
-    experiments_to_run: Optional[list[EXPERIMENTS]] = None,
+    experiments_to_run: Optional[list[str]] = None,
+    frankfurt_data_dir: Optional[str] = "./flow_data_ffm",
+    frankfurt_experiments_to_run: Optional[list[str]] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Validate the Ulm and Frankfurt centers with the same parameter sweep.
 
-    experiments = experiments_to_run or [
-        "exp1", "exp2", "exp3", "exp4",
-        "val_exp_1", "val_exp_2", "val_exp_3", "val_exp_4", "val_exp_5",
-        "val_exp_6", "val_exp_7", "val_exp_8", "val_exp_9", "val_exp_10",
-        "val_exp_11", "val_exp_12", "val_exp_13", "val_exp_14", "val_exp_15",
-        "val_exp_16", "val_exp_17",
+    Parameters
+    ----------
+    data_dir:
+        Ulm root directory (normally ``./flow_data``).
+    frankfurt_data_dir:
+        Frankfurt root directory (normally ``./flow_data_ffm``). Pass None
+        to run only Ulm for backwards compatibility.
+    experiments_to_run:
+        Optional subset of Ulm experiments; None selects all 21.
+    frankfurt_experiments_to_run:
+        Optional subset of Frankfurt experiments; None selects all 50.
+
+    Each center must have a ``role_map.csv`` in its root directory and one
+    ``<experiment>_expr_data.csv`` next to each experiment's FCS folder.
+    The output CSVs contain a ``dataset`` column identifying the center.
+    """
+    ulm_experiments = (
+        list(ULM_EXPERIMENTS) if experiments_to_run is None
+        else list(experiments_to_run)
+    )
+    frankfurt_experiments = (
+        list(FRANKFURT_EXPERIMENTS) if frankfurt_experiments_to_run is None
+        else list(frankfurt_experiments_to_run)
+    )
+
+    center_runs: list[tuple[str, str, list[str]]] = [
+        ("Ulm", data_dir, ulm_experiments),
     ]
+    if frankfurt_data_dir is not None:
+        center_runs.append(("Frankfurt", frankfurt_data_dir, frankfurt_experiments))
 
     all_metric_dfs: list[pd.DataFrame] = []
     run_infos: list[dict[str, Any]] = []
@@ -569,25 +609,29 @@ def run_flow_validation(
         algorithm_params = sweep["algorithm_params"]
         config = sweep["config"]
 
-        for experiment in experiments:
-            print(
-                f"[flow-validation] experiment={experiment} algorithm={algorithm} params={algorithm_params}"
-            )
-            metrics_df, run_info = run_single_flow_validation(
-                data_dir=data_dir,
-                experiment=experiment,
-                config=config,
-                algorithm=algorithm,
-                algorithm_params=algorithm_params,
-            )
-            all_metric_dfs.append(metrics_df)
-            run_infos.append(run_info)
+        for dataset, center_data_dir, experiments in center_runs:
+            for experiment in experiments:
+                print(
+                    f"[flow-validation] dataset={dataset} experiment={experiment} "
+                    f"algorithm={algorithm} params={algorithm_params}"
+                )
+                center_metrics_df, run_info = run_single_flow_validation(
+                    data_dir=center_data_dir,
+                    experiment=experiment,
+                    config=config,
+                    algorithm=algorithm,
+                    algorithm_params=algorithm_params,
+                    dataset=dataset,
+                )
+                all_metric_dfs.append(center_metrics_df)
+                run_infos.append(run_info)
 
     if all_metric_dfs:
         metrics_df = pd.concat(all_metric_dfs, ignore_index=True)
     else:
         metrics_df = pd.DataFrame(
             columns=[
+                "dataset",
                 "experiment",
                 "algorithm",
                 "algorithm_params_json",
@@ -612,7 +656,7 @@ def run_flow_validation(
     else:
         summary_df = (
             metrics_df.groupby(
-                ["experiment", "algorithm", "algorithm_params_json", "gate"],
+                ["dataset", "experiment", "algorithm", "algorithm_params_json", "gate"],
                 as_index=False,
             )
             .agg(
@@ -628,7 +672,7 @@ def run_flow_validation(
             )
             .merge(
                 runs_df,
-                on=["experiment", "algorithm", "algorithm_params_json"],
+                on=["dataset", "experiment", "algorithm", "algorithm_params_json"],
                 how="left",
             )
         )
@@ -640,3 +684,4 @@ def run_flow_validation(
         runs_df.to_csv(os.path.join(output_dir, "flow_validation_runs.csv"), index=False)
 
     return metrics_df, summary_df, runs_df
+

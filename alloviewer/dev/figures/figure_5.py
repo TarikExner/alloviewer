@@ -128,6 +128,7 @@ def _prepare_panel_c_data(
     summary_df: pd.DataFrame,
 ) -> pd.DataFrame:
     required_metric_cols = {
+        "dataset",
         "experiment",
         "algorithm",
         "algorithm_params_json",
@@ -698,44 +699,64 @@ def _generate_subfigure_c(
         "B cells",
     ]
 
-    fig_sgs = gs.subgridspec(1, 1)
-    sub_ax = fig.add_subplot(fig_sgs[0, 0])
+    # Retain the selected pipeline and original box/strip plot styling.
+    # Split only this performance panel by validation center.
+    fig_sgs = gs.subgridspec(1, 2, wspace=0.12)
+    centers = [("Ulm", "Center 1"), ("Frankfurt", "Center 2")]
+    left_ax = None
 
-    sns.boxplot(
-        data=plot_df,
-        x="gate_display",
-        y="f1",
-        order=gate_order,
-        ax=sub_ax,
-        showcaps=True,
-        fliersize=0,
-        width=0.65,
-        boxprops=dict(facecolor="white"),
-    )
+    for i, (dataset, title) in enumerate(centers):
+        center_df = plot_df.loc[plot_df["dataset"] == dataset].copy()
+        if center_df.empty:
+            raise ValueError(
+                f"Panel C cannot show {title}: no validation data for dataset '{dataset}'."
+            )
 
-    sns.stripplot(
-        data=plot_df,
-        x="gate_display",
-        y="f1",
-        order=gate_order,
-        ax=sub_ax,
-        size=3,
-        linewidth=0.5,
-        edgecolor="black",
-    )
+        if i == 0:
+            sub_ax = fig.add_subplot(fig_sgs[0, i])
+            left_ax = sub_ax
+        else:
+            sub_ax = fig.add_subplot(fig_sgs[0, i], sharey=left_ax)
 
-    sub_ax.set_xlabel("")
-    sub_ax.set_ylabel("F1 score across files", fontsize=cfg.AXIS_LABEL_SIZE)
-    sub_ax.set_ylim(0.2, 1.02)
-    sub_ax.set_title(
-        "Overall performance of the selected final pipeline",
-        fontsize=cfg.TITLE_SIZE,
-    )
-    sub_ax.tick_params(
-        axis="both",
-        which="major",
-        labelsize=cfg.AXIS_LABEL_SIZE,
-    )
+        sns.boxplot(
+            data=center_df,
+            x="gate_display",
+            y="f1",
+            order=gate_order,
+            ax=sub_ax,
+            showcaps=True,
+            fliersize=0,
+            width=0.65,
+            boxprops=dict(facecolor="white"),
+        )
+
+        sns.stripplot(
+            data=center_df,
+            x="gate_display",
+            y="f1",
+            order=gate_order,
+            ax=sub_ax,
+            size=3,
+            linewidth=0.5,
+            edgecolor="black",
+        )
+
+        sub_ax.set_xlabel("")
+        sub_ax.set_ylabel(
+            "F1 score across files" if i == 0 else "",
+            fontsize=cfg.AXIS_LABEL_SIZE,
+        )
+        sub_ax.set_ylim(0.2, 1.02)
+        sub_ax.set_title(title, fontsize=cfg.TITLE_SIZE)
+        sub_ax.tick_params(
+            axis="both",
+            which="major",
+            labelsize=cfg.AXIS_LABEL_SIZE,
+        )
+        # Narrower axes need angled category labels to avoid overlap.
+        sub_ax.tick_params(axis="x", labelrotation=35)
+        for tick in sub_ax.get_xticklabels():
+            tick.set_ha("right")
 
 
 def _generate_main_figure(
