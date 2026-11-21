@@ -591,6 +591,7 @@ def figure_S8_generation(
         raise FileNotFoundError(f"Missing flow validation summary: {summary_path}")
 
     summary_df = pd.read_csv(summary_path)
+    summary_df = summary_df.loc[summary_df["dataset"] == "Ulm"].copy()
 
     scatter_df, runtime_breakdown_df = _prepare_runtime_data(summary_df)
 

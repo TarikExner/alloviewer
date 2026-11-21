@@ -78,7 +78,7 @@ def _select_best_settings_per_algorithm(summary_df: pd.DataFrame) -> pd.DataFram
     return best_settings_df
 
 
-def _prepare_figure_S11_data(summary_df: pd.DataFrame) -> pd.DataFrame:
+def _prepare_figure_S9_data(summary_df: pd.DataFrame) -> pd.DataFrame:
     required_cols = {
         "experiment",
         "algorithm",
@@ -444,7 +444,8 @@ def figure_S9_generation(
         raise FileNotFoundError(f"Missing flow validation summary: {summary_path}")
 
     summary_df = pd.read_csv(summary_path)
-    plot_df = _prepare_figure_S11_data(summary_df)
+    summary_df = summary_df.loc[summary_df["dataset"] == "Ulm"].copy()
+    plot_df = _prepare_figure_S9_data(summary_df)
 
     _generate_main_figure(
         summary_df=summary_df,
