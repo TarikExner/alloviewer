@@ -54,6 +54,7 @@ import re
 import sys
 import warnings
 import zipfile
+import pandas as pd
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from importlib import metadata
@@ -159,6 +160,37 @@ def list_annotation_groups(csv_dir: Path) -> list[tuple[Path, str, str, list[dic
         seen[key] = path
     return groups
 
+def _sanitize_manual_annotations(df: pd.DataFrame, image_shape: tuple[int, int]) -> pd.DataFrame:
+    """Remove clearly invalid manual circles without touching the raw files.
+
+    Rules:
+    - Remove circles that are completely outside the image.
+    - Remove exact duplicate circles (same geometry), keeping the first.
+    """
+    h, w = image_shape[:2]
+    out = df.copy()
+
+    # Ensure numeric columns
+    for col in ("roi_x_px", "roi_y_px", "center_x_px", "center_y_px", "diameter_px"):
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+
+    # 1) Remove circles completely outside the image
+    x0 = out["roi_x_px"].to_numpy(dtype=float)
+    y0 = out["roi_y_px"].to_numpy(dtype=float)
+    d = out["diameter_px"].to_numpy(dtype=float)
+
+    x1 = x0 + d
+    y1 = y0 + d
+
+    fully_outside = (x1 <= 0) | (y1 <= 0) | (x0 >= w) | (y0 >= h)
+    out = out.loc[~fully_outside].copy()
+
+    # 2) Remove exact duplicate circles, keep first occurrence
+    # "identical" = same circle geometry
+    dup_cols = ["roi_x_px", "roi_y_px", "center_x_px", "center_y_px", "diameter_px"]
+    out = out.drop_duplicates(subset=dup_cols, keep="first").copy()
+
+    return out
 
 def manual_circle_instances(rows: list[Mapping[str, str]], shape: tuple[int, int]) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     """Rasterize ImageJ-style circle/oval ROIs using pixel centers.
@@ -1288,9 +1320,23 @@ def run(
                     raise ValueError(f"Prediction dimensions differ from image {raw.shape}")
                 cache.clear()
                 cache[name] = (raw, unet_labels, cp_labels)
-            raw, unet_labels, cp_labels = cache[name]
-            gt, centers, manual_stats = manual_circle_instances(rows, raw.shape[:2])
-            coverage = evaluation_region(gt, mode=region_mode, margin=bbox_margin)
+                raw, unet_labels, cp_labels = cache[name]
+
+                # Remove identical circles and circles completely outside the tile.
+                n_before = len(rows)
+                rows = _sanitize_manual_annotations(
+                    pd.DataFrame(rows), raw.shape[:2]
+                ).to_dict("records")
+
+                if len(rows) != n_before:
+                    print(
+                        f"Sanitized {name} / {annotator}: "
+                        f"removed {n_before - len(rows)} annotations",
+                        flush=True,
+                    )
+
+                gt, centers, manual_stats = manual_circle_instances(rows, raw.shape[:2])
+                coverage = evaluation_region(gt, mode=region_mode, margin=bbox_margin)
             for method, pred in zip(METHODS, (unet_labels, cp_labels)):
                 metrics = compare_instances(
                     gt, pred, centers, region=coverage, boundary_tolerance=boundary_tolerance
