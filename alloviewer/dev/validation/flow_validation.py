@@ -442,6 +442,123 @@ def _compute_qc_and_lymphocyte_metrics(
     return file_records, metric_rows, stage_times, marker_cofactors, marker_thresholds
 
 
+
+
+def _median_finite(values: np.ndarray) -> float:
+    """Median of finite IgG intensities, or NaN for an empty gate."""
+    values = np.asarray(values, dtype=float)
+    finite = values[np.isfinite(values)]
+    return float(np.median(finite)) if finite.size else np.nan
+
+
+def _safe_median_ratio(sample_median: float, nc_median: float) -> tuple[float, str]:
+    """Return raw median IgG(sample) / median IgG(NC) without pseudocounts."""
+    if not np.isfinite(sample_median):
+        return np.nan, "empty_sample_gate"
+    if not np.isfinite(nc_median):
+        return np.nan, "empty_negative_control_gate"
+    if nc_median <= 0.0:
+        return np.nan, "nonpositive_negative_control_median"
+    return float(sample_median / nc_median), "ok"
+
+
+def _igg_median_ratio_rows(
+    *,
+    file_records: list[dict[str, Any]],
+    ground_truth_df: pd.DataFrame,
+    experiment: str,
+    dataset: str,
+    algorithm: str,
+    algorithm_params: dict[str, Any],
+    panel: Panel,
+    event_source: str,
+) -> list[dict[str, Any]]:
+    """Untransformed FITC-A median ratios per file, lineage gate, and center.
+
+    Ground-truth masks come from the manual CD3+/CD19+ gates. Predicted masks
+    come from the automated cluster classification, including the negative
+    control itself. NC denominators are pooled over all NC files/events for
+    each method and cell type, never mixed across experiments or centers.
+    """
+    gate_cols = {
+        "T_cells": _gt_gate_column(ground_truth_df, CD3_GATE_CSV, dataset),
+        "B_cells": _gt_gate_column(ground_truth_df, CD19_GATE_CSV, dataset),
+    }
+    pred_keys = {"T_cells": "mask_t_cells", "B_cells": "mask_b_cells"}
+    staged: list[dict[str, Any]] = []
+    nc_values: dict[tuple[str, str], list[np.ndarray]] = {
+        (cell_type, source): []
+        for cell_type in gate_cols for source in ("ground_truth", "predicted")
+    }
+    has_nc = False
+
+    for rec in file_records:
+        sample = rec["sample"]
+        role = str(sample.role).strip()
+        is_nc = role.upper() in {"NC", "NEGATIVE", "NEGATIVE_CONTROL", "NEGATIVE CONTROL"}
+        has_nc |= is_nc
+        file_name = sample.name
+        gt_df = ground_truth_df.loc[ground_truth_df["file_name"] == file_name]
+        if gt_df.empty:
+            raise ValueError(f"Missing manual event gates: {dataset}/{experiment}/{file_name}")
+
+        events = np.asarray(rec["events"])
+        channel_index = int(rec["fcs"].get_channel_index(panel.igg))
+        igg = np.asarray(events[:, channel_index], dtype=float)
+        if gt_df.shape[0] != len(igg):
+            raise ValueError(
+                f"Event alignment mismatch: {dataset}/{experiment}/{file_name}: "
+                f"manual={len(gt_df)}, FCS={len(igg)}"
+            )
+        finite_igg = np.isfinite(igg)
+        for cell_type, gt_col in gate_cols.items():
+            gt_mask = gt_df[gt_col].astype(bool).to_numpy()
+            pred_mask = np.asarray(rec[pred_keys[cell_type]], dtype=bool)
+            if pred_mask.shape != gt_mask.shape:
+                raise ValueError(f"Predicted mask length mismatch: {file_name}/{cell_type}")
+            entry = {
+                "dataset": dataset, "center": dataset,
+                "experiment": experiment, "sample": file_name,
+                "file_name": file_name, "role": role, "cell_type": cell_type,
+                "algorithm": algorithm,
+                "algorithm_params_json": json.dumps(algorithm_params, sort_keys=True),
+                "igg_channel": panel.igg, "igg_scale": "untransformed",
+                "igg_event_source": event_source,
+            }
+            for source, mask in (("ground_truth", gt_mask), ("predicted", pred_mask)):
+                vals = igg[mask & finite_igg]
+                entry[f"n_events_{source}"] = int(mask.sum())
+                entry[f"n_finite_igg_{source}"] = int(len(vals))
+                entry[f"igg_median_{source}"] = _median_finite(vals)
+                if is_nc and len(vals):
+                    nc_values[(cell_type, source)].append(vals)
+            staged.append(entry)
+
+    if not has_nc:
+        raise ValueError(
+            f"No negative control (role=NC) for {dataset}/{experiment}; "
+            "cannot compute IgG median ratios"
+        )
+
+    nc_medians: dict[tuple[str, str], float] = {}
+    nc_counts: dict[tuple[str, str], int] = {}
+    for key, arrays in nc_values.items():
+        nc_counts[key] = sum(len(v) for v in arrays)
+        nc_medians[key] = _median_finite(np.concatenate(arrays)) if arrays else np.nan
+
+    for entry in staged:
+        cell_type = entry["cell_type"]
+        for source in ("ground_truth", "predicted"):
+            key = (cell_type, source)
+            ref = nc_medians[key]
+            ratio, status = _safe_median_ratio(entry[f"igg_median_{source}"], ref)
+            entry[f"nc_igg_median_{source}"] = ref
+            entry[f"nc_n_finite_igg_{source}"] = nc_counts[key]
+            entry[f"igg_median_ratio_{source}"] = ratio
+            entry[f"ratio_status_{source}"] = status
+    return staged
+
+
 def _compute_cluster_metrics(
     *,
     file_records: list[dict[str, Any]],
@@ -454,7 +571,7 @@ def _compute_cluster_metrics(
     marker_thresholds: dict[str, Any],
     dataset: str = "Ulm",
     panel: Optional[Panel] = None,
-) -> tuple[list[dict[str, Any]], dict[str, float], dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, float], dict[str, Any], list[dict[str, Any]]]:
     panel = panel if panel is not None else PANEL_ULM
     gt_t_cells = _gt_gate_column(ground_truth_df, CD3_GATE_CSV, dataset)
     gt_b_cells = _gt_gate_column(ground_truth_df, CD19_GATE_CSV, dataset)
@@ -510,6 +627,10 @@ def _compute_cluster_metrics(
         for rec in file_records:
             file_name = rec["sample"].name
             mask_lymph = np.asarray(rec["mask_lymph"], dtype=bool)
+            # Every FCS file, including NC and an empty lymphocyte gate,
+            # participates in the IgG ratio table.
+            rec["mask_t_cells"] = np.zeros(mask_lymph.shape, dtype=bool)
+            rec["mask_b_cells"] = np.zeros(mask_lymph.shape, dtype=bool)
             if not np.any(mask_lymph):
                 continue
 
@@ -531,6 +652,9 @@ def _compute_cluster_metrics(
                 marker_names=marker_names,
             )
 
+            rec["mask_t_cells"] = np.asarray(pred.mask_by_marker["CD3 PerCP-A"], dtype=bool)
+            rec["mask_b_cells"] = np.asarray(pred.mask_by_marker["CD19 APC-Cy7-A"], dtype=bool)
+
             metric_rows.append(
                 _build_metric_row(
                     experiment=experiment,
@@ -540,7 +664,7 @@ def _compute_cluster_metrics(
                     gate_name="t_cells",
                     gate_column=gt_t_cells,
                     gt_df=gt_df,
-                    comp_vector=np.asarray(pred.mask_by_marker["CD3 PerCP-A"], dtype=bool),
+                    comp_vector=rec["mask_t_cells"],
                 )
             )
             metric_rows.append(
@@ -552,12 +676,23 @@ def _compute_cluster_metrics(
                     gate_name="b_cells",
                     gate_column=gt_b_cells,
                     gt_df=gt_df,
-                    comp_vector=np.asarray(pred.mask_by_marker["CD19 APC-Cy7-A"], dtype=bool),
+                    comp_vector=rec["mask_b_cells"],
                 )
             )
     stage_times["predict_runtime_s"] = payload["runtime_s"]
 
-    return metric_rows, stage_times, stage_info
+    # Store continuous IgG median ratios; no center-specific cutoff is applied.
+    igg_rows = _igg_median_ratio_rows(
+        file_records=file_records,
+        ground_truth_df=ground_truth_df,
+        experiment=experiment,
+        dataset=dataset,
+        algorithm=algorithm,
+        algorithm_params=algorithm_params,
+        panel=panel,
+        event_source=config.qc.event_source,
+    )
+    return metric_rows, stage_times, stage_info, igg_rows
 
 
 def run_single_flow_validation(
@@ -567,7 +702,8 @@ def run_single_flow_validation(
     algorithm: str,
     algorithm_params: dict[str, Any],
     dataset: str = "Ulm",
-) -> tuple[pd.DataFrame, dict[str, Any]]:
+    return_igg_ratios: bool = False,
+) -> tuple[pd.DataFrame, dict[str, Any]] | tuple[pd.DataFrame, dict[str, Any], pd.DataFrame]:
     panel = PANEL_FFM if dataset == "Frankfurt" else PANEL_ULM
     monitor = MemoryMonitor()
     overall_t0 = time.perf_counter()
@@ -590,7 +726,7 @@ def run_single_flow_validation(
         panel=panel,
     )
 
-    cluster_metric_rows, cluster_stage_times, cluster_stage_info = _compute_cluster_metrics(
+    cluster_metric_rows, cluster_stage_times, cluster_stage_info, igg_rows = _compute_cluster_metrics(
         file_records=file_records,
         ground_truth_df=ground_truth_df,
         experiment=experiment,
@@ -622,6 +758,8 @@ def run_single_flow_validation(
     del file_records
     gc.collect()
 
+    if return_igg_ratios:
+        return metrics_df, run_info, pd.DataFrame(igg_rows)
     return metrics_df, run_info
 
 
@@ -667,6 +805,7 @@ def run_flow_validation(
         center_runs.append(("Frankfurt", frankfurt_data_dir, frankfurt_experiments))
 
     all_metric_dfs: list[pd.DataFrame] = []
+    all_igg_dfs: list[pd.DataFrame] = []
     run_infos: list[dict[str, Any]] = []
 
     for sweep in _iter_sweep_configs(base_config):
@@ -680,14 +819,16 @@ def run_flow_validation(
                     f"[flow-validation] dataset={dataset} experiment={experiment} "
                     f"algorithm={algorithm} params={algorithm_params}"
                 )
-                center_metrics_df, run_info = run_single_flow_validation(
+                center_metrics_df, run_info, center_igg_df = run_single_flow_validation(
                     data_dir=center_data_dir,
                     experiment=experiment,
                     config=config,
                     algorithm=algorithm,
                     algorithm_params=algorithm_params,
                     dataset=dataset,
+                    return_igg_ratios=True,
                 )
+                all_igg_dfs.append(center_igg_df)
                 all_metric_dfs.append(center_metrics_df)
                 run_infos.append(run_info)
 
@@ -747,6 +888,8 @@ def run_flow_validation(
         metrics_df.to_csv(os.path.join(output_dir, "flow_validation_metrics_long.csv"), index=False)
         summary_df.to_csv(os.path.join(output_dir, "flow_validation_summary.csv"), index=False)
         runs_df.to_csv(os.path.join(output_dir, "flow_validation_runs.csv"), index=False)
+        igg_df = pd.concat(all_igg_dfs, ignore_index=True) if all_igg_dfs else pd.DataFrame()
+        igg_df.to_csv(os.path.join(output_dir, "flow_validation_igg_median_ratios.csv"), index=False)
 
     return metrics_df, summary_df, runs_df
 
