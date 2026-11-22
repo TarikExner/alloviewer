@@ -1,4 +1,5 @@
 import os
+import warnings
 from typing import Any, Optional
 
 import numpy as np
@@ -11,6 +12,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec, SubplotSpec
 from matplotlib.ticker import FuncFormatter, MaxNLocator
+from sklearn.metrics import confusion_matrix
 
 from alloviewer.flow_cytometry.fcs_file import FCSFile
 from alloviewer.flow_cytometry.gating.clusterers import default_clusterer_factory
@@ -26,6 +28,17 @@ from alloviewer.dev.validation.flow_validation import (
 
 from . import figure_config as cfg
 from . import figure_utils as utils
+
+
+# Figure 5C: IgG median / NC median positivity thresholds.
+IGG_RATIO_CUTOFFS: dict[str, dict[str, float]] = {
+    "Ulm": {"T_cells": 3.5, "B_cells": 3.8},
+    "Frankfurt": {"T_cells": 3.5, "B_cells": 3.5},
+}
+
+# Optional single-sample overrides: (center, experiment, FCS filename, cell_type).
+# Example: ("Ulm", "val_exp_1", "FCS_000001.fcs", "T_cells"): 4.0
+IGG_RATIO_SAMPLE_CUTOFFS: dict[tuple[str, str, str, str], float] = {}
 
 
 EDGE_GATE_CSV = "root/edge_exclusion"
@@ -187,6 +200,115 @@ def _prepare_panel_c_data(
     )
 
     return plot_df
+
+
+def _prepare_panel_c_igg_decisions(
+    igg_df: pd.DataFrame,
+    summary_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Apply editable IgG median-ratio cutoffs to the selected model only.
+
+    The reference is the manual-gate median ratio, not a separate clinical
+    diagnosis. Each (center, experiment, sample, cell type) contributes at most
+    one observation. Controls are excluded from the decision matrix.
+    """
+    required = {
+        "dataset", "experiment", "sample", "role", "cell_type",
+        "algorithm", "algorithm_params_json",
+        "igg_median_ratio_ground_truth", "igg_median_ratio_predicted",
+    }
+    missing = required - set(igg_df.columns)
+    if missing:
+        raise ValueError(f"IgG ratio CSV is missing columns: {sorted(missing)}")
+
+    best = _select_best_setting_overall_from_summary(summary_df)
+    selected = igg_df.merge(
+        best[["algorithm", "algorithm_params_json"]],
+        on=["algorithm", "algorithm_params_json"],
+        how="inner", validate="many_to_one",
+    ).copy()
+    if selected.empty:
+        raise ValueError("No IgG ratios for the clustering setting selected in panel C")
+
+    # Remove controls, but preserve all patient/sample rows, including missing
+    # ratios, for a transparent record of exclusions.
+    role = selected["role"].fillna("").astype(str).str.strip().str.upper()
+    role = role.str.replace(r"[\s_-]+", "", regex=True)
+    control_roles = {"NC", "PC", "NEGATIVE", "POSITIVE", "NEGATIVECONTROL", "POSITIVECONTROL"}
+    selected = selected.loc[~role.isin(control_roles)].copy()
+    if selected.empty:
+        raise ValueError("No patient/sample rows remain after removing NC/PC controls")
+    if selected["role"].isna().any():
+        raise ValueError("IgG ratios contain rows with an unspecified sample role")
+
+    key_cols = ["dataset", "experiment", "sample", "cell_type"]
+    duplicated = selected.duplicated(key_cols, keep=False)
+    if duplicated.any():
+        examples = selected.loc[duplicated, key_cols].head(6).to_dict("records")
+        raise ValueError(f"Repeated sample/cell-type rows in the selected setting: {examples}")
+
+    def cutoff_for(row: pd.Series) -> float:
+        center, experiment, sample, cell_type = (
+            str(row["dataset"]), str(row["experiment"]),
+            str(row["sample"]), str(row["cell_type"]),
+        )
+        override_key = (center, experiment, sample, cell_type)
+        if override_key in IGG_RATIO_SAMPLE_CUTOFFS:
+            cutoff = IGG_RATIO_SAMPLE_CUTOFFS[override_key]
+        else:
+            try:
+                cutoff = IGG_RATIO_CUTOFFS[center][cell_type]
+            except KeyError as exc:
+                raise ValueError(f"No IgG cutoff configured for {center}/{cell_type}") from exc
+        cutoff = float(cutoff)
+        if not np.isfinite(cutoff) or cutoff <= 0:
+            raise ValueError(f"Invalid IgG ratio cutoff {cutoff} for {override_key}")
+        return cutoff
+
+    selected["decision_cutoff"] = selected.apply(cutoff_for, axis=1)
+    gt = pd.to_numeric(selected["igg_median_ratio_ground_truth"], errors="coerce")
+    predicted = pd.to_numeric(selected["igg_median_ratio_predicted"], errors="coerce")
+    selected["valid_ratio_pair"] = np.isfinite(gt) & np.isfinite(predicted)
+    selected["reference_positive"] = pd.Series(pd.NA, index=selected.index, dtype="boolean")
+    selected["automated_positive"] = pd.Series(pd.NA, index=selected.index, dtype="boolean")
+    valid = selected["valid_ratio_pair"]
+    selected.loc[valid, "reference_positive"] = (gt.loc[valid] >= selected.loc[valid, "decision_cutoff"]).to_numpy()
+    selected.loc[valid, "automated_positive"] = (
+        predicted.loc[valid] >= selected.loc[valid, "decision_cutoff"]
+    ).to_numpy()
+    selected["decision_status"] = np.where(valid, "ok", "missing_or_nonfinite_ratio")
+
+    records = []
+    for center in ("Ulm", "Frankfurt"):
+        for cell_type in ("T_cells", "B_cells"):
+            group = selected.loc[
+                (selected["dataset"] == center) & (selected["cell_type"] == cell_type)
+            ]
+            usable = group.loc[group["valid_ratio_pair"]]
+            cm = confusion_matrix(
+                usable["reference_positive"].astype(bool).to_numpy(),
+                usable["automated_positive"].astype(bool).to_numpy(),
+                labels=[False, True],
+            )
+            tn, fp, fn, tp = map(int, cm.ravel())
+            cutoffs = group["decision_cutoff"].dropna().unique()
+            cutoff_text = (f"{cutoffs[0]:g}" if len(cutoffs) == 1 else
+                           "variable" if len(cutoffs) > 1 else "n/a")
+            records.append({
+                "dataset": center, "cell_type": cell_type,
+                "algorithm": str(best.iloc[0]["algorithm"]),
+                "algorithm_params_json": str(best.iloc[0]["algorithm_params_json"]),
+                "cutoff": cutoff_text,
+                "n_samples_total": len(group),
+                "n_samples_evaluable": len(usable),
+                "n_samples_missing_ratio": len(group) - len(usable),
+                "tn": tn, "fp": fp, "fn": fn, "tp": tp,
+                "sensitivity": tp / (tp + fn) if tp + fn else np.nan,
+                "specificity": tn / (tn + fp) if tn + fp else np.nan,
+            })
+            if group.empty:
+                warnings.warn(f"No IgG ratio rows for {center}/{cell_type}")
+    return selected, pd.DataFrame.from_records(records)
 
 
 def _prepare_panel_b_data(
@@ -695,20 +817,20 @@ def _generate_subfigure_c(
     gs: SubplotSpec,
     subfigure_label: str,
     plot_df: pd.DataFrame,
+    confusion_df: pd.DataFrame,
 ) -> None:
     ax.axis("off")
     utils.figure_label(ax, subfigure_label, x=0)
 
-    # Only Ulm has singlet gating. Frankfurt follows edge exclusion
-    # directly with lymphocyte gating (no FSC-H channel).
+    # Keep the original center-wise gating F1 plots in columns 1 and 2.
+    # The right-hand column contains four 2x2 decision matrices, as in sketch.
     gate_orders = {
         "Ulm": ["Edge exclusion", "Singlets", "Lymphocytes", "T cells", "B cells"],
         "Frankfurt": ["Edge exclusion", "Lymphocytes", "T cells", "B cells"],
     }
-
-    # Retain the selected pipeline and original box/strip plot styling.
-    # Split only this performance panel by validation center.
-    fig_sgs = gs.subgridspec(1, 2, wspace=0.12)
+    fig_sgs = gs.subgridspec(
+        1, 3, width_ratios=[1.05, 1.05, 1.8], wspace=0.24,
+    )
     centers = [("Ulm", "Center 1"), ("Frankfurt", "Center 2")]
     left_ax = None
 
@@ -730,28 +852,14 @@ def _generate_subfigure_c(
             sub_ax = fig.add_subplot(fig_sgs[0, i], sharey=left_ax)
 
         sns.boxplot(
-            data=center_df,
-            x="gate_display",
-            y="f1",
-            order=gate_order,
-            ax=sub_ax,
-            showcaps=True,
-            fliersize=0,
-            width=0.65,
+            data=center_df, x="gate_display", y="f1", order=gate_order,
+            ax=sub_ax, showcaps=True, fliersize=0, width=0.65,
             boxprops=dict(facecolor="white"),
         )
-
         sns.stripplot(
-            data=center_df,
-            x="gate_display",
-            y="f1",
-            order=gate_order,
-            ax=sub_ax,
-            size=3,
-            linewidth=0.5,
-            edgecolor="black",
+            data=center_df, x="gate_display", y="f1", order=gate_order,
+            ax=sub_ax, size=3, linewidth=0.5, edgecolor="black",
         )
-
         sub_ax.set_xlabel("")
         sub_ax.set_ylabel(
             "F1 score across files" if i == 0 else "",
@@ -759,24 +867,71 @@ def _generate_subfigure_c(
         )
         sub_ax.set_ylim(0.2, 1.02)
         sub_ax.set_title(title, fontsize=cfg.TITLE_SIZE)
-        # Explain the missing singlet stage without implying a score of zero.
         if dataset == "Frankfurt":
             sub_ax.text(
                 0.99, 0.03, "Singlet gating not performed",
-                transform=sub_ax.transAxes,
-                ha="right", va="bottom",
-                fontsize=max(cfg.AXIS_LABEL_SIZE - 1, 6),
-                color="0.4",
+                transform=sub_ax.transAxes, ha="right", va="bottom",
+                fontsize=max(cfg.AXIS_LABEL_SIZE - 1, 6), color="0.4",
             )
-        sub_ax.tick_params(
-            axis="both",
-            which="major",
-            labelsize=cfg.AXIS_LABEL_SIZE,
-        )
-        # Narrower axes need angled category labels to avoid overlap.
+        sub_ax.tick_params(axis="both", which="major", labelsize=cfg.AXIS_LABEL_SIZE)
         sub_ax.tick_params(axis="x", labelrotation=35)
         for tick in sub_ax.get_xticklabels():
             tick.set_ha("right")
+
+    # Third column: rows are centers, columns are T/B cells. Each inset is
+    # a 2x2 confusion matrix. Insets are excluded from constrained layout,
+    # preventing Matplotlib from collapsing them at journal column widths.
+    matrix_parent = fig.add_subplot(fig_sgs[0, 2])
+    matrix_parent.axis("off")
+    matrix_parent.set_xlim(0, 1)
+    matrix_parent.set_ylim(0, 1)
+    for col, name in enumerate(("T cells", "B cells")):
+        matrix_parent.text(
+            (0.16, 0.59)[col] + 0.18, 0.99, name,
+            ha="center", va="top", fontsize=cfg.TITLE_SIZE,
+            transform=matrix_parent.transAxes,
+        )
+    for row, (dataset, title) in enumerate(centers):
+        y = (0.58, 0.10)[row]
+        matrix_parent.text(
+            0.025, y + 0.17, title, rotation=90, ha="center", va="center",
+            fontsize=cfg.TITLE_SIZE, transform=matrix_parent.transAxes,
+        )
+        for col, cell_type in enumerate(("T_cells", "B_cells")):
+            values = confusion_df.loc[
+                (confusion_df["dataset"] == dataset)
+                & (confusion_df["cell_type"] == cell_type)
+            ]
+            if len(values) != 1:
+                raise ValueError(f"Expected one matrix for {dataset}/{cell_type}; got {len(values)}")
+            summary = values.iloc[0]
+            matrix = np.array([
+                [int(summary["tn"]), int(summary["fp"])],
+                [int(summary["fn"]), int(summary["tp"])],
+            ])
+            heat_ax = matrix_parent.inset_axes([(0.16, 0.59)[col], y, 0.36, 0.34])
+            heat_ax.set_in_layout(False)
+            sns.heatmap(
+                matrix, ax=heat_ax, cmap="Blues", cbar=False,
+                annot=np.array([
+                    [f"TN\n{matrix[0, 0]}", f"FP\n{matrix[0, 1]}"],
+                    [f"FN\n{matrix[1, 0]}", f"TP\n{matrix[1, 1]}"],
+                ]),
+                fmt="", linewidths=0.7, linecolor="black", square=False,
+                annot_kws={"fontsize": max(cfg.AXIS_LABEL_SIZE - 1, 6)},
+            )
+            heat_ax.set_xticklabels(["−", "+"], rotation=0)
+            heat_ax.set_yticklabels(["−", "+"] if col == 0 else ["", ""], rotation=0)
+            heat_ax.tick_params(axis="both", labelsize=max(cfg.AXIS_LABEL_SIZE - 1, 6), length=0)
+            heat_ax.set_xlabel("Automated" if row == 1 else "", fontsize=max(cfg.AXIS_LABEL_SIZE - 1, 6), labelpad=5)
+            heat_ax.set_ylabel("Manual" if col == 0 else "", fontsize=max(cfg.AXIS_LABEL_SIZE - 1, 6), labelpad=0)
+            cutoff = summary["cutoff"]
+            n = int(summary["n_samples_evaluable"])
+            n_missing = int(summary["n_samples_missing_ratio"])
+            heat_ax.set_title(
+                f"≥{cutoff}, n={n}" + (f" ({n_missing} missing)" if n_missing else ""),
+                fontsize=max(cfg.AXIS_LABEL_SIZE - 1, 6), pad=2,
+            )
 
 
 def _generate_main_figure(
@@ -786,17 +941,18 @@ def _generate_main_figure(
     panel_a_image: np.ndarray,
     panel_b_plot_data: dict[str, Any],
     panel_c_plot_df: pd.DataFrame,
+    panel_c_confusion_df: pd.DataFrame,
 ) -> None:
     fig = plt.figure(
         layout="constrained",
-        figsize=(cfg.FIGURE_WIDTH_FULL, cfg.FIGURE_HEIGHT_FULL),
+        figsize=(cfg.FIGURE_WIDTH_FULL, cfg.FIGURE_HEIGHT_FULL * 1.20),
     )
 
     gs = GridSpec(
         ncols=1,
         nrows=3,
         figure=fig,
-        height_ratios=[1.1, 1.6, 0.9],
+        height_ratios=[1.1, 1.6, 1.45],
     )
 
     a_coords = gs[0, 0]
@@ -829,6 +985,7 @@ def _generate_main_figure(
         gs=c_coords,
         subfigure_label="C",
         plot_df=panel_c_plot_df,
+        confusion_df=panel_c_confusion_df,
     )
 
     os.makedirs(figure_output_dir, exist_ok=True)
@@ -865,11 +1022,13 @@ def figure_5_generation(
 
     summary_path = os.path.join(validation_results_dir, "flow_validation_summary.csv")
     metrics_path = os.path.join(validation_results_dir, "flow_validation_metrics_long.csv")
+    igg_path = os.path.join(validation_results_dir, "flow_validation_igg_median_ratios.csv")
 
     panel_a_image = _prepare_panel_a_image(panel_a_image_path)
 
     summary_df = pd.read_csv(summary_path)
     metrics_df = pd.read_csv(metrics_path)
+    igg_df = pd.read_csv(igg_path)
 
     panel_b_plot_data = _prepare_panel_b_data(
         data_dir=flow_data_dir,
@@ -884,10 +1043,20 @@ def figure_5_generation(
         summary_df=summary_df,
     )
 
+    decision_df, confusion_df = _prepare_panel_c_igg_decisions(
+        igg_df=igg_df,
+        summary_df=summary_df,
+    )
+    os.makedirs(figure_output_dir, exist_ok=True)
+    decision_df.to_csv(os.path.join(figure_output_dir, "Figure_5_ratio_decisions.csv"), index=False)
+    confusion_df.to_csv(os.path.join(figure_output_dir, "Figure_5_confusion_counts.csv"), index=False)
+
     _generate_main_figure(
         figure_output_dir=figure_output_dir,
         figure_name="Figure_5",
         panel_a_image=panel_a_image,
         panel_b_plot_data=panel_b_plot_data,
         panel_c_plot_df=panel_c_plot_df,
+        panel_c_confusion_df=confusion_df,
     )
+
