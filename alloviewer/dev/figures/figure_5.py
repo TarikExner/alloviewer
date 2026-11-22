@@ -43,8 +43,8 @@ FIGURE_5_RESOLUTION_PARAMETER = FIGURE_5_CLUSTERER.resolution_parameter
 # Figure 5C: IgG median / NC median positivity thresholds.
 # Adjust independently for each center and cell population.
 IGG_RATIO_CUTOFFS: dict[str, dict[str, float]] = {
-    "Ulm": {"T_cells": 3.5, "B_cells": 3.5},
-    "Frankfurt": {"T_cells": 3.5, "B_cells": 3.5},
+    "Ulm": {"T_cells": 3.5, "B_cells": 3.8},
+    "Frankfurt": {"T_cells": 3.5, "B_cells": 3.8},
 }
 
 # Optional single-sample overrides: (center, experiment, FCS filename, cell_type).
@@ -848,7 +848,7 @@ def _generate_subfigure_c(
         "Frankfurt": ["Edge exclusion", "Lymphocytes", "T cells", "B cells"],
     }
     fig_sgs = gs.subgridspec(
-        1, 3, width_ratios=[1.05, 1.05, 1.8], wspace=0.24,
+        1, 3, width_ratios=[1, 1, 2], wspace=0.05,
     )
     centers = [("Ulm", "Center 1"), ("Frankfurt", "Center 2")]
     left_ax = None
