@@ -1,3 +1,4 @@
+import json
 import os
 import warnings
 from typing import Any, Optional
@@ -30,9 +31,19 @@ from . import figure_config as cfg
 from . import figure_utils as utils
 
 
+# Use the same clustering algorithm and parameters as the production pipeline.
+# This reads GatingConfig defaults rather than selecting the best sweep result.
+FIGURE_5_CLUSTERER = GatingConfig().clusterer
+if not isinstance(FIGURE_5_CLUSTERER, PARCConfig):
+    raise TypeError("Figure 5 currently expects the default clusterer to be PARC")
+FIGURE_5_ALGORITHM = FIGURE_5_CLUSTERER.algorithm
+FIGURE_5_RESOLUTION_PARAMETER = FIGURE_5_CLUSTERER.resolution_parameter
+
+
 # Figure 5C: IgG median / NC median positivity thresholds.
+# Adjust independently for each center and cell population.
 IGG_RATIO_CUTOFFS: dict[str, dict[str, float]] = {
-    "Ulm": {"T_cells": 3.5, "B_cells": 3.8},
+    "Ulm": {"T_cells": 3.5, "B_cells": 3.5},
     "Frankfurt": {"T_cells": 3.5, "B_cells": 3.5},
 }
 
@@ -107,33 +118,36 @@ def _prepare_panel_a_image(panel_a_image_path: str) -> np.ndarray:
     return np.asarray(Image.open(panel_a_image_path))
 
 
-def _select_best_setting_overall_from_summary(summary_df: pd.DataFrame) -> pd.DataFrame:
-    required_cols = {
-        "algorithm",
-        "algorithm_params_json",
-        "gate",
-        "mean_f1",
-    }
-    missing = required_cols - set(summary_df.columns)
+def _select_default_setting_from_summary(summary_df: pd.DataFrame) -> pd.DataFrame:
+    """Find the production PARC default in the saved parameter sweep.
+
+    Do not select the setting with the highest validation F1: Figure 5 should
+    report results for the configuration actually used by AlloViewer.
+    """
+    required = {"algorithm", "algorithm_params_json"}
+    missing = required - set(summary_df.columns)
     if missing:
-        raise ValueError(f"summary_df is missing required columns: {missing}")
+        raise ValueError(f"summary_df is missing required columns: {sorted(missing)}")
 
-    focus_gates = ["lymphocytes", "t_cells", "b_cells"]
+    settings = summary_df[["algorithm", "algorithm_params_json"]].drop_duplicates()
 
-    ranking_df = summary_df.loc[summary_df["gate"].isin(focus_gates)].copy()
-    if ranking_df.empty:
-        raise ValueError(
-            "No rows found for focus gates lymphocytes/t_cells/b_cells in summary_df."
+    def is_default(row: pd.Series) -> bool:
+        if str(row["algorithm"]).lower() != FIGURE_5_ALGORITHM:
+            return False
+        params = json.loads(row["algorithm_params_json"])
+        return float(params.get("resolution_parameter", float("nan"))) == float(
+            FIGURE_5_RESOLUTION_PARAMETER
         )
 
-    ranking_df = (
-        ranking_df
-        .groupby(["algorithm", "algorithm_params_json"], as_index=False)
-        .agg(score=("mean_f1", "mean"))
-        .sort_values("score", ascending=False)
-    )
-
-    return ranking_df.iloc[[0]].copy()
+    selected = settings.loc[settings.apply(is_default, axis=1)]
+    if len(selected) != 1:
+        raise ValueError(
+            "Expected exactly one saved configuration for production default "
+            f"{FIGURE_5_ALGORITHM} (resolution_parameter="
+            f"{FIGURE_5_RESOLUTION_PARAMETER}), found {len(selected)}. "
+            "Check flow_validation_summary.csv and the parameter sweep."
+        )
+    return selected.reset_index(drop=True)
 
 
 def _prepare_panel_c_data(
@@ -153,7 +167,7 @@ def _prepare_panel_c_data(
     if missing_metrics:
         raise ValueError(f"metrics_df is missing required columns: {missing_metrics}")
 
-    best_df = _select_best_setting_overall_from_summary(summary_df)
+    default_setting = _select_default_setting_from_summary(summary_df)
 
     gate_display_map = {
         "edge_exclusion": "Edge exclusion",
@@ -172,14 +186,14 @@ def _prepare_panel_c_data(
     ]
 
     plot_df = metrics_df.merge(
-        best_df[["algorithm", "algorithm_params_json"]],
+        default_setting[["algorithm", "algorithm_params_json"]],
         on=["algorithm", "algorithm_params_json"],
         how="inner",
     ).copy()
 
     if plot_df.empty:
         raise ValueError(
-            "Panel C data is empty after selecting the best algorithm setting."
+            "Panel C has no data for the default production PARC configuration."
         )
 
     # Frankfurt has no FSC-H and therefore no singlet gate.
@@ -221,14 +235,14 @@ def _prepare_panel_c_igg_decisions(
     if missing:
         raise ValueError(f"IgG ratio CSV is missing columns: {sorted(missing)}")
 
-    best = _select_best_setting_overall_from_summary(summary_df)
+    default_setting = _select_default_setting_from_summary(summary_df)
     selected = igg_df.merge(
-        best[["algorithm", "algorithm_params_json"]],
+        default_setting[["algorithm", "algorithm_params_json"]],
         on=["algorithm", "algorithm_params_json"],
         how="inner", validate="many_to_one",
     ).copy()
     if selected.empty:
-        raise ValueError("No IgG ratios for the clustering setting selected in panel C")
+        raise ValueError("No IgG ratios for the default production PARC configuration")
 
     # Remove controls, but preserve all patient/sample rows, including missing
     # ratios, for a transparent record of exclusions.
@@ -285,19 +299,24 @@ def _prepare_panel_c_igg_decisions(
                 (selected["dataset"] == center) & (selected["cell_type"] == cell_type)
             ]
             usable = group.loc[group["valid_ratio_pair"]]
-            cm = confusion_matrix(
-                usable["reference_positive"].astype(bool).to_numpy(),
-                usable["automated_positive"].astype(bool).to_numpy(),
-                labels=[False, True],
-            )
+            if usable.empty:
+                # sklearn rejects an empty input; retain zero-count matrices
+                # and report the lack of evaluable samples explicitly.
+                cm = np.zeros((2, 2), dtype=int)
+            else:
+                cm = confusion_matrix(
+                    usable["reference_positive"].astype(bool).to_numpy(),
+                    usable["automated_positive"].astype(bool).to_numpy(),
+                    labels=[False, True],
+                )
             tn, fp, fn, tp = map(int, cm.ravel())
             cutoffs = group["decision_cutoff"].dropna().unique()
             cutoff_text = (f"{cutoffs[0]:g}" if len(cutoffs) == 1 else
                            "variable" if len(cutoffs) > 1 else "n/a")
             records.append({
                 "dataset": center, "cell_type": cell_type,
-                "algorithm": str(best.iloc[0]["algorithm"]),
-                "algorithm_params_json": str(best.iloc[0]["algorithm_params_json"]),
+                "algorithm": str(default_setting.iloc[0]["algorithm"]),
+                "algorithm_params_json": str(default_setting.iloc[0]["algorithm_params_json"]),
                 "cutoff": cutoff_text,
                 "n_samples_total": len(group),
                 "n_samples_evaluable": len(usable),
@@ -317,7 +336,7 @@ def _prepare_panel_b_data(
     experiment: str,
     sample_name: str,
     algorithm: str = "parc",
-    resolution_parameter: float = 4.0,
+    resolution_parameter: float = FIGURE_5_RESOLUTION_PARAMETER,
 ) -> dict[str, Any]:
     config = GatingConfig(
         clusterer=PARCConfig(resolution_parameter=resolution_parameter)
@@ -1017,8 +1036,8 @@ def figure_5_generation(
     panel_b_experiment = "val_exp_15"
     panel_b_sample_name = "FCS_000151.fcs"
 
-    panel_b_algorithm = "parc"
-    panel_b_resolution_parameter = 4.0
+    panel_b_algorithm = FIGURE_5_ALGORITHM
+    panel_b_resolution_parameter = FIGURE_5_RESOLUTION_PARAMETER
 
     summary_path = os.path.join(validation_results_dir, "flow_validation_summary.csv")
     metrics_path = os.path.join(validation_results_dir, "flow_validation_metrics_long.csv")
