@@ -876,7 +876,7 @@ def _plot_metric_boxstrip(
     )
     counts = df.groupby("algorithm").size()
     ax.set_xticks(np.arange(len(methods)))
-    ax.set_xticklabels([f"{m}\n(n={counts[m]:,})" for m in methods])
+    ax.set_xticklabels([f"{'CellPose-SAM' if m == 'Cellpose' else m}\n(n={counts[m]:,})" for m in methods])
     ax.set_xlabel("")
     ax.set_ylabel(ylabel, fontsize=cfg.AXIS_LABEL_SIZE)
     ax.set_title(title, fontsize=cfg.TITLE_SIZE)
@@ -1069,7 +1069,7 @@ def _generate_main_figure(
         paired = _paired_metric_frame(unet_on_human, PRIMARY_METRIC, ("UNet", "Cellpose"))
         _plot_metric_boxstrip(
             plot_ax, paired, PRIMARY_METRIC, ("UNet", "Cellpose"),
-            "UNet and CellPoseSAM performance\non human annotated real images", "Center F1 (4 px)",
+            "UNet and CellPose-SAM performance\non human annotated real images", "Center F1 (4 px)",
         )
 
     def generate_subfigure_e(
@@ -1085,7 +1085,7 @@ def _generate_main_figure(
         paired = _paired_metric_frame(imagej_on_sim, PRIMARY_METRIC, methods)
         _plot_metric_boxstrip(
             plot_ax, paired, PRIMARY_METRIC, methods,
-            "UNet comparison to CellPoseSAM on\nvariable simulated images", "Center F1 (4 px)",
+            "UNet comparison to CellPose-SAM on\nvariable simulated images", "Center F1 (4 px)",
         )
 
     def generate_subfigure_f(

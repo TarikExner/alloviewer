@@ -28,6 +28,14 @@ from alloviewer.dev.segmentation.image_simulation import (
     simulate_image, default_scene
 )
 import copy
+from pathlib import Path as _SupplementPath
+from typing import Any as _SupplementAny
+
+import numpy as _supp_np
+import pandas as _supp_pd
+
+
+SUPPLEMENT_METHODS = ("UNet", "Cellpose")
 
 SIMULATION_IMAGE_SIZE = 512
 SIMULATION_TILE_SIZE = 128
@@ -1778,4 +1786,358 @@ def get_score_frame(validation_results_dir):
     return df_filled
 
 
+
+def _supplement_level(metric_level: str) -> str:
+    if metric_level not in ("PER_IMAGE", "PER_TILE"):
+        raise ValueError("metric_level must be 'PER_IMAGE' or 'PER_TILE'")
+    return "image" if metric_level == "PER_IMAGE" else "tile"
+
+
+def _supplement_read_csv(path: str | _SupplementPath) -> _supp_pd.DataFrame:
+    path = _SupplementPath(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing comparison CSV: {path}")
+    frame = _supp_pd.read_csv(path, low_memory=False)
+    if frame.empty:
+        raise ValueError(f"Empty comparison CSV: {path}")
+    return frame
+
+
+def _supplement_require(frame: _supp_pd.DataFrame, columns, source: str) -> None:
+    missing = sorted(set(columns) - set(frame.columns))
+    if missing:
+        raise KeyError(f"{source}: missing required columns {missing}")
+
+
+def _supplement_numeric(frame: _supp_pd.DataFrame, metrics, source: str) -> _supp_pd.DataFrame:
+    _supplement_require(frame, metrics, source)
+    frame = frame.copy()
+    for key in metrics:
+        frame[key] = _supp_pd.to_numeric(frame[key], errors="coerce")
+        valid = frame[key].dropna()
+        if not _supp_np.isfinite(valid).all() or not valid.between(0, 1).all():
+            raise ValueError(f"{source}: {key} contains invalid values (expected [0, 1])")
+    return frame
+
+
+def _supplement_paired_metric(
+    frame: _supp_pd.DataFrame,
+    metric: str,
+    methods: tuple[str, ...] = SUPPLEMENT_METHODS,
+) -> _supp_pd.DataFrame:
+    """Retain the exact same source image/tile for the two methods."""
+    _supplement_require(frame, ["image_id", "algorithm", metric], "metric pairing")
+    selected = frame.loc[frame["algorithm"].isin(methods),
+                         ["image_id", "algorithm", metric]].copy()
+    if selected.duplicated(["image_id", "algorithm"]).any():
+        raise ValueError(f"Duplicate image/algorithm pairs for {metric}")
+    wide = selected.pivot(index="image_id", columns="algorithm", values=metric)
+    absent = set(methods) - set(wide.columns)
+    if absent:
+        raise ValueError(f"{metric}: methods absent from data: {sorted(absent)}")
+    wide = wide.dropna(subset=list(methods))
+    if wide.empty:
+        raise ValueError(f"{metric}: no finite matched observations")
+    return wide.loc[:, list(methods)].stack().rename(metric).reset_index()
+
+
+def plot_segmentation_supplement_metric(
+    ax,
+    frame: _supp_pd.DataFrame,
+    metric: str,
+    title: str,
+    *,
+    methods: tuple[str, ...] = SUPPLEMENT_METHODS,
+    max_strip_points: int | None = 400,
+) -> None:
+    """Shared white box/gray stripplot; full dataset for box, sample only for dots."""
+    import seaborn as _supp_sns
+    from alloviewer.dev.figures import figure_config as _supp_cfg
+    from alloviewer.dev.figures import figure_utils as _supp_utils
+
+    paired = _supplement_paired_metric(frame, metric, methods)
+    _supp_sns.boxplot(
+        data=paired, x="algorithm", y=metric, order=list(methods), ax=ax,
+        color="white", saturation=1, width=0.55, whis=(0, 100), showfliers=False,
+        boxprops={"facecolor": "white", "edgecolor": "black", "linewidth": 0.75},
+        whiskerprops={"color": "black", "linewidth": 0.65},
+        capprops={"color": "black", "linewidth": 0.65},
+        medianprops={"color": "black", "linewidth": 1.0},
+        zorder=2,
+    )
+    if max_strip_points is None:
+        dots = paired
+    else:
+        if max_strip_points < 1:
+            raise ValueError("max_strip_points must be >=1 or None")
+        dots = _supp_pd.concat([
+            block.sample(n=min(len(block), max_strip_points), random_state=187)
+            for _, block in paired.groupby("algorithm", sort=False)
+        ], ignore_index=True)
+    _supp_sns.stripplot(
+        data=dots, x="algorithm", y=metric, order=list(methods), ax=ax,
+        color="0.55", size=2.0, jitter=0.22, alpha=0.60,
+        linewidth=0.3, edgecolor="black", zorder=3,
+    )
+    counts = paired.groupby("algorithm").size()
+    ax.set_xticks(range(len(methods)))
+    ax.set_xticklabels([f"{method}\n(n={counts[method]:,})" for method in methods])
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.set_title(title, fontsize=_supp_cfg.TITLE_SIZE)
+    ax.set_ylim(-0.025, 1.025)
+    ax.set_yticks(_supp_np.linspace(0, 1, 6))
+    ax.grid(axis="y", color="0.86", linewidth=0.3, zorder=0)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    _supp_utils.adjust_fontsize_ticklabels(ax, _supp_cfg.AXIS_LABEL_SIZE)
+
+
+def load_figure_s7_real_metrics(
+    validation_results_dir: str,
+    *,
+    metrics: tuple[str, ...],
+    metric_level: str = "PER_IMAGE",
+    unet_size: str = "small",
+) -> _supp_pd.DataFrame:
+    """S7: real manual ROIs. Image rows pool annotated tiles, not full images.
+
+    Matching is on (source, annotator, tile), prior to image-level averaging.
+    This prevents different annotator sets for UNet and Cellpose.
+    """
+    scope = _supplement_level(metric_level)
+    path = _SupplementPath(validation_results_dir) / "manual_segmentation_comparison_v2.csv"
+    df = _supplement_read_csv(path)
+    _supplement_require(
+        df, ["level", "status", "source_image_key", "image_name", "human_annotator",
+             "method", *metrics], str(path),
+    )
+    df = df.loc[(df["level"] == scope) & (df["status"] == "ok")].copy()
+    if "unet_mode" in df.columns:
+        df = df.loc[df["unet_mode"].eq(unet_size)].copy()
+    df["algorithm"] = df["method"].replace({"AlloViewer_UNet": "UNet"})
+    df = df.loc[df["algorithm"].isin(SUPPLEMENT_METHODS)].copy()
+    df = _supplement_numeric(df, metrics, path.name)
+    if df.empty:
+        raise ValueError(f"No usable real-image {scope} rows in {path}")
+
+    keys = (["source_image_key", "human_annotator"] if scope == "image" else
+            ["source_image_key", "image_name", "human_annotator"])
+    if df.duplicated(keys + ["algorithm"]).any():
+        raise ValueError(f"Duplicate real-image annotation keys: {keys}")
+    matched = df.groupby(keys, dropna=False)["algorithm"].nunique()
+    matched_keys = matched[matched == len(SUPPLEMENT_METHODS)].index.to_frame(index=False)
+    df = df.merge(matched_keys, on=keys, how="inner", validate="many_to_one")
+    if df.empty:
+        raise ValueError("No common manual annotations between UNet and Cellpose")
+    if scope == "image":
+        # Each source image is represented once per method, averaging the *same*
+        # matched annotators. The source scores themselves pool annotated tiles.
+        df = df.groupby(["source_image_key", "algorithm"], as_index=False)[list(metrics)].mean()
+        df["image_id"] = df["source_image_key"].astype(str)
+    else:
+        df["image_id"] = (
+            df["source_image_key"].astype(str) + "|" +
+            df["image_name"].astype(str) + "|" +
+            df["human_annotator"].astype(str)
+        )
+    if df.duplicated(["image_id", "algorithm"]).any():
+        raise ValueError("Non-unique real-image observation identifiers")
+    print(f"S7 {metric_level}: {df['image_id'].nunique():,} annotated observations")
+    return df[["image_id", "algorithm", *metrics]].copy()
+
+
+def load_figure_s8_simulated_metrics(
+    validation_results_dir: str,
+    *,
+    metrics: tuple[str, ...],
+    metric_level: str = "PER_IMAGE",
+    unet_size: str = "small",
+    seg_method: str = "inst_seg",
+) -> tuple[_supp_pd.DataFrame, _supp_pd.DataFrame]:
+    """S8: comparable final-instance metrics on simulator-stored /inst GT."""
+    scope = _supplement_level(metric_level)
+    path = (_SupplementPath(validation_results_dir) /
+            f"testing_val_CPIJ_{unet_size}_{seg_method}.csv")
+    source = _supplement_read_csv(path)
+    _supplement_require(source,
+                        ["sample_idx", "tile_idx", "metric_level", "method", *metrics],
+                        str(path))
+    df = source.loc[source["metric_level"].astype(str).str.lower() == scope].copy()
+    if "unet_mode" in df.columns:
+        df = df.loc[df["unet_mode"].eq(unet_size)].copy()
+    df["algorithm"] = df["method"].replace({"AlloViewer_UNet": "UNet"})
+    df = df.loc[df["algorithm"].isin(SUPPLEMENT_METHODS)].copy()
+    df = _supplement_numeric(df, metrics, path.name)
+    if df.empty:
+        raise ValueError(f"No simulated UNet/Cellpose {scope} rows in {path}")
+    df["sample_idx"] = _supp_pd.to_numeric(df["sample_idx"], errors="raise").astype(int)
+    if scope == "tile":
+        df["tile_idx"] = _supp_pd.to_numeric(df["tile_idx"], errors="raise").astype(int)
+        df["image_id"] = df["sample_idx"].astype(str) + ":" + df["tile_idx"].astype(str)
+    else:
+        df["image_id"] = df["sample_idx"].astype(str)
+    if df.duplicated(["image_id", "algorithm"]).any():
+        raise ValueError("Duplicate simulated image/tile and algorithm keys")
+    print(f"S8 {metric_level}: {df['image_id'].nunique():,} simulator observations")
+    return df[["image_id", "algorithm", *metrics]].copy(), source
+
+
+def _supplement_single_setting(frame: _supp_pd.DataFrame, key: str):
+    if key not in frame.columns:
+        raise KeyError(f"CPIJ CSV does not record Cellpose setting {key!r}")
+    values = frame[key].dropna().unique().tolist()
+    if len(values) != 1:
+        raise ValueError(f"Need one recorded Cellpose setting for {key}: got {values}")
+    return values[0]
+
+
+def segment_image_cellpose(
+    img: _supp_np.ndarray,
+    *,
+    use_gpu: bool,
+    cellpose_model: str | None,
+    diameter: float,
+    min_size: int,
+    flow_threshold: float,
+    cellprob_threshold: float,
+    expected_version: str | None = None,
+) -> _supp_np.ndarray:
+    """Use the same Cellpose model/adapter as manual and simulated validation.
+
+    Input is RGB HWC float in [0,1]. Returns the instance-label map only.
+    """
+    from alloviewer.dev.validation.manual_segmentation_comparison import (
+        _make_cellpose, _predict_cellpose,
+    )
+    img = _supp_np.asarray(img, dtype=_supp_np.float32)
+    if img.ndim != 3 or img.shape[-1] != 3 or not _supp_np.isfinite(img).all():
+        raise ValueError("Cellpose needs finite RGB input [H,W,3]")
+    if img.min() < 0 or img.max() > 1:
+        raise ValueError("Cellpose input must be scaled to [0,1]")
+    model, major, version, _model_label = _make_cellpose(cellpose_model, use_gpu)
+    if expected_version is not None and version != str(expected_version):
+        raise RuntimeError(f"CPIJ used Cellpose {expected_version}, installed version is {version}")
+    masks = _predict_cellpose(
+        model, img, major=major, diameter=float(diameter), min_size=int(min_size),
+        flow_threshold=float(flow_threshold), cellprob_threshold=float(cellprob_threshold),
+    )
+    masks = _supp_np.asarray(masks, dtype=_supp_np.int32)
+    if masks.shape != img.shape[:2] or (masks < 0).any():
+        raise ValueError("Cellpose returned an invalid instance-label map")
+    return masks
+
+
+def load_figure_s8_simulated_example(
+    model_output_dir: str,
+    h5_path: str,
+    source: _supp_pd.DataFrame,
+    *,
+    img_index: int = 12,
+    tile_idx: int = 7,
+    unet_size: str = "small",
+    seg_method: str = "inst_seg",
+    model_file: str | None = None,
+) -> dict[str, _supp_np.ndarray]:
+    """Re-run the CPIJ full-image inference, then crop one representative tile.
+
+    Ground truth: stored H5 /inst labels. UNet probability heads are stitched
+    before instance segmentation, as in simulated_segmentation_comparison.py.
+    Cellpose sees the reconstructed full RGB image, not an individual tile.
+    """
+    import torch
+    from torch.utils.data import DataLoader
+    from alloviewer.dev.segmentation import TiledH5Dataset
+    from alloviewer.dev.segmentation.utils import collate_no_meta
+    from alloviewer.dev.validation.imageJ_comparison import (
+        _extract_full_hw, _make_segmenter_and_validation_config,
+        _segment_full_probs, stitch_float_tiles_mean, stitch_instance_tiles,
+    )
+    from alloviewer.dev.validation.simulated_segmentation_comparison import _full_rgb_from_tiles
+
+    gt_path = _SupplementPath(h5_path) / "fullres_ground_truth.h5"
+    if not gt_path.is_file():
+        raise FileNotFoundError(f"Missing simulated GT H5: {gt_path}")
+    if seg_method != "inst_seg":
+        raise ValueError("S8 example currently supports seg_method='inst_seg' only")
+    _supplement_require(source, ["sample_idx", "method"], "S8 CPIJ CSV")
+    scored = set(_supp_pd.to_numeric(source["sample_idx"], errors="raise").astype(int))
+    if img_index not in scored:
+        raise ValueError(f"img_index={img_index} is not among scored CPIJ samples")
+
+    checkpoint = model_file or f"best_{unet_size}_tiles_S512_seed187.pth"
+    segmenter, imagej_segmenter, validation_cfg = _make_segmenter_and_validation_config(
+        gt_h5_path=str(gt_path),
+        out_csv=str(_SupplementPath(h5_path) / "_unused_figure_s8.csv"),
+        out_summary_json=str(_SupplementPath(h5_path) / "_unused_figure_s8.json"),
+        unet_mode=unet_size, model_dir=str(model_output_dir),
+        model_file=checkpoint, seg_method=seg_method,
+    )
+    del imagej_segmenter  # S8 compares UNet and Cellpose, not NCISP.
+    dataset = TiledH5Dataset(str(gt_path), indices=[int(img_index)])
+    try:
+        batch = next(iter(DataLoader(
+            dataset, batch_size=1, shuffle=False, num_workers=0,
+            collate_fn=collate_no_meta,
+        )))
+        inputs, _targets, extras = batch
+        metadata = extras["meta"][0]
+        tile_metadata = metadata["tiles"]
+        n_tiles = len(tile_metadata)
+        if not (0 <= tile_idx < n_tiles):
+            raise ValueError(f"tile_idx={tile_idx} outside 0..{n_tiles-1}")
+        tiles = inputs[0, :n_tiles].detach().cpu().numpy().astype(_supp_np.float32)
+        gt_tiles = extras["instance_labels"][0, :n_tiles].detach().cpu().numpy().astype(_supp_np.int32)
+        full_hw = _extract_full_hw(metadata, tile_metadata)
+        ground_truth = stitch_instance_tiles(gt_tiles, tile_metadata, full_hw)
+        rgb_full = _full_rgb_from_tiles(tiles, tile_metadata, full_hw)
+
+        with torch.inference_mode():
+            result = segmenter(tiles)
+        heads = _supp_np.stack(
+            [result["probs"][name] for name in ("cell", "bound", "center", "energy")],
+            axis=1,
+        ).astype(_supp_np.float32)
+        full_heads = stitch_float_tiles_mean(heads, tile_metadata, full_hw)
+        unet_full = _segment_full_probs(
+            segmenter.inst_seg, *full_heads, cell_thr=validation_cfg.cell_thr,
+            update_cell_mask=True,
+        )
+
+        cp_rows = source.loc[source["method"].eq("Cellpose")]
+        if cp_rows.empty:
+            raise ValueError("No Cellpose rows/settings in CPIJ CSV")
+        cp_name = str(_supplement_single_setting(cp_rows, "cellpose_model"))
+        if cp_name == "installed_cellpose4_default":
+            cp_name = None
+        cp_masks = segment_image_cellpose(
+            rgb_full,
+            use_gpu=str(segmenter.device).startswith("cuda"),
+            cellpose_model=cp_name,
+            diameter=float(_supplement_single_setting(cp_rows, "cellpose_diameter")),
+            min_size=int(_supplement_single_setting(cp_rows, "cellpose_min_size")),
+            flow_threshold=float(_supplement_single_setting(cp_rows, "cellpose_flow_threshold")),
+            cellprob_threshold=float(_supplement_single_setting(cp_rows, "cellpose_cellprob_threshold")),
+            expected_version=str(_supplement_single_setting(cp_rows, "cellpose_version")),
+        )
+        if ground_truth.shape != full_hw or _supp_np.asarray(unet_full).shape != full_hw or cp_masks.shape != full_hw:
+            raise ValueError("GT/UNet/Cellpose reconstructed shapes do not agree")
+
+        info = tile_metadata[tile_idx]
+        y0, x0 = (int(v) for v in info["tile_xy"])
+        h, w = (int(v) for v in info["tile_hw"])
+        if h <= 0 or w <= 0 or y0 < 0 or x0 < 0 or y0+h > full_hw[0] or x0+w > full_hw[1]:
+            raise ValueError("Invalid source tile bounds")
+        crop = _supp_np.s_[y0:y0+h, x0:x0+w]
+        return {
+            "image": _supp_np.asarray(rgb_full[crop]),
+            "gt": _supp_np.asarray(ground_truth[crop], dtype=_supp_np.int32),
+            "unet": _supp_np.asarray(unet_full[crop], dtype=_supp_np.int32),
+            "cellpose": _supp_np.asarray(cp_masks[crop], dtype=_supp_np.int32),
+        }
+    finally:
+        dataset.close()
+        del segmenter
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
