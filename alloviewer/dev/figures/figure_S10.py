@@ -433,7 +433,7 @@ def _generate_main_figure(
     return
 
 
-def figure_S9_generation(
+def figure_S10_generation(
     figure_output_dir: str,
     validation_results_dir: str,
     **kwargs,
