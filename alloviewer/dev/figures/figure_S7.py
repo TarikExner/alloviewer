@@ -62,7 +62,7 @@ def _generate_main_figure(
     def _metric_panel(fig: Figure, ax: Axes, gs: SubplotSpec,
                       letter: str, metric: str, title: str) -> None:
         ax.axis("off")
-        utils.figure_label(ax, letter, x=0)
+        utils.figure_label(ax, letter, x=-0.3)
         inner = fig.add_subplot(gs.subgridspec(1, 1)[0])
         plot_segmentation_supplement_metric(
             inner, data, metric, title, max_strip_points=max_strip_points,
@@ -117,7 +117,8 @@ def figure_S7_generation(
         unet_size=unet_size,
     )
     _generate_main_figure(
-        data, figure_output_dir, figure_name or f"Figure_S7_{metric_level}",
+        data, figure_output_dir,
+        figure_name=("Figure_S7" if metric_level == "PER_IMAGE" else "Figure_S7_PER_TILE"),
         max_strip_points=max_strip_points,
     )
 

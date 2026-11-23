@@ -228,7 +228,8 @@ def figure_S8_generation(
         img_index=img_index, tile_idx=tile_idx, model_file=model_file,
     )
     _generate_main_figure(
-        figure_data, figure_output_dir, figure_name or f"Figure_S8_{metric_level}",
+        figure_data, figure_output_dir,
+        figure_name=("Figure_S8" if metric_level == "PER_IMAGE" else "Figure_S8_PER_TILE"),
         inset_center=inset_center, inset_box_px=inset_box_px,
         max_strip_points=max_strip_points,
     )
