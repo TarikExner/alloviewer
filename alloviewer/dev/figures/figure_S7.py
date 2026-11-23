@@ -84,13 +84,13 @@ def _generate_main_figure(
         _metric_panel(fig, ax, gs, letter, *S7_METRICS[4])
 
     fig = plt.figure(figsize=(6.375, 4.25), layout="constrained")
-    grid = GridSpec(2, 3, figure=fig, hspace=0.34, wspace=0.42)
+    grid = GridSpec(2, 3, figure=fig, hspace=0, wspace=0)
     slots = [grid[0, 0], grid[0, 1], grid[0, 2], grid[1, 0], grid[1, 1]]
     panels = (
         generate_subfigure_a, generate_subfigure_b, generate_subfigure_c,
         generate_subfigure_d, generate_subfigure_e,
     )
-    for letter, slot, panel_fn in zip("abcde", slots, panels):
+    for letter, slot, panel_fn in zip("ABCDE", slots, panels):
         panel_fn(fig, fig.add_subplot(slot), slot, letter)
 
     Path(figure_output_dir).mkdir(parents=True, exist_ok=True)
