@@ -1,4 +1,5 @@
 import os
+import json
 import pandas as pd
 import seaborn as sns
 
@@ -47,24 +48,24 @@ ALGO_DISPLAY_MAP = {
     "hdbscan": "HDBSCAN",
 }
 
-ALGO_ORDER = [
-    "PARC",
-    "FlowSOM",
-    "HDBSCAN",
-]
-
 ALGO_KEY_ORDER = [
     "parc",
     "flowsom",
     "hdbscan",
 ]
 
+ALGO_DISPLAY_ORDER = [
+    "PARC",
+    "FlowSOM",
+    "HDBSCAN",
+]
+
 
 def _select_best_settings_per_algorithm(summary_df: pd.DataFrame) -> pd.DataFrame:
-    ranking_df = summary_df.loc[summary_df["gate"].isin(FOCUS_GATES)].copy()
+    focus_df = summary_df.loc[summary_df["gate"].isin(FOCUS_GATES)].copy()
 
     ranking_df = (
-        ranking_df.groupby(["algorithm", "algorithm_params_json"], as_index=False)
+        focus_df.groupby(["algorithm", "algorithm_params_json"], as_index=False)
         .agg(score=("mean_f1", "mean"))
     )
 
@@ -78,52 +79,145 @@ def _select_best_settings_per_algorithm(summary_df: pd.DataFrame) -> pd.DataFram
     return best_settings_df
 
 
-def _prepare_figure_S9_data(summary_df: pd.DataFrame) -> pd.DataFrame:
+def _prepare_runtime_data(summary_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     required_cols = {
         "experiment",
         "algorithm",
         "algorithm_params_json",
         "gate",
         "mean_f1",
+        "total_runtime_s",
+        "qc_plus_lymph_runtime_s",
+        "fit_clustering_runtime_s",
+        "label_clusters_runtime_s",
+        "predict_runtime_s",
     }
+
+    optional_memory_cols = [
+        "memory_current_mb",
+        "memory_delta_mb",
+        "memory_peak_mb",
+    ]
 
     missing = required_cols - set(summary_df.columns)
     if missing:
         raise ValueError(f"summary_df is missing required columns: {missing}")
 
+    focus_df = summary_df.loc[summary_df["gate"].isin(FOCUS_GATES)].copy()
+
+    focus_df["gate_display"] = (
+        focus_df["gate"]
+        .map(GATE_DISPLAY_MAP)
+        .fillna(focus_df["gate"])
+    )
+
+    focus_df["algorithm_display"] = (
+        focus_df["algorithm"]
+        .map(ALGO_DISPLAY_MAP)
+        .fillna(focus_df["algorithm"])
+    )
+
+    agg_kwargs = {
+        "mean_focus_f1": ("mean_f1", "mean"),
+        "total_runtime_s": ("total_runtime_s", "mean"),
+    }
+
+    for col in optional_memory_cols:
+        if col in focus_df.columns:
+            agg_kwargs[col] = (col, "mean")
+
+    scatter_df = (
+        focus_df.groupby(
+            ["experiment", "algorithm", "algorithm_display", "algorithm_params_json"],
+            as_index=False,
+        )
+        .agg(**agg_kwargs)
+    )
+
     best_settings_df = _select_best_settings_per_algorithm(summary_df)
 
-    plot_df = summary_df.merge(
+    best_df = summary_df.merge(
         best_settings_df[["algorithm", "algorithm_params_json"]],
         on=["algorithm", "algorithm_params_json"],
         how="inner",
     ).copy()
 
-    plot_df["gate_display"] = (
-        plot_df["gate"]
-        .map(GATE_DISPLAY_MAP)
-        .fillna(plot_df["gate"])
-    )
-
-    plot_df["gate_display"] = pd.Categorical(
-        plot_df["gate_display"],
-        categories=GATE_DISPLAY_ORDER,
-        ordered=True,
-    )
-
-    plot_df["algorithm_display"] = (
-        plot_df["algorithm"]
+    best_df["algorithm_display"] = (
+        best_df["algorithm"]
         .map(ALGO_DISPLAY_MAP)
-        .fillna(plot_df["algorithm"])
+        .fillna(best_df["algorithm"])
     )
 
-    plot_df["algorithm_display"] = pd.Categorical(
-        plot_df["algorithm_display"],
-        categories=ALGO_ORDER,
+    runtime_breakdown_df = (
+        best_df.groupby(
+            ["algorithm", "algorithm_display", "algorithm_params_json"],
+            as_index=False,
+        )
+        .agg(
+            qc_plus_lymph_runtime_s=("qc_plus_lymph_runtime_s", "mean"),
+            fit_clustering_runtime_s=("fit_clustering_runtime_s", "mean"),
+            label_clusters_runtime_s=("label_clusters_runtime_s", "mean"),
+            predict_runtime_s=("predict_runtime_s", "mean"),
+            total_runtime_s=("total_runtime_s", "mean"),
+        )
+    )
+
+    runtime_breakdown_df["algorithm_display"] = pd.Categorical(
+        runtime_breakdown_df["algorithm_display"],
+        categories=ALGO_DISPLAY_ORDER,
         ordered=True,
     )
 
-    return plot_df
+    runtime_breakdown_df = runtime_breakdown_df.sort_values("algorithm_display")
+
+    return scatter_df, runtime_breakdown_df
+
+
+def _param_label(algo: str, param_json: str) -> str:
+    params = json.loads(param_json)
+
+    if algo == "parc":
+        return f"res={params['resolution_parameter']}"
+
+    if algo == "flowsom":
+        return f"k={params['n_clusters']}"
+
+    if algo == "hdbscan":
+        return f"{params['cluster_selection_method']}, ms={params['min_samples']}"
+
+    return str(params)
+
+
+def _sort_key(algo: str, param_json: str):
+    params = json.loads(param_json)
+
+    if algo == "parc":
+        return params["resolution_parameter"]
+
+    if algo == "flowsom":
+        return params["n_clusters"]
+
+    if algo == "hdbscan":
+        method_order = {"leaf": 0, "eom": 1}
+        return (
+            method_order.get(params["cluster_selection_method"], 999),
+            params["min_samples"],
+        )
+
+    return str(params)
+
+
+def _palette_for_algo(algo: str, n: int):
+    if algo == "parc":
+        return sns.color_palette("tab20", n_colors=n)
+
+    if algo == "flowsom":
+        return sns.color_palette("PuRd", n_colors=max(n + 2, 3))[2:2 + n]
+
+    if algo == "hdbscan":
+        return sns.color_palette("tab20c", n_colors=n)
+
+    return sns.color_palette("tab10", n_colors=n)
 
 
 def _generate_subfigure_a(
@@ -133,76 +227,109 @@ def _generate_subfigure_a(
     subfigure_label: str,
     summary_df: pd.DataFrame,
 ) -> None:
+    import matplotlib.patches as mpatches
+
     ax.axis("off")
     utils.figure_label(ax, subfigure_label, x=0)
 
-    ranking_df = summary_df.loc[summary_df["gate"].isin(FOCUS_GATES)].copy()
+    panel_a_df = summary_df.copy()
 
-    ranking_df = (
-        ranking_df.groupby(["algorithm", "algorithm_params_json"], as_index=False)
-        .agg(score=("mean_f1", "mean"))
-    )
-
-    best_settings_df = (
-        ranking_df.sort_values(["algorithm", "score"], ascending=[True, False])
-        .groupby("algorithm", as_index=False)
-        .head(1)
-        .copy()
-    )
-
-    best_settings_df["row_label"] = best_settings_df["algorithm"].map(ALGO_DISPLAY_MAP)
-
-    best_settings_df["algo_order"] = best_settings_df["algorithm"].map(
-        {algo: i for i, algo in enumerate(ALGO_KEY_ORDER)}
-    )
-
-    best_settings_df = best_settings_df.sort_values("algo_order")
-    row_order = best_settings_df["row_label"].tolist()
-
-    best_summary_df = summary_df.merge(
-        best_settings_df[["algorithm", "algorithm_params_json", "row_label"]],
-        on=["algorithm", "algorithm_params_json"],
-        how="inner",
-    ).copy()
-
-    best_summary_df["gate_display"] = (
-        best_summary_df["gate"]
+    panel_a_df["gate_display"] = (
+        panel_a_df["gate"]
         .map(GATE_DISPLAY_MAP)
-        .fillna(best_summary_df["gate"])
+        .fillna(panel_a_df["gate"])
     )
 
-    experiment_order = sorted(
-        best_summary_df["experiment"].dropna().unique().tolist()
+    panel_a_df["param_label"] = panel_a_df.apply(
+        lambda x: _param_label(x["algorithm"], x["algorithm_params_json"]),
+        axis=1,
+    )
+
+    panel_a_df = (
+        panel_a_df.groupby(
+            ["algorithm", "algorithm_params_json", "param_label", "gate", "gate_display"],
+            as_index=False,
+        )
+        .agg(mean_f1=("mean_f1", "mean"))
     )
 
     fig_sgs = gs.subgridspec(
-        5,
-        2,
-        width_ratios=[1.0, 0.035],
-        height_ratios=[1, 1, 1, 1, 1],
+        4,
+        4,
+        height_ratios=[0.2, 0.9, 12.0, 4.0],
+        width_ratios=[1.0, 1.0, 1.0, 0.08],
         hspace=0,
         wspace=0,
     )
 
-    cbar_ax = fig.add_subplot(fig_sgs[:, 1])
+    cbar_ax = fig.add_subplot(fig_sgs[2, 3])
     first_hm = None
 
-    for i, gate in enumerate(GATE_KEY_ORDER):
-        gate_label = GATE_DISPLAY_MAP[gate]
+    for i, algo in enumerate(ALGO_KEY_ORDER):
+        algo_df = panel_a_df.loc[panel_a_df["algorithm"] == algo].copy()
+        if algo_df.empty:
+            continue
 
-        gate_df = best_summary_df.loc[best_summary_df["gate"] == gate].copy()
+        setting_order_df = (
+            algo_df[["algorithm_params_json", "param_label"]]
+            .drop_duplicates()
+            .assign(
+                sort_key=lambda d: d["algorithm_params_json"].map(
+                    lambda s: _sort_key(algo, s)
+                )
+            )
+            .sort_values("sort_key")
+        )
+
+        param_order = setting_order_df["param_label"].tolist()
 
         pivot_df = (
-            gate_df.pivot_table(
-                index="row_label",
-                columns="experiment",
+            algo_df.pivot_table(
+                index="gate_display",
+                columns="param_label",
                 values="mean_f1",
                 aggfunc="mean",
             )
-            .reindex(index=row_order, columns=experiment_order)
+            .reindex(index=GATE_DISPLAY_ORDER, columns=param_order)
         )
 
-        heat_ax = fig.add_subplot(fig_sgs[i, 0])
+        param_colors = _palette_for_algo(algo, len(param_order))
+        param_to_color = {p: c for p, c in zip(param_order, param_colors)}
+
+        title_ax = fig.add_subplot(fig_sgs[0, i])
+        annot_ax = fig.add_subplot(fig_sgs[1, i])
+        heat_ax = fig.add_subplot(fig_sgs[2, i])
+        legend_ax = fig.add_subplot(fig_sgs[3, i])
+
+        title_ax.axis("off")
+        title_ax.text(
+            0.5,
+            0.5,
+            ALGO_DISPLAY_MAP[algo],
+            ha="center",
+            va="center",
+            fontsize=cfg.TITLE_SIZE,
+        )
+
+        annot_ax.set_xlim(0, len(param_order))
+        annot_ax.set_ylim(0, 1)
+        annot_ax.set_xticks([])
+        annot_ax.set_yticks([])
+
+        for spine in annot_ax.spines.values():
+            spine.set_visible(False)
+
+        for j, param_label in enumerate(param_order):
+            annot_ax.add_patch(
+                plt.Rectangle(
+                    (j, 0),
+                    1,
+                    1,
+                    facecolor=param_to_color[param_label],
+                    edgecolor="white",
+                    linewidth=0.5,
+                )
+            )
 
         hm = sns.heatmap(
             pivot_df,
@@ -212,9 +339,9 @@ def _generate_subfigure_a(
             vmax=1.0,
             cbar=(first_hm is None),
             cbar_ax=cbar_ax if first_hm is None else None,
-            linewidths=0.35,
+            linewidths=0.4,
             linecolor="white",
-            xticklabels=True,
+            xticklabels=False,
             yticklabels=True,
         )
 
@@ -225,17 +352,44 @@ def _generate_subfigure_a(
             cbar.set_ticks([0.0, 1.0])
             cbar.set_ticklabels(["0", "1"])
 
-        heat_ax.set_title(gate_label, fontsize=cfg.TITLE_SIZE, pad=4)
+        heat_ax.set_title("")
         heat_ax.set_xlabel("")
         heat_ax.set_ylabel("")
 
-        if i < len(GATE_KEY_ORDER) - 1:
-            heat_ax.set_xticklabels([])
-            heat_ax.tick_params(axis="x", length=0)
+        if i == 0:
+            heat_ax.set_yticklabels(heat_ax.get_yticklabels(), rotation=0)
+            heat_ax.tick_params(axis="y", labelsize=8)
         else:
-            heat_ax.tick_params(axis="x", rotation=90, labelsize=7)
+            heat_ax.set_yticklabels([])
+            heat_ax.tick_params(axis="y", length=0)
 
-        heat_ax.tick_params(axis="y", rotation=0, labelsize=8)
+        heat_ax.tick_params(axis="x", length=0)
+
+        legend_ax.axis("off")
+
+        handles = [
+            mpatches.Patch(
+                facecolor=param_to_color[p],
+                edgecolor="none",
+                label=p,
+            )
+            for p in param_order
+        ]
+
+        ncol = 2 if len(handles) >= 6 else 1
+
+        legend_ax.legend(
+            handles=handles,
+            loc="center",
+            frameon=False,
+            fontsize=7,
+            title="Parameter settings",
+            title_fontsize=8,
+            ncol=ncol,
+            handlelength=1.2,
+            handletextpad=0.4,
+            columnspacing=0.8,
+        )
 
 
 def _generate_subfigure_b(
@@ -243,59 +397,49 @@ def _generate_subfigure_b(
     ax: Axes,
     gs: SubplotSpec,
     subfigure_label: str,
-    plot_df: pd.DataFrame,
+    scatter_df: pd.DataFrame,
 ) -> None:
     ax.axis("off")
     utils.figure_label(ax, subfigure_label, x=0)
 
-    fig_sgs = gs.subgridspec(1, 5, wspace=0)
+    fig_sgs = gs.subgridspec(1, 1)
+    sub_ax = fig.add_subplot(fig_sgs[0, 0])
 
-    for i, gate in enumerate(GATE_DISPLAY_ORDER):
-        gate_df = plot_df.loc[plot_df["gate_display"] == gate].copy()
+    plot_df = scatter_df.sample(frac=1.0, random_state=42).copy()
 
-        gate_df["algorithm_display"] = pd.Categorical(
-            gate_df["algorithm_display"],
-            categories=ALGO_ORDER,
-            ordered=True,
-        )
+    sns.scatterplot(
+        data=plot_df,
+        x="total_runtime_s",
+        y="mean_focus_f1",
+        hue="algorithm_display",
+        hue_order=ALGO_DISPLAY_ORDER,
+        s=32,
+        alpha=0.75,
+        edgecolor="black",
+        linewidth=0.4,
+        ax=sub_ax,
+    )
 
-        sub_ax = fig.add_subplot(fig_sgs[0, i])
+    sub_ax.set_xlabel("Total runtime (s)", fontsize=cfg.AXIS_LABEL_SIZE)
+    sub_ax.set_ylabel(
+        "Mean F1 score\n(Lymphocytes, T cells, B cells)",
+        fontsize=cfg.AXIS_LABEL_SIZE,
+    )
+    sub_ax.set_xscale("log")
+    sub_ax.set_title(
+        "Accuracy versus runtime across all settings",
+        fontsize=cfg.TITLE_SIZE,
+    )
+    sub_ax.set_ylim(0.0, 1.02)
 
-        sns.boxplot(
-            data=gate_df,
-            x="algorithm_display",
-            y="mean_f1",
-            order=ALGO_ORDER,
-            ax=sub_ax,
-            showcaps=True,
-            fliersize=0,
-            width=0.65,
-        )
+    sub_ax.legend(
+        frameon=False,
+        title="Algorithm family",
+        fontsize=cfg.TITLE_SIZE,
+        title_fontsize=cfg.TITLE_SIZE,
+    )
 
-        sns.stripplot(
-            data=gate_df,
-            x="algorithm_display",
-            y="mean_f1",
-            order=ALGO_ORDER,
-            ax=sub_ax,
-            dodge=False,
-            size=3,
-            alpha=0.7,
-            color="black",
-        )
-
-        sub_ax.set_title(gate, fontsize=cfg.TITLE_SIZE)
-        sub_ax.set_xlabel("")
-        sub_ax.set_ylabel(
-            "Mean F1 score" if i == 0 else "",
-            fontsize=cfg.AXIS_LABEL_SIZE,
-        )
-        sub_ax.set_ylim(0.80, 1.02)
-        sub_ax.tick_params(axis="x", rotation=45)
-        utils.adjust_fontsize_ticklabels(sub_ax, cfg.AXIS_LABEL_SIZE)
-
-        if i > 0:
-            sub_ax.set_yticklabels([])
+    utils.adjust_fontsize_ticklabels(sub_ax, cfg.AXIS_LABEL_SIZE)
 
 
 def _generate_subfigure_c(
@@ -303,76 +447,78 @@ def _generate_subfigure_c(
     ax: Axes,
     gs: SubplotSpec,
     subfigure_label: str,
-    plot_df: pd.DataFrame,
+    runtime_breakdown_df: pd.DataFrame,
 ) -> None:
     ax.axis("off")
     utils.figure_label(ax, subfigure_label, x=0)
 
-    fig_sgs = gs.subgridspec(1, 5, wspace=0)
+    stage_cols = [
+        "qc_plus_lymph_runtime_s",
+        "fit_clustering_runtime_s",
+        "label_clusters_runtime_s",
+        "predict_runtime_s",
+    ]
 
-    for i, gate in enumerate(GATE_DISPLAY_ORDER):
-        gate_df = plot_df.loc[plot_df["gate_display"] == gate].copy()
+    stage_labels = [
+        "QC + lymphocytes",
+        "Clustering fit",
+        "Cluster labeling",
+        "Prediction",
+    ]
 
-        pivot_df = (
-            gate_df.pivot_table(
-                index="experiment",
-                columns="algorithm_display",
-                values="mean_f1",
-                aggfunc="mean",
-            )
-            .reindex(columns=ALGO_ORDER)
-            .sort_index()
+    plot_df = runtime_breakdown_df.copy()
+
+    plot_df["algorithm_display"] = pd.Categorical(
+        plot_df["algorithm_display"],
+        categories=ALGO_DISPLAY_ORDER,
+        ordered=True,
+    )
+
+    plot_df = plot_df.sort_values("algorithm_display")
+
+    fig_sgs = gs.subgridspec(1, 1)
+    sub_ax = fig.add_subplot(fig_sgs[0, 0])
+
+    bottoms = [0.0] * len(plot_df)
+
+    for stage_col, stage_label in zip(stage_cols, stage_labels):
+        values = plot_df[stage_col].to_numpy(dtype=float)
+
+        sub_ax.bar(
+            plot_df["algorithm_display"],
+            values,
+            bottom=bottoms,
+            label=stage_label,
         )
 
-        sub_ax = fig.add_subplot(fig_sgs[0, i])
+        bottoms = [b + v for b, v in zip(bottoms, values)]
 
-        for _, row in pivot_df.iterrows():
-            y = row.to_numpy(dtype=float)
-            x = range(len(ALGO_ORDER))
+    sub_ax.set_xlabel("Clustering algorithm", fontsize=cfg.AXIS_LABEL_SIZE)
+    sub_ax.set_ylabel("Mean runtime (s)", fontsize=cfg.AXIS_LABEL_SIZE)
 
-            sub_ax.plot(
-                x,
-                y,
-                marker="o",
-                linewidth=0.7,
-                markersize=2.5,
-                alpha=0.35,
-                color="0.6",
-                zorder=1,
-            )
+    sub_ax.set_title(
+        "Runtime breakdown for each algorithm family",
+        fontsize=cfg.TITLE_SIZE,
+    )
 
-        mean_vals = pivot_df.mean(axis=0).reindex(ALGO_ORDER)
+    sub_ax.legend(
+        frameon=False,
+        title="Stage",
+        loc="upper right",
+        fontsize=cfg.TITLE_SIZE,
+        title_fontsize=cfg.TITLE_SIZE,
+    )
 
-        sub_ax.plot(
-            range(len(ALGO_ORDER)),
-            mean_vals.to_numpy(dtype=float),
-            marker="o",
-            linewidth=2.5,
-            markersize=5,
-            alpha=1.0,
-            color="black",
-            zorder=3,
-        )
+    y_min, y_max = sub_ax.get_ylim()
+    sub_ax.set_ylim(y_min, y_max * 1.5)
 
-        sub_ax.set_title(gate, fontsize=cfg.TITLE_SIZE)
-        sub_ax.set_xticks(range(len(ALGO_ORDER)))
-        sub_ax.set_xticklabels(ALGO_ORDER, rotation=45)
-        sub_ax.set_xlabel("")
-        sub_ax.set_ylabel(
-            "Mean F1 score" if i == 0 else "",
-            fontsize=cfg.AXIS_LABEL_SIZE,
-        )
-        sub_ax.set_ylim(0.8, 1.02)
-
-        utils.adjust_fontsize_ticklabels(sub_ax, cfg.AXIS_LABEL_SIZE)
-
-        if i > 0:
-            sub_ax.set_yticklabels([])
+    utils.adjust_fontsize_ticklabels(sub_ax, cfg.AXIS_LABEL_SIZE)
 
 
 def _generate_main_figure(
     summary_df: pd.DataFrame,
-    plot_df: pd.DataFrame,
+    scatter_df: pd.DataFrame,
+    runtime_breakdown_df: pd.DataFrame,
     figure_output_dir: str = "",
     figure_name: str = "",
 ):
@@ -382,15 +528,16 @@ def _generate_main_figure(
     )
 
     gs = GridSpec(
-        ncols=1,
-        nrows=3,
+        ncols=2,
+        nrows=2,
         figure=fig,
-        height_ratios=[1.25, 1.0, 1.0],
+        width_ratios=[1.25, 1.0],
+        height_ratios=[1.25, 1.0],
     )
 
-    a_coords = gs[0, 0]
+    a_coords = gs[0, :]
     b_coords = gs[1, 0]
-    c_coords = gs[2, 0]
+    c_coords = gs[1, 1]
 
     fig_a = fig.add_subplot(a_coords)
     fig_b = fig.add_subplot(b_coords)
@@ -409,7 +556,7 @@ def _generate_main_figure(
         ax=fig_b,
         gs=b_coords,
         subfigure_label="B",
-        plot_df=plot_df,
+        scatter_df=scatter_df,
     )
 
     _generate_subfigure_c(
@@ -417,7 +564,7 @@ def _generate_main_figure(
         ax=fig_c,
         gs=c_coords,
         subfigure_label="C",
-        plot_df=plot_df,
+        runtime_breakdown_df=runtime_breakdown_df,
     )
 
     os.makedirs(figure_output_dir, exist_ok=True)
@@ -433,7 +580,7 @@ def _generate_main_figure(
     return
 
 
-def figure_S9_generation(
+def figure_S8_generation(
     figure_output_dir: str,
     validation_results_dir: str,
     **kwargs,
@@ -445,11 +592,13 @@ def figure_S9_generation(
 
     summary_df = pd.read_csv(summary_path)
     summary_df = summary_df.loc[summary_df["dataset"] == "Ulm"].copy()
-    plot_df = _prepare_figure_S9_data(summary_df)
+
+    scatter_df, runtime_breakdown_df = _prepare_runtime_data(summary_df)
 
     _generate_main_figure(
         summary_df=summary_df,
-        plot_df=plot_df,
+        scatter_df=scatter_df,
+        runtime_breakdown_df=runtime_breakdown_df,
         figure_output_dir=figure_output_dir,
-        figure_name="Figure_S9",
+        figure_name="Figure_S8",
     )

@@ -13,6 +13,7 @@ from .figure_S6 import figure_S6_generation
 from .figure_S7 import figure_S7_generation
 from .figure_S8 import figure_S8_generation
 from .figure_S9 import figure_S9_generation
+from .figure_S10 import figure_S10_generation
 from .figure_SIM import figure_SIM_generation
 
 __all__ = [
@@ -78,5 +79,6 @@ def generate_all_figures(DIRECTORIES: dict):
     figure_S7_generation(**DIRECTORIES)
     figure_S8_generation(**DIRECTORIES)
     figure_S9_generation(**DIRECTORIES)
+    figure_S10_generation(**DIRECTORIES)
 
     figure_SIM_generation(**DIRECTORIES)
