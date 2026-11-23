@@ -1,6 +1,9 @@
 import os
 import copy
 from typing import Any, Optional, Literal
+from pathlib import Path
+import csv
+from itertools import chain
 
 import numpy as np
 import pandas as pd
@@ -643,6 +646,248 @@ def prepare_instance_segmentation_panel_data(
     }
 
 
+# ---- Figure 3 C–E: consistent, instance-derived evaluation metrics ------------
+# The two supported evaluation scopes are controlled by ONE parameter. The
+# validation scenes have incomplete tiling, so "PER_IMAGE" in panel C means the
+# average of its recorded tile scores, NOT a reconstructed full-image score.
+METRIC_LEVELS = ("PER_IMAGE", "PER_TILE")
+PRIMARY_METRIC = "F1_center_4px"
+REAL_METRICS = (
+    PRIMARY_METRIC,
+    "center_precision_r4",
+    "center_recall_r4",
+    "instance_f1_iou_0p5",
+    "mean_instance_dice_all_gt_iou_0p5",
+    "pixel_dice",
+)
+
+
+def _validate_metric_level(metric_level: str) -> str:
+    if metric_level not in METRIC_LEVELS:
+        raise ValueError(f"metric_level must be one of {METRIC_LEVELS}, got {metric_level!r}")
+    return metric_level
+
+
+def _read_metric_csv(path: str | Path) -> pd.DataFrame:
+    """Load a result CSV. Also handle fully quoted rows in exported CSV copies."""
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Required Figure 3 results file not found: {path}")
+    df = pd.read_csv(path, low_memory=False)
+    if "sample_idx" in df.columns and len(df) and df["sample_idx"].isna().all():
+        # Some sample exports quote the entire data row as a single CSV field.
+        with path.open(newline="", encoding="utf-8-sig") as handle:
+            reader = csv.reader(handle)
+            columns = next(reader)
+            first = next(reader, None)
+            if first is not None and len(first) == 1 and len(columns) > 1:
+                rows = []
+                for row in chain((first,), reader):
+                    parsed = next(csv.reader([row[0]])) if len(row) == 1 else row
+                    if len(parsed) != len(columns):
+                        raise ValueError(f"{path.name}: expected {len(columns)} fields, got {len(parsed)}")
+                    rows.append(parsed)
+                df = pd.DataFrame(rows, columns=columns)
+    return df
+
+
+def _require_metric_columns(df: pd.DataFrame, columns: list[str] | tuple[str, ...], source: str) -> None:
+    missing = sorted(set(columns).difference(df.columns))
+    if missing:
+        raise KeyError(f"{source}: missing required columns {missing}")
+
+
+def _make_numeric(df: pd.DataFrame, metrics: tuple[str, ...], source: str) -> pd.DataFrame:
+    _require_metric_columns(df, metrics, source)
+    df = df.copy()
+    for metric in metrics:
+        df[metric] = pd.to_numeric(df[metric], errors="coerce")
+        if metric != "count_error_relative":
+            invalid = df[metric].notna() & ~df[metric].between(0, 1)
+            if invalid.any():
+                raise ValueError(f"{source}: {metric} has values outside [0,1]")
+    return df
+
+
+def _paired_metric_frame(
+    df: pd.DataFrame, metric: str, methods: tuple[str, ...]
+) -> pd.DataFrame:
+    """Retain only observations scored by every listed algorithm."""
+    _require_metric_columns(df, ("image_id", "algorithm", metric), "comparison")
+    subset = df.loc[df["algorithm"].isin(methods), ["image_id", "algorithm", metric]].copy()
+    if subset.duplicated(["image_id", "algorithm"]).any():
+        raise ValueError("Repeated image/tile and method combinations in comparison data")
+    wide = subset.pivot(index="image_id", columns="algorithm", values=metric)
+    absent = set(methods).difference(wide.columns)
+    if absent:
+        raise ValueError(f"Missing comparison algorithms: {sorted(absent)}")
+    wide = wide.dropna(subset=list(methods))
+    if wide.empty:
+        raise ValueError(f"No matched observations with finite {metric} for {methods}")
+    return wide[list(methods)].stack().rename(metric).reset_index()
+
+
+def _load_simulated_validation(
+    validation_results_dir: str, metric_level: str,
+) -> pd.DataFrame:
+    """Panel C: only the small, tiles-trained UNet and saved per-tile F1."""
+    path = Path(validation_results_dir) / "training_val_small_tiles_inst_seg.csv"
+    df = _read_metric_csv(path)
+    _require_metric_columns(
+        df, ("sample_idx", "tile_idx", "metric_level", "dataset_mode", PRIMARY_METRIC),
+        path.name,
+    )
+    df = df.loc[df["metric_level"].eq("tile") &
+                df["dataset_mode"].isin(("tiles", "tiling"))].copy()
+    if "segmentation_method" in df.columns:
+        df = df.loc[df["segmentation_method"].eq("inst_seg")]
+    df = _make_numeric(df, (PRIMARY_METRIC,), path.name)
+    df = df.dropna(subset=[PRIMARY_METRIC, "sample_idx", "tile_idx"])
+    if df.empty:
+        raise ValueError(f"No usable tile F1 values in {path}")
+    df["sample_idx"] = pd.to_numeric(df["sample_idx"], errors="raise").astype(int)
+    df["tile_idx"] = pd.to_numeric(df["tile_idx"], errors="raise").astype(int)
+    if df.duplicated(["sample_idx", "tile_idx"]).any():
+        raise ValueError(f"Duplicate simulated validation tile identity in {path.name}")
+    if metric_level == "PER_IMAGE":
+        # NOT a true whole-image F1: incomplete validation tile coverage.
+        df = df.groupby("sample_idx", as_index=False)[PRIMARY_METRIC].mean()
+        df["image_id"] = df["sample_idx"].astype(str)
+    else:
+        df["image_id"] = (df["sample_idx"].astype(str) + ":" +
+                          df["tile_idx"].astype(str))
+    df["algorithm"] = "UNet"
+    print(f"Figure 3C ({metric_level}): {len(df):,} small-UNet observations")
+    return df[["image_id", "algorithm", PRIMARY_METRIC]]
+
+
+def _load_real_annotations(
+    validation_results_dir: str, metric_level: str,
+    metrics: tuple[str, ...] = REAL_METRICS,
+) -> pd.DataFrame:
+    """Human annotated microscopy: matched UNet and Cellpose tile/image rows."""
+    path = Path(validation_results_dir) / "manual_segmentation_comparison_v2.csv"
+    df = _read_metric_csv(path)
+    _require_metric_columns(
+        df, ("level", "status", "source_image_key", "image_name", "human_annotator", "method"),
+        path.name,
+    )
+    scope = "image" if metric_level == "PER_IMAGE" else "tile"
+    df = df.loc[df["level"].eq(scope) & df["status"].eq("ok")].copy()
+    if "unet_mode" in df.columns:
+        # The manuscript main figure uses only the small UNet.
+        df = df.loc[df["unet_mode"].eq("small")]
+    df["algorithm"] = df["method"].replace({"AlloViewer_UNet": "UNet"})
+    df = df.loc[df["algorithm"].isin(("UNet", "Cellpose"))].copy()
+    df = _make_numeric(df, metrics, path.name)
+    if df.empty:
+        raise ValueError(f"No usable {scope} rows in {path.name}")
+    if metric_level == "PER_IMAGE":
+        if df.duplicated(["source_image_key", "human_annotator", "algorithm"]).any():
+            raise ValueError("Duplicate image/annotator/method combinations in manual data")
+        # Each image gets one measurement per method; multiple independent
+        # human annotations are averaged after their tile-confusion pooling.
+        df = df.groupby(["source_image_key", "algorithm"], as_index=False)[list(metrics)].mean()
+        df["image_id"] = df["source_image_key"].astype(str)
+    else:
+        if df.duplicated(["source_image_key", "image_name", "human_annotator", "algorithm"]).any():
+            raise ValueError("Duplicate tile/annotator/method combinations in manual data")
+        # Keep both human annotations if present: the reference is annotator-
+        # specific; multiple tiles from a source image may still overlap.
+        df["image_id"] = (df["source_image_key"].astype(str) + "|" +
+                          df["image_name"].astype(str) + "|" +
+                          df["human_annotator"].astype(str))
+    print(f"Real-image data ({metric_level}): {df['image_id'].nunique():,} scored units")
+    return df[["image_id", "algorithm", *metrics]]
+
+
+def _load_simulated_testing(
+    validation_results_dir: str, metric_level: str,
+) -> pd.DataFrame:
+    """Panel E: small-UNet / Cellpose / ImageJ from common CPIJ CSV."""
+    path = Path(validation_results_dir) / "testing_val_CPIJ_small_inst_seg.csv"
+    df = _read_metric_csv(path)
+    _require_metric_columns(
+        df, ("metric_level", "sample_idx", "tile_idx", "dataset_mode", PRIMARY_METRIC),
+        path.name,
+    )
+    scope = "image" if metric_level == "PER_IMAGE" else "tile"
+    df = df.loc[df["metric_level"].eq(scope)].copy()
+    # CPIJ identifies the tested algorithm in dataset_mode (also has 'method').
+    df["algorithm"] = df["dataset_mode"].replace({
+        "AlloViewer_UNet": "UNet", "imageJ": "ImageJ", "NCISP": "ImageJ",
+    })
+    df = df.loc[df["algorithm"].isin(("UNet", "Cellpose", "ImageJ"))].copy()
+    df = _make_numeric(df, (PRIMARY_METRIC,), path.name)
+    df = df.dropna(subset=[PRIMARY_METRIC, "sample_idx"])
+    if df.empty:
+        raise ValueError(f"No usable CPIJ {scope} results in {path.name}")
+    df["sample_idx"] = pd.to_numeric(df["sample_idx"], errors="raise").astype(int)
+    if metric_level == "PER_TILE":
+        df["tile_idx"] = pd.to_numeric(df["tile_idx"], errors="raise").astype(int)
+        df["image_id"] = (df["sample_idx"].astype(str) + ":" +
+                          df["tile_idx"].astype(str))
+    else:
+        df["image_id"] = df["sample_idx"].astype(str)
+    print(f"Figure 3E ({metric_level}): {df['image_id'].nunique():,} scored units")
+    return df[["image_id", "algorithm", PRIMARY_METRIC]]
+
+
+def _plot_metric_boxstrip(
+    ax: Axes,
+    data: pd.DataFrame,
+    metric: str,
+    methods: tuple[str, ...],
+    title: str,
+    ylabel: str,
+    *,
+    max_strip_points: int | None = 400,
+) -> None:
+    """White boxes, full-range whiskers, and black-edged gray strip points."""
+    df = data.loc[data["algorithm"].isin(methods), ["algorithm", metric]].dropna()
+    if df.empty:
+        raise ValueError(f"No data for {title}: {metric}")
+    absent = set(methods).difference(df["algorithm"].unique())
+    if absent:
+        raise ValueError(f"{title}: no observations for {sorted(absent)}")
+
+    sns.boxplot(
+        data=df, x="algorithm", y=metric, order=list(methods), ax=ax,
+        width=0.56, whis=(0, 100), showfliers=False,
+        color="white", saturation=1,
+        boxprops={"facecolor": "white", "edgecolor": "black", "linewidth": 0.75},
+        whiskerprops={"color": "black", "linewidth": 0.65},
+        capprops={"color": "black", "linewidth": 0.65},
+        medianprops={"color": "black", "linewidth": 1.0},
+        zorder=2,
+    )
+    # Strip points are sampled only to prevent dense plots from becoming solid
+    # gray blocks; boxes use every observation. Set None to show all points.
+    dots = df
+    if max_strip_points is not None:
+        dots = pd.concat([
+            part.sample(n=min(len(part), max_strip_points), random_state=187)
+            for _, part in df.groupby("algorithm", sort=False)
+        ], ignore_index=True)
+    sns.stripplot(
+        data=dots, x="algorithm", y=metric, order=list(methods), ax=ax,
+        color="0.55", size=1.9, jitter=0.22, alpha=0.60,
+        linewidth=0.3, edgecolor="black", zorder=3,
+    )
+    counts = df.groupby("algorithm").size()
+    ax.set_xticks(np.arange(len(methods)))
+    ax.set_xticklabels([f"{m}\n(n={counts[m]:,})" for m in methods])
+    ax.set_xlabel("")
+    ax.set_ylabel(ylabel, fontsize=cfg.AXIS_LABEL_SIZE)
+    ax.set_title(title, fontsize=cfg.TITLE_SIZE)
+    ax.set_ylim(-0.025, 1.025)
+    ax.set_yticks(np.arange(0, 1.01, 0.2))
+    ax.grid(axis="y", linewidth=0.35, color="0.85", zorder=0)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.tick_params(axis="both", length=2, pad=2)
+    utils.adjust_fontsize_ticklabels(ax, cfg.AXIS_LABEL_SIZE)
+
+
 def prepare_model_evaluation_panel_data(
     validation_results_dir: str,
     model_output_dir: str,
@@ -651,31 +896,25 @@ def prepare_model_evaluation_panel_data(
     unet_size: Literal["small", "medium", "large"] = "small",
     comparison_images: Literal["external_images", "tiles"] = "tiles",
     redo_analysis: bool = False,
+    metric_level: Literal["PER_IMAGE", "PER_TILE"] = "PER_IMAGE",
 ) -> dict[str, Any]:
+    """Load matched comparisons for panels C–E and unchanged image grid F.
+
+    Only the small UNet and the tiles configuration are used in the main figure;
+    the old arguments are retained for call-site compatibility.
+    """
+    _validate_metric_level(metric_level)
+    if unet_size != "small" or comparison_images != "tiles":
+        raise ValueError("Main Figure 3 C–E is restricted to small UNet and tiles")
+
+    # Fail early if a required result is absent; avoid generating image cache first.
+    panel_c = _load_simulated_validation(validation_results_dir, metric_level)
+    panel_d = _load_real_annotations(validation_results_dir, metric_level)
+    panel_e = _load_simulated_testing(validation_results_dir, metric_level)
+
     image_cache_path = os.path.join(
-        validation_results_dir,
-        "figure_3_image_cache_fullres.npz",
+        validation_results_dir, "figure_3_image_cache_fullres.npz",
     )
-
-    unet_on_sim = get_validation_data(
-        results_dir=validation_results_dir,
-        mode="testing",
-        unet_size=unet_size,
-        comparison_images=comparison_images,
-        seg_method="inst_seg",
-    )
-    unet_on_sim = unet_on_sim.sample(n=2000, replace=False, random_state=187)
-
-    unet_on_human = get_validation_data(
-        results_dir=validation_results_dir,
-        mode="human",
-    )
-
-    imagej_on_sim = get_validation_data(
-        results_dir=validation_results_dir,
-        mode="imageJ",
-    )
-
     image_data = load_or_create_multimodal_image_cache(
         cache_path=image_cache_path,
         model_dir=model_output_dir,
@@ -684,10 +923,11 @@ def prepare_model_evaluation_panel_data(
     )
 
     return {
-        "unet_on_sim": unet_on_sim,
-        "unet_on_human": unet_on_human,
-        "imagej_on_sim": imagej_on_sim,
+        "unet_on_sim": panel_c,
+        "unet_on_human": panel_d,
+        "imagej_on_sim": panel_e,
         "image_data": image_data,
+        "metric_level": metric_level,
     }
 
 
@@ -695,6 +935,7 @@ def prepare_figure_3_data(
     validation_results_dir: str,
     model_output_dir: str,
     ext_images_dir: str,
+    metric_level: Literal["PER_IMAGE", "PER_TILE"] = "PER_IMAGE",
 ) -> dict[str, Any]:
     return {
         "instance_segmentation": prepare_instance_segmentation_panel_data(
@@ -709,6 +950,7 @@ def prepare_figure_3_data(
             validation_results_dir=validation_results_dir,
             model_output_dir=model_output_dir,
             redo_analysis=False,
+            metric_level=metric_level,
         ),
     }
 
@@ -808,18 +1050,11 @@ def _generate_main_figure(
     ) -> None:
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
-
-        fig_sgs = gs.subgridspec(1, 1)
-        plot_ax = fig.add_subplot(fig_sgs[0])
-
-        _plot_identity_scatter(
-            ax=plot_ax,
-            data=unet_on_sim,
-            x_col="n_cells_gt_instances_stored_labels",
-            y_col="n_cells_pred_instances",
-            title="UNet performance on\nsimulated images",
-            xlabel="n_cells ground truth",
-            ylabel="n_cells predicted",
+        plot_ax = fig.add_subplot(gs.subgridspec(1, 1)[0])
+        # Small UNet only; other checkpoints belong in the supplement.
+        _plot_metric_boxstrip(
+            plot_ax, unet_on_sim, PRIMARY_METRIC, ("UNet",),
+            "UNet on simulated validation", "Center F1 (4 px)",
         )
 
     def generate_subfigure_d(
@@ -830,37 +1065,11 @@ def _generate_main_figure(
     ) -> None:
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
-
-        fig_sgs = gs.subgridspec(1, 1)
-        plot_ax = fig.add_subplot(fig_sgs[0])
-
-        plot_df = unet_on_human.copy()
-
-        plot_df = plot_df.melt(
-            id_vars=["Folder", "image_name", "human_roi_count"],
-            value_vars=["unet_roi_count", "imageJ_roi_count"],
-            var_name="method",
-            value_name="predicted_roi_count",
-        )
-
-        plot_df["method"] = plot_df["method"].map(
-            {
-                "unet_roi_count": "UNet",
-                "imageJ_roi_count": "NCISP",
-            }
-        )
-
-        _plot_identity_scatter(
-            ax=plot_ax,
-            data=plot_df,
-            x_col="human_roi_count",
-            y_col="predicted_roi_count",
-            title="UNet and NCISP performance on\nhuman annotated real images",
-            xlabel="Human ROI count",
-            ylabel="Predicted ROI count",
-            hue_col="method",
-            legend=True,
-            legend_fontsize=cfg.TITLE_SIZE,
+        plot_ax = fig.add_subplot(gs.subgridspec(1, 1)[0])
+        paired = _paired_metric_frame(unet_on_human, PRIMARY_METRIC, ("UNet", "Cellpose"))
+        _plot_metric_boxstrip(
+            plot_ax, paired, PRIMARY_METRIC, ("UNet", "Cellpose"),
+            "Real microscopy", "Center F1 (4 px)",
         )
 
     def generate_subfigure_e(
@@ -871,26 +1080,12 @@ def _generate_main_figure(
     ) -> None:
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
-
-        fig_sgs = gs.subgridspec(1, 1)
-        plot_ax = fig.add_subplot(fig_sgs[0])
-
-        plot_df = imagej_on_sim.copy()
-        plot_df["dataset_mode"] = plot_df["dataset_mode"].map(
-            {"UNet": "UNet", "imageJ": "NCISP"}
-        )
-
-        _plot_identity_scatter(
-            ax=plot_ax,
-            data=plot_df,
-            x_col="n_cells_gt_instances",
-            y_col="n_cells_pred_instances",
-            title="UNet comparison to NCISP on\nvariable simulated images",
-            xlabel="n_cells ground truth",
-            ylabel="n_cells predicted",
-            hue_col="dataset_mode",
-            legend=True,
-            legend_fontsize=cfg.TITLE_SIZE,
+        plot_ax = fig.add_subplot(gs.subgridspec(1, 1)[0])
+        methods = ("UNet", "Cellpose", "ImageJ")
+        paired = _paired_metric_frame(imagej_on_sim, PRIMARY_METRIC, methods)
+        _plot_metric_boxstrip(
+            plot_ax, paired, PRIMARY_METRIC, methods,
+            "Simulated test images", "Center F1 (4 px)",
         )
 
     def generate_subfigure_f(
@@ -1056,6 +1251,7 @@ def figure_3_generation(
     figure_output_dir: str,
     model_output_dir: str,
     ext_images_dir: str,
+    metric_level: Literal["PER_IMAGE", "PER_TILE"] = "PER_IMAGE",
     **kwargs
 ) -> None:
     _generate_main_figure(
@@ -1063,7 +1259,8 @@ def figure_3_generation(
             validation_results_dir=validation_results_dir,
             model_output_dir=model_output_dir,
             ext_images_dir=ext_images_dir,
+            metric_level=metric_level,
         ),
         figure_output_dir=figure_output_dir,
-        figure_name="Figure_3",
+        figure_name=("Figure_3" if metric_level == "PER_IMAGE" else "Figure_3_PER_TILE"),
     )
