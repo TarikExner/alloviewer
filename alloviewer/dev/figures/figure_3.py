@@ -853,7 +853,7 @@ def _plot_metric_boxstrip(
 
     sns.boxplot(
         data=df, x="algorithm", y=metric, order=list(methods), ax=ax,
-        width=0.56, whis=(0, 100), showfliers=False,
+        width=0.56, whis=(5, 95), showfliers=False,
         color="white", saturation=1,
         boxprops={"facecolor": "white", "edgecolor": "black", "linewidth": 0.75},
         whiskerprops={"color": "black", "linewidth": 0.65},
@@ -1054,7 +1054,7 @@ def _generate_main_figure(
         # Small UNet only; other checkpoints belong in the supplement.
         _plot_metric_boxstrip(
             plot_ax, unet_on_sim, PRIMARY_METRIC, ("UNet",),
-            "UNet on simulated validation", "Center F1 (4 px)",
+            "UNet performance on\nsimulated images", "Center F1 (4 px)",
         )
 
     def generate_subfigure_d(
@@ -1069,7 +1069,7 @@ def _generate_main_figure(
         paired = _paired_metric_frame(unet_on_human, PRIMARY_METRIC, ("UNet", "Cellpose"))
         _plot_metric_boxstrip(
             plot_ax, paired, PRIMARY_METRIC, ("UNet", "Cellpose"),
-            "Real microscopy", "Center F1 (4 px)",
+            "UNet and CellPoseSAM performance\non human annotated real images", "Center F1 (4 px)",
         )
 
     def generate_subfigure_e(
@@ -1081,11 +1081,11 @@ def _generate_main_figure(
         ax.axis("off")
         utils.figure_label(ax, subfigure_label, x=0)
         plot_ax = fig.add_subplot(gs.subgridspec(1, 1)[0])
-        methods = ("UNet", "Cellpose", "ImageJ")
+        methods = ("UNet", "Cellpose")
         paired = _paired_metric_frame(imagej_on_sim, PRIMARY_METRIC, methods)
         _plot_metric_boxstrip(
             plot_ax, paired, PRIMARY_METRIC, methods,
-            "Simulated test images", "Center F1 (4 px)",
+            "UNet comparison to CellPoseSAM on\nvariable simulated images", "Center F1 (4 px)",
         )
 
     def generate_subfigure_f(
