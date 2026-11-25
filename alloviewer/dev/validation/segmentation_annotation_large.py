@@ -162,8 +162,8 @@ def select_unet_median_disagreements(
     """Select all three-expert-vs-UNet median disagreements from one long CSV.
 
     The identity is (site, Folder, well, image_name) only: nullable PRA and
-    Specificity metadata must NEVER be grouping keys. Exclude the previously
-    identified Frankfurt repeated run by default to match Figure 4. Bad or
+    Specificity metadata must NEVER be grouping keys. Exclude both Berlin +DTT
+    runs, and the previously identified Frankfurt repeated run by default. Bad or
     incomplete scores are logged as issues and never treated as agreements.
 
     Returns (cases, issues, full_run_controls). The source CSV is read only.
@@ -194,6 +194,12 @@ def select_unet_median_disagreements(
             raw["Folder"].eq("RUN_063F11D2D1DD")
         )].copy()
         print(f"Excluded duplicated Frankfurt RUN_063F11D2D1DD: {old_count - len(raw)} scoring rows")
+
+    # +DTT experiments are excluded from the Berlin validation and review export.
+    berlin_dtt_runs = {"20260811_01_+DTT", "20260811_02_+DTT"}
+    dtt_mask = raw["site"].eq("Berlin") & raw["Folder"].isin(berlin_dtt_runs)
+    print(f"Excluded Berlin +DTT experiments: {int(dtt_mask.sum())} scoring rows")
+    raw = raw.loc[~dtt_mask].copy()
 
     roles_by_site = {site: _review_pra_layout(site)[0] for site in ("Frankfurt", "Berlin")}
     # All controls from the complete readout sheet are required for the
@@ -747,6 +753,15 @@ def cli(argv: Sequence[str] | None = None) -> int:
     if not model_path.is_file():
         raise FileNotFoundError(f"Missing UNet checkpoint: {model_path}")
     config = AnnotationConfig(
+        outline_width=1,
+        colors_rgb={
+            "pos": (255, 0, 255),       # Magenta
+            "neg": (255, 255, 0),       # Yellow
+            "uncertain": (0, 255, 255), # Cyan
+        },
+        classifier_margin=1.0,
+        qc=False,
+        verify_tiff=True,
         unet_config=cfg_dict,
         render_mode=args.render_mode,
         overwrite=args.overwrite,
