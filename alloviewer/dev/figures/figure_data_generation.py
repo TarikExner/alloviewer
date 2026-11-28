@@ -2129,8 +2129,31 @@ def load_figure_s8_simulated_example(
         if h <= 0 or w <= 0 or y0 < 0 or x0 < 0 or y0+h > full_hw[0] or x0+w > full_hw[1]:
             raise ValueError("Invalid source tile bounds")
         crop = _supp_np.s_[y0:y0+h, x0:x0+w]
+
+        # Read the original, unnormalized RGB tile directly from H5.
+        # TiledH5Dataset normalizes images in __getitem__, but the
+        # underlying /imgs dataset contains the original [0, 1] values.
+        import h5py
+
+        with h5py.File(gt_path, "r") as hf:
+            raw_tile = _supp_np.asarray(
+                hf["imgs"][img_index, tile_idx, :, :h, :w],
+                dtype=_supp_np.float32,
+            )
+
+        # Convert CHW -> HWC without changing any pixel values.
+        rgb_original = _supp_np.moveaxis(raw_tile, 0, -1)
+
+        if (
+            rgb_original.shape != (h, w, 3)
+            or not _supp_np.isfinite(rgb_original).all()
+            or rgb_original.min() < 0
+            or rgb_original.max() > 1
+        ):
+            raise ValueError("Unexpected original RGB image shape or range")
+
         return {
-            "image": _supp_np.asarray(rgb_full[crop]),
+            "image": rgb_original,
             "gt": _supp_np.asarray(ground_truth[crop], dtype=_supp_np.int32),
             "unet": _supp_np.asarray(unet_full[crop], dtype=_supp_np.int32),
             "cellpose": _supp_np.asarray(cp_masks[crop], dtype=_supp_np.int32),

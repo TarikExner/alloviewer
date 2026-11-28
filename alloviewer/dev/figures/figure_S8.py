@@ -130,47 +130,6 @@ def make_energy_from_instances(instances: np.ndarray) -> np.ndarray:
 
     return energy
 
-def _enhance_rgb_for_display(
-    rgb: np.ndarray,
-    black_percentile: float = 50.0,
-    white_percentile: float = 99.7,
-) -> np.ndarray:
-    """Improve fluorescence image contrast while preserving RGB ratios.
-
-    Display only. Does not alter segmentation or model input.
-    """
-
-    rgb = np.asarray(rgb, dtype=np.float32)
-
-    # Use one brightness value per pixel.
-    brightness = rgb.max(axis=2)
-
-    black, white = np.percentile(
-        brightness,
-        [black_percentile, white_percentile],
-    )
-
-    if white <= black:
-        return np.clip(rgb, 0.0, 1.0)
-
-    # Map background toward black and bright cells toward white.
-    adjusted = np.clip(
-        (brightness - black) / (white - black),
-        0.0,
-        1.0,
-    )
-
-    # Apply the same multiplier to all three channels at each pixel.
-    # This preserves the R:G:B ratio of nonzero pixels.
-    factor = np.divide(
-        adjusted,
-        brightness,
-        out=np.zeros_like(brightness),
-        where=brightness > 0,
-    )
-
-    return np.clip(rgb * factor[..., None], 0.0, 1.0)
-
 
 def _visual_map(labels: np.ndarray, kind: str) -> np.ndarray:
     """Plotting maps derived strictly from the final instance labels."""
@@ -193,57 +152,6 @@ def _visual_map(labels: np.ndarray, kind: str) -> np.ndarray:
     if kind == "energy":
         return make_energy_from_instances(labels)
     raise ValueError(f"Unknown visual kind: {kind}")
-
-
-def _display_rgb(image: np.ndarray) -> np.ndarray:
-    """Convert image data to genuine RGB for Matplotlib without color distortion.
-
-    The H5 tiles fed to UNet are channel-normalized using UNET_MEAN/STD.
-    If a local figure_data_generation.py returns these normalized values
-    instead of denormalized RGB, undo that normalization before showing them.
-    Already-correct RGB in [0,1] is preserved. NO independent per-channel
-    min/max rescaling is performed (which would alter red/green ratios).
-    """
-    rgb = np.asarray(image)
-    if rgb.ndim != 3 or rgb.shape[-1] != 3:
-        raise ValueError(f"Expected HxWx3 RGB image, got {rgb.shape}")
-    if not np.all(np.isfinite(rgb)):
-        raise ValueError("Image contains non-finite RGB values")
-
-    if np.issubdtype(rgb.dtype, np.integer):
-        if rgb.min() < 0:
-            raise ValueError("RGB image has negative integer values")
-        # Matplotlib accepts uint8 RGB directly, but not uint16 as standard RGB.
-        if rgb.dtype == np.uint8:
-            return rgb
-        maximum = float(np.iinfo(rgb.dtype).max)
-        return np.clip(rgb.astype(np.float32) / maximum, 0.0, 1.0)
-
-    rgb = rgb.astype(np.float32, copy=False)
-    minimum, maximum = float(rgb.min()), float(rgb.max())
-    if minimum >= 0.0 and maximum <= 1.0:
-        return rgb
-
-    # Typical normalized H5 tile range includes negative pixels and values >1.
-    # This branch also handles a positive-only standardized tile, whose max >1.
-    if minimum >= -10.0 and maximum <= 10.0:
-        from alloviewer.dev.segmentation import UNET_MEAN, UNET_STD
-        mean = np.asarray(UNET_MEAN, dtype=np.float32).reshape(1, 1, 3)
-        std = np.asarray(UNET_STD, dtype=np.float32).reshape(1, 1, 3)
-        restored = rgb * std + mean
-        if restored.min() < -0.05 or restored.max() > 1.05:
-            raise ValueError(
-                "H5 RGB values could not be restored using UNET_MEAN/STD. "
-                f"Before [{minimum:.3f}, {maximum:.3f}], after "
-                f"[{restored.min():.3f}, {restored.max():.3f}]."
-            )
-        return np.clip(restored, 0.0, 1.0).astype(np.float32)
-
-    if minimum >= 0.0 and maximum <= 255.0:
-        # Handle explicit float-valued 8-bit RGB, with a single scale for all channels.
-        return np.clip(rgb / 255.0, 0.0, 1.0).astype(np.float32)
-
-    raise ValueError(f"Unexpected RGB range [{minimum:.3f}, {maximum:.3f}]")
 
 
 def _image_with_inset(
@@ -295,9 +203,7 @@ def _generate_main_figure(
 ) -> None:
     metrics = figure_data["metrics"]
     field = figure_data["field"]
-    rgb_display = _enhance_rgb_for_display(
-        _display_rgb(field["image"])
-    )
+    rgb_display = np.asarray(field["image"], dtype=np.float32)
 
     def generate_subfigure_a(
         fig: Figure, ax: Axes, gs: SubplotSpec, letter: str
