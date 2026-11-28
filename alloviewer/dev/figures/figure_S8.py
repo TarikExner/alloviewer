@@ -91,20 +91,85 @@ def _instance_centers(labels: np.ndarray) -> np.ndarray:
 
 
 def make_energy_from_instances(instances: np.ndarray) -> np.ndarray:
-    """Distance-transform energy defined identically for GT, UNet and Cellpose.
+    """Calculate normalized distance-transform energy for each instance."""
 
-    This is derived from the binary foreground of the final instance labels;
-    it is NOT the UNet's predicted energy head. Touching instances contribute
-    to one foreground distance field, as in the supplied reference function.
+    instances = np.asarray(instances)
+    energy = np.zeros(instances.shape, dtype=np.float32)
+
+    if not np.any(instances):
+        return energy
+
+    # Process each instance separately.
+    for instance_id, slices in enumerate(
+        ndi.find_objects(instances), start=1
+    ):
+        if slices is None:
+            continue
+
+        instance_mask = instances[slices] == instance_id
+
+        # Pad to ensure proper distance calculation at instance edges.
+        padded = np.pad(
+            instance_mask,
+            1,
+            mode="constant",
+            constant_values=False,
+        )
+
+        dist = ndi.distance_transform_edt(padded)[1:-1, 1:-1]
+        dist = dist.astype(np.float32)
+
+        # Normalize each instance individually.
+        peak = float(dist[instance_mask].max())
+
+        if peak > 0:
+            dist /= peak
+
+        crop = energy[slices]
+        crop[instance_mask] = dist[instance_mask]
+
+    return energy
+
+def _enhance_rgb_for_display(
+    rgb: np.ndarray,
+    black_percentile: float = 50.0,
+    white_percentile: float = 99.7,
+) -> np.ndarray:
+    """Improve fluorescence image contrast while preserving RGB ratios.
+
+    Display only. Does not alter segmentation or model input.
     """
-    cell = instances > 0
-    dist = ndi.distance_transform_edt(cell).astype(np.float32)
-    if cell.any():
-        dmax = float(dist[cell].max())
-        if dmax > 0:
-            dist /= dmax
-    dist[~cell] = 0.0
-    return dist.astype(np.float32)
+
+    rgb = np.asarray(rgb, dtype=np.float32)
+
+    # Use one brightness value per pixel.
+    brightness = rgb.max(axis=2)
+
+    black, white = np.percentile(
+        brightness,
+        [black_percentile, white_percentile],
+    )
+
+    if white <= black:
+        return np.clip(rgb, 0.0, 1.0)
+
+    # Map background toward black and bright cells toward white.
+    adjusted = np.clip(
+        (brightness - black) / (white - black),
+        0.0,
+        1.0,
+    )
+
+    # Apply the same multiplier to all three channels at each pixel.
+    # This preserves the R:G:B ratio of nonzero pixels.
+    factor = np.divide(
+        adjusted,
+        brightness,
+        out=np.zeros_like(brightness),
+        where=brightness > 0,
+    )
+
+    return np.clip(rgb * factor[..., None], 0.0, 1.0)
 
 
 def _visual_map(labels: np.ndarray, kind: str) -> np.ndarray:
@@ -230,7 +295,9 @@ def _generate_main_figure(
 ) -> None:
     metrics = figure_data["metrics"]
     field = figure_data["field"]
-    rgb_display = _display_rgb(field["image"])
+    rgb_display = _enhance_rgb_for_display(
+        _display_rgb(field["image"])
+    )
 
     def generate_subfigure_a(
         fig: Figure, ax: Axes, gs: SubplotSpec, letter: str
